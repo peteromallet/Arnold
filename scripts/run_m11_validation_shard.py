@@ -40,7 +40,12 @@ STATUS_MAP = {
     "ERROR": "errors",
 }
 RESULT_RE = re.compile(
-    r"^(?P<nodeid>\S+::\S+?)\s+(?P<status>PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)"
+    # Node IDs are opaque pytest strings.  In particular, parametrized IDs may
+    # contain spaces (and even words such as "PASSED"), so match greedily up to
+    # the final status token instead of treating node IDs as whitespace-free.
+    # Exclude ``-rA`` summary rows, whose status precedes the node ID.
+    r"^(?!(?:PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)\s)"
+    r"(?P<nodeid>.+::.+)\s+(?P<status>PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)"
     r"(?:\s|$)"
 )
 SUMMARY_RE = re.compile(
@@ -237,16 +242,15 @@ def _collect_inventory(root: Path, argv: Sequence[str], timeout: float) -> list[
             f"collect-only failed with {result.returncode}: {result.stderr[-1000:]}"
         )
     inventory = sorted(
-        {
-            line.strip()
-            for line in result.stdout.splitlines()
-            if "::" in line
-            and not line.startswith(("=", "ERROR", "WARNING"))
-            and " " not in line.strip()
-        }
+        line.strip()
+        for line in result.stdout.splitlines()
+        if "::" in line
+        and not line.startswith(("=", "ERROR", "WARNING"))
     )
     if not inventory:
         raise ValidationShardError("collect-only produced no exact nodeids")
+    if len(inventory) != len(set(inventory)):
+        raise ValidationShardError("collect-only produced duplicate nodeids")
     return inventory
 
 
@@ -255,7 +259,12 @@ def _parse_outcomes(output: str) -> tuple[dict[str, int], list[str]]:
     for raw in output.splitlines():
         match = RESULT_RE.match(raw.strip())
         if match:
-            statuses[match.group("nodeid")] = STATUS_MAP[match.group("status")]
+            nodeid = match.group("nodeid")
+            if nodeid in statuses:
+                raise ValidationShardError(
+                    f"pytest reported duplicate terminal outcome for {nodeid!r}"
+                )
+            statuses[nodeid] = STATUS_MAP[match.group("status")]
     counts = {name: 0 for name in OUTCOMES}
     for status in statuses.values():
         counts[status] += 1
