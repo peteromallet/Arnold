@@ -1,0 +1,294 @@
+{
+  "schema": "arnold.post_m11_release_evidence.v1",
+  "record_id": "post-m11-consolidation-20260731",
+  "record_status": "in_progress",
+  "recorded_at_utc": "2026-07-31T03:52:06Z",
+  "authority": {
+    "plan_path": "docs/megaplan/post-m11-loose-work-consolidation-release-plan-2026-07-29.md",
+    "plan_publication_commit": "f1c0b7384752ee96ea74eaee0f6c8d5d06c301d4",
+    "plan_blob": "8b8a157ae0e2ad89209dd1cde61791856997585b",
+    "origin_base_commit": "96127731661b4aeec7e049b8a7b59170a9506b06",
+    "evidence_cut_commit": "87ef026ba7bfced7906f27cb0d965b2b62c3884a",
+    "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b"
+  },
+  "checkpoints": [
+    {
+      "id": "local-main-dirty-encrypted",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$LOCAL_CHECKPOINT_ROOT/20260731T0218Z-local-main/local-main-dirty-payload.tar.enc",
+      "sha256": "12febab26e425b88a45c272014427f226c6e1b3d64fb49a694d93f3192a5caad",
+      "restore_check": "verified",
+      "notes": "Decryption material is held outside Git in the approved local secret store."
+    },
+    {
+      "id": "local-main-dirty-encrypted-cloud-copy",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$CLOUD_WORKSPACE/.megaplan/checkpoints/post-m11-20260731T0218Z/local-main-dirty-payload.tar.enc",
+      "sha256": "12febab26e425b88a45c272014427f226c6e1b3d64fb49a694d93f3192a5caad",
+      "restore_check": "hash_verified_copy"
+    },
+    {
+      "id": "preservation-stash-bundle-local",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$LOCAL_CHECKPOINT_ROOT/20260731T0218Z-local-main/preservation-stash.bundle",
+      "sha256": "2c8c34ad0c85531873473683d18413e79601d26549a1994618e5d10bab7b575b",
+      "restore_check": "git_bundle_verify_passed",
+      "notes": "Bundle contains refs/stash at 591a7aba8f and depends on existing Git objects."
+    },
+    {
+      "id": "preservation-stash-bundle-cloud-copy",
+      "classification": "KEEP_UNTIL_FINAL_ACCEPTANCE",
+      "location": "$CLOUD_WORKSPACE/.megaplan/checkpoints/post-m11-20260731T0218Z/preservation-stash.bundle",
+      "sha256": "2c8c34ad0c85531873473683d18413e79601d26549a1994618e5d10bab7b575b",
+      "restore_check": "hash_verified_copy"
+    }
+  ],
+  "source_refs": [
+    {
+      "ref": "checkpoint/local-main-pre-post-m11-20260731",
+      "sha": "36a10988717f9dfb0ab31d49baf05cc89bcfa989",
+      "classification": "KEEP_CHECKPOINT",
+      "disposition": "Preserves the 18 local commits that predated consolidation."
+    },
+    {
+      "ref": "checkpoint/local-main-tracked-dirty-20260731",
+      "sha": "fd7e039e99617f5296ee59897c0f0cdede28fa4a",
+      "classification": "KEEP_CHECKPOINT",
+      "disposition": "Preserves tracked dirty work and selected valuable untracked plans, tickets, documentation, and tests."
+    },
+    {
+      "ref": "preserve/custody-m11-cloud-20260730",
+      "sha": "b3ad38ab26ff0fe0477bb264a1370b5d33e84d1f",
+      "classification": "LAND",
+      "disposition": "Merged by 6bc63b14e891e2ee5f18c46a2ce5cadd368d55cd."
+    },
+    {
+      "ref": "consolidate/arnold-runtime-activation-20260714",
+      "sha": "b3ad38ab26ff0fe0477bb264a1370b5d33e84d1f",
+      "classification": "LAND",
+      "disposition": "Integration ref was fast-forwarded to the completed M11 tip; merged by 6bc63b14e891e2ee5f18c46a2ce5cadd368d55cd."
+    },
+    {
+      "ref": "fix/post-m11-immediate-stability-20260731",
+      "sha": "76a9eee3118c3b0831a358ce0b5b484a64f952fb",
+      "classification": "LAND",
+      "disposition": "Included in a14566909f579b1a3a9c447738e31feb1feced2c."
+    },
+    {
+      "ref": "fix/post-m11-bounded-supervision-20260731",
+      "sha": "d282214c1e784f73d57a0bee4668d20d78111885",
+      "classification": "LAND",
+      "disposition": "Included in 18c69f4bd184c8e9056f9760d478d190a3d28f32."
+    },
+    {
+      "ref": "fix/post-m11-authority-closure-20260731",
+      "sha": "9dc3b6e2705b2415c4151b9adaac9e857956246f",
+      "classification": "LAND",
+      "disposition": "Included in a14566909f579b1a3a9c447738e31feb1feced2c."
+    },
+    {
+      "ref": "docs/post-m11-program-port-20260731",
+      "sha": "dd99864b2f8e00983b79635485b37f195475155d",
+      "classification": "LAND",
+      "disposition": "Included in d5baf6806677ab9c1f0285a573bd55fec963efc8."
+    },
+    {
+      "ref": "fix/post-m11-runtime-envelope-context-20260731",
+      "sha": "fe92c0ed5ba5ec04eed53c3c33696ebe5e842886",
+      "classification": "LAND",
+      "disposition": "Included in 6e60b31fbf9044253269fae5ae533ee9f244141b."
+    },
+    {
+      "ref": "docs/post-m11-ticket-reconciliation-20260731",
+      "sha": "a0539274fff80dc6c3c044f9eb6c32ed8ef8ec09",
+      "classification": "LAND",
+      "disposition": "Included in a2ec84e3e7ff1ca41832b5577f08c58cb3dd4dbb."
+    },
+    {
+      "ref": "fix/post-m11-publication-runtime-custody-20260731",
+      "sha": "63908a2aae8dcee7d9f3eff3c500ef86e446df1d",
+      "classification": "LAND",
+      "disposition": "Included in 653977c97f2e63612c350a3385b601b44c8c0163."
+    },
+    {
+      "ref": "fix/post-m11-human-wait-custody-20260731",
+      "sha": "62e54c30ddd9b070bc3b602794620abf515e7eb0",
+      "classification": "LAND",
+      "disposition": "Included in 329e03b6bad20fc079783fc9cdc2bbca792257d6."
+    },
+    {
+      "ref": "fix/post-m11-fixer-occurrence-custody-20260731",
+      "sha": "359370b430a44a46836164544f669c18888fb3f5",
+      "classification": "LAND",
+      "disposition": "Included in 87ef026ba7bfced7906f27cb0d965b2b62c3884a."
+    }
+  ],
+  "integration_lineage": [
+    {
+      "sha": "6bc63b14e891e2ee5f18c46a2ce5cadd368d55cd",
+      "subject": "Merge completed Custody control-plane M5-M11 lineage"
+    },
+    {
+      "sha": "18c69f4bd184c8e9056f9760d478d190a3d28f32",
+      "subject": "Merge bounded supervision and atomic phase handoff"
+    },
+    {
+      "sha": "a14566909f579b1a3a9c447738e31feb1feced2c",
+      "subject": "Merge immediate stability and authority closure fixes"
+    },
+    {
+      "sha": "d5baf6806677ab9c1f0285a573bd55fec963efc8",
+      "subject": "Merge finalized native parity and platformization program"
+    },
+    {
+      "sha": "bbb4e59068710fa5309b996e96e076ffff5000c9",
+      "subject": "Merge provider recovery edge cases"
+    },
+    {
+      "sha": "7a491a48d07e7fc69a53ba46edbb70b2278151ea",
+      "subject": "Restore chain completion reconciliation invariants"
+    },
+    {
+      "sha": "6e60b31fbf9044253269fae5ae533ee9f244141b",
+      "subject": "Merge context budget and persistent Railway runtime fixes"
+    },
+    {
+      "sha": "a2ec84e3e7ff1ca41832b5577f08c58cb3dd4dbb",
+      "subject": "Merge post-M11 ticket reconciliation"
+    },
+    {
+      "sha": "653977c97f2e63612c350a3385b601b44c8c0163",
+      "subject": "Merge repair publication and runtime custody containment"
+    },
+    {
+      "sha": "329e03b6bad20fc079783fc9cdc2bbca792257d6",
+      "subject": "Merge human-wait repair custody"
+    },
+    {
+      "sha": "87ef026ba7bfced7906f27cb0d965b2b62c3884a",
+      "subject": "Merge canonical fixer occurrence custody"
+    }
+  ],
+  "validation_observations": [
+    {
+      "id": "custody-merge-focused",
+      "scope": "pre-integration Custody conflict-resolution focused suite",
+      "status": "historical_pass",
+      "result": {
+        "passed": 283,
+        "failed": 0
+      },
+      "acceptance_effect": "informational_only"
+    },
+    {
+      "id": "custody-merge-broad-first-run",
+      "scope": "pre-integration broader conflict-resolution matrix",
+      "status": "historical_failure",
+      "result": {
+        "passed": 275,
+        "failed": 7
+      },
+      "acceptance_effect": "superseded_by_followup_fixes",
+      "notes": "Three overlay failures omitted repair_escalation; four exposed the L1 versus typed L2/L3 dispatch policy mismatch."
+    },
+    {
+      "id": "immediate-stability-branch",
+      "scope": "ticket parser, neutral executor routing, dead-PID liveness, and stale hook focused matrix",
+      "status": "historical_pass",
+      "result": {
+        "passed": 289,
+        "skipped": 1,
+        "failed": 0
+      },
+      "acceptance_effect": "branch_level_only"
+    },
+    {
+      "id": "bounded-supervision-branch",
+      "scope": "bounded event replay and atomic execute-to-review handoff compatibility validation",
+      "status": "historical_pass",
+      "result": {
+        "passed": 488,
+        "failed": 0
+      },
+      "acceptance_effect": "branch_level_only",
+      "source": ".megaplan/tickets/01KYT4ZMFNK458MA5AFNR1ZM9R-bound-event-journal-replay-and-watchdog-supervision.md"
+    }
+  ],
+  "cloud_protected_resources": [
+    {
+      "resource": "$CLOUD_WORKSPACE/custody-control-plane-20260714/Arnold",
+      "classification": "PROTECTED",
+      "observed_head": "b3ad38ab26ff0fe0477bb264a1370b5d33e84d1f",
+      "notes": "Completed Custody source checkout; do not delete before final acceptance."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/runtime-candidates/arnold-5bf11d5a5600",
+      "classification": "PROTECTED",
+      "observed_head": "b3ad38ab26ff0fe0477bb264a1370b5d33e84d1f",
+      "notes": "Existing runtime candidate; not the pending final-main runtime."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/critique-ledger-accountability-v2-20260728/Arnold",
+      "classification": "PROTECTED",
+      "observed_head": "a290e57cb7b9ba1bec72c631cb6e0a6a07f0c451",
+      "notes": "Authoritative Critique initiative checkout; must remain unlaunched until rebound to the released runtime."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/.paused-epics/critique-ledger-m9-glm-20260723/Arnold",
+      "classification": "PROTECTED_AUDIT_ONLY",
+      "notes": "Dirty predecessor archive; preserve and never resume."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/arnold",
+      "classification": "PROTECTED_UNTIL_CLASSIFIED",
+      "notes": "Divergent dirty checkout; no deletion authorized."
+    },
+    {
+      "resource": "$CLOUD_WORKSPACE/arnold-consolidation-20260714",
+      "classification": "PROTECTED_UNTIL_CLASSIFIED",
+      "notes": "Divergent dirty checkout; no deletion authorized."
+    }
+  ],
+  "residuals": [
+    {
+      "id": "final-integrated-validation",
+      "status": "pending",
+      "required_evidence": "Frozen command inventory, focused integration suites, practical broad suite or explicit shard union, compile checks, and clean diff checks at the final release candidate SHA."
+    },
+    {
+      "id": "release-pr",
+      "status": "pending",
+      "required_evidence": "Reviewed release PR for the consolidation branch; no direct push to main."
+    },
+    {
+      "id": "main-merge-and-tag",
+      "status": "pending",
+      "required_evidence": "Exact final main merge SHA and annotated release tag."
+    },
+    {
+      "id": "content-addressed-runtime",
+      "status": "pending",
+      "required_evidence": "Runtime built and deployed from exact final main SHA with provenance receipt."
+    },
+    {
+      "id": "production-canary",
+      "status": "pending",
+      "required_evidence": "Resident, watchdog, three-hour fixer, /whats-cooking, ten-minute canary, and recurring-cycle observations on the promoted runtime."
+    },
+    {
+      "id": "critique-runtime-rebind",
+      "status": "pending",
+      "required_evidence": "Critique cloud.yaml rebound from its M10 runtime to the released runtime without changing the authoritative initiative payload."
+    },
+    {
+      "id": "critique-launch",
+      "status": "pending",
+      "required_evidence": "Supported cloud-chain launch and durable status progression for the exact 2026-07-28 initiative."
+    },
+    {
+      "id": "cleanup-deletions",
+      "status": "pending",
+      "required_evidence": "Per-item user approval followed by exact branch, stash, worktree, and cloud-resource deletion receipts."
+    }
+  ]
+}
