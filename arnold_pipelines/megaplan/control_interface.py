@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from importlib import import_module
-import logging
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from arnold.workflow.boundary_evidence import BoundaryOutcome, BoundaryReceipt
 from arnold.control.interface import (
-    ArtifactRequest,
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
     CONTROL_TARGET_REROUTE,
+    ArtifactRequest,
     ControlBinding,
     ControlInterfaceTarget,
     ControlProjection,
@@ -25,8 +24,12 @@ from arnold.control.interface import (
     ControlTransitionResult,
     RunStateView,
 )
+from arnold.runtime.outcome import RunOutcome
+from arnold.workflow.boundary_evidence import BoundaryOutcome, BoundaryReceipt
 from arnold_pipelines.megaplan._core.state import write_plan_state
-from arnold_pipelines.megaplan.custody.override_wbc import validate_override_wbc_transition
+from arnold_pipelines.megaplan.custody.override_wbc import (
+    validate_override_wbc_transition,
+)
 from arnold_pipelines.megaplan.custody.phase_wbc import (
     clear_phase_wbc_suspension,
     resume_clarification_phase_wbc_if_present,
@@ -38,10 +41,12 @@ from arnold_pipelines.megaplan.orchestration.override_authority import (
     override_authority_contract_for_transition,
 )
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
-from arnold_pipelines.megaplan.state_delta import StateDelta, StateDeltaConflict, apply_delta
+from arnold_pipelines.megaplan.state_delta import (
+    StateDelta,
+    StateDeltaConflict,
+    apply_delta,
+)
 from arnold_pipelines.megaplan.workflows.override_matrix import OVERRIDE_ACTION_MATRIX
-from arnold.runtime.outcome import RunOutcome
-
 
 _MISSING_BINDING = object()
 _OVERRIDE_AUTHORITY_TRANSITIONS = frozenset(
@@ -492,8 +497,8 @@ def _check_override_acceptance_gate(
     mode = str(config.get("completion_contract_mode") or "shadow")
 
     from arnold_pipelines.megaplan.orchestration.completion_contract import (
-        is_fail_closed_mode,
         PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+        is_fail_closed_mode,
     )
 
     if not is_fail_closed_mode(mode):
@@ -650,6 +655,31 @@ def apply_transition(
             and phase_wbc_reentry_invocation_id is not None
         ):
             clear_phase_wbc_suspension(next_state, step="prep")
+            next_meta = next_state.get("meta")
+            next_overrides = (
+                next_meta.get("overrides")
+                if isinstance(next_meta, Mapping)
+                else None
+            )
+            if not isinstance(next_overrides, list) or not next_overrides:
+                raise RuntimeError(
+                    "resume-clarify transition is missing its durable override record"
+                )
+            latest_override = next_overrides[-1]
+            if (
+                not isinstance(latest_override, Mapping)
+                or latest_override.get("action") != "resume-clarify"
+            ):
+                raise RuntimeError(
+                    "resume-clarify transition has no matching durable override record"
+                )
+            persisted_meta = dict(next_meta)
+            persisted_overrides = [dict(entry) for entry in next_overrides]
+            persisted_overrides[-1][
+                "phase_wbc_reentry_invocation_id"
+            ] = phase_wbc_reentry_invocation_id
+            persisted_meta["overrides"] = persisted_overrides
+            next_state["meta"] = persisted_meta
         remove_keys = binding_result.artifacts.get("remove_state_keys", ())
         if isinstance(remove_keys, Sequence) and not isinstance(remove_keys, (str, bytes)):
             for key in remove_keys:

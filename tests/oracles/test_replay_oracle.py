@@ -1,24 +1,31 @@
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pytest
 
-from arnold_pipelines.megaplan.handlers import override as override_handler
+from arnold.workflow.execution_attempt_ledger import AttemptEventType
+from arnold_pipelines.megaplan._core import set_active_step
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.blocker_recovery import quality_blocker_id
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    activate_phase_wbc,
+    query_phase_wbc_events,
+    suspend_phase_wbc,
+)
+from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan.handlers.critique import handle_critique
 from arnold_pipelines.megaplan.handlers.override import handle_override
 from arnold_pipelines.megaplan.handlers.plan import handle_plan
 from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
-from arnold_pipelines.megaplan.quality_resolutions import build_quality_resolution_event
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_BLOCKED,
     STATE_GATED,
     STATE_PLANNED,
 )
+from arnold_pipelines.megaplan.quality_resolutions import build_quality_resolution_event
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.user_actions import build_resolution_event
 from tests.conftest import PlanFixture, load_state, make_fake_phase_result
@@ -129,6 +136,41 @@ def _prepare_recoverable_quality_blocked(fixture: PlanFixture) -> None:
         exit_kind="blocked_by_quality",
         deviations=(deviation,),
     )
+
+
+def _assert_routed_force_proceed_is_custodied(
+    *,
+    legacy,
+    routed,
+    from_state: str,
+    reason: str,
+) -> None:
+    """Prove the routed path is an intentional, authority-preserving superset."""
+
+    assert legacy.accepted is routed.accepted is True
+    assert legacy.response["state"] == routed.response["state"] == STATE_GATED
+    assert "force_proceed_custody" not in legacy.state["meta"]
+
+    custody = routed.state["meta"]["force_proceed_custody"]
+    assert custody["schema_version"] == "megaplan.force_proceed_custody.v1"
+    assert custody["from_state"] == from_state
+    assert custody["reason"] == reason
+    assert custody["transaction_id"].startswith("force-proceed:")
+    dispositions = custody["critique_dispositions"]
+    assert dispositions
+    assert all(row["disposition"] == "waived_to_debt" for row in dispositions)
+    assert all(row["reason"] == reason for row in dispositions)
+
+    override = routed.state["meta"]["overrides"][-1]
+    assert override["custody_transaction_id"] == custody["transaction_id"]
+    assert override["debt_entries_added"] == len(dispositions)
+
+    gate = routed.artifacts["gate.json"]
+    resolutions = gate["flag_resolutions"]
+    assert {row["flag_id"] for row in resolutions} == {
+        row["subject_id"] for row in dispositions
+    }
+    assert all(row["action"] == "accept_tradeoff" for row in resolutions)
 
 
 @pytest.mark.replay_oracle
@@ -352,8 +394,6 @@ def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
         ),
         artifact_names=("gate.json",),
     )
-    legacy_gate_bytes = (plan_fixture.plan_dir / "gate.json").read_bytes()
-
     from tests.conftest import _make_plan_fixture_with_robustness
 
     fresh_root = tmp_path / "routed-force-proceed-critiqued"
@@ -379,18 +419,21 @@ def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
         ),
         artifact_names=("gate.json",),
     )
-    routed_gate_bytes = (fresh_fixture.plan_dir / "gate.json").read_bytes()
-
-    assert_replay_parity(
+    _assert_routed_force_proceed_is_custodied(
         legacy=legacy,
         routed=routed,
-        fields=("accepted", "response", "state", "artifacts"),
+        from_state="critiqued",
+        reason="operator accepted routed gate risk",
     )
-    assert routed_gate_bytes == legacy_gate_bytes
-    assert routed.events[0]["kind"] == "artifact_written"
-    assert routed.events[0]["payload"]["path"].endswith("/gate.json")
-    assert routed.events[0]["payload"]["size_bytes"] == legacy.events[0]["payload"]["size_bytes"]
-    assert routed.events[1:] == legacy.events[1:]
+    assert routed.events == (
+        {
+            "kind": "override_applied",
+            "payload": {
+                "action": "force-proceed",
+                "reason": "operator accepted routed gate risk",
+            },
+        },
+    )
 
 
 @pytest.mark.replay_oracle
@@ -458,10 +501,11 @@ def test_routed_force_proceed_from_blocked_agent_availability_matches_legacy(
         artifact_names=("gate.json",),
     )
 
-    assert_replay_parity(
+    _assert_routed_force_proceed_is_custodied(
         legacy=legacy,
         routed=routed,
-        fields=("accepted", "response", "state", "artifacts"),
+        from_state="blocked",
+        reason="agent availability was repaired",
     )
 
 
@@ -710,23 +754,40 @@ def test_routed_resume_clarify_prep_only_matches_legacy(
 ) -> None:
     frozen_now = "2026-01-02T03:04:05Z"
 
-    def _prepare_prep_clarification(fixture: PlanFixture) -> None:
+    def _prepare_prep_clarification(fixture: PlanFixture) -> str:
         handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
         state = load_state(fixture.plan_dir)
+        set_active_step(state, step="prep", agent="prep", mode="test")
+        metadata = activate_phase_wbc(
+            state=state,
+            plan_dir=fixture.plan_dir,
+            step="prep",
+            agent="prep",
+        )
+        assert metadata is not None
         state["current_state"] = STATE_AWAITING_HUMAN
         state["clarification"] = {
             "intent_summary": "Prep needs a human answer.",
             "questions": ["Which auth library?"],
             "source": "prep",
         }
+        suspend_phase_wbc(
+            state=state,
+            plan_dir=fixture.plan_dir,
+            step="prep",
+            checkpoint={"clarification": state["clarification"]},
+            cursor={"resume_action": "override:resume-clarify"},
+            agent="prep",
+        )
         state["meta"]["notes"].append(
             {"timestamp": frozen_now, "note": "Use platform auth.", "source": "user"}
         )
         write_plan_state(fixture.plan_dir, mode="replace", state=state)
+        return str(metadata["invocation_id"])
 
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
-    _prepare_prep_clarification(plan_fixture)
+    legacy_invocation_id = _prepare_prep_clarification(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
         monkeypatch,
@@ -748,7 +809,7 @@ def test_routed_resume_clarify_prep_only_matches_legacy(
     )
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
-    _prepare_prep_clarification(fresh_fixture)
+    routed_invocation_id = _prepare_prep_clarification(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
         monkeypatch,
@@ -759,11 +820,42 @@ def test_routed_resume_clarify_prep_only_matches_legacy(
         ),
     )
 
-    assert_replay_parity(
-        legacy=legacy,
-        routed=routed,
-        fields=("accepted", "response", "state", "artifacts", "events"),
+    assert legacy.accepted is routed.accepted is True
+    legacy_response = dict(legacy.response)
+    routed_response = dict(routed.response)
+    legacy_reentry = legacy_response.pop("phase_wbc_reentry_invocation_id")
+    routed_reentry = routed_response.pop("phase_wbc_reentry_invocation_id")
+    assert legacy_response == routed_response
+    assert legacy_reentry != legacy_invocation_id
+    assert routed_reentry != routed_invocation_id
+    assert legacy.state["current_state"] == routed.state["current_state"] == "prepped"
+    assert "clarification" not in legacy.state
+    assert "clarification" not in routed.state
+    assert "phase_wbc_suspensions" not in legacy.state["meta"]
+    assert "phase_wbc_suspensions" not in routed.state["meta"]
+    assert legacy.state["meta"]["overrides"][-1]["phase_wbc_reentry_invocation_id"] == (
+        legacy_reentry
     )
+    assert routed.state["meta"]["overrides"][-1]["phase_wbc_reentry_invocation_id"] == (
+        routed_reentry
+    )
+    for fixture, invocation_id in (
+        (plan_fixture, legacy_invocation_id),
+        (fresh_fixture, routed_invocation_id),
+    ):
+        events = query_phase_wbc_events(
+            fixture.plan_dir,
+            step="prep",
+            invocation_id=invocation_id,
+        )
+        assert [event.event_type for event in events] == [
+            AttemptEventType.STARTED,
+            AttemptEventType.SUSPENDED,
+            AttemptEventType.RESUMED,
+            AttemptEventType.COMPLETED,
+        ]
+    assert legacy.artifacts == routed.artifacts == {}
+    assert legacy.events == routed.events
 
 
 @pytest.mark.replay_oracle

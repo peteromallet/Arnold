@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from arnold.workflow.execution_attempt_ledger import AttemptEventType
 from arnold.control.interface import ControlTransition
+from arnold.workflow.execution_attempt_ledger import AttemptEventType
 from arnold_pipelines.megaplan._core import set_active_step
 from arnold_pipelines.megaplan.control_interface import apply_transition
 from arnold_pipelines.megaplan.custody.controlled_writer_registry import (
     _clear_registry,
 )
 from arnold_pipelines.megaplan.custody.phase_wbc import (
-    PHASE_WBC_SUSPENSIONS_STATE_KEY,
     PHASE_WBC_SUSPENSION_CURSOR_KEY,
+    PHASE_WBC_SUSPENSIONS_STATE_KEY,
     activate_phase_wbc,
     complete_phase_wbc,
     phase_wbc_required,
@@ -30,13 +30,13 @@ from arnold_pipelines.megaplan.custody.wbc_runtime import (
 from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan.handlers import shared as shared_handlers
 from arnold_pipelines.megaplan.outcomes import PrepOutcome
+from arnold_pipelines.megaplan.planning.control_binding import (
+    planning_run_state_view,
+)
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_INITIALIZED,
     STATE_PREPPED,
-)
-from arnold_pipelines.megaplan.planning.control_binding import (
-    planning_run_state_view,
 )
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
@@ -506,6 +506,11 @@ def test_control_routed_clarification_resume_commits_wbc_before_state_transition
     )
     assert persisted_state["current_state"] == STATE_PREPPED
     assert phase_wbc_suspension_state(persisted_state, step="prep") is None
+    assert persisted_state["meta"]["overrides"][-1] == {
+        "action": "resume-clarify",
+        "timestamp": persisted_state["meta"]["overrides"][-1]["timestamp"],
+        "phase_wbc_reentry_invocation_id": reentry_invocation_id,
+    }
     events = query_phase_wbc_events(
         plan_dir,
         step="prep",
