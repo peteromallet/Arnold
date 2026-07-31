@@ -189,7 +189,7 @@ python -m arnold_pipelines.megaplan cloud exec \
    fi
    test \"\$(git -C '${RUNTIME_SRC}' rev-parse HEAD)\" = '${FINAL_SHA}'
    test -z \"\$(git -C '${RUNTIME_SRC}' status --porcelain)\"
-   python3 -m venv '${RUNTIME_VENV}'
+   python3 -m venv --copies '${RUNTIME_VENV}'
    '${RUNTIME_PYTHON}' -m pip install --upgrade pip uv
    cd '${RUNTIME_SRC}'
    VIRTUAL_ENV='${RUNTIME_VENV}' PATH='${RUNTIME_VENV}/bin':\"\$PATH\" \
