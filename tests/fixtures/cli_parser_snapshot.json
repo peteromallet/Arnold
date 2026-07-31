@@ -2279,7 +2279,7 @@
                   "const": null,
                   "default": null,
                   "dest": "expected_current_plan",
-                  "help": "Exact current plan name, or @none when the cursor has no plan yet.",
+                  "help": "Exact current plan name, or @none when no plan is active. A fully completed chain uses --expected-current-milestone @terminal with --expected-current-plan @none; terminal state and the exact completed milestone set are then verified.",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [

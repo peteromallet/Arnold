@@ -8637,7 +8637,12 @@ def build_chain_parser(subparsers: Any) -> None:
     runtime_rebind_parser.add_argument(
         "--expected-current-plan",
         required=True,
-        help="Exact current plan name, or @none when the cursor has no plan yet.",
+        help=(
+            "Exact current plan name, or @none when no plan is active. A fully "
+            "completed chain uses --expected-current-milestone @terminal with "
+            "--expected-current-plan @none; terminal state and the exact "
+            "completed milestone set are then verified."
+        ),
     )
     runtime_rebind_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
     runtime_rebind_parser.add_argument("--reason", required=True)

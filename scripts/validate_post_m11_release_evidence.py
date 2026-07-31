@@ -14,8 +14,15 @@ from typing import Any
 
 SHA1 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-ALLOWED_RECORD_STATUS = {"in_progress", "complete"}
+ALLOWED_RECORD_STATUS = {"in_progress", "candidate_ready", "complete"}
 ALLOWED_RESIDUAL_STATUS = {"pending", "complete"}
+POST_DEPLOY_RESIDUAL_IDS = {
+    "production-canary",
+    "runtime-selector-promotion",
+    "acceptance-tag",
+    "critique-runtime-rebind",
+    "critique-launch",
+}
 ALLOWED_OBSERVATION_STATUS = {
     "discovery",
     "failure",
@@ -473,7 +480,21 @@ def validate(path: Path) -> None:
                 f"residuals[{index}] is complete without completion_evidence"
             )
 
-    if data["record_status"] == "complete":
+    if data["record_status"] == "candidate_ready":
+        pending_pre_deploy = [
+            item["id"]
+            for item in residuals
+            if item["status"] != "complete"
+            and item["id"] not in POST_DEPLOY_RESIDUAL_IDS
+        ]
+        if pending_pre_deploy:
+            raise ValueError(
+                "record_status cannot be candidate_ready while pre-deploy "
+                "residuals are pending: "
+                + ", ".join(pending_pre_deploy)
+            )
+        _validate_final_acceptance(data, residuals, repo=repo)
+    elif data["record_status"] == "complete":
         pending = [item["id"] for item in residuals if item["status"] != "complete"]
         if pending:
             raise ValueError(

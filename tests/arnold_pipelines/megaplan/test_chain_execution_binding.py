@@ -696,6 +696,159 @@ def test_runtime_cutover_is_separate_from_spec_binding(
             assert state.to_dict()[field] == before[field]
 
 
+def _terminal_runtime_drift_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, ChainState, dict, dict]:
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["require_editable_runtime_match"] = True
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "require runtime binding")
+    raw["driver"]["intended_initiative_revision"] = _git(
+        tmp_path, "rev-parse", "HEAD"
+    )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    initial_active = active_execution_identity(spec_path)
+    initial_active["runtime"]["editable_root"] = initial_active["runtime"][
+        "import_root"
+    ]
+    initial_active["runtime"]["editable_revision"] = initial_active["runtime"][
+        "source_revision"
+    ]
+    initial_active["ready"] = True
+    initial_active["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: initial_active,
+    )
+    state = _bound_state(spec_path)
+    labels = ("c1", "c2", "c3")
+    state.current_milestone_index = len(labels)
+    state.current_plan_name = None
+    state.last_state = "done"
+    state.completed = [
+        {"label": label, "plan": f"{label}-plan", "status": "done"}
+        for label in labels
+    ]
+    original_runtime = json.loads(
+        json.dumps(
+            state.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+        )
+    )
+    successor = json.loads(json.dumps(initial_active))
+    successor["runtime"].update(
+        {
+            "import_root": str(tmp_path / "runtime-b"),
+            "editable_root": str(tmp_path / "runtime-b"),
+            "source_revision": "b" * 40,
+            "editable_revision": "b" * 40,
+        }
+    )
+    successor["runtime"]["content_sha256"] = "ignored-and-recomputed"
+    successor["ready"] = True
+    successor["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: successor,
+    )
+    drift = execution_binding_report(spec_path, state)
+    assert drift["runtime_binding"]["status"] == "drift"
+    return spec_path, state, original_runtime, drift
+
+
+def test_runtime_cutover_accepts_exact_completed_terminal_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift = _terminal_runtime_drift_case(
+        tmp_path, monkeypatch
+    )
+    before = state.to_dict()
+
+    cutover = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=original_runtime["content_sha256"],
+        expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+            "content_sha256"
+        ],
+        expected_current_milestone="@terminal",
+        expected_current_plan="@none",
+        reason="promote a verified runtime after chain completion",
+    )
+
+    assert cutover["runtime_binding"]["status"] == "match"
+    assert cutover["event"]["current_milestone"] == "@terminal"
+    assert cutover["event"]["current_plan"] == ""
+    for field in before:
+        if field != "metadata":
+            assert state.to_dict()[field] == before[field]
+
+
+@pytest.mark.parametrize(
+    ("invalid_state", "message"),
+    [
+        ("milestone_guard", "@terminal milestone guard"),
+        ("plan_guard", "@none plan guard"),
+        ("active_plan", "current plan remains"),
+        ("last_state", "canonical last_state 'done'"),
+        ("missing_completion", "exact ordered milestone set"),
+        ("out_of_order_completion", "exact ordered milestone set"),
+        ("non_done_completion", "exact ordered milestone set"),
+        ("past_terminal", "outside the bound sequence"),
+        ("active_cursor_terminal_token", "current milestone does not match"),
+    ],
+)
+def test_runtime_cutover_terminal_path_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_state: str,
+    message: str,
+) -> None:
+    spec_path, state, original_runtime, drift = _terminal_runtime_drift_case(
+        tmp_path, monkeypatch
+    )
+    expected_milestone = "@terminal"
+    expected_plan = "@none"
+    if invalid_state == "milestone_guard":
+        expected_milestone = "c3"
+    elif invalid_state == "plan_guard":
+        expected_plan = "c3-plan"
+    elif invalid_state == "active_plan":
+        state.current_plan_name = "c3-plan"
+    elif invalid_state == "last_state":
+        state.last_state = "blocked"
+    elif invalid_state == "missing_completion":
+        state.completed.pop()
+    elif invalid_state == "out_of_order_completion":
+        state.completed[0], state.completed[1] = state.completed[1], state.completed[0]
+    elif invalid_state == "non_done_completion":
+        state.completed[-1]["status"] = "waived"
+    elif invalid_state == "past_terminal":
+        state.current_milestone_index += 1
+    elif invalid_state == "active_cursor_terminal_token":
+        state.current_milestone_index = 0
+        state.current_plan_name = "c1-plan"
+    before = json.loads(json.dumps(state.to_dict()))
+
+    with pytest.raises(CliError, match=message):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=original_runtime["content_sha256"],
+            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+                "content_sha256"
+            ],
+            expected_current_milestone=expected_milestone,
+            expected_current_plan=expected_plan,
+            reason="terminal guard regression",
+        )
+    assert state.to_dict() == before
+
+
 def test_b_cli_rolls_back_to_independently_receipted_a_runtime(
     tmp_path: Path,
     offline_rollback_runtime: dict[str, Path | str],

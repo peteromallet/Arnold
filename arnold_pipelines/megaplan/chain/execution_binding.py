@@ -1407,17 +1407,62 @@ def rebind_runtime_identity(
 
     labels = _identity_labels(spec_report.get("expected") or {})
     current_index = int(getattr(state, "current_milestone_index", -1))
-    if current_index < 0 or current_index >= len(labels):
+    terminal_cursor = current_index == len(labels)
+    if current_index < 0 or current_index > len(labels):
         raise CliError(
             RUNTIME_DRIFT_ERROR, "current milestone index is outside the bound sequence"
         )
-    if labels[current_index] != expected_current_milestone:
-        raise CliError(
-            RUNTIME_DRIFT_ERROR, "current milestone does not match the guard"
-        )
     guarded_plan = "" if expected_current_plan == "@none" else expected_current_plan
-    if str(getattr(state, "current_plan_name", "") or "") != guarded_plan:
-        raise CliError(RUNTIME_DRIFT_ERROR, "current plan does not match the guard")
+    if terminal_cursor:
+        if expected_current_milestone != "@terminal":
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "terminal runtime rebind requires the @terminal milestone guard",
+            )
+        if expected_current_plan != "@none":
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "terminal runtime rebind requires the @none plan guard",
+            )
+        if str(getattr(state, "current_plan_name", "") or ""):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "terminal runtime rebind refused while a current plan remains",
+            )
+        if str(getattr(state, "last_state", "") or "") != "done":
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "terminal runtime rebind requires canonical last_state 'done'",
+            )
+        completed = list(getattr(state, "completed", []) or [])
+        completed_labels = [
+            str(record.get("label") or "")
+            for record in completed
+            if isinstance(record, Mapping)
+        ]
+        completed_statuses = [
+            str(record.get("status") or "")
+            for record in completed
+            if isinstance(record, Mapping)
+        ]
+        if (
+            len(completed) != len(labels)
+            or len(completed_labels) != len(labels)
+            or completed_labels != labels
+            or completed_statuses != ["done"] * len(labels)
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "terminal runtime rebind requires the exact ordered milestone set "
+                "with status 'done'",
+            )
+    else:
+        if labels[current_index] != expected_current_milestone:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR, "current milestone does not match the guard"
+            )
+        if str(getattr(state, "current_plan_name", "") or "") != guarded_plan:
+            raise CliError(RUNTIME_DRIFT_ERROR, "current plan does not match the guard")
 
     rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     event_core = {

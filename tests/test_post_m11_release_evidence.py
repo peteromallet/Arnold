@@ -103,6 +103,56 @@ def _completed_record() -> dict:
     return data
 
 
+def _candidate_ready_record() -> dict:
+    data = _completed_record()
+    data["record_status"] = "candidate_ready"
+    for residual in data["residuals"]:
+        if residual["id"] in {
+            "production-canary",
+            "runtime-selector-promotion",
+            "acceptance-tag",
+            "critique-runtime-rebind",
+            "critique-launch",
+        }:
+            residual["status"] = "pending"
+            residual.pop("completion_evidence", None)
+            residual.pop("completion_receipt", None)
+    return data
+
+
+def test_candidate_ready_allows_only_post_deploy_residuals_pending(
+    tmp_path: Path,
+) -> None:
+    validate(_write(tmp_path, _candidate_ready_record()))
+
+
+def test_candidate_ready_rejects_a_pending_pre_deploy_residual(
+    tmp_path: Path,
+) -> None:
+    data = _candidate_ready_record()
+    residual = next(
+        item
+        for item in data["residuals"]
+        if item["id"] == "content-addressed-runtime"
+    )
+    residual["status"] = "pending"
+    residual.pop("completion_evidence", None)
+    residual.pop("completion_receipt", None)
+
+    with pytest.raises(ValueError, match="pre-deploy residuals are pending"):
+        validate(_write(tmp_path, data))
+
+
+def test_candidate_ready_requires_bound_acceptance_evidence(
+    tmp_path: Path,
+) -> None:
+    data = _candidate_ready_record()
+    data.pop("final_acceptance")
+
+    with pytest.raises(ValueError, match="requires final_acceptance"):
+        validate(_write(tmp_path, data))
+
+
 def test_complete_release_requires_one_immutable_acceptance_binding(
     tmp_path: Path,
 ) -> None:
