@@ -132,6 +132,8 @@ DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megapl
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
+AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"
+AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"
 if ! "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" - "$AUDIT_WINDOW_HOURS" <<'PY'
 import math
 import sys
@@ -159,6 +161,7 @@ AUDIT_GITHUB_REPO="${MEGAPLAN_AUDIT_GITHUB_REPO:-}"
 AUDIT_GITHUB_REPO_PATH="${MEGAPLAN_AUDIT_GITHUB_REPO_PATH:-}"
 AUDIT_GITHUB_LABELS="${MEGAPLAN_AUDIT_GITHUB_LABELS:-incident-control-plane,persistent-problem}"
 RECOVERY_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_ENABLED:-1}"
+GLOBAL_WATCHDOG_SWEEP_ENABLED="${MEGAPLAN_AUDIT_GLOBAL_WATCHDOG_SWEEP_ENABLED:-0}"
 RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
 WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
 # Step 51: the legacy REPAIR_TRIGGER_BIN argv handoff has been retired.  The
@@ -436,6 +439,35 @@ run_recovery_sweep() {
   local before_path="$GATHER_DIR/recovery-before.json"
   local after_path="$GATHER_DIR/recovery-after.json"
   local watchdog_rc=0
+  case "${GLOBAL_WATCHDOG_SWEEP_ENABLED,,}" in
+    1|true|yes|on)
+      ;;
+    *)
+      log "global watchdog recovery sweep disabled; bounded gather and targeted L3 repair custody own recovery"
+      python3 - "$RECOVERY_EVIDENCE" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+payload = {
+    "schema_version": 1,
+    "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "enabled": False,
+    "skip_reason": "targeted_l3_repair_custody",
+    "watchdog_exit_code": 0,
+    "sessions_discovered": 0,
+    "should_run_count": 0,
+    "decisions": [],
+}
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+      return 0
+      ;;
+  esac
   capture_recovery_snapshot "$before_path"
   if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" != "1" ]]; then
     log "report-only audit: skipping watchdog recovery sweep because mutation is not authorized"
@@ -688,8 +720,23 @@ for entry in entries.values():
     entry["authoritative_current_plan"] = current_plan
     entry["session_evidence_scope"] = bool(current_plan and current_plan == entry["plan"])
 
+session_allowlist = {
+    item.strip()
+    for item in os.environ.get("MEGAPLAN_AUDIT_SESSION_ALLOWLIST", "").split(",")
+    if item.strip()
+}
+plan_allowlist = {
+    item.strip()
+    for item in os.environ.get("MEGAPLAN_AUDIT_PLAN_ALLOWLIST", "").split(",")
+    if item.strip()
+}
+
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
+        if session_allowlist and entry.get("session") not in session_allowlist:
+            continue
+        if plan_allowlist and entry.get("plan") not in plan_allowlist:
+            continue
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 
 discovery_path = pathlib.Path(out).with_name("discovery-indeterminate.jsonl")
@@ -2667,14 +2714,71 @@ def _repair_custody_summary(session, plan_state, current_target):
         "nested_claim_count": nested_projection.get("claim_count") or 0,
         "nested_attempt_count": nested_projection.get("attempt_count") or 0,
     }
+EVENT_TAIL_MAX_BYTES = max(
+    int(os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES", str(16 * 1024 * 1024))),
+    1024,
+)
+EVENT_TAIL_MAX_LINES = max(
+    int(os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES", "5000")),
+    1,
+)
 
 def _load_events(events_path):
+    """Load a bounded recent journal tail.
+
+    Progress auditing needs the current evidence window, not a reconstruction
+    of the plan's complete event history.  Reading a multi-hundred-megabyte
+    journal with ``read_text().splitlines()`` multiplies its resident-memory
+    cost and can OOM-kill the repair supervisor before it reaches the session
+    that needs recovery.
+    """
     events = []
     try:
-        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        from arnold_pipelines.megaplan.observability.event_checkpoint import (
+            EventCheckpointError,
+            read_bounded_event_projection,
+        )
+
+        projection = read_bounded_event_projection(
+            events_path.parent,
+            max_tail_events=EVENT_TAIL_MAX_LINES,
+            allow_rebuild=False,
+            publish_checkpoint=False,
+        )
+        return list(projection.events)
+    except ImportError:
+        pass
+    except EventCheckpointError as exc:
+        # Installed-wrapper compatibility while a new source tree is being
+        # promoted, and first-read compatibility before a writer has published
+        # the durable cursor.  The bounded byte-tail below remains the safe
+        # read-only fallback.  Invalid existing acceleration state remains
+        # fail-closed.
+        if str(exc) not in {
+            "checkpoint_missing",
+            "checkpoint_store_incarnation_missing",
+        }:
+            return events
     except Exception:
+        # A corrupt/stale checkpoint must not be consumed.  The canonical
+        # helper already attempted a permitted cold rebuild; if that failed,
+        # return no positive evidence rather than trusting an unsafe cursor.
         return events
-    for line in lines:
+    try:
+        size = events_path.stat().st_size
+        with events_path.open("rb") as handle:
+            truncated = size > EVENT_TAIL_MAX_BYTES
+            if truncated:
+                handle.seek(size - EVENT_TAIL_MAX_BYTES)
+            raw = handle.read(EVENT_TAIL_MAX_BYTES)
+    except (OSError, ValueError):
+        return events
+    lines = raw.splitlines()
+    if truncated and lines:
+        # The byte cursor normally lands inside a JSON record.
+        lines = lines[1:]
+    for raw_line in lines[-EVENT_TAIL_MAX_LINES:]:
+        line = raw_line.decode("utf-8", errors="replace")
         if not line.strip():
             continue
         try:

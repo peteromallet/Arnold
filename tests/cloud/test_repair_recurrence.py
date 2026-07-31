@@ -636,7 +636,7 @@ def test_completed_session_state_is_progress_when_external_checks_unavailable() 
     assert updated["layer2_recurrence"] is False
 
 
-def test_plan_event_growth_does_not_reset_without_canonical_cursor_delta(tmp_path: Path) -> None:
+def test_plan_event_growth_does_not_claim_durable_recovery(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
     plan_dir.mkdir(parents=True)
@@ -738,4 +738,109 @@ def test_last_dispatch_at_boundary_is_not_within_interval() -> None:
     last = "2026-07-01T12:00:00+00:00"  # exactly 2 minutes ago
     assert not repair_recurrence.last_dispatch_within_minimum_interval(
         last, now=now, min_interval=120
+    )
+
+
+def test_state_transition_beyond_recovered_phase_resets_recurrence() -> None:
+    previous = repair_recurrence.build_advancement_snapshot(
+        _failure_context(
+            current_state="blocked",
+            phase="execute",
+            current_milestone_index=7,
+            completed_count=2,
+        ),
+        run_kind="chain",
+    )
+    current = repair_recurrence.build_advancement_snapshot(
+        _failure_context(
+            current_state="reviewed",
+            phase="execute",
+            current_milestone_index=7,
+            completed_count=2,
+        ),
+        run_kind="chain",
+    )
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        {
+            "last_dispatch_snapshot": previous,
+            "no_advance_dispatches": [
+                "2026-06-30T00:00:00+00:00",
+                "2026-06-30T00:05:00+00:00",
+            ],
+        },
+        current,
+        dispatched_at="2026-06-30T00:10:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert updated["advancement_since_last_dispatch"] is True
+    assert updated["layer2_recurrence"] is False
+
+
+def test_beyond_phase_state_is_durable_progress_when_git_is_unchanged() -> None:
+    previous = {
+        "milestone_or_plan": "demo",
+        "current_state": "blocked",
+        "phase": "execute",
+        "external_checks": {
+            "git": {"available": True, "head": "abc123", "ahead_count": 0},
+        },
+    }
+    current = {
+        "milestone_or_plan": "demo",
+        "current_state": "reviewed",
+        "phase": "execute",
+        "external_checks": {
+            "git": {"available": True, "head": "abc123", "ahead_count": 0},
+        },
+    }
+
+    assert repair_recurrence.has_advancement(previous, current) is True
+
+
+def test_finishing_recovered_phase_without_next_phase_is_not_beyond_progress() -> None:
+    previous = {
+        "milestone_or_plan": "demo",
+        "current_state": "blocked",
+        "phase": "execute",
+        "external_checks": {},
+    }
+    execute_finished_but_review_not_run = {
+        "milestone_or_plan": "demo",
+        "current_state": "executed",
+        "phase": "execute",
+        "external_checks": {},
+    }
+
+    assert (
+        repair_recurrence.has_advancement(
+            previous,
+            execute_finished_but_review_not_run,
+        )
+        is False
+    )
+
+
+def test_state_rank_growth_does_not_bypass_recovered_phase_boundary() -> None:
+    previous = {
+        "milestone_or_plan": "demo",
+        "current_state": "finalized",
+        "phase": "execute",
+        "external_checks": {},
+    }
+    execute_finished_but_review_not_run = {
+        "milestone_or_plan": "demo",
+        "current_state": "executed",
+        "phase": "execute",
+        "external_checks": {},
+    }
+
+    assert (
+        repair_recurrence.has_advancement(
+            previous,
+            execute_finished_but_review_not_run,
+        )
+        is False
     )

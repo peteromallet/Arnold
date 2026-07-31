@@ -289,7 +289,7 @@ def test_terminal_cursor_transition_closes_stale_goal_before_successor_launch(
     assert result["evaluation"]["control_action"] == "complete"
 
 
-def test_watchdog_relaunches_successor_after_stale_goal_closes() -> None:
+def test_watchdog_continues_to_successor_after_stale_goal_closes() -> None:
     wrapper = (
         Path(__file__).parents[2]
         / "arnold_pipelines"
@@ -299,10 +299,19 @@ def test_watchdog_relaunches_successor_after_stale_goal_closes() -> None:
         / "arnold-watchdog"
     ).read_text(encoding="utf-8")
 
-    assert "local repair_goal_progressed=0" in wrapper
-    assert "repair_goal_progressed=1" in wrapper
-    assert 'if [[ "$repair_goal_progressed" != "1" ]]; then' in wrapper
-    assert "bypassing historical repair-failure routing for successor relaunch" in wrapper
+    launch = wrapper[wrapper.index("launch_chain_tick() {") :]
+    launch = launch[: launch.index("\n}\n")]
+    progressed = launch.index("progressed)")
+    terminal_check = launch.index("session_terminal_status", progressed)
+    health_check = launch.index("session_health_status", terminal_check)
+    progressed_case = launch[progressed:terminal_check]
+
+    # A completed frozen goal is not an early terminal for the session: the
+    # same tick continues through exact current-target/terminal resolution and
+    # then evaluates the successor's health. Historical repair markers cannot
+    # short-circuit before that authoritative successor evaluation.
+    assert "return 0" not in progressed_case
+    assert progressed < terminal_check < health_check
 
 
 def test_replacement_session_evidence_cannot_complete_original_goal(tmp_path: Path) -> None:

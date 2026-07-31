@@ -416,7 +416,17 @@ def test_resolve_current_target_uses_spec_total_and_marks_live_successor_contrad
 
     assert record["chain_state"]["milestone_total"] == 2
     assert record["chain_state"]["completed_count"] == 1
-    assert record["stale_evidence"] == [
+    stale_evidence = record["stale_evidence"]
+    assert len(stale_evidence) == 1
+    evidence_id = stale_evidence[0].pop("evidence_id")
+    assert evidence_id.startswith("sha256:")
+    repeated = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+    assert repeated["stale_evidence"][0]["evidence_id"] == evidence_id
+    assert stale_evidence == [
         {
             "kind": "stale_terminal_chain_state_with_active_plan",
             "path": str(_chain_state_path(workspace, spec_path)),

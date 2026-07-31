@@ -5042,7 +5042,9 @@ dispatch_kimi_repair() {
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
-  local run_id_file launch_evidence child_pid gate_json gate_open reason
+  local run_id_file launch_evidence child_pid inherited_goal_id inherited_goal_path
+  local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
+  local gate_json gate_open reason
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   REPAIR_DISPATCH_RUN_ID=""
@@ -5170,7 +5172,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     return 0
   fi
   if declare -F claim_active_repair_launch >/dev/null 2>&1; then
-    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec")"
+    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id")"
   else
     claim_status=""
   fi
@@ -5196,6 +5198,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
   esac
   pgid_path="$(kimi_pgid_path "$session")"
   managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
+  if [[ -n "$inherited_goal_id" ]]; then
+    managed_identity="${managed_identity}:goal:${inherited_goal_id}:retry:${inherited_retry_sequence:-1}"
+  fi
   run_id_file="$MARKER_DIR/$(safe_name "$session").repair-managed-run-id"
   rm -f "$run_id_file"
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
@@ -5212,6 +5217,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --description "${ARNOLD_REPAIR_LAUNCH_DESCRIPTION:-Investigate then repair watchdog blocker for $session at ${PLAN_STATUS_PLAN_NAME:-current target}/${PLAN_STATUS_FAILURE_PHASE:-current stage}}"
     --origin-kind watchdog_repair
     --origin-id "$managed_identity"
     --origin-component arnold-watchdog
@@ -5226,6 +5232,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --link "chain=$remote_spec"
     --link "plan=${PLAN_STATUS_PLAN_NAME:-}"
     --link "phase=watchdog_dispatch"
+    --link "repair_goal_id=$inherited_goal_id"
+    --link "repair_goal_path=$inherited_goal_path"
+    --link "repair_checkpoint_digest=$inherited_checkpoint_digest"
     --
     "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
   )
@@ -5249,6 +5258,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
+    ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
+    ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
@@ -5257,6 +5269,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
+    ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
+    ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
@@ -5365,15 +5380,15 @@ claim_active_repair_launch() {
   local workspace="$2"
   local remote_spec="$3"
   local blocker_id request_id
-  blocker_id=""
-  request_id=""
-  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+  blocker_id="${4:-}"
+  request_id="${5:-}"
+  if [[ -z "$blocker_id" && -z "$request_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
   if [[ -z "$blocker_id" || -z "$request_id" ]]; then
-    printf '\n'
-    return 0
+    printf 'missing_identity\n'
+    return 1
   fi
   # Steps 59-60: claim-write and claim-adoption/existing-owner families.  A
   # direct repair-claim write or stale-claim adoption may NEVER become accepted
@@ -7650,6 +7665,24 @@ repair_unhealthy_session() {
     log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
     return 0
   fi
+  # A retained durable goal is retry authority for its exact frozen target.
+  # Do not let a terminal legacy dispatch marker suppress its next owner, and
+  # never tear down a live target session merely to attach that goal owner.
+  if [[ -n "${ARNOLD_REPAIR_RETRY_GOAL_ID:-}" ]]; then
+    if kimi_dispatch_failed_previously "$session"; then
+      kimi_dispatch_marker_clear "$session"
+    fi
+    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        log "retained repair goal retry is already owned; waiting session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+      else
+        log "retained repair goal background-dispatched without touching target session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+      fi
+      return 0
+    fi
+    log "retained repair goal owner dispatch unavailable; preserving target session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+    return 1
+  fi
   if mechanical_relaunch_attempted_previously "$session"; then
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
       if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
@@ -7714,6 +7747,13 @@ repair_unintended_stop() {
     else
       report_item "$report_items" "$session" "repair" "repair_dispatched" "$reason" "$workspace" "$remote_spec"
     fi
+    return 0
+  fi
+
+  # A confirmed L1 launch failure is itself deterministic L2 evidence. The
+  # retained-goal path must transfer custody instead of stranding the goal.
+  if route_l1_launch_failure_to_meta_repair \
+    "$session" "$workspace" "$remote_spec" "$report_items"; then
     return 0
   fi
 
@@ -8144,6 +8184,106 @@ if data_path.exists():
             if isinstance(context, dict) and is_complete_state(context.get("chain_state_summary")):
                 print("complete\tchain complete")
                 raise SystemExit(0)
+PY
+}
+
+repair_goal_watchdog_status() {
+  local session="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$MARKER_DIR" "$session" <<'PY' 2>>"${LOG:-/dev/null}"
+import json
+import os
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_goal import evaluate_repair_goal
+
+marker_dir = pathlib.Path(sys.argv[1])
+session = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in sys.argv[2]) or "unknown"
+goal_dir = marker_dir / "repair-goals" / session
+goals = sorted(goal_dir.glob("goal-*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+for path in goals:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if payload.get("status") != "active":
+        continue
+    result = evaluate_repair_goal(path, action="watchdog_authority_check")
+    status = str(result.get("status") or "active")
+    evaluation = result.get("evaluation") or {}
+    reason = str(evaluation.get("reason") or "")
+    control_action = str(evaluation.get("control_action") or "")
+    observation = result.get("observation") or {}
+    runner_transition = (
+        observation.get("runner_transition")
+        if isinstance(observation, dict)
+        and isinstance(observation.get("runner_transition"), dict)
+        else {}
+    )
+    active_worker = (
+        observation.get("active_worker")
+        if isinstance(observation, dict)
+        and isinstance(observation.get("active_worker"), dict)
+        else {}
+    )
+    target_worker_live = bool(
+        runner_transition.get("runner_pid_live") is True
+        and runner_transition.get("runner_pid")
+    ) or bool(
+        active_worker.get("worker_pid_live") is True
+        and active_worker.get("worker_pid")
+    )
+    if status != "active":
+        print(
+            f"{status}\t{result.get('goal_id') or ''}\t{reason}\t{control_action}\t"
+            f"{'true' if target_worker_live else 'false'}"
+        )
+        raise SystemExit(0)
+    refreshed = json.loads(path.read_text(encoding="utf-8"))
+    owner_live = False
+    for owner in reversed(refreshed.get("owners") or []):
+        if not isinstance(owner, dict) or not owner.get("manifest_path"):
+            continue
+        try:
+            manifest = json.loads(pathlib.Path(owner["manifest_path"]).read_text(encoding="utf-8"))
+            pid = int(manifest.get("pid") or 0)
+            if manifest.get("status") in {"reserved", "launching", "running", "adopting"} and pid > 0:
+                os.kill(pid, 0)
+                owner_live = True
+                break
+        except Exception:
+            continue
+    print(
+        f"{'active_owner' if owner_live else 'active_unowned'}\t"
+        f"{result.get('goal_id') or ''}\t{reason}\t{control_action}\t"
+        f"{'true' if target_worker_live else 'false'}"
+    )
+    raise SystemExit(0)
+print("none\t\t\t\tfalse")
+PY
+}
+
+current_target_has_live_worker() {
+  local observation="${1:-}"
+  [[ -n "$observation" ]] || return 1
+  python3 - "$observation" <<'PY'
+import json
+import sys
+
+try:
+    record = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError, TypeError):
+    raise SystemExit(1)
+heartbeat = record.get("active_step_heartbeat") if isinstance(record, dict) else {}
+if not isinstance(heartbeat, dict):
+    raise SystemExit(1)
+raise SystemExit(
+    0
+    if heartbeat.get("active") is True
+    and heartbeat.get("pid_live") is True
+    and str(heartbeat.get("worker_pid") or "").strip()
+    else 1
+)
 PY
 }
 
