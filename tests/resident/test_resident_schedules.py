@@ -20,16 +20,12 @@ from arnold_pipelines.megaplan.resident.schedules import (
     parse_wall_clock_at,
     reconcile_vp_todo_schedule,
     schedule_hot_context,
-    ScheduleDefinition,
-    ScheduleService,
-    parse_cron,
 )
 from arnold_pipelines.megaplan.resident.cli import (
     _register_resident_subcommands,
     run_resident_cli,
 )
 from arnold_pipelines.megaplan.store import FileStore, ScheduledJobInput
-from arnold_pipelines.megaplan.store import FileStore
 
 
 NOW = datetime(2026, 7, 16, 18, 0, tzinfo=UTC)

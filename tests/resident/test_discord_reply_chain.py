@@ -59,7 +59,7 @@ def _message_with_chain(count: int) -> Message:
         conversation_key="discord:dm:current-author",
         scope={"dm_user_id": "current-author"},
         raw_chain=_raw_chain(count),
-        reference_message_id=f"discord-1" if count else None,
+        reference_message_id="discord-1" if count else None,
         reference_author_id=None,
         reference_content=None,
     )
