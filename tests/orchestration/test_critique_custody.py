@@ -58,9 +58,13 @@ def test_deterministic_verifiability_flags_carry_source_criterion_evidence() -> 
     flags = _build_verifiability_flags(criteria, {"codex": {"file_read"}})
 
     assert len(flags) == 1
+    assert flags[0]["concern"] == flags[0]["evidence"]
     assert flags[0]["evidence"] == (
-        "success_criteria[0]: criterion='Architecture remains clear to a human "
-        "reviewer.'; priority='should'; requires=['subjective_judgment']"
+        "verifiability_audit: verdict='human_only'; "
+        "rationale='Some required capabilities need human verification.'; "
+        "missing_capabilities=['subjective_judgment']; "
+        "source=success_criteria[0]: criterion='Architecture remains clear to a "
+        "human reviewer.'; priority='should'; requires=['subjective_judgment']"
     )
     payload = {
         "checks": [],

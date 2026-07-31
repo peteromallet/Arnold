@@ -146,7 +146,13 @@ def test_synthetic_verifiability_flags_are_evidence_complete() -> None:
     assert all(flag["evidence"] == flag["concern"] for flag in flags)
     assert all(flag["evidence"].strip() for flag in flags)
     assert any(
-        "success_criteria[0]" in flag["evidence"]
+        "verdict='unverifiable_no_worker'" in flag["evidence"]
+        and (
+            "rationale='Required capabilities not satisfiable by any known worker.'"
+            in flag["evidence"]
+        )
+        and "missing_capabilities=['not_a_registered_capability']" in flag["evidence"]
+        and "success_criteria[0]" in flag["evidence"]
         and "criterion='Prove the contract.'" in flag["evidence"]
         and "requires=['not_a_registered_capability']" in flag["evidence"]
         for flag in flags

@@ -343,6 +343,14 @@ def _build_verifiability_flags(
             f"requires={sorted(str(item) for item in requires)!r}"
         )
 
+    def audit_evidence(audit: Any) -> str:
+        return (
+            f"verifiability_audit: verdict={audit.verdict!r}; "
+            f"rationale={audit.rationale!r}; "
+            f"missing_capabilities={sorted(audit.missing_caps)!r}; "
+            f"source={criterion_evidence(audit.criterion_idx)}"
+        )
+
     issues = validate_requires(success_criteria)
     for issue_str in issues:
         is_unknown_cap = "unknown capability" in issue_str
@@ -359,7 +367,7 @@ def _build_verifiability_flags(
     audits = audit_criteria(success_criteria, worker_caps)
     for audit in audits:
         if audit.verdict == "unverifiable_no_worker":
-            concern = criterion_evidence(audit.criterion_idx)
+            concern = audit_evidence(audit)
             flags.append({
                 "id": f"verifiability-{len(flags)}",
                 "concern": concern,
@@ -369,7 +377,7 @@ def _build_verifiability_flags(
                 "status": "open",
             })
         elif audit.verdict == "human_only":
-            concern = criterion_evidence(audit.criterion_idx)
+            concern = audit_evidence(audit)
             flags.append({
                 "id": f"verifiability-{len(flags)}",
                 "concern": concern,
