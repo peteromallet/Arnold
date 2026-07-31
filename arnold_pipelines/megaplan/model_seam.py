@@ -923,7 +923,10 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
             normalized["changed_surfaces"] = normalized_changed
         blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
         if isinstance(blast, dict):
-            normalized["test_blast_radius"] = blast
+            normalized["test_blast_radius"] = _normalize_blast_radius_proposal(
+                blast,
+                normalized_changed,
+            )
         return normalized
 
     parts: list[str] = []
@@ -983,7 +986,10 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         normalized["changed_surfaces"] = normalized_changed
     blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
     if isinstance(blast, dict):
-        normalized["test_blast_radius"] = blast
+        normalized["test_blast_radius"] = _normalize_blast_radius_proposal(
+            blast,
+            normalized_changed,
+        )
     return normalized
 
 
@@ -1014,6 +1020,18 @@ def _normalize_changed_surfaces(value: Any) -> list[str] | None:
             if isinstance(item, str) and item.strip()
         )
     )
+
+
+def _normalize_blast_radius_proposal(
+    value: dict[str, Any],
+    changed_surfaces: list[str] | None,
+) -> dict[str, Any]:
+    """Bind a proposal to the already-normalized top-level path inventory."""
+
+    normalized = dict(value)
+    if not isinstance(normalized.get("changed_surfaces"), list) and changed_surfaces is not None:
+        normalized["changed_surfaces"] = list(changed_surfaces)
+    return normalized
 
 
 def coerce_plan_markdown_payload(plan_text: str) -> dict[str, Any]:
