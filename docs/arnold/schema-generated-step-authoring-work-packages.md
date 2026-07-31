@@ -4,17 +4,21 @@
 
 Add a standard authoring protocol for every durable model-driven workflow step:
 the runtime materializes an attempt-local typed work package, the agent edits one
-designated response document, and the harness compiles that document into the
-canonical step result. The agent's final chat response is never authoritative.
+designated response directory, and the harness compiles its hash-bound submitted
+snapshot into the canonical typed step result. The agent's final chat response
+is never authoritative.
 
 Implement the first product-local vertical slice in Native Parity S3A for
 Megaplan's `prep -> plan -> critique` front half. Extend it through the later
 Native Parity phase migrations, then make the mechanism reusable in
 Platformization S2B and pleasant to use in Platformization S3.
 
-This is an authoring protocol, not a replacement for Step-IO, CompletionSpec,
+This is a new authoring contract, not a replacement for Step-IO, CompletionSpec,
 Workflow Boundary Contracts, Custody, or the attempt ledger. It connects those
-systems through one generated, typed boundary.
+systems through one generated, typed boundary. To avoid becoming a third schema
+system, `StepAuthoringSpec` may contain only ownership annotations, rendering
+and view configuration, and derivation bindings. Every field shape, type, and
+validation rule must reference Step-IO; a conformance test rejects duplication.
 
 ## Problem
 
@@ -42,6 +46,9 @@ Fields have explicit ownership:
 
 - `model_required`: semantic content the agent must supply;
 - `model_hint`: optional advice that cannot narrow a deterministic floor;
+- `model_proposal(merge=...)`: a model-authored candidate combined with a
+  harness-authoritative bound by a declared deterministic merge over a safety
+  lattice; the merge must be monotone in the safety direction;
 - `derived`: computed by the harness from source, receipts, or admitted inputs;
 - `protected`: immutable identity, authority, schema, evidence-window, and
   provenance fields;
@@ -59,7 +66,8 @@ class PlanResponse(AuthoringDocument):
     assumptions: list[str] = model_required(default_factory=list)
     success_criteria: list[SuccessCriterion] = model_required()
     changed_surfaces: list[str] = model_hint(default_factory=list)
-    test_selection: TestSelectionHint = model_hint(
+    test_selection: TestSelection = model_proposal(
+        merge=SafetyJoin.TEST_SELECTION,
         default_factory=TestSelectionHint.neutral,
     )
     runtime_binding: RuntimeIdentity = protected()
@@ -71,7 +79,8 @@ plan_step = agent_step(
     id="megaplan.plan",
     input=PlanInput,
     response=PlanResponse,
-    view=typed_markdown(frontmatter="typed_fields", body="body"),
+    view=response_directory(fields="fields.yaml", body="body.md",
+                            children="records/*.yaml"),
     prompt="prompts/plan.md",
     completion=PlanCompletionSpec,
 )
@@ -80,6 +89,10 @@ plan_step = agent_step(
 The exact API should use the adopted Arnold authoring vocabulary rather than
 introducing a parallel decorator or schema framework. The example shows the
 required semantics, not a frozen public API.
+
+`body` receives only structural compiler checks such as presence, encoding, and
+non-emptiness. Semantic prose quality belongs to critique and CompletionSpec;
+the compiler must not grow an opaque prose-quality policy.
 
 ## Attempt-local work package
 
@@ -93,21 +106,25 @@ attempts/plan/attempt-12/
 │   ├── brief.md             # immutable input projection
 │   ├── prep.md
 │   └── prior-response.md
-├── response.md              # only agent-editable result
+├── response/                # only agent-editable result tree
+│   ├── fields.yaml          # simple model-owned fields only
+│   ├── body.md              # primary prose, when applicable
+│   └── records/             # one child file per nested/stable record
+│       └── *.yaml
 ├── snapshots/               # immutable submitted drafts
 ├── compiled.json            # harness-generated canonical candidate
 ├── validation.json          # stable diagnostics
 └── verdict.json             # completion/custody result
 ```
 
-`response.md` combines typed frontmatter and the human-readable body:
+The response-directory convention is mandatory from the first slice. Nested
+critique findings, rework items, execution batches, and other independently
+identified records use child files from day one; they are never embedded in
+YAML frontmatter and later migrated. A simple response may use only
+`fields.yaml` and `body.md`:
 
-```markdown
----
-schema: megaplan.plan-response.v2
-step_identity: megaplan.plan
-attempt: 12
-
+```yaml
+# response/fields.yaml
 questions: []
 assumptions: []
 success_criteria: []
@@ -115,12 +132,10 @@ changed_surfaces: []
 test_selection:
   strategy: unspecified
   selectors: []
+```
 
-# Protected: edits reject
-runtime_binding: sha256:abc123
-evidence_window: sha256:def456
----
-
+```markdown
+<!-- response/body.md -->
 # Implementation Plan
 
 ## Overview
@@ -136,8 +151,13 @@ TODO
 TODO
 ```
 
-The editable document is an authoring input to a compiler. It does not become
+The editable directory is an authoring input to a compiler. It does not become
 authority merely because an agent wrote it.
+
+The canonical authoring evidence is the exact submitted directory snapshot
+bytes and manifest, hash-bound before parsing. The canonical result is the
+compiled typed record. The directory is an authoring view, not authority, and
+may be deleted and rebuilt after accepted publication without changing truth.
 
 ## Generated prompt protocol
 
@@ -148,20 +168,21 @@ current attempt:
 ```markdown
 ## Step authoring protocol
 
-Complete `attempts/plan/attempt-12/response.md`.
+Complete the declared files under `attempts/plan/attempt-12/response/`.
 
 Read-only inputs are listed in `context/manifest.json`.
 You may edit only the declared model-owned fields and Markdown body.
 Harness-derived and protected fields are not yours to author.
 Your final chat response is informational; it cannot complete this step.
-The step completes only when the response document compiles and its completion
+The step completes only when the response directory compiles and its completion
 specification is accepted.
 ```
 
 Large ledgers and source artifacts remain path-addressed and hash-bound rather
 than copied wholesale into the prompt. A small hot-context projection may be
-inlined. The prompt, template, JSON Schema, parser, repair instructions, editor
-hints, and completion mapping are all generated from the same declaration.
+inlined. The prompt, package template, parser, repair instructions, editor hints,
+and completion mapping derive from Step-IO plus the ownership/view/derivation
+annotations; `StepAuthoringSpec` does not redeclare the JSON Schema.
 
 ## Compilation and acceptance
 
@@ -184,6 +205,19 @@ The compiler must reject protected-field mutation, unknown fields, stale schema
 versions, cross-attempt evidence, and changes outside the admitted write scope.
 It must never silently restore or ignore an unauthorized mutation.
 
+Derivations may read only the admitted typed input, parsed model-owned fields,
+and declared receipts. A derivation may not reach into the ledger, inspect an
+undeclared sibling step result, or discover ambient state. Cross-step data must
+arrive through the step's admitted typed input.
+
+Compilation admits a candidate; it does not publish one. Materialization,
+submission, compilation, and verdict are events within the same occurrence.
+The single authority transition is publication by the existing WBC/Custody
+acceptance transaction. Protected fields are compared by value with the
+admitted binding, `compiled.json` and `verdict.json` live outside the agent's
+write grant and are hash-chained into that transaction, and acceptance reads
+only harness-produced records—never `response/` directly.
+
 The canonical candidate and verdict are immutable. A later repair creates a new
 snapshot or generation; it does not rewrite accepted history.
 
@@ -203,27 +237,41 @@ Use graduated recovery rather than restarting the entire intellectual task:
 5. **Repeated identical failure:** stop blind replay, emit a deterministic
    failure receipt, and route the exact work package to the fixer.
 
-Repair turns should have their own attempt identities and receipts while
-remaining linked to the originating step occurrence. A chat message, liveness
-label, or edited projection cannot manufacture completion.
+The evidence-window hash determines lifecycle mechanically. The same evidence-
+window hash opens a new repair attempt within the same occurrence. A changed
+evidence-window hash creates a new generation/occurrence with explicit reentry
+provenance. Resume evidence is admissible only when this tuple matches exactly:
+`(occurrence, attempt, evidence_window_hash, schema_version, custody_epoch,
+writable_snapshot_hash)`. Any mismatch is cross-attempt stitching and fails
+closed.
+
+Repair turns have their own attempt identities and receipts while remaining
+linked to the originating occurrence. A chat message, liveness label, or edited
+projection cannot manufacture completion.
 
 ## What to build
 
 ### 1. Authoring contract
 
-Define an internal `StepAuthoringSpec` that references existing Step-IO schemas,
-canonical workflow/step identity, prompt assets, field ownership, render/parse
-format, derivations, and CompletionSpec. Do not create a second schema registry.
+Define an internal `StepAuthoringSpec` in the same neutral Arnold authoring
+vocabulary that declares Step-IO fields. It may reference existing Step-IO
+schemas, canonical workflow/step identity, prompt assets, ownership, render/view
+configuration, derivations, and CompletionSpec, but may not redeclare field
+shape, type, or validation. Put the materializer/compiler in a small neutral
+package that Megaplan imports; a reverse Megaplan import is a design failure.
 
 ### 2. Materializer and compiler
 
 Build deterministic schema-to-form and form-to-canonical compilation with:
 
 - canonical serialization and content hashes;
-- typed Markdown/YAML frontmatter support;
+- mandatory response-directory and nested child-file support;
 - protected-field comparison;
+- declared monotone safety-lattice merges for `model_proposal` fields;
 - derivation ordering and dependency-cycle rejection;
 - stable source-located diagnostics;
+- normalized parsed rendering in `validation.json`, so a valid-but-wrong parse
+  is visible to agents and humans;
 - snapshot and schema migration rules; and
 - checkout/editable/wheel/cloud equivalence.
 
@@ -245,7 +293,9 @@ as chronological events.
 Adapt existing Megaplan response schemas incrementally. During migration,
 compare the compiled candidate with the legacy response-normalization result.
 Every divergence receives an explicit disposition; parity counts are not an
-oracle. Remove the legacy final-response authority after each phase cuts over.
+oracle. For a `derived` field, the compiler wins by declared ownership. For a
+`model_required` field, require human adjudication and retain the case as a
+fixture. Remove legacy final-response authority after each phase cuts over.
 
 ### 6. Tooling
 
@@ -263,16 +313,32 @@ today's failure but is not the generalized architecture.
 
 ### Native Parity S3A — first vertical slice
 
-Amend `s3a-prep-plan-critique-native-cutover` to require:
+Make S3A consume a pre-frozen Native authoring-package contract, then require:
 
 - `StepAuthoringSpec` for `prep`, `plan`, and `critique`;
-- attempt-local typed response packages;
+- mandatory attempt-local response directories and nested child-file records;
 - generated prompt protocol and bounded file grants;
 - deterministic compilation into the existing canonical phase records;
-- shadow comparison against legacy response parsing;
+- a volume-gated shadow comparison against real or content-addressed replayed
+  legacy traffic before GO-1A, with every divergence dispositioned;
 - targeted repair/reentry fixtures;
 - exact-pinned crash/resume tests; and
 - removal of legacy final-chat authority for the migrated phases at GO-1A.
+
+The shadow gate is part of S3A, before cutover. Its exit is a declared traffic
+volume, not elapsed time: at least 20 live occurrences or content-addressed
+replays of previously admitted real occurrences for each of prep, plan, and
+critique (synthetic fixtures do not count), including at least five repair/
+reentry cases and five omission/malformed cases per phase; zero unexplained
+divergences; all derived-
+field divergences resolved by ownership; and every model-required divergence
+human-adjudicated and promoted to a fixture. If detailed S3A planning proves
+that shadow plus cutover exceeds its execution budget, split exactly at the
+shadow/cutover seam. Do not insert a speculative milestone now.
+
+Native Parity freezes the response-directory layout, nested-child convention,
+ownership algebra, merge lattices, diagnostic codes, normalized parse view, and
+schema compatibility rules. Platformization consumes rather than reopens them.
 
 This is the smallest valuable slice because it covers research context, a large
 Markdown artifact, structured machine fields, and critique occurrences.
@@ -296,12 +362,17 @@ derived; agents author only intent, decisions, explanations, and blockers.
 Amend the `.pype` authoring-core milestone to productize:
 
 - schema/identity-to-`StepAuthoringSpec` derivation;
-- reusable form materialization and compilation;
+- reusable response-directory materialization and compilation;
 - package/install correspondence;
 - transactional schema/refactor migrations;
 - one generated field-ownership and diagnostic catalog; and
 - conformance proving every durable model step has exactly one authoring
   contract while pure helpers have none.
+
+The reusable compiler remains Step-IO-shaped and product-neutral. Its
+`StepAuthoringSpec` contains only ownership/view/derivation metadata, and its
+merge implementations are declared lattice operations rather than arbitrary
+product callbacks.
 
 Completion templates and step authoring forms must remain distinct products:
 completion templates define what must be proven; authoring forms collect a
@@ -311,8 +382,10 @@ model's candidate contribution.
 
 Amend the DX milestone to provide:
 
-- editor and CLI support for generated response forms;
+- editor and CLI support for generated response directories;
+- response-directory navigation and child-record creation;
 - source-located validation and targeted repair;
+- normalized parsed-value previews that expose valid-but-wrong parses;
 - navigation from response field to schema, source input, derived value, and
   completion obligation;
 - unfamiliar-agent authoring tasks;
@@ -322,9 +395,11 @@ Amend the DX milestone to provide:
 ### Platformization S4–S6
 
 Require extracted Megaplan patterns and the adversarial second consumer to use
-the same authoring protocol without importing Megaplan. Stabilize only after the
-second consumer demonstrates genuinely different forms, derivations, effects,
-human boundaries, and rework behavior.
+the same authoring protocol without importing Megaplan. The second consumer has
+no Markdown body, deeply nested output, a human-authorized gate, and concurrent
+attempts; an approval/audit or effectful-operations workflow is preferred over
+another planning workflow. Stabilize only after it demonstrates different
+forms, derivations, effects, human boundaries, and rework behavior.
 
 ## Implications and trade-offs
 
@@ -341,8 +416,8 @@ human boundaries, and rework behavior.
 ### Costs and risks
 
 - More attempt-local artifacts and schema-version compatibility obligations.
-- Frontmatter is awkward for very large or deeply nested records; some steps
-  may need a small response directory rather than one file.
+- Response directories add files, but avoid ambiguous nested frontmatter and
+  give independently identified records stable paths from the beginning.
 - Models may still damage templates, so compilation and ownership enforcement
   remain mandatory.
 - Concurrent agents require isolated packages and explicit merge/join rules.
@@ -370,8 +445,11 @@ Do not call the capability complete until:
 9. Every migrated phase has no reachable legacy response writer.
 10. A chronological timeline joins materialization, edits, diagnostics, repair,
     compilation, acceptance, failure, and resolution with UTC timestamps.
+11. A syntactically valid but semantically misparsed edit is detectable: the
+    compiler echoes a normalized parsed rendering in `validation.json`, and a
+    mis-indented nested-record fixture cannot silently invert meaning.
 
-## Questions for an oracle
+## Residual verification questions for an implementation oracle
 
 ### Architecture and ownership
 
@@ -379,10 +457,10 @@ Do not call the capability complete until:
    CompletionSpec, or does it accidentally become a third contract system?
 2. Which existing package should own it without creating an Arnold-to-Megaplan
    reverse dependency?
-3. Is the model/derived/protected ownership algebra complete, including fields
-   jointly proposed by a model but conservatively widened by the harness?
-4. Should the canonical authoring source be typed Markdown, a response
-   directory, or a typed object rendered into multiple views?
+3. Does static conformance prove the five-class ownership algebra is complete,
+   and that every joint proposal uses a declared monotone safety-lattice merge?
+4. Does implementation preserve the frozen split between hash-bound submitted
+   directory bytes as evidence and the compiled typed object as candidate?
 5. Can every supported step be represented without embedding workflow topology
    or authority rules in the form declaration?
 
@@ -412,8 +490,8 @@ Do not call the capability complete until:
 
 ### Format and usability
 
-16. Does YAML frontmatter remain robust for nested critique, rework, and
-    execution records, or should complex fields be referenced child files?
+16. Do all nested critique, rework, and execution records use the frozen child-
+    file convention, with no alternate frontmatter representation?
 17. Can common agents reliably edit the form using existing file tools without
     introducing partial-write races?
 18. Should the runtime preload the editable form, or merely provide paths and a
@@ -425,16 +503,16 @@ Do not call the capability complete until:
 
 ### Sequencing and migration
 
-21. Is Native Parity S3A the correct first authority cut, or must a smaller
-    pre-S3A shadow milestone prove the compiler first?
-22. Does adding the first vertical slice to S3A overload its GO-1A migration
-    scope enough to justify a separate inserted milestone?
+21. Does S3A's volume-gated shadow corpus exercise enough real traffic before
+    its first authority cut?
+22. When S3A is planned in detail, does its execution budget require a split at
+    the already-declared shadow/cutover seam?
 23. Which exact legacy normalizers/writers become unreachable after each phase
     cutover?
-24. How should divergences between legacy parsing and form compilation be
-    adjudicated when neither side is automatically correct?
-25. Does Platformization S2B own enough compiler/identity machinery to
-    generalize the feature without reopening Native Parity's format decisions?
+24. Does every derived divergence follow declared ownership, and every
+    model-required divergence receive human adjudication plus a retained fixture?
+25. Does Platformization S2B generalize the compiler without reopening Native
+    Parity's frozen format, child-file, diagnostic, or compatibility decisions?
 
 ### Adversarial proof
 
@@ -446,12 +524,12 @@ Do not call the capability complete until:
     floor or mutate runtime identity.
 29. Demonstrate that deleting or forging every generated view cannot change the
     accepted result.
-30. What second consumer is different enough to reveal falsely Megaplan-specific
-    assumptions in the form/compiler design?
+30. Does the second consumer prove all four independence axes: no Markdown body,
+    deeply nested output, human-authorized gate, and concurrent attempts?
 
 ## Decision requested
 
-Approve the architecture in principle, then amend Native Parity S3A and
-Platformization S2B/S3 before those milestones execute. If the S3A scope becomes
-too broad, insert one shadow-only authoring-package milestone immediately before
-S3A; do not postpone the first real Megaplan slice until Platformization.
+Approved with the binding amendments above. Native Parity freezes the contract,
+S3A proves it in shadow and cuts over the first real Megaplan slice, and
+Platformization S2B/S3 generalize and productize it. Split S3A only if its
+detailed execution plan exceeds budget, and only at the shadow/cutover seam.

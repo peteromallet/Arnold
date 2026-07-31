@@ -284,20 +284,24 @@ Platformization follows one ordered, seven-milestone argument:
    enablement.
 3. S2B productizes the S4-blocking `.pype` compiler/linker, conservative
    digest, package/distribution identity, converter, transactional refactors,
-   source correspondence, completion-template derivation, and install
-   equivalence.
+   source correspondence, completion-template derivation, and Native's frozen
+   Step-IO-referencing response-directory authoring compiler, ownership/merge
+   algebra, normalized parse contract and install equivalence without reopening
+   its format decisions.
 4. S3 completes CLI/editor/navigation/format/lint/topology/preview/test
-   experience, completion inspection and generated machine/Markdown views,
-   unfamiliar-author tasks, and benchmarks over that exact core. Every view is
-   a disposable projection.
+   experience, ownership-aware response-directory/child-record editing,
+   normalized parse previews and targeted repair, completion inspection and
+   generated machine/Markdown views, unfamiliar-author tasks, and benchmarks
+   over that exact core. Every view is a disposable projection.
 5. S4 extracts the first proven patterns and makes Megaplan consume them under
    isolation, recomposition, exact completion-conformance and no-duplicate-
    writer proof.
 6. S5 challenges the design with a machine-scanned unrelated consumer,
    unfamiliar bindings and shapes, an independently originated implementation,
    different completion obligations, a human/effect boundary, admitted rework
-   or analogous new work, independent profile re-derivation, and real evolution
-   scenarios; it may require revision or removal.
+   or analogous new work, a no-Markdown deeply nested authoring package with a
+   human-authorized gate and concurrent attempts, independent profile re-
+   derivation, and real evolution scenarios; it may require revision or removal.
 7. Only S6 may freeze and publish stable descriptors, profiles, packages,
    registries and public compatibility promises.
 

@@ -27,8 +27,9 @@ Consume:
   lifecycle events, source-map preservation, and proof interfaces; and
 - S2B's parser/linker, conservative executable-closure digest, package/
   distribution identity, source correspondence, converter, transactional
-  refactors, completion-template derivation, stable diagnostic codes, and
-  install-equivalence receipts; and
+  refactors, completion-template derivation, response-directory compiler,
+  ownership/merge catalog, normalized-parse contract, stable diagnostic codes,
+  and install-equivalence receipts; and
 - the exact Native completion schemas/decoder, current divergence-ledger hash,
   and Custody bounded-query API plus 57k benchmark receipt, all retained
   through the S2A handoff.
@@ -54,6 +55,10 @@ around it in an editor adapter or CLI translation layer.
   cannot change the canonical semantic envelope or contract digest.
 - Authors never hand-edit generated manifests, locks, migration records,
   identity registries, source maps, or route tables.
+- Agents edit only the model-owned files and child records in a generated
+  response directory. That directory is hash-bound authoring evidence, not
+  authority. Completion worksheets remain separate read-only projections;
+  `compiled.json`, `validation.json` and `verdict.json` remain harness-owned.
 - All surfaces remain experimental. S6 alone may stabilize them.
 - Completion lint, diagnostics, inspection and query tools are views over the
   authoritative kernel and Custody projection. Generated canonical-machine
@@ -91,6 +96,11 @@ around it in an editor adapter or CLI translation layer.
 3. Ship syntax highlighting, canonical-workflow/private-member distinction,
    import navigation, go-to-definition, find-importers, identity/digest hover,
    source-mapped traceback, and editor setup for `.pype`.
+   Add response-directory navigation, ownership-aware field decoration, safe
+   child-record creation, go-to Step-IO/derivation/completion obligation, and a
+   normalized parsed-value preview sourced from `validation.json`. A valid but
+   mis-indented nested record must visibly differ in preview and drive a
+   targeted repair; a green parse alone is never presented as acceptance.
 4. Generate a static topology view without executing author source. It shows
    canonical workflows, child calls, steps, finite named route discriminants,
    call-site policy, effects, suspension, source spans, package/distribution
@@ -134,6 +144,11 @@ around it in an editor adapter or CLI translation layer.
     obligations, tooling generates/pins the binding and worksheet, an omitted
     durable obligation fails lint/admission, and an ordinary pure helper needs
     no completion declaration.
+    Include agent tasks that omit an optional hint, supply a joint proposal that
+    the harness widens, attempt to forge a derived test result, mutate protected
+    identity, create deeply nested child records, and repair a syntactically
+    valid but semantically inverted parse. The agent edits the generated package
+    only; it never manually reconstructs the final machine envelope.
 11. Measure no-network p50/p95 for format, check, compile, navigation, topology,
     preview startup, and each transactional refactor in the frozen benchmark
     environment. Compare to the inherited baseline; any baseline change is
@@ -173,6 +188,10 @@ around it in an editor adapter or CLI translation layer.
   full-payload discriminants, and non-atomic refactor failure mutations reject.
 - Projection deletion/rebuild/forgery cannot change a canonical completion
   record, accepted decision, evidence identity, effect identity or next action.
+- Response-directory tools preserve the submitted snapshot hash and ownership
+  provenance; final chat deletion is inert; compiler success is clearly
+  distinguished from WBC/Custody publication; and targeted repair preserves no
+  evidence outside the exact six-coordinate resume tuple.
 
 ### Adoption gate
 
@@ -188,8 +207,9 @@ around it in an editor adapter or CLI translation layer.
 Produce the generic CLI/editor/formatter/linter/topology/preview/test surfaces;
 generated registry views; complete diagnostic and author-task corpus; benchmark
 environment and p50/p95 report; install-form/source-map/local-trace receipts;
-tooling docs/examples; updated proof rows; and a content-addressed S3 handoff
-pinning the exact S2B/S2A versions S4 must use.
+tooling docs/examples; response-directory/child-record navigation and normalized
+parse previews; updated proof rows; and a content-addressed S3 handoff pinning
+the exact S2B/S2A versions S4 must use.
 
 ## Do not close this milestone if
 
@@ -201,6 +221,9 @@ pinning the exact S2B/S2A versions S4 must use.
   or loses original `.pype` spans;
 - authors must edit generated manifests, locks, migration records, source maps,
   route tables, or identity registries;
+- tooling treats compiler success, final chat or an editable response file as
+  accepted authority, hides the normalized parse, or rebuilds Native's format
+  and ownership semantics in an editor-only adapter;
 - a timed task or pinned p50/p95 threshold is red, reset, or omitted;
 - S4 must invent authoring or local-tool behavior; or
 - experimental tooling is described as stable.

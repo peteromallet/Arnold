@@ -119,14 +119,17 @@ The active launch contracts are `briefs/s1-*.md`, `briefs/s2f-*.md`,
 1. custody admission, staged `.pype` suffix migration, and semantic-
    preservation gate without changing the selected authoring suffix;
 2. `.pype` compiler, canonical identity and durable-boundary call-site
-   templates, converter, preview, GO-FORMAT, and authoring/admission switch;
+   templates, converter, preview, GO-FORMAT, the frozen Step-IO-referencing
+   response-directory authoring-package contract, and authoring/admission
+   switch;
 3. C1 experimental neutral completion contract/identity kernel, shadow
    generation, negative fixture, and content-addressed divergence ledger;
 4. C2 immutable binding/evaluation kernel, internal wire/decoder contract,
    restore/projection-invariance proof, and shadow acceptance integration;
 5. generic durable control primitives, concrete aggregation instances, and
    the sole authoritative kernel-enablement GO-0 receipt;
-6. prep/plan/critique cutover, execution-plane binding, and GO-1A;
+6. volume-gated authoring-package shadow proof, prep/plan/critique cutover,
+   execution-plane binding, and GO-1A;
 7. gate/revise front-half completion and GO-1B;
 8. tiebreaker, finalize, human decisions, and durable reentry;
 9. complete delivery/completion vertical slice plus exhaustive per-effect-class

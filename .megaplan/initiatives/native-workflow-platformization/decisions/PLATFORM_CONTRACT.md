@@ -492,6 +492,44 @@ Platformization may add generic completion inspection/query DX over that API.
 It cannot own a checkpoint/snapshot implementation, full-journal fallback, or
 parallel projection authority.
 
+## 3B. Schema-generated step authoring packages
+
+The platform inherits Native Parity's frozen authoring-package contract and
+generalizes its implementation without reopening its format decisions.
+
+- `StepAuthoringSpec` is a contract colocated with Step-IO declarations, but it
+  may contain only ownership annotations, render/view configuration and
+  derivation bindings. Field shape, type and validation are references to
+  Step-IO. Conformance rejects any duplicated schema semantics, and the neutral
+  materializer/compiler imports no Megaplan product package.
+- Ownership is exactly `model_required`, `model_hint`, `derived`, `protected`
+  and `model_proposal(merge=...)`. Proposal merges are named deterministic
+  meet/join operations over declared safety lattices and must be monotone in
+  the safety direction; arbitrary product callbacks reject.
+- Every agent-authored candidate uses the frozen response-directory and nested
+  child-file convention. The hash-bound submitted bytes are canonical authoring
+  evidence; the compiled typed record is the canonical candidate. Editable
+  package files, normalized views and final chat are never authority.
+- Derivations may read only admitted typed input, parsed model fields and
+  declared receipts. Cross-step data arrives through admitted input, never a
+  ledger lookup or ambient sibling read. Body validation is structural; prose
+  quality belongs to critique and CompletionSpec.
+- Materialization, submission, compilation and verdict are events within one
+  occurrence. Compilation admits a candidate only. Publication remains the one
+  WBC/Custody acceptance transaction, which reads only hash-chained harness
+  records outside the agent grant and never reads the response directory.
+- Repair stays within an occurrence only when the evidence-window hash is
+  unchanged. Changed evidence creates a new generation/occurrence with reentry
+  provenance. Resume requires exact equality of `(occurrence, attempt,
+  evidence_window_hash, schema_version, custody_epoch,
+  writable_snapshot_hash)`; mismatches fail closed.
+- `validation.json` includes a normalized parsed rendering. A valid-but-wrong
+  nested parse is therefore observable and covered by a semantic-inversion
+  fixture; compiler success is not displayed or consumed as acceptance.
+- Completion worksheets are separate read-only disposable projections. Step
+  response packages are editable candidate inputs. Neither may mutate binding,
+  evidence, verdict, publication or next action.
+
 ## 4. Root hosting and terminal truth
 
 ### PWC-ROOT-01 — Exclusive root-host adapter
@@ -970,10 +1008,10 @@ separately accepted occurrence migration applies.
 | --- | --- | --- |
 | **S1 — candidate standard and executable corpus** | Consume the hashed handoff; freeze extraction direction; pin candidate Descriptor v1, executable-closure digest, distribution authority, finite route discriminants, root-adapter ownership, the sole machine mode/disposition/store registry, lifecycle, composition, humans, joins/resources, serialization, LLM, bindings, locks, trace-allowlist governance and compatibility contracts; extend Native's DX baselines; build executable reference models and invalid/mutation corpora. | Reproducible candidate, explicitly experimental. Prose-only rules, reset baselines, fake production CAS, missing negative dispositions, implicit modes, or self-authored classifiers fail. |
 | **S2A — product-neutral runtime enforcement** | Promote the accepted runtime/adapters in place; implement shared validation/lowering interfaces, lifecycle/root hosting, local test kit, repeat/fork, mode/store isolation, identity/namespaces, loops/joins/resources/cancellation, RA/Custody/WBC generation, locks/receipts, manifest evolution, effects, traces, independent profile re-derivation and real-store contention. | The canonical runtime and authority substrate is executable and fault-tested without a fork or shadow implementation. S2B need not invent lifecycle, admission, authority or durable-state semantics. |
-| **S2B — `.pype` authoring core** | Productize the one-workflow-per-file parser/linker, conservative digest canonicalizer, source correspondence, distribution/package selection, converter, identity-aware transactional refactors, minimum scriptable commands, source maps and checkout/editable/wheel/sdist/cloud equivalence over S2A. | The S4-blocking format/package/identity/refactor core is one product-neutral experimental SDK. S3 can add DX without changing semantics; S4 need not invent authoring, identity, packaging or migration rules. |
-| **S3 — developer experience and tooling** | Complete the CLI/editor/navigation/format/lint/topology/preview/test experience, actionable diagnostics and tracebacks, unfamiliar-author tasks and pinned p50/p95 benchmarks using only S2B/S2A semantics. | The rigorous format is usable without alternate parser/runtime meaning or manual generated-file maintenance; S4 receives a complete local authoring loop. |
+| **S2B — `.pype` authoring core** | Productize the one-workflow-per-file parser/linker, conservative digest canonicalizer, source correspondence, distribution/package selection, converter, identity-aware transactional refactors, minimum scriptable commands, source maps, plus Native's frozen Step-IO-referencing response-directory materializer/compiler and checkout/editable/wheel/sdist/cloud equivalence over S2A. | The S4-blocking format/package/identity/refactor and step-authoring core is one product-neutral experimental SDK. S3 can add DX without changing semantics; S4 need not invent authoring, identity, packaging or migration rules. |
+| **S3 — developer experience and tooling** | Complete the CLI/editor/navigation/format/lint/topology/preview/test experience, ownership-aware response-directory/child-record editing, normalized-parse previews, targeted repair, actionable diagnostics and tracebacks, unfamiliar-author tasks and pinned p50/p95 benchmarks using only S2B/S2A semantics. | The rigorous format is usable without alternate parser/runtime meaning or manual machine-envelope reconstruction; S4 receives a complete local authoring loop. |
 | **S4 — first extraction under isolation** | Extract evaluator panel, bounded refinement, human gate and effect-safe action first; remove Megaplan defaults; prove concurrent isolation and multiple shapes; make Megaplan consume shared implementations with unchanged golden traces; exercise reconfigure and a bounded agentic fixture where justified. | One correct product consumes real shared patterns, with low-latency faithful local tests and installed equivalence. |
-| **S5 — unrelated adversarial consumer** | Build a real non-Megaplan workflow with different types, outcomes, root maps, joins, timeout/resource policies, effects, storage and composition shapes; produce and verify the executable independence manifest/scan; challenge and narrow S1; swap an independently originated implementation; independently re-derive profiles; prove separate new-instance/resume compatibility, migration, pin and quarantine; exercise the evolution matrix and modes. | A mechanically independent second consumer must expose product leakage. Unresolved or unproved independence blocks S6 rather than being normalized into the standard. |
+| **S5 — unrelated adversarial consumer** | Build a real non-Megaplan workflow with different types, outcomes, root maps, joins, timeout/resource policies, effects, storage and composition shapes; require a no-Markdown, deeply nested, human-authorized, concurrent-attempt authoring package; produce and verify the executable independence manifest/scan; challenge and narrow S1; swap an independently originated implementation; independently re-derive profiles; prove separate new-instance/resume compatibility, migration, pin and quarantine; exercise the evolution matrix and modes. | A mechanically independent second consumer must expose product and authoring-package leakage. Unresolved or unproved independence blocks S6 rather than being normalized into the standard. |
 | **S6 — stable certification and adoption** | Incorporate S5 findings, then freeze stable public surfaces; finalize docs/DX/SLOs, compatibility/evolution, registry states, retention/GC, conformance profiles/manifests, allowlist replay/invalidation, CAS/registry/manifest provenance, LLM/effect/checkpoint/resource receipts, reusable-pattern registry, validator self-mutations and completion manifest. | Only this gate may promote candidate artifacts from `experimental` to `stable`. |
 
 The milestone count is seven. S2A owns platform runtime meaning while consuming
@@ -1028,7 +1066,7 @@ proof-map keys.
 
 ## 12. Standardization acceptance-family index
 
-These 38 identifiers are exhaustive and stable. A sprint may refine fixtures,
+These 39 identifiers are exhaustive and stable. A sprint may refine fixtures,
 but it may not close a family with a hand-authored label, hash-only receipt,
 projection, stitched cross-run history, producer self-certification, or a test
 path that bypasses production semantics. The S6 completion manifest must consume
@@ -1075,6 +1113,7 @@ with the derived-closure evidence that excludes it.
 | `PWC-AF-36` | Edited-code repeat/fork | Recorded input/checkpoint trials get fresh digest/lineage/attempt/namespaces and preserve bidirectionally queryable source/agent-session/LLM/tool/effect/cost/log/transcript records without appending to admitted history. | S2A, S3–S6 |
 | `PWC-AF-37` | Mode-boundary negatives | Silent changed-code resume, production authority/effect/key/cache/checkpoint reuse, evidence promotion and durable claims from unsupported preview all fail. | S1, S2A, S3, S5, S6 |
 | `PWC-AF-38` | Native completion-kernel preservation | The exact `PWC-COMPLETE-04` dependency passes at intake, in-place extraction, authoring generation/lint, projection deletion/rebuild/forgery, Megaplan migration, adversarial-consumer candidate/algebra/absence/waiver/reopen mutations, and final two-consumer certification. Any changed semantic ID, evidence window, child mapping, registry projection, writer/decoder/evaluator, import direction, restore behavior, stable occurrence, or false-pass result fails before adoption/publication. | S1, S2A, S2B, S3, S4, S5, S6 |
+| `PWC-AF-39` | Schema-generated step authoring | StepAuthoringSpec duplicates no Step-IO schema; five ownership classes and monotone proposal merges compile deterministic candidates from hash-bound response directories; derivations cannot reach ambient/ledger state; protected/derived forgery, hint narrowing, final-chat authority, cross-attempt stitching and direct package acceptance fail; normalized rendering exposes a valid-but-wrong nested parse; and the four-axis unrelated consumer succeeds without Megaplan. | Native S2F/S3A, S2B, S3, S5, S6 |
 
 ## 13. Proof trust, receipts, and final manifest
 
