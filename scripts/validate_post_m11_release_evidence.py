@@ -63,6 +63,7 @@ def validate(path: Path) -> None:
         "plan_publication_commit",
         "origin_base_commit",
         "evidence_cut_commit",
+        "evidence_cut_tree",
     ):
         git_objects.add(_require_sha1(authority[field], f"authority.{field}"))
 
@@ -73,6 +74,14 @@ def validate(path: Path) -> None:
             f"plan blob mismatch: expected {plan_blob}, got {actual_plan_blob}"
         )
     git_objects.add(plan_blob)
+    actual_evidence_tree = _git(
+        "rev-parse", f"{authority['evidence_cut_commit']}^{{tree}}", cwd=repo
+    )
+    if actual_evidence_tree != authority["evidence_cut_tree"]:
+        raise ValueError(
+            "evidence cut tree mismatch: expected "
+            f"{authority['evidence_cut_tree']}, got {actual_evidence_tree}"
+        )
 
     source_refs = data.get("source_refs")
     if not isinstance(source_refs, list) or not source_refs:
@@ -89,6 +98,22 @@ def validate(path: Path) -> None:
         git_objects.add(
             _require_sha1(item["sha"], f"integration_lineage[{index}].sha")
         )
+
+    for index, item in enumerate(data.get("validation_observations", [])):
+        if "bound_commit" in item:
+            git_objects.add(
+                _require_sha1(
+                    item["bound_commit"],
+                    f"validation_observations[{index}].bound_commit",
+                )
+            )
+        if "bound_tree" in item:
+            git_objects.add(
+                _require_sha1(
+                    item["bound_tree"],
+                    f"validation_observations[{index}].bound_tree",
+                )
+            )
 
     for sha in sorted(git_objects):
         _git("cat-file", "-e", f"{sha}^{{object}}", cwd=repo)
