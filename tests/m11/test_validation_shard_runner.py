@@ -14,6 +14,7 @@ from scripts.run_m11_validation_shard import (
     SHARD_SCHEMA,
     ValidationShardError,
     _digest,
+    _parse_outcomes,
     build_aggregate,
     run_validation_shard,
 )
@@ -118,6 +119,47 @@ def test_xfail_is_counted_as_debt_not_silently_passed(tmp_path: Path) -> None:
     assert receipt["counts"]["xfailed"] == 1
     assert receipt["counts"]["debt"] == 1
     assert receipt["debt"] == ["xfailed:1"]
+
+
+def test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly(
+    tmp_path: Path,
+) -> None:
+    root, revision, tree = _git_project(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.mark.parametrize(\n"
+        "    'value',\n"
+        "    [1, 2, 3],\n"
+        "    ids=[\n"
+        "        'contains spaces',\n"
+        "        'literal PASSED marker :: inside',\n"
+        "        'punctuation !@#$%^&*()={}+,.',\n"
+        "    ],\n"
+        ")\n"
+        "def test_opaque_nodeid(value):\n"
+        "    assert value > 0\n",
+    )
+    receipt = _run(tmp_path, root, revision, tree, kind="full_suite")
+    expected = [
+        "test_sample.py::test_opaque_nodeid[contains spaces]",
+        "test_sample.py::test_opaque_nodeid[literal PASSED marker :: inside]",
+        "test_sample.py::test_opaque_nodeid[punctuation !@#$%^&*()={}+,.]",
+    ]
+    assert receipt["inventory"] == sorted(expected)
+    assert receipt["counts"]["collected"] == len(expected)
+    assert receipt["counts"]["passed"] == len(expected)
+    assert receipt["exact_inventory"] is True
+
+
+def test_outcome_parser_rejects_duplicate_terminal_nodeid() -> None:
+    output = "\n".join(
+        [
+            "test_sample.py::test_case[param with spaces] PASSED [ 50%]",
+            "test_sample.py::test_case[param with spaces] PASSED [100%]",
+        ]
+    )
+    with pytest.raises(ValidationShardError, match="duplicate terminal outcome"):
+        _parse_outcomes(output)
 
 
 def test_durable_slot_rejects_concurrent_runner(tmp_path: Path) -> None:
