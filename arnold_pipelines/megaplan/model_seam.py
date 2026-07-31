@@ -916,17 +916,12 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         normalized["assumptions"] = _normalize_plan_assumptions(
             payload.get("assumptions", extracted.get("assumptions"))
         )
-        # Pass through changed_surfaces and test_blast_radius if present
-        changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
-        normalized_changed = _normalize_changed_surfaces(changed)
-        if normalized_changed is not None:
-            normalized["changed_surfaces"] = normalized_changed
-        blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
-        if isinstance(blast, dict):
-            normalized["test_blast_radius"] = _normalize_blast_radius_proposal(
-                blast,
-                normalized_changed,
-            )
+        normalized_changed, normalized_blast = _normalize_plan_test_proposal(
+            payload,
+            extracted,
+        )
+        normalized["changed_surfaces"] = normalized_changed
+        normalized["test_blast_radius"] = normalized_blast
         return normalized
 
     parts: list[str] = []
@@ -979,18 +974,43 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized["assumptions"] = _normalize_plan_assumptions(
         payload.get("assumptions", extracted.get("assumptions"))
     )
-    # Pass through changed_surfaces and test_blast_radius if present
-    changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
-    normalized_changed = _normalize_changed_surfaces(changed)
-    if normalized_changed is not None:
-        normalized["changed_surfaces"] = normalized_changed
+    normalized_changed, normalized_blast = _normalize_plan_test_proposal(
+        payload,
+        extracted,
+    )
+    normalized["changed_surfaces"] = normalized_changed
+    normalized["test_blast_radius"] = normalized_blast
+    return normalized
+
+
+def _normalize_plan_test_proposal(
+    payload: Mapping[str, Any],
+    extracted: Mapping[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    """Materialize optional model hints without granting them floor authority."""
+
     blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
+    changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
+    if changed is None and isinstance(blast, Mapping):
+        changed = blast.get("changed_surfaces")
+    normalized_changed = _normalize_changed_surfaces(changed) or []
     if isinstance(blast, dict):
-        normalized["test_blast_radius"] = _normalize_blast_radius_proposal(
+        normalized_blast = _normalize_blast_radius_proposal(
             blast,
             normalized_changed,
         )
-    return normalized
+    else:
+        normalized_blast = {
+            "strategy": "none",
+            "selectors": [],
+            "changed_surfaces": list(normalized_changed),
+            "full_suite_fallback": True,
+            "rationale": (
+                "The model omitted optional test-selection hints; the harness "
+                "must derive the authoritative repository floor."
+            ),
+        }
+    return normalized_changed, normalized_blast
 
 
 def _normalize_changed_surfaces(value: Any) -> list[str] | None:
