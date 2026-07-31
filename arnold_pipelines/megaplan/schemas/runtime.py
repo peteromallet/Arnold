@@ -123,6 +123,32 @@ TEST_BLAST_RADIUS_SCHEMA: dict[str, Any] = {
     ],
 }
 
+# The model proposes the human-authored portion of the test contract.  The
+# plan/revise handlers then merge it with the deterministic repository floor
+# and persist TEST_BLAST_RADIUS_SCHEMA.  Requiring harness-owned fields in the
+# raw model response makes that augmentation seam impossible to reach.
+TEST_BLAST_RADIUS_PROPOSAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "x-preserve-explicit-required": True,
+    "properties": {
+        key: deepcopy(TEST_BLAST_RADIUS_SCHEMA["properties"][key])
+        for key in (
+            "strategy",
+            "selectors",
+            "changed_surfaces",
+            "full_suite_fallback",
+            "rationale",
+        )
+    },
+    "required": [
+        "strategy",
+        "selectors",
+        "changed_surfaces",
+        "full_suite_fallback",
+        "rationale",
+    ],
+}
+
 CRITIQUE_EVALUATOR_CHECK_IDS: list[str] = [
     "issue_hints",
     "correctness",
@@ -242,6 +268,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
 
 SCHEMAS: dict[str, dict[str, Any]] = {
     "plan.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "plan": {
@@ -269,7 +296,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "changed_surfaces": {"type": "array", "items": {"type": "string"}},
-            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_SCHEMA),
+            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_PROPOSAL_SCHEMA),
         },
         "required": ["plan", "questions", "success_criteria", "assumptions"],
     },
@@ -505,7 +532,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "questions": {"type": "array", "items": {"type": "string"}},
             "changed_surfaces": {"type": "array", "items": {"type": "string"}},
-            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_SCHEMA),
+            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_PROPOSAL_SCHEMA),
         },
         "required": [
             "plan",

@@ -918,10 +918,9 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
         # Pass through changed_surfaces and test_blast_radius if present
         changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
-        if isinstance(changed, list):
-            normalized["changed_surfaces"] = [
-                str(s) for s in changed if isinstance(s, str) and s.strip()
-            ]
+        normalized_changed = _normalize_changed_surfaces(changed)
+        if normalized_changed is not None:
+            normalized["changed_surfaces"] = normalized_changed
         blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
         if isinstance(blast, dict):
             normalized["test_blast_radius"] = blast
@@ -979,14 +978,42 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     )
     # Pass through changed_surfaces and test_blast_radius if present
     changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
-    if isinstance(changed, list):
-        normalized["changed_surfaces"] = [
-            str(s) for s in changed if isinstance(s, str) and s.strip()
-        ]
+    normalized_changed = _normalize_changed_surfaces(changed)
+    if normalized_changed is not None:
+        normalized["changed_surfaces"] = normalized_changed
     blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
     if isinstance(blast, dict):
         normalized["test_blast_radius"] = blast
     return normalized
+
+
+def _normalize_changed_surfaces(value: Any) -> list[str] | None:
+    """Normalize the two lossless planner encodings seen in provider output.
+
+    Providers sometimes group paths by created/modified surface.  The runtime
+    contract owns a flat path list; flattening list-valued groups preserves all
+    declared paths while deliberately ignoring prose notes.
+    """
+
+    candidates: list[Any]
+    if isinstance(value, list):
+        candidates = value
+    elif isinstance(value, dict):
+        candidates = [
+            item
+            for group in value.values()
+            if isinstance(group, list)
+            for item in group
+        ]
+    else:
+        return None
+    return list(
+        dict.fromkeys(
+            item.strip()
+            for item in candidates
+            if isinstance(item, str) and item.strip()
+        )
+    )
 
 
 def coerce_plan_markdown_payload(plan_text: str) -> dict[str, Any]:
