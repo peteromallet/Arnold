@@ -1284,7 +1284,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": false,
+                  "required": true,
                   "type": null
                 }
               ],
@@ -5042,7 +5042,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": false,
+                  "required": true,
                   "type": null
                 }
               ],
@@ -7927,7 +7927,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": false,
+                  "required": true,
                   "type": null
                 }
               ],
@@ -8036,6 +8036,527 @@
               "subcommands": {}
             }
           }
+        },
+        "tiebreaker": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {
+            "audit": {
+              "mutually_exclusive_groups": [
+                {
+                  "actions": [
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "plan",
+                      "help": "Plan name",
+                      "metavar": null,
+                      "nargs": null,
+                      "option_strings": [
+                        "--plan"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": false,
+                      "dest": "global_audit",
+                      "help": "Aggregate across all plans",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--global"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "required": false
+                }
+              ],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan",
+                  "help": "Plan name",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--plan"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "global_audit",
+                  "help": "Aggregate across all plans",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--global"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "decide": {
+              "mutually_exclusive_groups": [
+                {
+                  "actions": [
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "pick",
+                      "help": "Option name to pick",
+                      "metavar": null,
+                      "nargs": null,
+                      "option_strings": [
+                        "--pick"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": false,
+                      "dest": "escalate",
+                      "help": "Escalate to human outside tool",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--escalate"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": false,
+                      "dest": "replan",
+                      "help": "Question itself is wrong; replan",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--replan"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "required": true
+                }
+              ],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan",
+                  "help": "Plan name",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--plan"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "pick",
+                  "help": "Option name to pick",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--pick"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "escalate",
+                  "help": "Escalate to human outside tool",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--escalate"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "replan",
+                  "help": "Question itself is wrong; replan",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--replan"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "rationale",
+                  "help": "Rationale for the decision",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--rationale"
+                  ],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "status": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan",
+                  "help": "Plan name",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--plan"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            }
+          }
+        },
+        "tiebreaker-run": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "plan",
+              "help": "Plan name",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--plan"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "claude",
+                "codex",
+                "hermes",
+                "shannon"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "agent",
+              "help": "Agent to use for tiebreaker steps",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--agent"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": "",
+              "default": null,
+              "dest": "hermes",
+              "help": "Use Hermes agent. Optional: specify model",
+              "metavar": null,
+              "nargs": "?",
+              "option_strings": [
+                "--hermes"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_AppendAction",
+              "choices": null,
+              "const": null,
+              "default": [],
+              "dest": "phase_model",
+              "help": "Per-step model override, e.g. --phase-model tiebreaker_researcher=hermes:openai/gpt-5",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--phase-model"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "profile",
+              "help": "Named preset from profiles.toml; see 'megaplan config profiles list'.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--profile"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "claude",
+                "codex"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "vendor",
+              "help": "Pick the premium vendor for tier-2-through-4 profile slots. Defaults to ~/.config/megaplan/config.toml [defaults].vendor (or 'codex').",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--vendor"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "depth",
+              "help": "Set author-phase thinking depth (plan / revise / loop_plan / tiebreaker_*). Rewrites claude:X / codex:X effort suffix on author slots only; critic + mechanical phases plateau.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--depth"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "kimi",
+                "cross"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "critic",
+              "help": "Override the critique+review pair: 'kimi' swaps in Kimi (Fireworks kimi-k2p6); 'cross' swaps to the other premium vendor (relative to --vendor).",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--critic"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "with_prep",
+              "help": "Force the visible prep phase into the workflow regardless of --robustness. Off by default (only thorough/extreme include prep). Use when the planner needs explicit discovery before committing.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--with-prep"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "fresh",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--fresh"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "persist",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--persist"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "ephemeral",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--ephemeral"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {}
         },
         "trace": {
           "mutually_exclusive_groups": [],
