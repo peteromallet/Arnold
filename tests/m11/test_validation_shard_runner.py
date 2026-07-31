@@ -121,6 +121,46 @@ def test_xfail_is_counted_as_debt_not_silently_passed(tmp_path: Path) -> None:
     assert receipt["debt"] == ["xfailed:1"]
 
 
+def test_skip_reason_rendering_is_counted_without_losing_exact_inventory(
+    tmp_path: Path,
+) -> None:
+    root, revision, tree = _git_project(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.mark.skip(reason='why is this dependency unavailable')\n"
+        "def test_a_deliberately_long_name_that_overflows_pytest_status_columns():\n"
+        "    assert False\n",
+    )
+    receipt = _run(
+        tmp_path, root, revision, tree, kind="semantic_carrier"
+    )
+    assert receipt["exact_inventory"] is True
+    assert receipt["counts"]["collected"] == 1
+    assert receipt["counts"]["skipped"] == 1
+    assert receipt["counts"]["debt"] == 1
+    assert receipt["debt"] == ["skipped:1"]
+
+
+def test_xpass_is_counted_as_debt_without_losing_exact_inventory(
+    tmp_path: Path,
+) -> None:
+    root, revision, tree = _git_project(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.mark.xfail(reason='unexpected recovery')\n"
+        "def test_unexpected_pass():\n"
+        "    assert True\n",
+    )
+    receipt = _run(
+        tmp_path, root, revision, tree, kind="semantic_carrier"
+    )
+    assert receipt["exact_inventory"] is True
+    assert receipt["counts"]["collected"] == 1
+    assert receipt["counts"]["xpassed"] == 1
+    assert receipt["counts"]["debt"] == 1
+    assert receipt["debt"] == ["xpassed:1"]
+
+
 def test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly(
     tmp_path: Path,
 ) -> None:
@@ -152,14 +192,27 @@ def test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly
 
 
 def test_outcome_parser_rejects_duplicate_terminal_nodeid() -> None:
+    nodeid = "test_sample.py::test_case[param with spaces]"
     output = "\n".join(
         [
-            "test_sample.py::test_case[param with spaces] PASSED [ 50%]",
-            "test_sample.py::test_case[param with spaces] PASSED [100%]",
+            f"{nodeid} PASSED [ 50%]",
+            f"{nodeid} PASSED [100%]",
         ]
     )
     with pytest.raises(ValidationShardError, match="duplicate terminal outcome"):
-        _parse_outcomes(output)
+        _parse_outcomes(output, expected_inventory=[nodeid])
+
+
+def test_outcome_parser_accepts_skip_reason_glued_to_status() -> None:
+    nodeid = "test_sample.py::test_case[param with spaces and PASSED marker]"
+    counts, executed = _parse_outcomes(
+        f"{nodeid} SKIPPEDy is this dependency unavailable [100%]",
+        expected_inventory=[nodeid],
+    )
+    assert executed == [nodeid]
+    assert counts["skipped"] == 1
+    assert counts["collected"] == 1
+    assert counts["debt"] == 1
 
 
 def test_durable_slot_rejects_concurrent_runner(tmp_path: Path) -> None:
