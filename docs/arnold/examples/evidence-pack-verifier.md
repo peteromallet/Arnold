@@ -23,7 +23,7 @@ Provenance:
 | Builder source | arnold_pipelines/evidence_pack/__init__.py|
 | Skill | arnold_pipelines/evidence_pack/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
-| Contract | workflow|
+| Contract | native|
 | Load state | loadable-native|
 | Identity | native:evidence_pack|
 

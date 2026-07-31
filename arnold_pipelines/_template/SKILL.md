@@ -38,43 +38,54 @@ subpipeline ownership, or Capsule projection). Those compositional
 concerns are deferred to later Megaplan layers above the dispatch
 boundary.
 
-Package authors declare the public workflow entrypoint. The generated package
-adapter and validation receipt prove that the package is runnable; generated
-execution objects are not an authoring surface.
+Package authors should treat `native_program` as the execution-level
+contract: a non-null program proves the package is native-runnable, but
+the exact shape of how composition is rendered for end users, agents, or
+Capsules is not finalised at this layer.
 
 ## Example
 
 ```python
-from arnold.pipeline import step, workflow
+from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline.types import Pipeline
 
 
-@step(id="draft")
-def draft(ctx: object) -> dict:
-    return {"draft": "TODO"}
+@phase(name="draft")
+def draft(ctx: object) -> StepResult:
+    return StepResult(outputs={"draft": "TODO"}, next="publish")
 
 
-@step(id="publish")
-def publish(ctx: object) -> dict:
-    return {"final_artifact": "TODO"}
+@phase(name="publish")
+def publish(ctx: object) -> StepResult:
+    return StepResult(outputs={"final_artifact": "TODO"}, next="halt")
 
 
-@workflow(id="my-pipeline.root")
-def my_pipeline(ctx: object):
-    yield draft(ctx, id="draft")
-    yield publish(ctx, id="publish")
+@pipeline(name="my-pipeline", description="draft → publish")
+def my_pipeline_native(ctx: object) -> Any:
+    state = yield draft(ctx)
+    state = yield publish(ctx)
+    return state
+
+
+def build_pipeline() -> Pipeline:
+    native = compile_pipeline(my_pipeline_native)
+    return project_graph(native, key_mode="phase")
 ```
 
-The package generator consumes `my_pipeline` and emits the runtime adapter and
-manifest. Those generated files are validated but never hand-edited.
+The returned `Pipeline` carries a non-null `native_program`. The runtime
+uses that program directly; the projected shell is for discovery and
+validation, not for hand-authored graph construction.
 
 ## Validation
 
-- Validate import: `arnold_pipelines.my_pipeline.workflow:my_pipeline`
-- Contract: the workflow entrypoint compiles through the public authoring API.
-- Metadata and generated artifacts satisfy the package schema.
+- Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
+- Contract: `build_pipeline()` returns `arnold.pipeline.types.Pipeline`
+  with a non-null `native_program`.
+- Metadata: `driver` starts with `"native"`; `supported_modes` contains
+  `"native"`.
 
 Run through the Arnold native checker:
 
 ```bash
-arnold pipelines check --module arnold_pipelines.my_pipeline.workflow:my_pipeline
+arnold pipelines check --module arnold_pipelines.my_pipeline:build_pipeline
 ```

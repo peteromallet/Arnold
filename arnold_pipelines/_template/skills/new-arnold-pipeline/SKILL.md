@@ -6,12 +6,16 @@ description: Steps to create a new Arnold native-first pipeline package from the
 # Skill: Create a New Arnold Native-First Pipeline
 
 1. Copy `arnold_pipelines/_template/` to `arnold_pipelines/<your_pipeline>/`.
-2. Edit the package metadata and point it at the public workflow entrypoint.
-3. Edit `workflow.py`: replace the skeleton public `@step`, `@workflow`, and
-   `@decision` functions with real logic. The package generator owns runtime
-   projection and manifest output.
+2. Edit `__init__.py`: set `name`, `description`, `capabilities`, keep
+   `driver=("native", "project+validate")` and `supported_modes=("native",)`,
+   and ensure `build_pipeline()` compiles the native program and returns a
+   projected `Pipeline` with a non-null `native_program`.
+3. Edit `pipelines.py`: replace the skeleton `@phase` functions with real
+   logic. Use `@pipeline`, `@phase`, `@decision`, `parallel`,
+   `compile_pipeline`, and `project_graph` from `arnold.pipeline.native`.
 4. Run `arnold pipelines check <your_pipeline>` to validate the package
-   against the authoring contract and regenerate derived package artifacts.
+   against the native-first authoring contract (metadata, driver, native
+   program, and graph projection).
 5. Add tests that compile the native program, project the graph, and assert
    the returned `Pipeline` carries a non-null `native_program`.
 
