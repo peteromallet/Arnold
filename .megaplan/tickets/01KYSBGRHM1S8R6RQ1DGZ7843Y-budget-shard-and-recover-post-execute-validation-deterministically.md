@@ -21,7 +21,7 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T06:27:01+00:00'
+last_edited_at: '2026-07-31T06:54:31+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -215,3 +215,48 @@ with content SHA-256
 `bf65b7b695b24b87418a966069e1d95f1830bd31b3f8ef030d41be537a338204`.
 This remains an immediate release blocker under this umbrella; it does not
 justify a separate platform or Native Parity ticket.
+
+## 2026-07-31 shard 015 release-discovery residual
+
+The exact shard 015 run on `78fae10fef` collected and executed 475 nodes:
+472 passed and three failed, with no skip, xfail, xpass, timeout, source-tree
+mutation, inventory gap, or parser ambiguity. The immutable terminal receipt
+has content SHA-256
+`a371783f31cf34d4031d8554c333e750ec2e70b7401ac650edd7e1966b6d1916`.
+
+One failure was a release-evidence construction bug. Synthetic verifiability
+flags used duplicate `evidence` keys in dictionary literals, so the later
+source-criterion string silently replaced the audit disposition. The retained
+record could not prove the audit verdict, rationale, and missing capabilities
+that produced the flag. Commit `069fedf857` removes the duplicate-key path and
+binds one non-empty `concern == evidence` record to both the audit disposition
+and its source criterion.
+
+The other two failures exposed an authority-boundary bug, not a slow heartbeat
+implementation. An `active-step-heartbeat` cache write called lifecycle
+handoff reconciliation. Given an already-persisted `executed` state and live
+execute custody, that observation-only write could reinterpret or clear the
+active step before persisting the heartbeat, yielding a false stale/dead-worker
+view. The reviewed immediate containment is commit `be164da4cb`: it
+narrowly prevents only `active-step-heartbeat` writes from reconciling a
+lifecycle handoff, while authoritative lifecycle writes retain their existing
+behavior. It merged into the consolidation vector at `6027584bf9`.
+The broader nonlanded classifier experiment at `a242f6ea78` was rejected
+because transport-mode names are not a sound general proxy for lifecycle
+authority.
+
+The exact rerun at `be164da4cb` passed all 475 frozen shard nodes with zero
+failures, errors, skips, xfails, xpasses, deselections, debt, inventory gaps, or
+source mutation. Its receipt is
+`Arnold-validation-checkpoints/be164da-shard015-exact-20260731/receipts/full-suite-015-be164da.json`
+with content SHA-256
+`8494218e44063815fa1a622a49d81656a74ab17d62505c70f31e8bd36b36a0c2`.
+That proves the shard 015 immediate residual, including heartbeat versus
+execute/review custody, stale-run rejection, existing-handoff preservation,
+and authoritative `executing -> executed` recovery.
+
+This release umbrella remains open for the exact complete frozen inventory,
+one clean release vector, and deployed live canaries. The broader replacement
+of transport write modes with an explicit lifecycle write-intent/delta API is
+follow-up architecture recorded in `01KTH21EXMWBHWBA62QC5Y8D3D`; it is not a
+reason to defer this proven release correction.
