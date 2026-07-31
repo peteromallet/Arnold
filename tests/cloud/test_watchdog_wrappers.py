@@ -107,6 +107,7 @@ def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
         assert "export ARNOLD_REPAIR_RUN_KIND=" in text
     assert "operator-managed runtime environment inside the new child" in repair_loop
     assert ". /workspace/.cloud-hot-env" in repair_loop
+    assert 'ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR"' in watchdog
 
 
 def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
@@ -5785,9 +5786,10 @@ def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
     text = _wrapper("arnold-repair-loop")
 
     assert (
-        'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-'
+        'ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-'
         '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
     ) in text
+    assert 'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"' in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
@@ -6104,7 +6106,11 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
         "git -C \"$SRC\" push origin \"$REF\"; "
         "git -C \"$MEGAPLAN_RUNTIME_SRC\" merge-base --is-ancestor HEAD \"origin/$REF\""
     )
-    extract = _extract_wrapper_function if wrapper_kind == "watchdog" else _extract_repair_function
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
     source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
     script = "\n\n".join(
         [
@@ -6128,6 +6134,42 @@ def test_persisted_push_capable_marker_command_is_always_regenerated(
     assert "using current source checkout at $SRC" in result.stdout
     assert "attempting push" not in result.stdout
     assert 'git -C "$SRC" push origin' not in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_persisted_install_capable_marker_command_is_always_regenerated(
+    wrapper_kind: str,
+) -> None:
+    persisted_command = (
+        "pip install -e /tmp/unbound-runtime && "
+        "touch /tmp/unbound-runtime-was-selected"
+    )
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml "
+                f"chain '' {shlex.quote(persisted_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "/tmp/unbound-runtime" not in result.stdout
 
 
 def _post_dev_quality_recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
