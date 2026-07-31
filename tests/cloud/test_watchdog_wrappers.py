@@ -4594,7 +4594,7 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
         assert "another repair loop is already active" in f"{second.stdout}\n{second.stderr}"
     finally:
         proc.terminate()
-        proc.wait(timeout=15)
+        proc.communicate(timeout=15)
 
     assert not pidfile.exists()
 
@@ -4764,12 +4764,13 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
             time.sleep(0.05)
         assert pidfile.read_text(encoding="utf-8").strip() == str(second.pid)
     finally:
-        if second is not None and second.poll() is None:
-            second.terminate()
+        if second is not None:
+            if second.poll() is None:
+                second.terminate()
             second.communicate(timeout=15)
         if first.poll() is None:
             first.terminate()
-            first.wait(timeout=15)
+        first.communicate(timeout=15)
         if codex_pids.exists():
             for raw_pid in codex_pids.read_text(encoding="utf-8").splitlines():
                 if raw_pid.strip().isdigit():
