@@ -471,6 +471,7 @@ while time.monotonic() < deadline:
     links = manifest.get("links") if isinstance(manifest.get("links"), dict) else {}
     stdin_contract = manifest.get("stdin") if isinstance(manifest.get("stdin"), dict) else {}
     started = any(item.get("status") == "running" for item in manifest.get("status_history") or [])
+    terminal_failed = manifest.get("status") == "failed"
     request_matches = not request_id or links.get("repair_request_id") == request_id
     blocker_matches = not blocker_id or links.get("blocker_id") == blocker_id
     if (
@@ -479,13 +480,14 @@ while time.monotonic() < deadline:
         and stdin_contract.get("sealed") is True
         and manifest.get("launch_contract_sha256")
         and started
+        and not terminal_failed
         and request_matches
         and blocker_matches
         and manifest.get("incident_attempt_event_id")
     ):
         print(f"{run_id}\t{manifest_path}")
         raise SystemExit(0)
-    if manifest.get("status") == "failed" and not started:
+    if terminal_failed:
         break
     time.sleep(0.02)
 raise SystemExit(1)
@@ -6054,7 +6056,11 @@ PY
   incident_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
-  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-$(date +%s%N)}"
+  # Every dispatch is a new generation, including retries of a request whose
+  # prior managed manifest reached failed after briefly running.  Request
+  # identity alone must never deduplicate a failed generation into a false
+  # launch receipt.
+  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-none}:$(date +%s%N)"
   run_id_file="$MARKER_DIR/$(safe_name "$session").meta-managed-run-id"
   rm -f "$run_id_file"
   managed_cmd=(
@@ -8392,6 +8398,41 @@ launch_chain_tick() {
 
   if [[ -n "$plan_name" ]]; then
     run_kind="plan"
+  fi
+
+  # A deterministic phase-contract failure is not a stopped process waiting
+  # for a mechanical restart: the same input will deterministically fail
+  # again.  Read this narrow durable state before any general supervision
+  # helpers and fence relaunch until the canonical repair queue has taken
+  # custody.  Keeping this gate at the top also makes it impossible for a
+  # missing/stale sidecar helper to fall through into tmux relaunch.
+  local phase_contract_status_env
+  phase_contract_status_env="$(
+    plan_attention_status_env \
+      "$workspace" "$remote_spec" "$run_kind" "$plan_name" \
+      2>>"${LOG:-/dev/null}" || true
+  )"
+  if [[ -n "$phase_contract_status_env" ]]; then
+    eval "$phase_contract_status_env"
+  fi
+  if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_phase_failure" \
+    && "${PLAN_STATUS_RETRY_STRATEGY:-}" == "repair_phase_contract" ]]; then
+    local phase_contract_dispatch_result
+    phase_contract_dispatch_result=""
+    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      phase_contract_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+    fi
+    log "mechanical relaunch fenced pending phase-contract repair custody session=$session phase=${PLAN_STATUS_FAILURE_PHASE:-unknown} dispatch=${phase_contract_dispatch_result:-unavailable}"
+    if [[ "$phase_contract_dispatch_result" == "dispatched" || "$phase_contract_dispatch_result" == "busy" ]]; then
+      report_item "$report_items" "$session" "repair" "repair_running" \
+        "deterministic phase-contract failure is under canonical repair custody" \
+        "$workspace" "$remote_spec"
+    else
+      report_item "$report_items" "$session" "repair" "repair_unavailable" \
+        "deterministic phase-contract failure requires a claimed repair request before relaunch" \
+        "$workspace" "$remote_spec"
+    fi
+    return 0
   fi
 
   PLAN_STATUS_FOUND=0

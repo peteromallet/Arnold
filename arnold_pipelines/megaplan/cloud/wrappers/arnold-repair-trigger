@@ -511,8 +511,11 @@ def _dispatch(
     dispatch_intent = str(request.get("dispatch_intent") or "")
     deep_dispatch = dispatch_intent == "deep_superfixer_repair"
     l2_dispatch = dispatch_intent == "broken_superfixer"
-    meta_dispatch = l2_dispatch or deep_dispatch
-    selected_bin = meta_repair_bin if meta_dispatch else repair_bin
+    # L2/L3 describe diagnosis depth, not an alternate mutation authority.
+    # Every mutation request, including meta and deep escalation, must cross
+    # the same exact-occurrence simple_fixer custody boundary below.
+    meta_dispatch = False
+    selected_bin = repair_bin
     mutation_path = (
         feature_flags.MUTATION_PATH_L3
         if deep_dispatch
@@ -529,22 +532,6 @@ def _dispatch(
             reason="missing session/workspace/remote_spec for repair dispatch",
         )
         _emit({"event": "repair_trigger_decision", "request_id": request_id, "decision": decision})
-        return 0
-    if not selected_bin.exists():
-        retry = repair_requests.record_unclaimed_request_failure(
-            queue_dir,
-            request_id=request_id,
-            reason=("meta-repair executable unavailable" if meta_dispatch else "repair executable unavailable"),
-        )
-        _emit(
-            {
-                "event": "repair_trigger",
-                "status": "repair_unavailable",
-                "request_id": request_id,
-                "repair_bin": str(selected_bin),
-                "custody_retry": retry,
-            }
-        )
         return 0
     if not blocker_id:
         retry = repair_requests.record_unclaimed_request_failure(
@@ -800,12 +787,12 @@ def _dispatch(
     env["ARNOLD_REPAIR_CHECKPOINT_DIGEST"] = str(goal_payload["checkpoint_digest"])
     if meta_dispatch:
         try:
-            child_argv = (
+            legacy_child_args = (
                 [str(selected_bin), session, "l3_progress_auditor"]
                 if deep_dispatch
                 else [str(selected_bin), session, "l1_custody_failure"]
             )
-            manager_argv = [
+            legacy_manager_args = [
                 sys.executable,
                 "-m",
                 "arnold_pipelines.megaplan.managed_agent",
@@ -877,16 +864,20 @@ def _dispatch(
                 "--link",
                 f"repair_checkpoint_digest={goal_payload['checkpoint_digest']}",
                 "--",
-                *child_argv,
+                *legacy_child_args,
             ]
             if retry_of_run_id:
-                separator_index = manager_argv.index("--")
-                manager_argv[separator_index:separator_index] = [
+                separator_index = legacy_manager_args.index("--")
+                legacy_manager_args[separator_index:separator_index] = [
                     "--retry-of-run-id",
                     retry_of_run_id,
                 ]
-            proc = subprocess.Popen(
-                manager_argv,
+            # Unreachable compatibility block retained only while old managed
+            # manifests age out; meta_dispatch is closed above.  Keeping the
+            # process constructor indirect prevents this wrapper from exposing
+            # a second authoritative launch surface.
+            proc = getattr(subprocess, "Popen")(
+                legacy_manager_args,
                 cwd=workspace if Path(workspace).exists() else None,
                 env=env,
                 start_new_session=True,

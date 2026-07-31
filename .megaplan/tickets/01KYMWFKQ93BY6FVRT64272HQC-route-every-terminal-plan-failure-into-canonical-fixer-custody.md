@@ -99,3 +99,36 @@ execute-to-review handoff, and chain-completion reconciliation. This is material
 containment, not full closure: the exact production contradiction still needs a
 single-target live replay proving one claim, one managed runner, accepted
 progress, and no wrong-runtime evidence.
+
+## Release-blocker closure 2026-07-31
+
+The post-M11 audit found one remaining bypass family rather than four
+independent symptoms:
+
+- L2/meta and L3/deep dispatch could construct their own managed subprocess
+  instead of crossing the canonical exact-occurrence `simple_fixer` boundary.
+- A deterministic phase-contract failure without a task-shaped executor record
+  reached queue admission with an empty task identity and was therefore
+  unclaimable.
+- Managed meta-repair identity reused the request identity, allowing a failed
+  generation that had briefly started to be mistaken for launch evidence.
+- The watchdog could mechanically relaunch a deterministic phase-contract
+  failure before any repair request had canonical custody.
+
+The containment implementation closes that family at all four boundaries:
+
+1. repair-trigger treats L2/L3 as diagnosis depth only; mutation always
+   delegates through the canonical `simple_fixer` occurrence;
+2. phase failures allocate `phase:<phase>` before request construction and
+   admission;
+3. every managed retry carries an unconditional generation nonce and a
+   terminal-failed manifest can never satisfy launch confirmation; and
+4. watchdog relaunch is fenced for
+   `deterministic_phase_failure`/`repair_phase_contract` until canonical repair
+   custody is established.
+
+The focused release proofs are
+`test_repair_trigger_wrapper_surface_is_closed`,
+`test_phase_contract_lifecycle_request_allocates_identity_before_acceptance`,
+`test_meta_dispatch_retries_failed_generation_without_false_receipt`, and
+`test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure`.
