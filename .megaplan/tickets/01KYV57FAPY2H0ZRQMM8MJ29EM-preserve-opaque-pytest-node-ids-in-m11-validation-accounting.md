@@ -1,7 +1,7 @@
 ---
 id: 01KYV57FAPY2H0ZRQMM8MJ29EM
 title: Preserve opaque pytest node IDs in M11 validation accounting
-status: open
+status: addressed
 source: human
 tags:
 - bug
@@ -11,7 +11,11 @@ tags:
 - m11
 codebase_id: null
 created_at: '2026-07-31T03:59:29.110861+00:00'
-last_edited_at: '2026-07-31T03:59:37.245672+00:00'
+last_edited_at: '2026-07-31T04:00:34.033675+00:00'
+resolution_note: 'Fixed by bb59b88852: opaque node IDs are preserved; duplicate collection/execution
+  outcomes fail closed; current 17,605-node collection recovers all 208 previously
+  omitted IDs; 74 focused tests pass.'
+addressed_at: '2026-07-31T04:00:34.033677+00:00'
 epics:
 - epic_id: custody-control-plane
   resolves_on_complete: true
