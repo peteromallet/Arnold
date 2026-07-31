@@ -1151,6 +1151,15 @@ class ScheduleService:
                 "authorization_digest": occurrence.authorization_digest,
                 "pinned_definition_digest": occurrence.pinned_definition_digest,
             }
+            pinned_delivery = Delivery.model_validate(pinned["delivery"])
+            if (
+                authorization.launch_origin.get("applicability") == "not_applicable"
+                and pinned_delivery.route_ref.startswith("discord:dm:")
+            ):
+                schedule_context["delivery"] = {
+                    "mode": "standalone",
+                    "route_ref": pinned_delivery.route_ref,
+                }
             if target.kind == "resident_orchestrator_turn" and target.operation == "probe":
                 self.repo.transition(occurrence.occurrence_id, event="probe_committed", actor=worker_id,
                                      expected_fence=fence, expected_token=token,
