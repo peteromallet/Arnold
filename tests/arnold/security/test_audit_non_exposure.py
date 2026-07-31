@@ -13,11 +13,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from arnold.pipeline.native.audit import AuditHooks, AuditRecord
+from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.decorators import phase, pipeline
 from arnold.pipeline.native.runtime import run_native_pipeline
 from arnold.security import (
@@ -34,7 +33,6 @@ from arnold.security import (
     redact_value,
 )
 from arnold.security.audit import BrokerAuditEntry
-from arnold.security.types import ActionVerdict as AV
 
 # ── Sentinel values for non-exposure assertions ──────────────────────
 
@@ -348,7 +346,12 @@ class TestAuditNdjsonNonExposure:
             return state
 
         prog = compile_pipeline(my_pipe)
-        run_native_pipeline(prog, hooks=hooks)
+        run_native_pipeline(
+            prog,
+            hooks=hooks,
+            artifact_root=tmp_path / "native-runtime",
+        )
+        assert (tmp_path / "native-runtime" / ".native_wbc").is_dir()
 
         # Read NDJSON
         audit_file = audit_dir / "audit.ndjson"
@@ -387,7 +390,11 @@ class TestAuditNdjsonNonExposure:
             return state
 
         prog = compile_pipeline(my_pipe)
-        run_native_pipeline(prog, hooks=hooks)
+        run_native_pipeline(
+            prog,
+            hooks=hooks,
+            artifact_root=tmp_path / "native-runtime",
+        )
 
         audit_file = audit_dir / "audit.ndjson"
         lines = [
@@ -432,7 +439,11 @@ class TestAuditNdjsonNonExposure:
             return state
 
         prog = compile_pipeline(my_pipe)
-        run_native_pipeline(prog, hooks=hooks)
+        run_native_pipeline(
+            prog,
+            hooks=hooks,
+            artifact_root=tmp_path / "native-runtime",
+        )
 
         audit_file = audit_dir / "audit.ndjson"
         ndjson_text = audit_file.read_text(encoding="utf-8")
@@ -471,7 +482,11 @@ class TestAuditNdjsonNonExposure:
             return s
 
         prog = compile_pipeline(my_pipe)
-        run_native_pipeline(prog, hooks=hooks)
+        run_native_pipeline(
+            prog,
+            hooks=hooks,
+            artifact_root=tmp_path / "native-runtime",
+        )
 
         audit_file = audit_dir / "audit.ndjson"
         ndjson_text = audit_file.read_text(encoding="utf-8")
