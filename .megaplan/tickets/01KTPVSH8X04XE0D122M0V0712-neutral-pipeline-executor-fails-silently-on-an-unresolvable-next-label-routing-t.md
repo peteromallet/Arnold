@@ -22,6 +22,8 @@ addressed_at: '2026-07-31T02:31:00+00:00'
 epics:
 - epic_id: aggressive-generalized-pipeline-migration
   resolves_on_complete: false
+  kind: associated
+  provenance: legacy-ticket-metadata-normalization-20260731
   linked_at: '2026-06-09T18:56:37.998300+00:00'
 ---
 

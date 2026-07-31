@@ -11,14 +11,14 @@ tags:
 - m11
 codebase_id: null
 created_at: '2026-07-31T03:59:29.110861+00:00'
-last_edited_at: '2026-07-31T05:32:19+00:00'
+last_edited_at: '2026-07-31T09:25:00+00:00'
 resolution_note: null
 epics:
 - epic_id: custody-control-plane
   resolves_on_complete: false
   kind: associated
-  provenance: null
-  linked_at: 2026-07-31 03:59:37.244460+00:00
+  provenance: post-m11-release-accounting-reconciliation-20260731
+  linked_at: '2026-07-31T03:59:37.244460+00:00'
 ---
 
 ## Observed failure
@@ -69,3 +69,12 @@ The corrective implementation must:
 Discovery evidence is preserved at
 `Arnold-validation-checkpoints/1a10886218-full-no-debt-20260731/`, including
 `full-suite-004-defect.json` and the immutable shard custody/terminal receipts.
+
+## 2026-07-31 candidate reconciliation
+
+The inherited-node provenance repair is landed at candidate ancestor
+`c1a45e2624`, in addition to the original opaque-node repair
+`bb59b88852`. Focused parser evidence is necessary but not sufficient: this
+ticket remains open until the final frozen Linux inventory proves exact
+collect-versus-execute equality with zero missing, duplicate, skipped,
+xfail/xpass, or debt outcomes.
