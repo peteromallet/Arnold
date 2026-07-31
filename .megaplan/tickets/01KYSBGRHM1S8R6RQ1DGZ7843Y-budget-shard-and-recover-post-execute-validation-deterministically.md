@@ -461,3 +461,34 @@ Final packaging must be rebuilt and independently verified from the eventual
 final acceptance commit. Direct promotion uses the separately authorized
 ordinary, non-force, fast-forward compare-and-swap push to `main`; no release
 PR or force push is part of this path.
+
+## 2026-07-31 split previous-runtime authority correction
+
+The final read-only cutover preflight disproved the runbook's assumption that
+the terminal chain and cloud marker share one previous runtime digest. The
+chain is pinned to independently receipted `3d482370707a…`; the marker is
+pinned to marker-only `b7ec04a77bc6…`. Marker history has one discontinuity
+between those lineages, followed by five marker-only hotfix rebinds. The
+marker digest also cannot be freshly reproduced by the current provenance
+verifier because its recorded `.pth` identity predates the verifier's file-hash
+field. Rebinding the chain to that marker digest would manufacture agreement.
+
+The immediate release contract therefore:
+
+1. keeps separate `CHAIN_PREVIOUS_RUNTIME_SHA256` and
+   `MARKER_PREVIOUS_RUNTIME_SHA256` guards;
+2. checkpoints and hashes the exact marker, chain spec/state, and independently
+   receipted old chain identity before mutation;
+3. moves chain and marker directly to the same independently verified final
+   candidate, then proves equality before selector mutation;
+4. holds the release lock, requires a terminal chain with no live writer, and
+   compares the chain-state checkpoint hash because the supported chain writer
+   does not yet expose a file-SHA CAS guard;
+5. rolls each authority back to its own prior identity on partial failure.
+
+Follow-up platform work must add an atomic dual-authority runtime promotion
+API (or a transaction coordinator) with chain-state file CAS, prohibit
+unreceipted marker identity replacement, and retain a provenance receipt for
+every marker rebind. Until that lands, the release procedure above is the
+smallest truthful convergence path; no synthetic pre-reconciliation step is
+allowed.

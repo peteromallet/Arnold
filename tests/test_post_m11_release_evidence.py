@@ -11,12 +11,42 @@ from scripts.validate_post_m11_release_evidence import validate
 
 REPO = Path(__file__).resolve().parents[1]
 RECORD = REPO / "docs/megaplan/post-m11-release-evidence-20260731.json"
+RUNBOOK = REPO / "docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md"
 HASH = "a" * 64
 OTHER_HASH = "b" * 64
 
 
 def test_release_evidence_record_is_structurally_valid() -> None:
     validate(RECORD)
+
+
+def test_runtime_promotion_converges_split_authorities_without_fake_prebind() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "CHAIN_PREVIOUS_RUNTIME_SHA256" in text
+    assert "MARKER_PREVIOUS_RUNTIME_SHA256" in text
+    assert 'export PREVIOUS_RUNTIME_SHA256=' not in text
+    assert "--from-runtime-sha256 '${CHAIN_PREVIOUS_RUNTIME_SHA256}'" in text
+    assert "--from-runtime-sha256 '${MARKER_PREVIOUS_RUNTIME_SHA256}'" in text
+    assert "Manufacturing an intermediate equality" in text
+    assert "chain-state.before.json" in text
+    assert "marker.before.json" in text
+    assert "chain-previous-runtime-provenance.json" in text
+
+    chain_rebind = text.index("public/chain-runtime-rebind.json")
+    marker_rebind = text.index("public/marker-runtime-rebind.json")
+    selector_rewrite = text.index("hot_next=", marker_rebind)
+    assert chain_rebind < marker_rebind < selector_rewrite
+
+
+def test_runtime_promotion_documents_terminal_cas_limit_and_rollback() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "currently lacks a state-file-SHA CLI guard" in text
+    assert "no runner, repairer, or other chain-state writer is live" in text
+    assert "runtime-rebind --direction rollback" in text
+    assert "MARKER_PREVIOUS_RUNTIME_SHA256" in text
+    assert "Verify both restored identities and receipt hashes" in text
 
 
 def test_release_evidence_cannot_claim_done_with_pending_gates(
