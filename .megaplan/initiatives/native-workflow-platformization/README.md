@@ -80,14 +80,16 @@ or proof infrastructure.
   and authority enforcement without another kernel enablement.
 - `briefs/s2b-pype-authoring-format-toolchain.md` — product-neutral `.pype`
   compiler/linker, packaging, conservative digest, distribution identity,
-  converter, transactional refactors, and install-equivalent authoring core.
+  converter, transactional refactors, and Native's frozen response-directory
+  step-authoring compiler as one install-equivalent authoring core.
 - `briefs/s3-developer-experience-tooling.md` — generic CLI/editor/navigation,
-  format/lint/topology/preview/test and completion inspection/generated-view
-  experience, author tasks, and benchmarks over the S2B core.
+  format/lint/topology/preview/test, ownership-aware response-package editing,
+  normalized parse/repair and completion inspection/generated-view experience,
+  author tasks, and benchmarks over the S2B core.
 - `briefs/s4-isolated-extraction-recomposition.md` — first extraction,
   isolation and recomposition proof.
 - `briefs/s5-adversarial-second-consumer-substitutability.md` — unrelated
-  consumer, evolution and substitution challenge.
+  consumer, four-axis authoring-package, evolution and substitution challenge.
 - `briefs/s6-certification-evolution-adoption.md` — stable certification,
   publication and completion proof.
 - `scripts/validate_native_workflow_platform_stage_gate.py` plus per-milestone
@@ -120,11 +122,14 @@ Canonical context remains in:
 S1 freezes the generic candidate and proof corpus; S2A promotes the accepted
 runtime and exact Native completion implementation in place; S2B productizes
 the S4-blocking authoring/package/identity/refactor and completion-template
-core; S3 completes the public developer experience and non-authoritative
-completion views; S4 extracts the first patterns and makes Megaplan consume
+core plus Native's frozen response-directory step-authoring compiler; S3
+completes the public developer experience, ownership-aware package editing,
+normalized parse previews, targeted repair and non-authoritative completion
+views; S4 extracts the first patterns and makes Megaplan consume
 them without a duplicate completion writer; S5 challenges them with a
-mechanically independent unrelated consumer. Only S6 may certify a stable
-public standard or package.
+mechanically independent unrelated consumer whose authoring package has no
+Markdown body, deeply nested records, a human-authorized gate and concurrent
+attempts. Only S6 may certify a stable public standard or package.
 
 Completion schemas and the persisted binding envelope are internally versioned
 from Native C1/M1. Authoritative persisted-wire compatibility and decoder

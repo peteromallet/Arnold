@@ -14,7 +14,8 @@ claim that the complete front half is native.
 GO-FORMAT and GO-0 must already be green. Before any S3A work, independently
 rerun their validators against the accepted merged trees, locks, descriptors,
 proof maps, compilers/runtime and installed artifacts. Reconsume the exact
-C1/C2 manifests, S2R `completion-kernel-enablement-receipt.json`, current
+C1/C2 manifests, S2F authoring-package handoff, S2R
+`completion-kernel-enablement-receipt.json`, current
 divergence-ledger hash, accepted M11 coordinates, and scoped
 topology/obligation hashes. Missing, red, stale, unresolved-blocking, unbound,
 cross-incarnation or mismatched evidence blocks S3A; prose completion is not
@@ -35,6 +36,24 @@ back if later GO-1B fails.
 The switch runs only as the chain's declared S3A transition. It emits one
 immutable cutover receipt, and the separate post-transition GO-1A verifier must
 accept the selected producer/fence state before S3A completes.
+
+## Mandatory authoring-package shadow gate
+
+Before GO-1A can switch authority, run the S2F-frozen neutral compiler in shadow
+against live traffic or content-addressed replays of previously admitted real
+prep, plan, and critique traffic. Synthetic fixtures do not count toward the
+volume. The gate is volume-bound, not time-bound: for each phase it consumes at
+least 20 distinct occurrences, including at least five repair/reentry cases and
+five omission/malformed cases. Every divergence is recorded and dispositioned.
+A `derived` divergence resolves to the compiled value by the declared ownership
+contract; a `model_required` divergence requires human adjudication and becomes
+a permanent fixture. Exit requires zero unexplained divergences.
+
+Shadow compilation admits no candidate and changes no authority. If detailed
+S3A planning proves shadow plus cutover exceeds the milestone execution budget,
+split the milestone only at the shadow/cutover seam, preserving the exact shadow
+receipt as the cutover precondition. Do not invent an earlier speculative
+milestone and do not postpone the first live slice to Platformization.
 
 ## Product scope
 
@@ -61,6 +80,31 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
   workflow invoked as a child. Shared steps/policies/types live in
   `workflows/plan_quality/*.py`; truly private critique steps may remain only in
   `critique.pype`. No second workflow or importable private member is allowed.
+- Materialize the S2F-frozen response directory for every prep, plan and
+  critique attempt. Agents may edit only declared model-owned files and child
+  records. Protected bindings, `compiled.json`, `validation.json`, and
+  `verdict.json` remain outside their grant. The submitted directory snapshot
+  bytes are hash-bound evidence; only the compiled typed record is a canonical
+  candidate, and final chat is informational.
+- Compile through the neutral authoring package with no Megaplan import in the
+  compiler. `StepAuthoringSpec` contains only ownership/view/derivation
+  annotations over Step-IO. Use the declared monotone `model_proposal` merge for
+  joint fields such as test selection; models cannot narrow the harness floor.
+  Derivations read only admitted typed input, parsed model fields and declared
+  receipts, never the ledger or undeclared sibling output.
+- Echo the normalized parsed value into `validation.json`. Exercise a cleanly
+  parsed but mis-indented nested record and prove the inversion is visible and
+  cannot be accepted unnoticed. Semantic body quality is enforced by critique
+  and completion, not compiler prose heuristics.
+- Treat materialization, submission, compilation and verdict as events within
+  the same occurrence. Compilation admits a candidate only; publication remains
+  the sole WBC/Custody acceptance transaction, which reads harness-produced
+  records and never reads the response directory directly.
+- Bind repair/resume to `(occurrence, attempt, evidence_window_hash,
+  schema_version, custody_epoch, writable_snapshot_hash)`. The same evidence-
+  window hash creates a new repair attempt within one occurrence; a changed hash
+  creates a new generation/occurrence with reentry provenance. Any tuple mismatch
+  fails closed as cross-attempt stitching.
 - Bind the admitted run to logical identity
   `(arnold-pipelines, workflow)` and its content-addressed canonical import/lock
   graph. Imported workflows use the same typed contract whether child-hosted or
@@ -123,6 +167,12 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
   incarnation/restore generation and raw-history high-water cursor.
 - Scoped durable subjects, bindings, required evidence, verdicts, accepted
   decisions and terminal candidate outcomes have exact inventory equality.
+- The authoring shadow volume is complete, every divergence has its declared
+  ownership-based or human-adjudicated disposition, and its content-addressed
+  receipt is an input to the GO-1A cutover rather than narrative evidence.
+- Deleting final chat or rebuilding the editable response directory cannot
+  change the compiled record, acceptance decision, evidence identity, or next
+  action. Forged compiled/verdict records and protected-field edits reject.
 
 ## Custody-adoption gate
 
@@ -134,6 +184,9 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
   binding with current authority and custody.
 - GO-1A passes in checkout and clean installed execution before old prefix
   carriers are fenced.
+- The acceptance transaction consumes only hash-chained harness output. It
+  cannot read `response/`, accept a compiler-only success, or reuse evidence
+  outside the exact six-coordinate resume tuple.
 
 ## Do not close if
 
@@ -144,3 +197,8 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
 - Comparison can acquire authority, write canonical history, resume or promote.
 - A retry consumes a second aggregate child result, comparison provenance can
   be forged/relabelled, or a cutover record defers restore proof until S7.
+- The S2F authoring handoff is missing or reopened, the shadow corpus is
+  duration-based or undersized, a divergence is unexplained, nested records use
+  frontmatter, proposal merges are arbitrary/non-monotone, derivations reach
+  into the ledger, normalized parse output is absent, or final chat/response
+  files remain an authority input.

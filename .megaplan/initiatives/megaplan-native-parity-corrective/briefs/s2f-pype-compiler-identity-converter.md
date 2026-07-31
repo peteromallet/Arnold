@@ -112,6 +112,21 @@ old path usable and cannot strand admitted work.
     call-site templates, source maps, manifests, and graph locks. Pure helpers
     have no template or independent durable identity; their behavior remains in
     the containing executable digest.
+12. Freeze the Native step-authoring-package contract that S3A must consume.
+    Extend the Step-IO declaration vocabulary with `StepAuthoringSpec` ownership
+    annotations only; field shape, type and validation remain references to
+    Step-IO and a conformance lint rejects any duplicate schema declaration.
+    Freeze five ownership classes: `model_required`, `model_hint`, `derived`,
+    `protected`, and `model_proposal(merge=...)`. Joint proposal merges are
+    named deterministic meet/join operations over declared safety lattices and
+    must be monotone in the safety direction; arbitrary callbacks reject.
+    Freeze a response-directory format from day one (`fields.yaml`, optional
+    `body.md`, and child files for nested/stable records), the nested-child
+    convention, stable diagnostic codes, normalized parsed rendering, schema
+    compatibility rules, and derivation purity. Derivations may read only the
+    admitted typed input, parsed model fields and declared receipts—never the
+    ledger or ambient sibling results. Body validation is structural only;
+    semantic prose quality remains a critique/completion obligation.
 
 ## GO-FORMAT gate
 
@@ -135,6 +150,10 @@ against merge HEAD. It covers at least:
 - exact inventory equality for human-gate and rework/reopen templates,
   including fail-closed deferred-instantiation schemas and their named closure
   owners; and
+- authoring-spec conformance to Step-IO; deterministic monotone proposal merges;
+  response-directory/nested-child parse and compile equivalence; derivation
+  purity; protected-field comparison; and a valid-but-wrong parse fixture whose
+  normalized rendering exposes the semantic inversion; and
 - checkout/editable/wheel/sdist/cloud equivalence.
 
 The transition consumes that readiness receipt; the post-transition verifier
@@ -155,7 +174,12 @@ before consuming compiler output.
 - a content-addressed S2F handoff naming authored/component/graph identity,
   durable-boundary call-site templates, human/effect/rework declarations,
   any explicitly gated deferred-instantiation schema, and every frozen
-  interface C1/C2 and S2R consume.
+  interface C1/C2 and S2R consume; and
+- a content-addressed authoring-package handoff naming the Step-IO vocabulary,
+  response-directory and child-file format, ownership algebra and safety
+  lattices, derivation inputs, compiler/schema versions, diagnostic catalog and
+  normalized-render contract that S3A consumes and Platformization cannot
+  reopen.
 
 ## Do not close if
 
@@ -173,4 +197,8 @@ before consuming compiler output.
 - a runtime human, fanout-child, invocation, or rework occurrence is
   preallocated at S2F, a durable declaration lacks a call-site template, or a
   pure helper receives one; or
+- an authoring spec redeclares Step-IO shape/type/validation, a joint field uses
+  arbitrary merge code, a derivation reaches into the ledger, nested records
+  depend on frontmatter, or a valid-but-wrong parse is not visibly normalized;
+  or
 - GO-FORMAT is narrative, self-declared, stale, or first enforced after merge.

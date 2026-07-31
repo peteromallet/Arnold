@@ -27,7 +27,8 @@ Consume:
 
 - the accepted Native Parity completion and Platformization handoff manifests;
 - Native Parity's grammar/schema, compiler, diagnostics, converter, minimal
-  preview, source/package correspondence proof, and legacy/identity receipts;
+  preview, source/package correspondence proof, authoring-package format and
+  shadow/cutover receipts, and legacy/identity receipts;
 - S1's content-addressed candidate standard, format corpus, DX baselines,
   conformance skeleton, and proof-map rows; and
 - S2A's product-neutral lifecycle, composition, admission, identity, lock,
@@ -100,6 +101,28 @@ identity registry, or migration log.
   pins immutable admission bindings and human-readable completion worksheets/
   reports; worksheets and reports are disposable, non-authoritative
   projections and are never hand-edited inputs.
+- Step authoring packages are distinct from completion worksheets. The frozen
+  Native response directory is an agent-edited, hash-bound candidate-input
+  view; completion worksheets remain read-only disposable projections. Neither
+  is authority, and acceptance consumes only harness-produced compiled/verdict
+  records through the existing WBC/Custody transaction.
+- `StepAuthoringSpec` is a new contract vocabulary colocated with Step-IO field
+  declarations, but it contains only ownership annotations, render/view
+  configuration and derivation bindings. Shape, type and validation reference
+  Step-IO. Static conformance rejects duplicated schema semantics. The neutral
+  materializer/compiler imports no Megaplan product package.
+- The ownership algebra is exactly `model_required`, `model_hint`, `derived`,
+  `protected`, and `model_proposal(merge=...)`. Proposal merges are named
+  deterministic meet/join operations on declared safety lattices, proven
+  monotone in the safety direction. Arbitrary merge callbacks reject.
+- Response directories and child files are the only supported authoring package
+  form, including simple records. Native's layout, nested-child convention,
+  diagnostic codes and schema compatibility rules are frozen inputs; S2B may
+  generalize their implementation but may not reopen their meaning.
+- Derivations read only admitted typed input, parsed model fields and declared
+  receipts. They cannot query the ledger or ambient sibling results. Body
+  validation is structural only; semantic quality remains a completion or
+  critique concern.
 
 ## Required work
 
@@ -156,6 +179,15 @@ identity registry, or migration log.
    The scriptable core also generates/pins completion templates and admission
    bindings from declared intent plus domain obligations and renders worksheets
    without making any generated Markdown authoritative.
+   Productize the Native response-directory materializer/compiler through those
+   same Step-IO declarations. Snapshot submitted bytes before parsing; preserve
+   provenance for every model proposal; compare protected values with the
+   admitted binding; write compiled/verdict records outside the agent grant;
+   echo normalized parsed values in `validation.json`; and expose stable repair
+   diagnostics. The compiler admits a candidate only and never publishes it.
+   Acceptance may not read the response directory.
+   Bind resume to `(occurrence, attempt, evidence_window_hash, schema_version,
+   custody_epoch, writable_snapshot_hash)` and fail closed on any mismatch.
 9. Verify checkout, editable install, wheel, sdist, and pinned cloud
     resolution. Descriptor, resource, logical graph, digest, source map, and
     selected pipeline must agree; disagreement fails before authority.
@@ -197,6 +229,10 @@ identity registry, or migration log.
   subject inventory and semantic obligation IDs. A missing contract, duplicate
   template, unstable/reused obligation ID, or hand-authored binding fails lint
   and admission, while a pure helper remains contract-free.
+- Every durable model step has exactly one Step-IO-referencing authoring spec;
+  deterministic/model-free durable steps and pure helpers have none. Duplicate
+  shape validation, reverse Megaplan imports, non-monotone proposal merges,
+  ambient derivations and response-directory acceptance reads reject.
 - Preview-only `.py` workflows and legacy artifacts cannot cross a durable or
   publication boundary.
 
@@ -219,6 +255,10 @@ identity registry, or migration log.
   execution and retain exact `.pype` spans for S3 consumers.
 - Evidence is content-addressed, commit/lock/schema-bound, and independently
   consumed. Narrative or hash-only receipts cannot pass.
+- Omitted hints compile through neutral defaults plus the derived safety floor;
+  fabricated derived facts and protected identity mutations reject through two
+  independent controls. A valid-but-wrong nested parse is exposed in normalized
+  validation output and fails its semantic fixture rather than silently passing.
 
 ### Adoption gate
 
@@ -238,8 +278,10 @@ transactional refactors; minimum scriptable core commands; positive, negative,
 digest, namespace, migration, and packaging corpora; identity/provenance and
 legacy-retention receipts; install-form equivalence evidence; updated proof
 rows; and a content-addressed S2B handoff naming the exact experimental
-surfaces S3 must present and S4 must consume, plus every open DX, extraction,
-consumer, and certification row.
+surfaces S3 must present and S4 must consume, including the StepAuthoringSpec
+conformance API, response-directory compiler, ownership/merge catalog,
+normalized-parse diagnostics and exact resume tuple, plus every open DX,
+extraction, consumer, and certification row.
 
 ## Do not close this milestone if
 
@@ -259,4 +301,7 @@ consumer, and certification row.
 - refactor/core tooling maintains alternate semantics;
 - S2B duplicates Native migration, S2A runtime meaning, or S4 extraction;
 - S3 would need to invent or reinterpret an authoring-format rule; or
+- a completion worksheet is confused with an editable response package, a
+  response package becomes authority, or Native's frozen authoring format is
+  reopened; or
 - the candidate is described as stable.

@@ -112,11 +112,22 @@ responsibility, failed claim, and a supported rewrite.
 S2F must close a content-addressed `GO-FORMAT` gate for this complete contract
 before C1. It covers file shape, import/privacy/leaf laws, identity and
 migration, preview/legacy isolation, source/package correspondence, and
-checkout/editable/wheel/cloud equivalence. C1 and C2 build the non-authoritative
+checkout/editable/wheel/cloud equivalence. It also freezes the Step-IO-
+referencing step-authoring contract: mandatory response directories and nested
+child files, the five-class field-ownership algebra including monotone safety-
+lattice proposal merges, derivation purity, normalized parse diagnostics, and
+schema compatibility. C1 and C2 build the non-authoritative
 completion kernel from that exact identity handoff. S2R independently
 revalidates GO-FORMAT and both kernel receipts, implements durable runtime
 primitives and concrete aggregation instances, and closes GO-0 through the sole
 authoritative kernel-enablement transition before S3A.
+
+S3A runs that compiler in a volume-gated shadow over real or content-addressed
+replayed prep/plan/critique occurrences, dispositions every divergence, and
+requires zero unexplained divergences before GO-1A. If detailed planning exceeds
+the milestone budget, it may split only at the shadow/cutover seam. Compilation
+admits a candidate; only the existing WBC/Custody transaction publishes it.
+Final chat and editable response files never become authority.
 
 ## Completion kernel and semantic proof
 

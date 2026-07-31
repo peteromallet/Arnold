@@ -46,6 +46,12 @@ implementation.
   decoder, distinct completion/enforcement registries and total mapping, and
   Custody bounded-query contract without copying Megaplan fixtures or
   completion implementations.
+- The unrelated consumer must also challenge the authoring-package abstraction
+  on four independent axes: no Markdown body, deeply nested child-file output,
+  a human-authorized gate with separately proven authority, and concurrent
+  attempts with isolated snapshots and deterministic join/merge. Prefer an
+  approval/audit or effectful-operations workflow; a planning-adjacent workflow
+  does not qualify.
 - It may supply different domain obligations, but it may not redefine
   candidate-first evaluation, executable obligation identity, evidence-window
   coordinates, proof modes, child-disposition algebra, waiver taint, verifier
@@ -181,11 +187,20 @@ implementation.
   quarantine, presence versus complete-capture absence, the normative evidence
   window, verifier producer/trust independence, total child disposition,
   multiplicity/no-double-counting, waiver taint and reopen-as-new-admission all
-  pass their negative mutations.
+   pass their negative mutations.
+- The same neutral StepAuthoringSpec/materializer/compiler handles the no-body,
+  deeply nested, human-authorized and concurrent-attempt package without a
+  Megaplan import, copied fixture or consumer-local ownership class. Proposal
+  merges remain declared monotone safety-lattice operations; derivations remain
+  limited to admitted input, parsed fields and declared receipts; acceptance
+  never reads editable package files.
 - No Megaplan import/copy exists; generic explanation works without product
   imports; the isolated lock succeeds with Megaplan absent; the independence
   manifest/scan is green; per-iteration agent/LLM/tool/effect/cost logs remain
   exact and queryable.
+- Cross-attempt child files, forged compiled/verdict records, protected-field
+  mutations and a syntactically valid but semantically inverted nested parse all
+  fail independently. Normalized parse output makes the last case observable.
 
 ### Adoption gate
 
@@ -210,6 +225,9 @@ exactly which versions and capability profiles S6 may consider for stability.
 
 - the second consumer is Megaplan-shaped, imports/copies Megaplan, or avoids the
   unfamiliar policies and shapes that challenge the abstraction;
+- it has a Markdown planning body, flat output, no human authority boundary, or
+  no concurrent-attempt isolation and therefore fails the four-axis authoring
+  challenge;
 - the independence manifest/scan is missing, producer-only-verified, forbids
   legitimate generic platform imports, or cannot build with Megaplan absent;
 - new-instance evidence is reused as resume evidence, or latest code resumes a
