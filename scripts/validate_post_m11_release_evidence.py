@@ -16,6 +16,68 @@ SHA1 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 ALLOWED_RECORD_STATUS = {"in_progress", "complete"}
 ALLOWED_RESIDUAL_STATUS = {"pending", "complete"}
+ALLOWED_OBSERVATION_STATUS = {
+    "acceptance_pass",
+    "discovery",
+    "failure",
+    "historical_blocked",
+    "historical_discovery",
+    "historical_failure",
+    "historical_pass",
+    "superseded",
+}
+ALLOWED_ACCEPTANCE_EFFECT = {
+    "branch_level_only",
+    "conformance_fix_level_only",
+    "defect_level_only",
+    "evidence_not_acceptance",
+    "final_acceptance",
+    "informational_only",
+    "integration_cut_only",
+    "packaging_code_gate",
+    "packaging_component_only",
+    "pinned_runtime_subset_only",
+    "superseded_by_followup_fixes",
+}
+NON_ACCEPTANCE_OBSERVATION_STATUS = {
+    "discovery",
+    "failure",
+    "historical_blocked",
+    "historical_discovery",
+    "historical_failure",
+    "superseded",
+}
+NON_ACCEPTANCE_EFFECT = {
+    "branch_level_only",
+    "conformance_fix_level_only",
+    "defect_level_only",
+    "evidence_not_acceptance",
+    "informational_only",
+    "integration_cut_only",
+    "packaging_code_gate",
+    "packaging_component_only",
+    "pinned_runtime_subset_only",
+    "superseded_by_followup_fixes",
+}
+ALLOWED_SUPERSEDED_STATUS = {
+    "superseded_defect_receipt",
+    "superseded_failed_shard_receipt",
+    "superseded_seeded_abort_receipt",
+}
+ALLOWED_PACKAGING_ACCEPTANCE_EFFECT = {
+    "packaging_code_gate_artifact",
+    "superseded_candidate_artifact",
+}
+NO_DEBT_COUNT_KEYS = {
+    "collected",
+    "passed",
+    "failed",
+    "errors",
+    "skipped",
+    "xfailed",
+    "xpassed",
+    "mutations",
+}
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -49,6 +111,195 @@ def _validate_sha256_fields(value: Any, label: str = "record") -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             _validate_sha256_fields(child, f"{label}[{index}]")
+
+
+def _require_sha256(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not SHA256.fullmatch(value):
+        raise ValueError(f"{label} must be a lowercase 64-character SHA-256")
+    return value
+
+
+def _require_string_list(value: Any, label: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, str) or not item for item in value)
+    ):
+        raise ValueError(f"{label} must be a non-empty list of strings")
+    if value != sorted(value) or len(value) != len(set(value)):
+        raise ValueError(f"{label} must be sorted and duplicate-free")
+    return list(value)
+
+
+def _validate_release_binding(
+    value: Any,
+    *,
+    label: str,
+    expected: tuple[str, str, str] | None = None,
+) -> tuple[str, str, str]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    if set(value) != {"bound_commit", "bound_tree", "runtime_sha256"}:
+        raise ValueError(f"{label} must bind exactly one commit, tree, and runtime")
+    binding = (
+        _require_sha1(value["bound_commit"], f"{label}.bound_commit"),
+        _require_sha1(value["bound_tree"], f"{label}.bound_tree"),
+        _require_sha256(value["runtime_sha256"], f"{label}.runtime_sha256"),
+    )
+    if expected is not None and binding != expected:
+        raise ValueError(f"{label} differs from the final acceptance binding")
+    return binding
+
+
+def _validate_completed_residual_receipts(
+    residuals: list[dict[str, Any]],
+    *,
+    binding: tuple[str, str, str],
+) -> None:
+    for index, item in enumerate(residuals):
+        if item["status"] != "complete":
+            continue
+        receipt = item.get("completion_receipt")
+        label = f"residuals[{index}].completion_receipt"
+        if not isinstance(receipt, dict):
+            raise ValueError(
+                f"residuals[{index}] is complete without an immutable "
+                "completion_receipt"
+            )
+        if set(receipt) != {
+            "receipt_sha256",
+            "bound_commit",
+            "bound_tree",
+            "runtime_sha256",
+        }:
+            raise ValueError(
+                f"{label} must contain one receipt hash and one release binding"
+            )
+        _require_sha256(receipt["receipt_sha256"], f"{label}.receipt_sha256")
+        _validate_release_binding(
+            {
+                "bound_commit": receipt["bound_commit"],
+                "bound_tree": receipt["bound_tree"],
+                "runtime_sha256": receipt["runtime_sha256"],
+            },
+            label=label,
+            expected=binding,
+        )
+
+
+def _validate_final_no_debt(
+    value: Any,
+    *,
+    binding: tuple[str, str, str],
+) -> None:
+    label = "final_acceptance.no_debt"
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    expected_keys = {
+        "receipt_sha256",
+        "bound_commit",
+        "bound_tree",
+        "runtime_sha256",
+        "frozen_collection",
+        "terminal_inventories",
+    }
+    if set(value) != expected_keys:
+        raise ValueError(f"{label} has missing or unexpected fields")
+    _require_sha256(value["receipt_sha256"], f"{label}.receipt_sha256")
+    _validate_release_binding(
+        {
+            "bound_commit": value["bound_commit"],
+            "bound_tree": value["bound_tree"],
+            "runtime_sha256": value["runtime_sha256"],
+        },
+        label=label,
+        expected=binding,
+    )
+    frozen = _require_string_list(
+        value["frozen_collection"], f"{label}.frozen_collection"
+    )
+    terminals = value["terminal_inventories"]
+    if not isinstance(terminals, list) or not terminals:
+        raise ValueError(f"{label}.terminal_inventories must be non-empty")
+
+    observed: set[str] = set()
+    for index, terminal in enumerate(terminals):
+        terminal_label = f"{label}.terminal_inventories[{index}]"
+        if not isinstance(terminal, dict) or set(terminal) != {
+            "receipt_sha256",
+            "inventory",
+            "counts",
+        }:
+            raise ValueError(f"{terminal_label} has the wrong schema")
+        _require_sha256(
+            terminal["receipt_sha256"], f"{terminal_label}.receipt_sha256"
+        )
+        inventory = _require_string_list(
+            terminal["inventory"], f"{terminal_label}.inventory"
+        )
+        overlap = observed.intersection(inventory)
+        if overlap:
+            raise ValueError(
+                f"{label} terminal inventories overlap: {sorted(overlap)!r}"
+            )
+        observed.update(inventory)
+
+        counts = terminal["counts"]
+        if not isinstance(counts, dict) or set(counts) != NO_DEBT_COUNT_KEYS:
+            raise ValueError(f"{terminal_label}.counts has the wrong schema")
+        if any(
+            type(counts[key]) is not int or counts[key] < 0
+            for key in NO_DEBT_COUNT_KEYS
+        ):
+            raise ValueError(
+                f"{terminal_label}.counts must contain non-negative integers"
+            )
+        if counts["collected"] != len(inventory) or counts["passed"] != len(
+            inventory
+        ):
+            raise ValueError(
+                f"{terminal_label}.counts do not exactly match its inventory"
+            )
+        non_acceptance = NO_DEBT_COUNT_KEYS - {"collected", "passed"}
+        if any(counts[key] != 0 for key in non_acceptance):
+            raise ValueError(
+                f"{terminal_label} contains failure, skip, xfail/xpass, "
+                "or mutation"
+            )
+
+    if sorted(observed) != frozen:
+        raise ValueError(
+            f"{label} frozen collection differs from terminal inventory union"
+        )
+
+
+def _validate_final_acceptance(
+    data: dict[str, Any],
+    residuals: list[dict[str, Any]],
+    *,
+    repo: Path,
+) -> None:
+    final = data.get("final_acceptance")
+    if not isinstance(final, dict) or set(final) != {"binding", "no_debt"}:
+        raise ValueError(
+            "complete record requires final_acceptance.binding and no_debt"
+        )
+    binding = _validate_release_binding(
+        final["binding"], label="final_acceptance.binding"
+    )
+    authority = data["authority"]
+    if binding[:2] != (
+        authority["evidence_cut_commit"],
+        authority["evidence_cut_tree"],
+    ):
+        raise ValueError(
+            "final acceptance binding must match the authoritative evidence cut"
+        )
+    actual_tree = _git("rev-parse", f"{binding[0]}^{{tree}}", cwd=repo)
+    if actual_tree != binding[1]:
+        raise ValueError("final acceptance commit/tree binding is inconsistent")
+    _validate_completed_residual_receipts(residuals, binding=binding)
+    _validate_final_no_debt(final["no_debt"], binding=binding)
 
 
 def validate(path: Path) -> None:
@@ -117,6 +368,31 @@ def validate(path: Path) -> None:
         )
 
     for index, item in enumerate(data.get("validation_observations", [])):
+        status = item.get("status")
+        acceptance_effect = item.get("acceptance_effect")
+        if status not in ALLOWED_OBSERVATION_STATUS:
+            raise ValueError(
+                f"validation_observations[{index}] has invalid status"
+            )
+        if acceptance_effect not in ALLOWED_ACCEPTANCE_EFFECT:
+            raise ValueError(
+                f"validation_observations[{index}] has invalid acceptance_effect"
+            )
+        if (status == "acceptance_pass") != (
+            acceptance_effect == "final_acceptance"
+        ):
+            raise ValueError(
+                f"validation_observations[{index}] must pair acceptance_pass "
+                "only with final_acceptance"
+            )
+        if (
+            status in NON_ACCEPTANCE_OBSERVATION_STATUS
+            and acceptance_effect not in NON_ACCEPTANCE_EFFECT
+        ):
+            raise ValueError(
+                f"validation_observations[{index}] is a failure, superseded, "
+                "or discovery observation and cannot provide acceptance"
+            )
         if "bound_commit" in item:
             git_objects.add(
                 _require_sha1(
@@ -137,6 +413,22 @@ def validate(path: Path) -> None:
         "packaging_artifacts",
     ):
         for index, item in enumerate(data.get(collection_name, [])):
+            if collection_name == "historical_superseded_attempts":
+                if item.get("status") not in ALLOWED_SUPERSEDED_STATUS:
+                    raise ValueError(
+                        f"{collection_name}[{index}] has invalid status"
+                    )
+                if item.get("acceptance_effect") != "evidence_not_acceptance":
+                    raise ValueError(
+                        f"{collection_name}[{index}] cannot provide acceptance"
+                    )
+            elif (
+                item.get("acceptance_effect")
+                not in ALLOWED_PACKAGING_ACCEPTANCE_EFFECT
+            ):
+                raise ValueError(
+                    f"{collection_name}[{index}] has invalid acceptance_effect"
+                )
             if "bound_commit" in item:
                 git_objects.add(
                     _require_sha1(
@@ -197,6 +489,7 @@ def validate(path: Path) -> None:
                 "record_status cannot be complete while residuals are pending: "
                 + ", ".join(pending)
             )
+        _validate_final_acceptance(data, residuals, repo=repo)
 
 
 def main() -> int:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,8 @@ from scripts.validate_post_m11_release_evidence import validate
 
 REPO = Path(__file__).resolve().parents[1]
 RECORD = REPO / "docs/megaplan/post-m11-release-evidence-20260731.json"
+HASH = "a" * 64
+OTHER_HASH = "b" * 64
 
 
 def test_release_evidence_record_is_structurally_valid() -> None:
@@ -26,3 +29,191 @@ def test_release_evidence_cannot_claim_done_with_pending_gates(
 
     with pytest.raises(ValueError, match="residuals are pending"):
         validate(candidate)
+
+
+def _write(tmp_path: Path, data: dict) -> Path:
+    candidate = tmp_path / "release-evidence.json"
+    candidate.write_text(json.dumps(data), encoding="utf-8")
+    return candidate
+
+
+def _completed_record() -> dict:
+    data = json.loads(RECORD.read_text(encoding="utf-8"))
+    data["record_status"] = "complete"
+    authority = data["authority"]
+    binding = {
+        "bound_commit": authority["evidence_cut_commit"],
+        "bound_tree": authority["evidence_cut_tree"],
+        "runtime_sha256": HASH,
+    }
+    for residual in data["residuals"]:
+        residual["status"] = "complete"
+        residual["completion_evidence"] = "Human-readable projection only."
+        residual["completion_receipt"] = {
+            "receipt_sha256": OTHER_HASH,
+            **binding,
+        }
+    data["final_acceptance"] = {
+        "binding": binding,
+        "no_debt": {
+            "receipt_sha256": HASH,
+            **binding,
+            "frozen_collection": [
+                "tests/a.py::test_a",
+                "tests/b.py::test_b",
+                "tests/m11/test_semantics.py::test_contract",
+            ],
+            "terminal_inventories": [
+                {
+                    "receipt_sha256": HASH,
+                    "inventory": [
+                        "tests/a.py::test_a",
+                        "tests/b.py::test_b",
+                    ],
+                    "counts": {
+                        "collected": 2,
+                        "passed": 2,
+                        "failed": 0,
+                        "errors": 0,
+                        "skipped": 0,
+                        "xfailed": 0,
+                        "xpassed": 0,
+                        "mutations": 0,
+                    },
+                },
+                {
+                    "receipt_sha256": OTHER_HASH,
+                    "inventory": [
+                        "tests/m11/test_semantics.py::test_contract"
+                    ],
+                    "counts": {
+                        "collected": 1,
+                        "passed": 1,
+                        "failed": 0,
+                        "errors": 0,
+                        "skipped": 0,
+                        "xfailed": 0,
+                        "xpassed": 0,
+                        "mutations": 0,
+                    },
+                },
+            ],
+        },
+    }
+    return data
+
+
+def test_complete_release_requires_one_immutable_acceptance_binding(
+    tmp_path: Path,
+) -> None:
+    data = _completed_record()
+    validate(_write(tmp_path, data))
+
+    missing_receipt = deepcopy(data)
+    del missing_receipt["residuals"][0]["completion_receipt"]
+    with pytest.raises(ValueError, match="immutable completion_receipt"):
+        validate(_write(tmp_path, missing_receipt))
+
+    mixed_commit = deepcopy(data)
+    mixed_commit["residuals"][0]["completion_receipt"]["bound_commit"] = (
+        data["authority"]["origin_base_commit"]
+    )
+    with pytest.raises(ValueError, match="differs from the final acceptance binding"):
+        validate(_write(tmp_path, mixed_commit))
+
+    mixed_runtime = deepcopy(data)
+    mixed_runtime["final_acceptance"]["no_debt"]["runtime_sha256"] = OTHER_HASH
+    with pytest.raises(ValueError, match="differs from the final acceptance binding"):
+        validate(_write(tmp_path, mixed_runtime))
+
+
+@pytest.mark.parametrize(
+    ("status", "acceptance_effect", "message"),
+    [
+        ("invented", "informational_only", "invalid status"),
+        ("historical_pass", "invented", "invalid acceptance_effect"),
+        (
+            "historical_pass",
+            "final_acceptance",
+            "must pair acceptance_pass only with final_acceptance",
+        ),
+        (
+            "acceptance_pass",
+            "informational_only",
+            "must pair acceptance_pass only with final_acceptance",
+        ),
+        (
+            "historical_failure",
+            "final_acceptance",
+            "must pair acceptance_pass only with final_acceptance",
+        ),
+        (
+            "discovery",
+            "final_acceptance",
+            "must pair acceptance_pass only with final_acceptance",
+        ),
+        (
+            "superseded",
+            "final_acceptance",
+            "must pair acceptance_pass only with final_acceptance",
+        ),
+    ],
+)
+def test_observation_status_and_acceptance_effect_are_fail_closed(
+    tmp_path: Path,
+    status: str,
+    acceptance_effect: str,
+    message: str,
+) -> None:
+    data = json.loads(RECORD.read_text(encoding="utf-8"))
+    data["validation_observations"][0]["status"] = status
+    data["validation_observations"][0]["acceptance_effect"] = acceptance_effect
+    with pytest.raises(ValueError, match=message):
+        validate(_write(tmp_path, data))
+
+
+def test_superseded_attempts_and_artifacts_cannot_be_promoted(
+    tmp_path: Path,
+) -> None:
+    data = json.loads(RECORD.read_text(encoding="utf-8"))
+    data["historical_superseded_attempts"][0][
+        "acceptance_effect"
+    ] = "final_acceptance"
+    with pytest.raises(ValueError, match="cannot provide acceptance"):
+        validate(_write(tmp_path, data))
+
+    data = json.loads(RECORD.read_text(encoding="utf-8"))
+    data["packaging_artifacts"][0]["acceptance_effect"] = "final_acceptance"
+    with pytest.raises(ValueError, match="invalid acceptance_effect"):
+        validate(_write(tmp_path, data))
+
+
+def test_final_no_debt_rejects_partial_and_overlapping_shard_sets(
+    tmp_path: Path,
+) -> None:
+    data = _completed_record()
+
+    partial = deepcopy(data)
+    partial["final_acceptance"]["no_debt"]["terminal_inventories"].pop()
+    with pytest.raises(ValueError, match="differs from terminal inventory union"):
+        validate(_write(tmp_path, partial))
+
+    overlap = deepcopy(data)
+    overlap["final_acceptance"]["no_debt"]["terminal_inventories"][1][
+        "inventory"
+    ] = ["tests/a.py::test_a"]
+    with pytest.raises(ValueError, match="terminal inventories overlap"):
+        validate(_write(tmp_path, overlap))
+
+
+@pytest.mark.parametrize("field", ["failed", "errors", "skipped", "xfailed", "xpassed", "mutations"])
+def test_final_no_debt_rejects_every_non_acceptance_outcome(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    data = _completed_record()
+    data["final_acceptance"]["no_debt"]["terminal_inventories"][0]["counts"][
+        field
+    ] = 1
+    with pytest.raises(ValueError, match="failure, skip, xfail/xpass, or mutation"):
+        validate(_write(tmp_path, data))
