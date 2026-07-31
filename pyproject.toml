@@ -118,6 +118,12 @@ exclude = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--import-mode=importlib"
+filterwarnings = [
+    # discord.py 2.7.x imports stdlib audioop on Python 3.11/3.12 and already
+    # depends on audioop-lts for Python 3.13+.  Keep every other warning fatal
+    # in the release proof while suppressing only this upstream transition.
+    "ignore:'audioop' is deprecated and slated for removal in Python 3.13:DeprecationWarning:discord.player",
+]
 python_files = ["test_*.py", "editorial_*.py"]
 norecursedirs = ["tests/archive", "tests/arnold/pipelines/deliberation", ".*", "build", "dist", "CVS", "_darcs", "{arch}", "*.egg"]
 markers = [
