@@ -2,14 +2,14 @@
   "schema": "arnold.post_m11_release_evidence.v1",
   "record_id": "post-m11-consolidation-20260731",
   "record_status": "in_progress",
-  "recorded_at_utc": "2026-07-31T03:52:06Z",
+  "recorded_at_utc": "2026-07-31T04:10:03Z",
   "authority": {
     "plan_path": "docs/megaplan/post-m11-loose-work-consolidation-release-plan-2026-07-29.md",
     "plan_publication_commit": "f1c0b7384752ee96ea74eaee0f6c8d5d06c301d4",
     "plan_blob": "8b8a157ae0e2ad89209dd1cde61791856997585b",
     "origin_base_commit": "96127731661b4aeec7e049b8a7b59170a9506b06",
-    "evidence_cut_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
-    "evidence_cut_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
+    "evidence_cut_commit": "bf5449ae0e509b7a61c012daab18a66e14defd04",
+    "evidence_cut_tree": "0084c438663eb40d2e30fb41c1daf290afbdc7ef",
     "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b"
   },
   "checkpoints": [
@@ -128,6 +128,12 @@
       "sha": "ad3e6176775d629d180c86f72f3432719249893c",
       "classification": "LAND",
       "disposition": "Included in 5642cdd1ac5749aaf206bccdc5723613493e6db3."
+    },
+    {
+      "ref": "fix/m11-validation-nodeid-accounting-20260731",
+      "sha": "49e7b448f8cdb4469c3630d8ebbe5e76313a6e52",
+      "classification": "LAND",
+      "disposition": "Included in bf5449ae0e509b7a61c012daab18a66e14defd04; ticket 01KYV57FAPY2H0ZRQMM8MJ29EM is addressed."
     }
   ],
   "integration_lineage": [
@@ -178,6 +184,10 @@
     {
       "sha": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
       "subject": "Merge post-M11 cloud supervisor test reconciliation"
+    },
+    {
+      "sha": "bf5449ae0e509b7a61c012daab18a66e14defd04",
+      "subject": "Merge complete M11 validation node accounting"
     }
   ],
   "validation_observations": [
@@ -235,6 +245,130 @@
       "acceptance_effect": "integration_cut_only",
       "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
       "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580"
+    },
+    {
+      "id": "pinned-runtime-431",
+      "scope": "Pinned-runtime validation subset",
+      "status": "historical_pass",
+      "result": {
+        "passed": 431,
+        "collected": 431,
+        "failed": 0
+      },
+      "acceptance_effect": "pinned_runtime_subset_only",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
+      "runtime_identity": {
+        "command_sha256": "8fa2720c324e15fbc45757614ad7d4a282e4e447fa304a2945cbc66e8f48c37c",
+        "pip_freeze_sha256": "6534d0b1a1ba2cf26b1a7d3a13d5401eec59fbdb52d5e4110d140e0291df55e8",
+        "composite_runtime_sha256": "5a8011b507240a1b7eebd90c66ffe3fec42ae9e0a33918f3846d6d57b9ad3bd6"
+      },
+      "log": {
+        "location": "$LOCAL_TEMP/arnold-pinned-validation-5642cdd1ac-pytest.log",
+        "sha256": "9e475291172a15c6af08deee3575570d2ca1b089437a8c8a8716ce99ad0c0e89"
+      }
+    },
+    {
+      "id": "nodeid-accounting-focused",
+      "scope": "Opaque pytest node-ID parsing, duplicate rejection, and no-debt receipt suites",
+      "status": "historical_pass",
+      "result": {
+        "passed": 74,
+        "failed": 0,
+        "recovered_nodeids": 208,
+        "collected_before_fix": 17605,
+        "retained_before_fix": 17397
+      },
+      "acceptance_effect": "defect_level_only",
+      "bound_commit": "49e7b448f8cdb4469c3630d8ebbe5e76313a6e52",
+      "source": ".megaplan/tickets/01KYV57FAPY2H0ZRQMM8MJ29EM-preserve-opaque-pytest-node-ids-in-m11-validation-accounting.md"
+    },
+    {
+      "id": "packaging-focused-framework312",
+      "scope": "Packaging, installed-wheel, skill-bundle, and package-metadata focused matrix under the framework-managed Python 3.12 runtime",
+      "status": "historical_failure",
+      "result": {
+        "passed": 132,
+        "failed": 3
+      },
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
+      "log_sha256": "be4944760ba91dd365f21ddf6a7d91913089790687601b4eb40bc57ac79163c7",
+      "blockers": [
+        "tests/installed_wheel/test_import_workflow_kernel.py::test_editable_install_deleted_inventory_modules_fail",
+        "tests/test_packaging_skills.py::test_superfixer_debug_codex_bundle_matches_canonical_skill",
+        "tests/characterization/test_package_metadata.py::test_megaplan_package_declares_pep561_typing_marker"
+      ]
+    },
+    {
+      "id": "cloud-template-framework312",
+      "scope": "Cloud-template validation under the framework-managed Python 3.12 runtime",
+      "status": "historical_pass",
+      "result": {
+        "passed": 47,
+        "failed": 0
+      },
+      "acceptance_effect": "packaging_component_only",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
+      "log_sha256": "1bcd7943a619132fbcd0d91b871fb7bbda89ff8473ed20c724e02bdf982581f2"
+    },
+    {
+      "id": "docker-build-attempt",
+      "scope": "Rendered cloud image build",
+      "status": "historical_blocked",
+      "result": {
+        "render": "passed",
+        "lint": "passed",
+        "placeholder_check": "passed",
+        "docker_build": "blocked"
+      },
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
+      "blocker": "Docker daemon was unavailable at the configured local socket.",
+      "log_sha256": "de94f6b6a0faeca076aa8d6d22d2f9d46dbc2a318bf89ad70573b45c937cbdcd"
+    }
+  ],
+  "historical_superseded_attempts": [
+    {
+      "id": "full-no-debt-5642-preflight-defect",
+      "status": "superseded_defect_receipt",
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "receipt": {
+        "location": "$LOCAL_VALIDATION_CHECKPOINT_ROOT/5642cdd1ac-full-no-debt-20260731/preflight-defect.json",
+        "sha256": "079311bfe32c84a7cf440a15939db33fcae53d8e755f659792dacb7c3f974556"
+      },
+      "notes": "The 5642 attempt exposed the opaque pytest node-ID accounting defect. It is retained as failure evidence and cannot satisfy final no-debt acceptance."
+    },
+    {
+      "id": "full-no-debt-bf-seeded-abort",
+      "status": "superseded_seeded_abort_receipt",
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "bf5449ae0e509b7a61c012daab18a66e14defd04",
+      "receipt": {
+        "location": "$LOCAL_VALIDATION_CHECKPOINT_ROOT/bf5449ae0e-full-no-debt-seeded-20260731/aborted-superseded.json",
+        "sha256": "e7536c92ec32a4ccd3128d80557dc5bd3bac4f62dc220e03dbc5b5bd99162d2b"
+      },
+      "notes": "The seeded run was deliberately aborted and superseded. It is evidence of the attempt, not acceptance."
+    }
+  ],
+  "packaging_artifacts": [
+    {
+      "kind": "wheel",
+      "filename": "arnold-0.23.0-py3-none-any.whl",
+      "sha256": "d50f5704f205224e3dd2d898f99a9b9de14dc5b91a356cf28ceee3b44c3ed0a5",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "acceptance_effect": "candidate_artifact_only"
+    },
+    {
+      "kind": "sdist",
+      "filename": "arnold-0.23.0.tar.gz",
+      "sha256": "bb59fc0b1a2334aecfe81fb1ddd96e08699c2b5bcdcbe4b7c96ca1bf2b1742fc",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "acceptance_effect": "candidate_artifact_only"
     }
   ],
   "cloud_protected_resources": [
@@ -277,6 +411,16 @@
       "id": "final-integrated-validation",
       "status": "pending",
       "required_evidence": "Frozen command inventory, focused integration suites, practical broad suite or explicit shard union, compile checks, and clean diff checks at the final release candidate SHA."
+    },
+    {
+      "id": "final-no-debt-validation",
+      "status": "pending",
+      "required_evidence": "A fresh non-seeded no-debt run bound to the final release candidate, with exact collection/execution equality and no superseded receipt treated as acceptance."
+    },
+    {
+      "id": "final-packaging-validation",
+      "status": "pending",
+      "required_evidence": "All packaging blockers resolved, wheel and sdist rebuilt from the final release candidate, installed-artifact checks green, and a successful cloud-image build against an available Docker daemon."
     },
     {
       "id": "release-pr",

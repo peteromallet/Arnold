@@ -1,8 +1,8 @@
 # Post-M11 consolidation release evidence
 
 Status: **in progress**. Evidence cut:
-`5642cdd1ac5749aaf206bccdc5723613493e6db3`, tree
-`129a3e880884a64bc8a0a09e57a884b976f14580`.
+`bf5449ae0e509b7a61c012daab18a66e14defd04`, tree
+`0084c438663eb40d2e30fb41c1daf290afbdc7ef`.
 
 This is the human-readable projection of
 [`post-m11-release-evidence-20260731.json`](post-m11-release-evidence-20260731.json).
@@ -20,9 +20,9 @@ pending.
 - Origin base containing that plan:
   `96127731661b4aeec7e049b8a7b59170a9506b06`
 - Consolidation evidence cut:
-  `5642cdd1ac5749aaf206bccdc5723613493e6db3`
+  `bf5449ae0e509b7a61c012daab18a66e14defd04`
 - Exact evidence-cut tree:
-  `129a3e880884a64bc8a0a09e57a884b976f14580`
+  `0084c438663eb40d2e30fb41c1daf290afbdc7ef`
 
 The original dirty checkout is preserved, not normalized. Its encrypted
 payload and preservation bundle each have a local copy and a hash-matched
@@ -46,7 +46,9 @@ The first-parent lineage records eleven integration steps:
 10. explicit human-wait custody; and
 11. canonical fixer-occurrence custody; and
 12. reconciliation of five stale cloud-supervisor test modules with the
-    post-M11 contracts.
+    post-M11 contracts; and
+13. repair of M11 validation node-ID accounting, recovering all 208 omitted
+    node IDs and closing ticket `01KYV57FAPY2H0ZRQMM8MJ29EM`.
 
 Every `LAND` source in the JSON names both its immutable source SHA and the
 integration commit that contains it. The two dirty-work checkpoint branches
@@ -65,6 +67,25 @@ substitute for the still-pending final integrated validation:
 - 488 passed on the bounded-supervision compatibility scope.
 - 650 passed across the five-file cloud-supervisor reconciliation matrix at
   commit `5642cdd1ac5749aaf206bccdc5723613493e6db3`.
+- A pinned-runtime subset collected and passed 431 of 431 tests at that same
+  commit. The ledger binds its command, dependency freeze, composite runtime,
+  and log hashes.
+- The node-ID repair's focused suites passed 74 tests and recovered the 208
+  IDs the old parser had silently omitted.
+
+Two attempted full no-debt validations are retained as failure history, not
+acceptance. The first exposed the node-ID defect at `5642cdd1ac`; the second
+was a seeded run at `bf5449ae0e` that was aborted and superseded. Neither may
+be promoted into a final green receipt.
+
+Packaging evidence is also partial:
+
+- 132 tests passed and three concrete packaging blockers failed under the
+  framework-managed Python 3.12 runtime;
+- all 47 cloud-template tests passed under that runtime;
+- candidate wheel and sdist hashes are recorded in the JSON; and
+- render, lint, and placeholder checks passed, but the image build was blocked
+  because the Docker daemon was unavailable.
 
 The seven-failure run remains in the record because failure history must not be
 laundered by later fixes. A final green run must be bound to the final release
@@ -81,7 +102,10 @@ classified; this record authorizes no deletion.
 
 ## Remaining completion gates
 
-- Freeze and execute the final integrated validation inventory.
+- Freeze and execute the final integrated and no-debt validation inventories.
+- Resolve the three packaging blockers, rebuild artifacts from the final
+  release candidate, prove installed artifacts, and run the cloud-image build
+  against an available Docker daemon.
 - Open and review the release PR; do not push the consolidation directly to
   main.
 - Record the exact main merge SHA and annotated tag.
