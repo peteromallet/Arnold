@@ -168,8 +168,21 @@ def installed_megaplan_wheel(
     wheel_dir = tmp / "wheelhouse"
     wheel_dir.mkdir()
 
+    venv_dir = tmp / "venv"
+    venv.create(venv_dir, with_pip=True)
+    python = venv_dir / "bin" / "python"
+    pip = venv_dir / "bin" / "pip"
     subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheel_dir), str(REPO_ROOT)],
+        [
+            str(python),
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "-w",
+            str(wheel_dir),
+            str(REPO_ROOT),
+        ],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
@@ -178,10 +191,6 @@ def installed_megaplan_wheel(
     wheels = sorted(wheel_dir.glob("*.whl"))
     assert len(wheels) == 1, f"expected one wheel, found {[wheel.name for wheel in wheels]}"
 
-    venv_dir = tmp / "venv"
-    venv.create(venv_dir, with_pip=True)
-    python = venv_dir / "bin" / "python"
-    pip = venv_dir / "bin" / "pip"
     subprocess.run(
         [str(pip), "install", str(wheels[0])],
         check=True,
