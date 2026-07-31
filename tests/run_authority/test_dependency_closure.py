@@ -21,8 +21,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from arnold_pipelines.run_authority import (
     CapabilityGrant,
     Claim,
