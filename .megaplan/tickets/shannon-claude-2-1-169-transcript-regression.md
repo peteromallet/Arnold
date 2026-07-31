@@ -10,7 +10,7 @@ tags:
 - transcript
 codebase_id: null
 created_at: '2026-06-09T00:00:00+00:00'
-last_edited_at: '2026-07-30T19:00:00+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics: []
 ---
 
@@ -105,3 +105,11 @@ made self-defending:
   "Timed out waiting for Claude transcript" wedge that silently kills a milestone.
 - Track Anthropic fix (#60984); only unpin to a future version after verifying it
   writes full user/assistant transcript rows (not ai-title-only).
+
+## 2026-07-31 reconciliation
+
+Keep open as standalone Shannon/provider compatibility debt. The consolidated
+provider recovery work does not implement the required interactive pane-based
+completion detector or a proved self-defending version guard. This is not owned
+by Native Parity, Workflow Platformization, or Critique Ledger, so no epic link
+is added.

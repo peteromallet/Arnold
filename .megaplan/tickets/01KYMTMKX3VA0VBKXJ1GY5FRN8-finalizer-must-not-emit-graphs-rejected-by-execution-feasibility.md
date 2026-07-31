@@ -17,14 +17,15 @@ tags:
 - progress
 - pre-native-blocker
 - planner
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-28T16:58:58.851378+00:00'
-last_edited_at: '2026-07-30T20:56:30.000000+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
   kind: associated
-  provenance: null
+  provenance: post-m11-ticket-reconciliation-20260731
   linked_at: 2026-07-30 20:16:48.610459+00:00
 ---
 
@@ -123,3 +124,9 @@ Keep this ticket open until the exact archived 46-task and 40-task/67-edge
 graphs are replayed. Deterministic graph normalization, crash-injection and
 concurrent-finalizer tests, frozen semantic-hash proof, and the separate
 planner-feasibility status projection remain outstanding.
+
+This is still a post-M11 pre-launch residual. Native Parity S4/S5 are associated
+consumers of the repaired admission contract and fixtures, but
+`resolves_on_complete` remains false because the outstanding replay,
+normalization, concurrency, crash, and status proofs must land before that epic
+starts. Critique Ledger does not own task-graph admission.
