@@ -3727,6 +3727,52 @@ def _chain_state_looks_terminal(chain_current):
             return True
     return False
 
+def _coherent_terminal_success(ev):
+    """Return true only when plan and chain independently agree on completion."""
+    if not isinstance(ev, dict):
+        return False
+    plan_state = str(ev.get("current_state") or "").strip().lower()
+    if plan_state not in {"done", "complete", "completed", "finalized"}:
+        return False
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    if not isinstance(chain_current, dict) or not chain_current:
+        return False
+    if chain_current.get("chain_complete") is False:
+        return False
+    if str(chain_current.get("last_state") or "").strip().lower() not in {
+        "done",
+        "complete",
+        "completed",
+    }:
+        return False
+    if str(chain_current.get("current_plan_name") or "").strip():
+        return False
+    if str(chain_current.get("pr_state") or "").strip().lower() not in {
+        "",
+        "merged",
+        "closed",
+    }:
+        return False
+    try:
+        total = int(chain_current.get("total_milestones"))
+        completed_count = int(chain_current.get("completed_count"))
+    except (TypeError, ValueError):
+        return False
+    if total <= 0 or completed_count != total:
+        return False
+    plan_name = str(ev.get("plan") or "").strip()
+    return any(
+        isinstance(item, dict)
+        and str(item.get("plan") or "").strip() == plan_name
+        and str(item.get("status") or "").strip().lower()
+        in {"done", "complete", "completed", "finalized"}
+        for item in (chain_current.get("completed") or [])
+    )
+
 def _chain_state_looks_nonterminal(chain_current):
     if not isinstance(chain_current, dict) or not chain_current:
         return False
@@ -5218,11 +5264,35 @@ for entry in plans:
         or ""
     ).strip()
     finding_state = str(ev.get("current_state") or "").strip().lower()
+    terminal_current_success = bool(
+        run_kind == "chain"
+        and _coherent_terminal_success(ev)
+        and (
+            not authoritative_plan
+            or authoritative_plan == str(ev.get("plan") or "").strip()
+        )
+    )
     completed_shadow = bool(
         finding_state in {"done", "complete", "completed", "finalized"}
         and authoritative_plan
         and authoritative_plan != str(ev.get("plan") or "").strip()
     )
+    if terminal_current_success:
+        # Historical churn explains how a chain reached its terminal state; it
+        # is not evidence that the successfully completed chain is still
+        # repairable.  Clear only history-derived signals here.  Fresh
+        # session-wide deterministic contradictions (watchdog disagreement,
+        # active repair custody, ghost repair state, etc.) are evaluated below
+        # and can still produce a finding.
+        reasons = []
+        corroboration = []
+        soft_corroboration = []
+        ev["suppression"] = {
+            "reason": "authoritative_terminal_success_historical_evidence_suppressed",
+            "authoritative_plan": authoritative_plan,
+            "authoritative_chain_path": chain_current.get("path"),
+            "authoritative_chain_state": chain_current.get("last_state"),
+        }
     session_reasons = []
     session_evidence_scope = bool(ev.get("session_evidence_scope"))
     if session_evidence_scope and meta_summary.get("missing_meta_run_evidence"):
@@ -5258,7 +5328,17 @@ for entry in plans:
     ):
         if deterministic_reason:
             session_reasons.append(deterministic_reason)
-    if not completed_shadow:
+    if completed_shadow:
+        reasons = []
+        corroboration = []
+        soft_corroboration = []
+        ev["suppression"] = {
+            "reason": "completed_plan_shadow_plan_local_evidence_suppressed",
+            "authoritative_plan": authoritative_plan,
+            "authoritative_chain_path": chain_current.get("path"),
+            "authoritative_chain_state": chain_current.get("last_state"),
+        }
+    elif not terminal_current_success:
         wrapper_drift = _installed_wrapper_drift_reason(ev)
         if wrapper_drift:
             session_reasons.append(wrapper_drift)
@@ -5271,16 +5351,6 @@ for entry in plans:
         ):
             if deterministic_reason:
                 reasons.append(deterministic_reason)
-    else:
-        reasons = []
-        corroboration = []
-        soft_corroboration = []
-        ev["suppression"] = {
-            "reason": "completed_plan_shadow_plan_local_evidence_suppressed",
-            "authoritative_plan": authoritative_plan,
-            "authoritative_chain_path": chain_current.get("path"),
-            "authoritative_chain_state": chain_current.get("last_state"),
-        }
     reasons.extend(session_reasons)
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
@@ -7128,7 +7198,7 @@ save_auditor_completion_evidence(
     evidence_out,
     evidence,
     redactor=redact_text,
-    sidecar_dir=str(pathlib.Path(repair_data_dir).with_name(f"{pathlib.Path(repair_data_dir).name}.d")),
+    sidecar_dir=str(Path(repair_data_dir).with_name(f"{Path(repair_data_dir).name}.d")),
     session="progress_auditor",
 )
 PY

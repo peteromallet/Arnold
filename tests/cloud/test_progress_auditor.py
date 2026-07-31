@@ -88,6 +88,50 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _extract_auditor_evidence_program() -> str:
+    """Extract the post-report auditor completion-evidence Python program."""
+    text = _wrapper("arnold-progress-auditor")
+    marker = (
+        'python3 - "$GATHER_DIR/findings.json" "$AUDITOR_EVIDENCE_OUT" '
+        '"$AUDIT_WINDOW_HOURS" "$TS" "$REPAIR_DATA_DIR" <<\'PY\''
+    )
+    py_start = text.index(marker)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def test_auditor_completion_evidence_program_runs_to_completion(
+    tmp_path: Path,
+) -> None:
+    findings_path = tmp_path / "findings.json"
+    evidence_path = tmp_path / "auditor-evidence.json"
+    repair_data_dir = tmp_path / "repair-data"
+    findings_path.write_text(json.dumps({"findings": []}), encoding="utf-8")
+    repair_data_dir.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _extract_auditor_evidence_program(),
+            str(findings_path),
+            str(evidence_path),
+            "6",
+            "20260731T000000Z",
+            str(repair_data_dir),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert evidence_path.is_file()
+
+
 def _load_superfixer_cycle_functions() -> dict[str, object]:
     text = _wrapper("arnold-progress-auditor")
     start = text.index("def _superfixer_cycle_evidence(ev):")
@@ -6620,7 +6664,14 @@ def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
     )
     installed = tmp_path / "installed-auditor"
     installed.write_text("older wrapper\n", encoding="utf-8")
-    worklist = [{"workspace": str(workspace), "plan": plan, "session": "wrapper-drift", "kind": "chain"}]
+    worklist = [
+        {
+            "workspace": str(workspace),
+            "plan": plan,
+            "session": "wrapper-drift",
+            "kind": "chain",
+        }
+    ]
 
     active = _run_gather_program(
         worklist,
@@ -6640,20 +6691,152 @@ def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
     assert report["dispatch_summary"]["repair_dispatched"] is False
     assert report["dispatch_summary"]["file_edit_performed"] is False
 
-    state_path.write_text(json.dumps({"name": plan, "current_state": "done"}), encoding="utf-8")
-    chain_path.write_text(
+    state_path.write_text(
         json.dumps(
             {
-                "current_plan_name": plan,
-                "last_state": "done",
-                "chain_complete": True,
-                "pr_state": "merged",
-                "milestones": [{"label": "m1"}],
-                "completed": [{"label": "m1", "status": "done"}],
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
             }
         ),
         encoding="utf-8",
     )
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "chain_complete": True,
+                "pr_state": "merged",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    terminal_with_drift = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_INSTALLED_WRAPPER": str(installed)},
+    )
+
+    assert terminal_with_drift["findings"] == []
+    assert len(terminal_with_drift["green_checks"]) == 1
+    assert terminal_with_drift["green_checks"][0]["suppression"]["reason"] == (
+        "authoritative_terminal_success_historical_evidence_suppressed"
+    )
+
+
+def test_gather_suppresses_historical_churn_after_authoritative_terminal_success(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "m11-final"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    (chain_dir / "chain-terminal.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "chain_complete": True,
+                "pr_state": "merged",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": "terminal-chain", "kind": "chain"}],
+        tmp_path,
+    )
+
+    assert result["findings"] == []
+    assert len(result["green_checks"]) == 1
+    assert result["green_checks"][0]["suppression"]["reason"] == (
+        "authoritative_terminal_success_historical_evidence_suppressed"
+    )
+
+
+@pytest.mark.parametrize(
+    "chain_overrides",
+    [
+        {"current_plan_name": "m11-inconsistent"},
+        {"last_state": "blocked"},
+        {"pr_state": "open"},
+        {
+            "milestones": [{"label": "m1"}, {"label": "m2"}],
+            "completed": [
+                {"label": "m1", "plan": "m11-inconsistent", "status": "done"}
+            ],
+        },
+    ],
+)
+def test_gather_does_not_suppress_plan_chain_terminal_disagreement(
+    tmp_path: Path,
+    chain_overrides: dict,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "m11-inconsistent"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    chain_state = {
+        "current_plan_name": "",
+        "last_state": "done",
+        "chain_complete": True,
+        "pr_state": "merged",
+        "milestones": [{"label": "m1"}],
+        "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+    }
+    chain_state.update(chain_overrides)
+    (chain_dir / "chain-terminal.json").write_text(
+        json.dumps(chain_state),
+        encoding="utf-8",
+    )
+
+    result = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": "inconsistent-chain", "kind": "chain"}],
+        tmp_path,
+    )
+
+    assert result["green_checks"] == []
+    reasons = result["findings"][0]["reasons"]
+    assert any(reason.startswith("plan_v refreshed") for reason in reasons)
+    assert any(reason.startswith("score regression") for reason in reasons)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
