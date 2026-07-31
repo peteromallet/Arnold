@@ -170,7 +170,8 @@ class TestM7CustodyNorthStarOwnership:
     """Verify the evidence respects North Star ownership separation."""
 
     @pytest.fixture(scope="class")
-    def evidence(self) -> dict:
+    @classmethod
+    def evidence(cls) -> dict:
         return _load_evidence(M7_CUSTODY_EVIDENCE)
 
     def test_cross_module_deps_are_documented(self, evidence: dict) -> None:
@@ -334,11 +335,13 @@ class TestModuleComparisonHelpers:
     # ── Shared fixtures ────────────────────────────────────────────────
 
     @pytest.fixture(scope="class")
-    def m7_evidence(self) -> dict:
+    @classmethod
+    def m7_evidence(cls) -> dict:
         return _load_evidence(M7_CUSTODY_EVIDENCE)
 
     @pytest.fixture(scope="class")
-    def m6_evidence(self) -> dict:
+    @classmethod
+    def m6_evidence(cls) -> dict:
         return _load_evidence(M6_INVENTORY_EVIDENCE)
 
     # ── Helper utilities ───────────────────────────────────────────────

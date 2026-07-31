@@ -643,12 +643,6 @@
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
     },
     {
-      "path": "tests/boundary/test_deliberation_import_leak.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Deliberation boundary test intentionally scans for forbidden legacy Megaplan imports."
-    },
-    {
       "path": "tests/characterization/test_agent_fanout_boundaries.py",
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",

@@ -4,16 +4,6 @@
 #
 # --- M4 Allowlist Entry Rationales ---
 #
-# 1. import-coupling arnold.agent.agent.copilot_acp_client /
-#    arnold.agent.tools.code_execution_tool /
-#    arnold.agent.tools.environments.local /
-#    arnold.agent.tools.environments.persistent_shell /
-#    arnold.agent.tools.process_registry /
-#    arnold.agent.tools.rl_training_tool
-#    Agent process-management surfaces temporarily import product-local process
-#    helpers while extraction settles.
-#    Owner: Platform  Expiry: 2026-12-31
-#
 # 4. import-coupling arnold.supervisor.model
 #    Supervisor model imports product outcome types; kept while the supervisor
 #    surface is refactored.  Owner: Platform  Expiry: 2026-12-31
@@ -114,15 +104,9 @@
 #
 # --- End M4 Allowlist Rationales ---
 
-import-coupling arnold.agent.agent.copilot_acp_client
 import-coupling arnold.agent.adapters._oneshot
 import-coupling arnold.agent.adapters.codex
 import-coupling arnold.agent.adapters.shannon
-import-coupling arnold.agent.tools.code_execution_tool
-import-coupling arnold.agent.tools.environments.local
-import-coupling arnold.agent.tools.environments.persistent_shell
-import-coupling arnold.agent.tools.process_registry
-import-coupling arnold.agent.tools.rl_training_tool
 import-coupling arnold.supervisor.model
 import-coupling arnold.supervisor.outcomes
 
