@@ -83,7 +83,15 @@ def test_all_generated_codex_skill_targets_have_generator_entries() -> None:
 
 
 def test_superfixer_debug_codex_bundle_matches_canonical_skill() -> None:
-    bundle = _resolve_bundle_path("_codex_skills/superfixer-debug") / "SKILL.md"
+    targets = [
+        target
+        for target in _GLOBAL_TARGETS
+        if target["agent"] == "codex"
+        and target["path"] == ".codex/skills/superfixer-debug"
+    ]
+    assert [target["data"] for target in targets] == ["skills/superfixer-debug"]
+
+    bundle = _resolve_bundle_path("skills/superfixer-debug") / "SKILL.md"
 
     assert bundle.is_file()
     assert bundle.read_text(encoding="utf-8") == bundled_global_file(

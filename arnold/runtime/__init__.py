@@ -73,37 +73,6 @@ from arnold.runtime.semantic_replay import (  # noqa: F401 — re-export for con
     semantic_equivalent,
     semantic_replay_journal,
 )
-from arnold.kernel.fold import (
-    fold_journal as _legacy_fold_journal,
-    last_state_snapshot_projector as _legacy_state_snapshot_projector,
-)
-from types import ModuleType
-import sys
-
-
-def _install_wal_fold_compatibility() -> None:
-    """Serve archived pipeline imports without restoring the deleted module."""
-    module_name = "arnold.runtime.wal_fold"
-    if module_name in sys.modules:
-        return
-    module = ModuleType(module_name)
-    module.fold_journal = _legacy_fold_journal
-    module.last_state_snapshot_projector = _legacy_state_snapshot_projector
-    module.read_event_journal = read_event_journal
-    module.read_event_journal_paged = read_event_journal_paged
-    module.stream_event_journal = stream_event_journal
-    module.__all__ = [
-        "fold_journal",
-        "last_state_snapshot_projector",
-        "read_event_journal",
-        "read_event_journal_paged",
-        "stream_event_journal",
-    ]
-    sys.modules[module_name] = module
-
-
-_install_wal_fold_compatibility()
-
 __all__: list[str] = [
     "ArnoldError",
     "BackendEventJournal",
