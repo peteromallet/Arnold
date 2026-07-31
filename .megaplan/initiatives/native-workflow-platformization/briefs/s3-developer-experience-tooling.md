@@ -15,7 +15,7 @@ generated metadata, or a local runtime that diverges from installed execution.
 ## Normative contract and inputs
 
 `docs/arnold/pype-authoring-contract.md` is the sole format authority.
-[`../PLATFORM_CONTRACT.md`](../PLATFORM_CONTRACT.md) is normative for runtime,
+[`../decisions/PLATFORM_CONTRACT.md`](../decisions/PLATFORM_CONTRACT.md) is normative for runtime,
 proof, execution modes, store/capability isolation, and milestone ownership.
 `docs/arnold/workflow-execution-mode-dispositions.yaml` is the only machine mode/disposition/
 store registry; all diagnostics and UI severity are derived from it.

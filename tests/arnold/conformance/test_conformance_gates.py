@@ -83,6 +83,37 @@ def test_current_tree_wires_conformance_suite_and_legacy_reference_gate() -> Non
     assert legacy_gate.details["invalid_entries"] == []
     assert legacy_gate.details["duplicates"] == []
 
+    layout_gate = checks_by_id["megaplan-artifact-layout"]
+    assert layout_gate.passed is True
+    assert layout_gate.details["unexpected"] == {}
+
+
+def test_normative_initiative_artifacts_use_canonical_semantic_subdirectories() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    canonical = {
+        ".megaplan/initiatives/megaplan-native-parity-corrective/"
+        "validation/GOLDEN_TRACE_CONTRACT.md",
+        ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/"
+        "research/research.md",
+        ".megaplan/initiatives/native-workflow-platformization/"
+        "decisions/PLATFORM_CONTRACT.md",
+        ".megaplan/initiatives/standardized-completion-specifications/"
+        "evidence/SUPERSESSION_CROSSWALK.yaml",
+    }
+    obsolete = {
+        ".megaplan/initiatives/megaplan-native-parity-corrective/"
+        "GOLDEN_TRACE_CONTRACT.md",
+        ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/"
+        "docs/research.md",
+        ".megaplan/initiatives/native-workflow-platformization/"
+        "PLATFORM_CONTRACT.md",
+        ".megaplan/initiatives/standardized-completion-specifications/"
+        "SUPERSESSION_CROSSWALK.yaml",
+    }
+
+    assert all((repo_root / path).is_file() for path in canonical)
+    assert all(not (repo_root / path).exists() for path in obsolete)
+
 
 def test_conformance_package_import_does_not_import_megaplan() -> None:
     script = """

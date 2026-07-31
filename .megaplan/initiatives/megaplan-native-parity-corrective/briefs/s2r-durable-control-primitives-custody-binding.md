@@ -12,7 +12,7 @@ Megaplan product phases until a neutral reference pipeline proves the machinery
 and the chain's GO-0 transition emits the sole authoritative
 completion-kernel enablement receipt.
 
-Use `../GOLDEN_TRACE_CONTRACT.md` as the neutral pipeline's normalized ordered,
+Use `../validation/GOLDEN_TRACE_CONTRACT.md` as the neutral pipeline's normalized ordered,
 multiset, same-run trace oracle; never as an execution input.
 
 ## Required work

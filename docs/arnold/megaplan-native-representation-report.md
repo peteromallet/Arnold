@@ -109,11 +109,11 @@ Workflow Platformization ticket, and the independent standardization review.
 - Native Parity execution plan:
   `docs/arnold/megaplan-native-parity-corrective-plan.md`
 - Native Parity composition oracle:
-  `.megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md`
+  `.megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md`
 - Workflow Platformization ticket:
   `.megaplan/tickets/01KY2DWSJG0B9YKAJRYA0107XE-build-a-reusable-native-workflow-pattern-platform-after-megaplan-parity.md`
 - Prepared Workflow Platformization contract and chain:
-  `.megaplan/initiatives/native-workflow-platformization/PLATFORM_CONTRACT.md`
+  `.megaplan/initiatives/native-workflow-platformization/decisions/PLATFORM_CONTRACT.md`
   and `.megaplan/initiatives/native-workflow-platformization/chain.yaml`
 - Independent standardization review:
   `.tmp/workflow-standardization-gap/final-report.md`
@@ -1050,7 +1050,7 @@ This file is the Stage 1 semantic authority. It is not itself the shared
 pattern package. Native Parity must first prove that its authored occurrences,
 lowered nodes, accepted Run Authority decisions, Custody histories, WBC
 attempt/effect histories, and terminals describe the same run under the
-`GOLDEN_TRACE_CONTRACT.md` oracle. Platformization may then extract only the
+`validation/GOLDEN_TRACE_CONTRACT.md` oracle. Platformization may then extract only the
 control structures that have a stable cross-product boundary.
 
 ### 5.1 The admitted action envelope
@@ -2805,8 +2805,8 @@ to independently verified runtime evidence.
 | Concern | Controlling source | Audit use |
 |---|---|---|
 | Holistic target representation | This report | Defines the combined product, execution, authority, proof, and platform endpoint. |
-| Stage 1 native parity | `megaplan-native-parity-corrective-plan.md` and `GOLDEN_TRACE_CONTRACT.md` | Controls parity gates and the minimum observable trace contract. |
-| Stage 2 reusable platform | Prepared Platformization `PLATFORM_CONTRACT.md`, milestone briefs, and `chain.yaml`; ticket retained as provenance | Controls the seven-milestone S1/S2A/S2B/S3/S4/S5/S6 runtime, authoring-core, developer-tooling, extraction, challenge, and certification sequence. |
+| Stage 1 native parity | `megaplan-native-parity-corrective-plan.md` and `validation/GOLDEN_TRACE_CONTRACT.md` | Controls parity gates and the minimum observable trace contract. |
+| Stage 2 reusable platform | Prepared Platformization `decisions/PLATFORM_CONTRACT.md`, milestone briefs, and `chain.yaml`; ticket retained as provenance | Controls the seven-milestone S1/S2A/S2B/S3/S4/S5/S6 runtime, authoring-core, developer-tooling, extraction, challenge, and certification sequence. |
 | Python authoring and manifest boundaries | `pype-authoring-contract.md` and `workflow-manifest.md`; `python-shaped-authoring-contract.md` is migration baseline | Constrains target authored syntax, lowering, validation, identity, packaging, migration, and generated-manifest identity. |
 | Execution authority and workflow boundaries | `runauthority-main-plan.md`, Workflow Boundary Contracts north star, and `state-authority-migration.md` | Constrains action admission, leases, evidence, state ownership, and migration. |
 | Current implementation | Cited source/compiler/runtime files and accepted completion artifacts | Establishes feasibility and actual behavior; source citations are descriptive unless a normative source adopts them. |
@@ -2908,7 +2908,7 @@ The final proof map must consume every row. A proof generator cannot certify a
 fact merely because its own prose, fixture, hash, or predeclared status says the
 fact is implemented.
 
-`GOLDEN_TRACE_CONTRACT.md` is the human-reviewed normative scenario/invariant
+`validation/GOLDEN_TRACE_CONTRACT.md` is the human-reviewed normative scenario/invariant
 contract, not an executable route table. An independent static source oracle
 derives semantic occurrences, source spans, named policies, and structured-
 control relations from canonical `.pype` source and scenario inputs without

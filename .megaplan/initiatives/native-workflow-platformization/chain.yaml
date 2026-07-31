@@ -45,7 +45,7 @@ launch_preconditions:
       kind: contains_text
       text: Megaplan Native Python and Reusable Workflow Platform Representation Report
   - name: platform contract exists
-    path: .megaplan/initiatives/native-workflow-platformization/PLATFORM_CONTRACT.md
+    path: .megaplan/initiatives/native-workflow-platformization/decisions/PLATFORM_CONTRACT.md
     check:
       kind: contains_text
       text: Native Workflow Platformization Contract

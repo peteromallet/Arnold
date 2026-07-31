@@ -241,15 +241,15 @@ appendices. They are not launch contracts and cannot narrow the active briefs.
 Primary anchors:
 
 - `NORTHSTAR.md`
-- `GOLDEN_TRACE_CONTRACT.md`
+- `validation/GOLDEN_TRACE_CONTRACT.md`
 - `docs/arnold/megaplan-native-representation-report.md`
 - `docs/arnold/megaplan-native-current-codebase-map.md`
 - `docs/arnold/megaplan-native-oracle-synthesis.md`
 - `docs/arnold/megaplan-native-parity-corrective-plan.md`
 - `docs/arnold/pype-authoring-contract.md`
-- `../standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml`
+- `../standardized-completion-specifications/evidence/SUPERSESSION_CROSSWALK.yaml`
 
-`GOLDEN_TRACE_CONTRACT.md` is the human-reviewed normative composition oracle.
+`validation/GOLDEN_TRACE_CONTRACT.md` is the human-reviewed normative composition oracle.
 An independent source oracle checks authored topology and a separately
 implemented verifier checks raw primary-store multiplicity before approved
 normalization. It compares one same-run ordered/partial-order history across lowering, Run

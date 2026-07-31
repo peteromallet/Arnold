@@ -11,7 +11,7 @@ reason: >-
   design and traceability source, not an executable epic.
 source_index:
   north_star: NORTHSTAR.md
-  supersession_crosswalk: SUPERSESSION_CROSSWALK.yaml
+  supersession_crosswalk: evidence/SUPERSESSION_CROSSWALK.yaml
   decision_snapshot: decisions/standardized-completion-spec-proposal.md
   source_ticket: notes/source-ticket.md
   historical_briefs:
@@ -49,4 +49,4 @@ required_active_dependencies:
     require_manifest: true
     required_artifact: .megaplan/initiatives/custody-control-plane/bounded-incident-projection-handoff.json
     supersession_policy: preserve_exact_content_address_and_never_orphan
-active_proof_index: SUPERSESSION_CROSSWALK.yaml#proof_rules
+active_proof_index: evidence/SUPERSESSION_CROSSWALK.yaml#proof_rules

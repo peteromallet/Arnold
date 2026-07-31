@@ -1183,7 +1183,7 @@ an explicit future action.
 - `docs/arnold/workflow-execution-mode-dispositions.yaml`
 - `.megaplan/tickets/01KY2DWSJG0B9YKAJRYA0107XE-build-a-reusable-native-workflow-pattern-platform-after-megaplan-parity.md`
 - `.megaplan/initiatives/megaplan-native-parity-corrective/`
-- `.megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md`
+- `.megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md`
 - `.megaplan/initiatives/megaplan-native-parity-corrective/briefs/s7-final-conformance-rollout.md`
 - `docs/arnold/megaplan-native-parity-corrective-plan.md`
 - `docs/arnold/megaplan-native-representation-report.md`

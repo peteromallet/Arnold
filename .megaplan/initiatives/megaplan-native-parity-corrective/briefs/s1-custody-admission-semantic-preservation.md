@@ -14,7 +14,7 @@ before merge eligibility, reruns against merge HEAD, and binds accepted
 receipts into completion proof. S1 does not recreate that harness.
 
 Normative composition oracle:
-`../GOLDEN_TRACE_CONTRACT.md`. It is the human-reviewed scenario/invariant
+`../validation/GOLDEN_TRACE_CONTRACT.md`. It is the human-reviewed scenario/invariant
 contract. An independent static source oracle checks Python topology without
 calling the production lowerer, and an independently implemented audit
 normalizer/verifier checks raw primary-store exports. It is proof only and can

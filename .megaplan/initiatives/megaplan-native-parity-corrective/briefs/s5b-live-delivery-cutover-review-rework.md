@@ -18,7 +18,7 @@ returns through normal finalization/admission; executable `REVIEW` is
 forbidden.
 
 Re-execute the S5A-green `NP-GT-004` and `NP-GT-005` scenarios from
-`../GOLDEN_TRACE_CONTRACT.md` on the admitted path. S5B may bind authority and
+`../validation/GOLDEN_TRACE_CONTRACT.md` on the admitted path. S5B may bind authority and
 prove admitted equivalence; it may not first implement or first prove a
 delivery route, cancellation disposition, named exit, rework edge, or
 reconciliation behavior after the switch.
