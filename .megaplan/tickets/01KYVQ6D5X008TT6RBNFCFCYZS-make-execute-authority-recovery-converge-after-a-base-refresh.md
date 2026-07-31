@@ -1,3 +1,20 @@
+---
+id: 01KYVQ6D5X008TT6RBNFCFCYZS
+title: Make execute-authority recovery converge after a base refresh
+status: open
+source: human
+tags:
+- bug
+- authority
+- recovery
+- post-m11
+- follow-up
+codebase_id: null
+created_at: '2026-07-31T09:13:28.509921+00:00'
+last_edited_at: '2026-07-31T09:13:28.509921+00:00'
+epics: []
+---
+
 # Execute authority rerun-loop after a base-refresh rebase (evidence-SHA storm)
 
 Status: open engine bug — needs a dedicated megaplan (~1–2 days). Surfaced via
@@ -141,3 +158,4 @@ primitive (re-run `chain start`). This is the bug that turned Bug A/B/C from
   `/workspace/.megaplan/cloud-sessions/repair-data/progress-auditor-stage-metrics.*`
 - Plan: `/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/plans/progress-auditor-stage-20260704-1400`
 - PR #140 (merged): `megaplan/progress-auditor-stage-metrics/m1` → `editible-install`.
+

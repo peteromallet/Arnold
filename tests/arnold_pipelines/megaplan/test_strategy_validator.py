@@ -961,8 +961,21 @@ class TestResolveDuplicateIntent:
     ) -> None:
         """Only the epic is in roadmap; ticket not — no duplicate intent."""
         _prepare_repo(tmp_path)
-        _write_ticket(tmp_path, _VALID_ULID, "fix-auth-timeout",
-                       "Fix auth timeout", status="open")
+        _write_ticket_with_epics(
+            tmp_path,
+            _VALID_ULID,
+            "fix-auth-timeout",
+            "Fix auth timeout",
+            status="open",
+            epics=[
+                {
+                    "epic_id": "my-epic",
+                    "resolves_on_complete": True,
+                    "kind": "promoted_to_epic",
+                    "provenance": "promotion:test",
+                }
+            ],
+        )
         _write_initiative(tmp_path, "my-epic", "My Epic")
         doc = _make_doc({
             "Now": [_make_entry("epic", "my-epic", "My Epic", "Now")],

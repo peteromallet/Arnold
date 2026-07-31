@@ -96,7 +96,6 @@ dependency graph unchanged.
 
 ## Next
 
-- [ticket:01KTH21DTP1HR3ER5W7SRRJVV5] Prevent stale git pre-commit hook rot
 - [epic:megaplan-chain-milestone-gates] Megaplan milestone conformance-gate bootstrap
 - [epic:megaplan-native-parity-corrective] Megaplan Native Parity Corrective
 
@@ -104,4 +103,5 @@ dependency graph unchanged.
 
 - [ticket:01KTH21EC489596QWBC3419JC9] Add compact megaplan monitor command for plan and chain health
 - [epic:native-workflow-platformization] Native Workflow Platformization
-- [ticket:01KYVKPN6JHD19ZRM3WQF9XV8S] Backend-neutral workflow evidence
+- [ticket:01KYVKPN6JHD19ZRM3WQF9XV8S] Provide backend-neutral WBC persistence and canonical deployed-evidence joins
+- [ticket:01KYVQ6D5X008TT6RBNFCFCYZS] Make execute-authority recovery converge after a base refresh

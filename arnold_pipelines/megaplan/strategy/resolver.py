@@ -403,7 +403,11 @@ def _check_promotion_duplicate_intent(
         ]
         for link in promoted_links:
             epic_ref = getattr(link, "epic_id", None)
-            if epic_ref and ("epic", epic_ref) in roadmap_identities:
+            if (
+                epic_ref
+                and ("ticket", ticket_ref) in roadmap_identities
+                and ("epic", epic_ref) in roadmap_identities
+            ):
                 # Both ticket and epic are in the roadmap.
                 # Find the horizons for a descriptive message.
                 ticket_horizon = _find_entry_horizon(roadmap, "ticket", ticket_ref)
