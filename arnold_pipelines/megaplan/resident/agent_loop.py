@@ -612,6 +612,9 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             toolsets=self.config.model_toolsets,
             max_tokens=self.config.model_max_tokens,
             timeout_s=self.config.model_timeout_s,
+            timeout_source=(
+                "trusted_config" if self.config.model_timeout_s is not None else None
+            ),
         )
         prompt = self._prompt(request, tools, route.backend)
         paths = self._new_run_paths(request.conversation_id)

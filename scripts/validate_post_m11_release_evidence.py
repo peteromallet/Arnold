@@ -327,8 +327,6 @@ def _validate_source_universe(data: dict[str, Any]) -> None:
     entries = universe["entries"]
     if not isinstance(entries, list) or not entries:
         raise ValueError("source_universe.entries must be non-empty")
-    if entries != sorted(entries, key=lambda item: item["source_id"] if isinstance(item, dict) else ""):
-        raise ValueError("source_universe.entries must be deterministically sorted")
     ids: set[str] = set()
     for index, entry in enumerate(entries):
         label = f"source_universe.entries[{index}]"
@@ -343,8 +341,12 @@ def _validate_source_universe(data: dict[str, Any]) -> None:
         ids.add(source_id)
         if not isinstance(entry["source_kind"], str) or not entry["source_kind"]:
             raise ValueError(f"{label}.source_kind is missing")
-        if not isinstance(entry["head_fingerprint"], str) or not entry["head_fingerprint"]:
-            raise ValueError(f"{label}.head_fingerprint is missing")
+        fingerprint = entry["head_fingerprint"]
+        if not isinstance(fingerprint, str) or not (
+            (fingerprint.startswith("sha1:") and len(fingerprint) == 45)
+            or (fingerprint.startswith("sha256:") and len(fingerprint) == 71)
+        ):
+            raise ValueError(f"{label}.head_fingerprint must be content-addressed")
         if type(entry["unique_delta_count"]) is not int or entry["unique_delta_count"] < 0:
             raise ValueError(f"{label}.unique_delta_count must be non-negative")
         disposition = entry["disposition"]
@@ -363,6 +365,13 @@ def _validate_source_universe(data: dict[str, Any]) -> None:
             for key in ("exact_final_proof",)
         ):
             raise ValueError(f"{label} lacks exact final proof")
+        if disposition == "REJECTED" and not all(
+            isinstance(evidence.get(key), str) and evidence[key]
+            for key in ("reason", "decision_authority", "exact_delta_proof")
+        ):
+            raise ValueError(f"{label} REJECTED evidence is incomplete")
+    if entries != sorted(entries, key=lambda item: item["source_id"]):
+        raise ValueError("source_universe.entries must be deterministically sorted")
     if universe["entry_count"] != len(entries):
         raise ValueError("source_universe.entry_count disagrees with entries")
     if _require_sha256(universe["sha256"], "source_universe.sha256") != hashlib.sha256(_canonical_json(entries)).hexdigest():
