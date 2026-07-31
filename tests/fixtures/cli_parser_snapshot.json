@@ -1284,7 +1284,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],
@@ -5042,7 +5042,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],
@@ -7927,7 +7927,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],

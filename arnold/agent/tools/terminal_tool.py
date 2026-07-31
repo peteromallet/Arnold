@@ -18,7 +18,7 @@ from pathlib import Path
 _TOOLS_PACKAGE = importlib.import_module("arnold.agent.tools")
 
 _MINISWEAGENT_PATH = importlib.import_module(
-    "arnold_pipelines.megaplan.agent.minisweagent_path"
+    "arnold.agent.minisweagent_path"
 )
 
 _CANONICAL_PATH = (

@@ -15,6 +15,15 @@ from arnold_pipelines.megaplan.control import _resume_runner
 from arnold_pipelines.megaplan.planning.operations import _run_phase_subprocess
 
 
+def test_generic_process_primitives_are_neutral_canonical_callables() -> None:
+    import arnold.runtime.process as neutral
+    import arnold_pipelines.megaplan.runtime.process as megaplan
+
+    assert megaplan.spawn is neutral.spawn
+    assert megaplan.spawn_async is neutral.spawn_async
+    assert megaplan.kill_group is neutral.kill_group
+
+
 def test_engine_root_is_anchored_to_megaplan_not_target_arnold(
     monkeypatch,
     tmp_path: Path,
