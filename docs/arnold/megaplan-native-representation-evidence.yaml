@@ -467,13 +467,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/handlers/plan.py
-  carrier_sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
+  carrier_sha256: sha256:f1ad59efe04bc2291e787703e8993d2922c2b4843de3a6f37f5fe0e8e596217e
   proof_artifact_path: arnold_pipelines/megaplan/handlers/plan.py
-  proof_artifact_sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
+  proof_artifact_sha256: sha256:f1ad59efe04bc2291e787703e8993d2922c2b4843de3a6f37f5fe0e8e596217e
   source_span:
     path: arnold_pipelines/megaplan/handlers/plan.py
     start_line: 1
-    end_line: 389
+    end_line: 390
   policy_object: plan_phase_body
   carrier_name: plan_phase_body
 - row_id: handler-purity-audit
@@ -4746,7 +4746,7 @@ installed_package_fingerprints:
   - behavior-parity
   - source-path-reconciliation
   proof_artifact_path: tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
-  proof_artifact_sha256: sha256:60c182731b2b91e207a758e7167741fbe3ec9a10a49d24aa18cde1331fca7b89
+  proof_artifact_sha256: sha256:6285a7c3989221f9456639637ba287ec89ede7786b92036b3e237a1fe1aad1b0
   canonical_source_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   canonical_source_sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   workflow_module_path: arnold_pipelines/megaplan/workflows/workflow.py
@@ -4883,7 +4883,7 @@ approved_carriers:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/handlers/plan.py
   carrier_name: plan_phase_body
-  sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
+  sha256: sha256:f1ad59efe04bc2291e787703e8993d2922c2b4843de3a6f37f5fe0e8e596217e
   rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
@@ -4956,12 +4956,16 @@ approved_carriers:
   rows:
   - plan-artifact-version-metadata
 fixture_hashes:
+- path: arnold_pipelines/megaplan/cloud/m11_workflow_canary.py
+  sha256: sha256:d4419afe98a202ee571342e3f703ddcba1d5fc151b5d055171641ffa94716901
+  referenced_by_rows:
+  - behavior-parity
 - path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
   sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
   referenced_by_rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/handlers/plan.py
-  sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
+  sha256: sha256:f1ad59efe04bc2291e787703e8993d2922c2b4843de3a6f37f5fe0e8e596217e
   referenced_by_rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/workflows/events.py
@@ -5075,6 +5079,10 @@ fixture_hashes:
   sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
   referenced_by_rows:
   - plan-artifact-version-metadata
+- path: docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md
+  sha256: sha256:4d04ef7db688c2129bb3c4b0c06749a51213bcb4d104fdddfcf547ef8e18ffa4
+  referenced_by_rows:
+  - behavior-parity
 - path: tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml
   sha256: sha256:09b6c6b55bcc35864252d1617c3df82ecf94d8a9720b71c106a07b6597d4e8f4
   referenced_by_rows:
@@ -5086,7 +5094,7 @@ fixture_hashes:
   - override-action-surface
   - review-retry-cap-outcomes
 - path: tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
-  sha256: sha256:60c182731b2b91e207a758e7167741fbe3ec9a10a49d24aa18cde1331fca7b89
+  sha256: sha256:6285a7c3989221f9456639637ba287ec89ede7786b92036b3e237a1fe1aad1b0
   referenced_by_rows:
   - behavior-parity
   - source-path-reconciliation
@@ -5141,6 +5149,10 @@ fixture_hashes:
   referenced_by_rows:
   - execute-approval-gates
   - review-retry-cap-outcomes
+- path: tests/cloud/test_m11_workflow_canary.py
+  sha256: sha256:ccf31252efa46742169484587651f1cac1e21c28af127c1a02f79ca826174b1c
+  referenced_by_rows:
+  - behavior-parity
 boundary_fixture_hashes:
 - fixture_id: execute_aggregate_promotion
   boundary_id: execute_aggregate_promotion
