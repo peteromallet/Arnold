@@ -983,6 +983,7 @@ notify_needs_human() {
   local run_kind="${5:-chain}"
   local health="${6:-stopped}"
   local summary="$7"
+  local notification_kind="${8:-repair_exhaustion_diagnostic}"
   local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir suppression_reason
   local diagnostic_bin diagnostic_result_tmp diagnostic_status diagnostic_run_id diagnostic_state_path diagnostic_fallback_required diagnostic_error
   suppression_reason="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$session" "$remote_spec" "$MARKER_DIR" <<'PY'
@@ -1024,7 +1025,8 @@ PY
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
     "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
-    "${PLAN_STATUS_FAILURE_RECORDED_AT:-}" "${PLAN_STATUS_TIERS_TRIED:-}" "${PLAN_STATUS_PUSHED_COMMITS:-}" <<'PY'
+    "${PLAN_STATUS_FAILURE_RECORDED_AT:-}" "${PLAN_STATUS_TIERS_TRIED:-}" "${PLAN_STATUS_PUSHED_COMMITS:-}" \
+    "$notification_kind" "${PLAN_STATUS_AWAITING_HUMAN_REASON:-}" <<'PY'
 import datetime as dt
 import json
 import sys
@@ -1048,10 +1050,13 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload
     failure_recorded_at,
     tiers_tried,
     pushed_commits,
+    notification_kind,
+    awaiting_human_reason,
 ) = sys.argv[1:]
 
 payload = {
     "event": "cloud_watchdog_needs_human",
+    "notification_kind": notification_kind,
     "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
     "session": session,
     "workspace": workspace,
@@ -1073,6 +1078,23 @@ payload = {
         "pushed_commit_shas": [item for item in pushed_commits.split(", ") if item],
     },
 }
+if notification_kind == "stable_human_gate":
+    state_token = current_state or "awaiting_human"
+    reason = awaiting_human_reason or summary
+    payload["human_gate"] = {
+        "state_token": state_token,
+        "reason": reason,
+        "evidence": {
+            "plan_name": plan_name,
+            "failure_kind": failure_kind,
+            "failure_phase": failure_phase,
+            "failure_recorded_at": failure_recorded_at,
+        },
+        "required_action": (
+            "Provide the narrow decision or missing input recorded by this gate, "
+            "then use the supported resume/verify transition."
+        ),
+    }
 failure_parts = [part for part in (failure_kind, failure_message, failure_phase) if part]
 fields = [
     {"label": "Session", "value": session, "style": "code"},
@@ -8446,6 +8468,51 @@ PY
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
 
+  # Human gates are durable wait dispositions, not failed executions. Resolve
+  # them before liveness, stale-sidecar, chain-health, or relaunch policy can
+  # accidentally turn the wait into L1/L2 repair. A canonical resolver may
+  # still admit a separately typed machine-repair disposition.
+  local early_plan_status_env
+  early_plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-186A" "authority-risk bypass converted to typed evidence gap")"
+  if [[ -n "$early_plan_status_env" ]]; then
+    eval "$early_plan_status_env"
+  fi
+  if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
+    local early_human_summary early_stale_marker_plans
+    early_human_summary="awaiting_human halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON:-plan is awaiting human action}"
+    if [[ -n "${PLAN_STATUS_FAILURE_KIND:-}" ]]; then
+      early_human_summary="$early_human_summary; failure=${PLAN_STATUS_FAILURE_KIND}"
+    fi
+    if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      route_resolver_machine_repair \
+        "$report_items" "$session" "$workspace" "$remote_spec" \
+        "${resolver_human_verdict#suppress:}" "$early_human_summary"
+      return 0
+    fi
+    if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+      early_stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>/dev/null)" || {
+        if declare -F compare_needs_human_to_resolver >/dev/null 2>&1; then
+          compare_needs_human_to_resolver \
+            "$session" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "true" \
+            "${early_stale_marker_plans:-}"
+        fi
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-186B" "authority-risk bypass converted to typed evidence gap"
+        log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-$plan_name} marker_plans=${early_stale_marker_plans:-unknown}"
+      }
+      if [[ -f "$(repair_needs_human_path "$session")" ]] \
+        && declare -F compare_needs_human_to_resolver >/dev/null 2>&1; then
+        compare_needs_human_to_resolver \
+          "$session" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "false" \
+          "${early_stale_marker_plans:-}"
+      fi
+    fi
+    log "session reached stable human gate; notifying without repair or relaunch session=$session plan=${PLAN_STATUS_PLAN_NAME:-$plan_name} summary=$early_human_summary"
+    notify_needs_human \
+      "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" \
+      "$early_human_summary" "stable_human_gate"
+    return 0
+  fi
+
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-186" "authority-risk bypass converted to typed evidence gap")"
   if [[ "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
@@ -8594,7 +8661,7 @@ PY
   fi
 
   if [[ "$health" == "awaiting_pr_merge" ]]; then
-    local pr_reconcile pr_reconcile_status pr_reconcile_message
+    local pr_reconcile pr_reconcile_status pr_reconcile_message pr_gate_reason
     pr_reconcile="$(reconcile_awaiting_pr_merge "$session" "$workspace" "$remote_spec" 2>/dev/null || authority_gap_continue "T29-BYPASS-192" "authority-risk bypass converted to typed evidence gap")"
     IFS=$'\t' read -r pr_reconcile_status pr_reconcile_message <<< "$pr_reconcile"
     if [[ "$pr_reconcile_status" == "merged" ]]; then
@@ -8603,6 +8670,16 @@ PY
     else
       log "session awaiting PR merge: $session detail=${pr_reconcile_message:-$pr_reconcile_status}"
       report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge: ${pr_reconcile_message:-$pr_reconcile_status}" "$workspace" "$remote_spec"
+      PLAN_STATUS_PLAN_NAME="${PLAN_STATUS_PLAN_NAME:-$plan_name}"
+      PLAN_STATUS_CURRENT_STATE="awaiting_pr_merge"
+      # Queue write status (queued/duplicate/etc.) is observation metadata, not
+      # gate identity. Excluding it keeps notification fingerprinting stable.
+      pr_gate_reason="${pr_reconcile_message%% evidence=*}"
+      PLAN_STATUS_AWAITING_HUMAN_REASON="PR merge boundary is still open: ${pr_gate_reason:-$pr_reconcile_status}"
+      notify_needs_human \
+        "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" \
+        "awaiting_human halt; state=awaiting_pr_merge; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON}" \
+        "stable_human_gate"
       return 0
     fi
   fi
@@ -8734,7 +8811,7 @@ PY
     return 0
   fi
   if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
-    local human_summary repair_busy repair_summary
+    local human_summary repair_summary
     human_summary="awaiting_human halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON:-plan is awaiting human action}"
     if [[ -n "${PLAN_STATUS_FAILURE_KIND:-}" ]]; then
       human_summary="$human_summary; failure=${PLAN_STATUS_FAILURE_KIND}"
@@ -8766,34 +8843,13 @@ PY
       fi
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         repair_summary="$(repair_needs_human_summary "$session")"
-        log "session awaits human action and repair loop already requested human session=$session summary=$repair_summary"
-        report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
-        return 0
+        log "session awaits human action; preserving matching repair evidence without suppressing typed gate session=$session summary=$repair_summary"
       fi
     fi
-    repair_busy="$(repair_loop_busy_state "$session")"
-    if [[ "$repair_busy" == "same_session" ]]; then
-      log "session awaits human action; repair already running to attempt resolution session=$session summary=$human_summary"
-      report_item "$report_items" "$session" "repair" "repair_running" "awaiting_human repair already running" "$workspace" "$remote_spec"
-      return 0
-    fi
-    if [[ "$repair_busy" == "other_session" ]]; then
-      log "session awaits human action; another repair loop already running so waiting turn session=$session summary=$human_summary"
-      report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
-      return 0
-    fi
-    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
-        log "session awaits human action; another repair loop already running so waiting turn session=$session summary=$human_summary"
-        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
-      else
-        log "session awaits human action; background-dispatched repair loop to attempt user-action resolution session=$session summary=$human_summary"
-        report_item "$report_items" "$session" "repair" "repair_dispatched" "awaiting_human repair loop dispatched before needs_human" "$workspace" "$remote_spec"
-      fi
-      return 0
-    fi
-    log "session awaits human action but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
-    notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
+    log "session reached stable human gate; notifying without repair or relaunch session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    notify_needs_human \
+      "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" \
+      "$human_summary" "stable_human_gate"
     return 0
   fi
   if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
