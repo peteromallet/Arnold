@@ -70,15 +70,20 @@ def test_wheel_has_arnold_entrypoint_and_py_typed(installed_wheel) -> None:
             assert not any(
                 "arnold/pipelines/megaplan/data/" in name for name in names
             ), "legacy generated data still packaged"
+            assert not any("/node_modules/" in f"/{name}" for name in names), (
+                "wheel contains repository-local Node dependency/cache content"
+            )
 
         with tarfile.open(sdist, "r:gz") as tar:
             sdist_names = tar.getnames()
             assert any(name.endswith("pyproject.toml") for name in sdist_names)
+            assert not any("/node_modules/" in f"/{name}" for name in sdist_names), (
+                "sdist contains repository-local Node dependency/cache content"
+            )
 
         # The shared fixture installs this exact wheel into an isolated package
         # environment using the validation runtime's pinned dependencies.
         arnold = installed_wheel.arnold
-        python = installed_wheel.python
 
         result = subprocess.run(
             [str(arnold), "workflow", "--help"],
