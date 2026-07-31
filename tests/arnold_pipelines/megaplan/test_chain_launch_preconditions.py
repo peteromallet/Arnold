@@ -474,8 +474,9 @@ milestones:
         }
     )
 
-    with pytest.raises(CliError, match="requires merged PR evidence"):
-        validate_paths(spec, tmp_path, spec_path=dependent_path)
+    with pytest.warns(UserWarning, match="merge_policy should only be set away"):
+        with pytest.raises(CliError, match="requires merged PR evidence"):
+            validate_paths(spec, tmp_path, spec_path=dependent_path)
 
 
 def test_review_chain_completed_precondition_without_manifest_rejects_publication_fallback(tmp_path: Path) -> None:
@@ -518,8 +519,9 @@ milestones:
         }
     )
 
-    with pytest.raises(CliError, match="requires merged PR evidence"):
-        validate_paths(spec, tmp_path, spec_path=dependent_path)
+    with pytest.warns(UserWarning, match="merge_policy should only be set away"):
+        with pytest.raises(CliError, match="requires merged PR evidence"):
+            validate_paths(spec, tmp_path, spec_path=dependent_path)
 
 
 def test_chain_completed_precondition_passes_when_all_current_milestones_done(tmp_path: Path) -> None:
@@ -740,7 +742,8 @@ milestones:
         }
     )
 
-    validate_paths(spec, tmp_path, spec_path=dependent_path)
+    with pytest.warns(UserWarning, match="merge_policy should only be set away"):
+        validate_paths(spec, tmp_path, spec_path=dependent_path)
 
 
 def test_chain_completed_require_manifest_rejects_stale_brief_hash(tmp_path: Path) -> None:
@@ -917,16 +920,17 @@ milestones:
         ),
     )
 
-    rc = run_chain_cli(
-        tmp_path,
-        argparse.Namespace(
-            chain_action="manifest",
-            spec=str(prereq_path),
-            project_dir=str(tmp_path),
-            proof_map="proof-map.json",
-            output=None,
-        ),
-    )
+    with pytest.warns(UserWarning, match="merge_policy should only be set away"):
+        rc = run_chain_cli(
+            tmp_path,
+            argparse.Namespace(
+                chain_action="manifest",
+                spec=str(prereq_path),
+                project_dir=str(tmp_path),
+                proof_map="proof-map.json",
+                output=None,
+            ),
+        )
 
     assert rc == 0
     capsys.readouterr()
