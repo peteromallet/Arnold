@@ -16,6 +16,30 @@ HASH = "a" * 64
 OTHER_HASH = "b" * 64
 
 
+def _add_source_universe(data: dict) -> None:
+    entries = []
+    for item in data["source_refs"]:
+        entries.append({
+            "source_id": item["ref"],
+            "source_kind": "git_ref",
+            "head_fingerprint": item["sha"],
+            "unique_delta_count": 0,
+            "disposition": "LANDED",
+            "disposition_evidence": {"exact_final_proof": f"final:{item['sha']}"},
+        })
+    entries.sort(key=lambda item: item["source_id"])
+    data["source_universe"] = {
+        "schema": "arnold.post_m11_source_universe",
+        "version": 1,
+        "generated_at_utc": "2026-07-31T00:00:00Z",
+        "entries": entries,
+        "entry_count": len(entries),
+        "sha256": __import__("hashlib").sha256(
+            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
 def test_release_evidence_record_is_structurally_valid() -> None:
     validate(RECORD)
 
@@ -130,6 +154,7 @@ def _completed_record() -> dict:
             ],
         },
     }
+    _add_source_universe(data)
     return data
 
 
@@ -180,6 +205,34 @@ def test_candidate_ready_requires_bound_acceptance_evidence(
     data.pop("final_acceptance")
 
     with pytest.raises(ValueError, match="requires final_acceptance"):
+        validate(_write(tmp_path, data))
+
+
+def test_candidate_ready_requires_complete_source_universe(tmp_path: Path) -> None:
+    data = _candidate_ready_record()
+    data.pop("source_universe")
+    with pytest.raises(ValueError, match="requires source_universe"):
+        validate(_write(tmp_path, data))
+
+
+@pytest.mark.parametrize("mutation", ["count", "digest", "duplicate", "unmapped_ref", "missing_proof", "deferred_fields"])
+def test_source_universe_completeness_gate_is_fail_closed(tmp_path: Path, mutation: str) -> None:
+    data = _candidate_ready_record()
+    universe = data["source_universe"]
+    if mutation == "count":
+        universe["entry_count"] += 1
+    elif mutation == "digest":
+        universe["sha256"] = OTHER_HASH
+    elif mutation == "duplicate":
+        universe["entries"].append(deepcopy(universe["entries"][0]))
+    elif mutation == "unmapped_ref":
+        data["source_refs"][0]["ref"] = "missing-source"
+    elif mutation == "missing_proof":
+        universe["entries"][0]["disposition_evidence"] = {}
+    else:
+        universe["entries"][0]["disposition"] = "DEFERRED"
+        universe["entries"][0]["disposition_evidence"] = {}
+    with pytest.raises(ValueError):
         validate(_write(tmp_path, data))
 
 

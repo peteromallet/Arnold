@@ -73,6 +73,7 @@ ALLOWED_PACKAGING_ACCEPTANCE_EFFECT = {
     "packaging_code_gate_artifact",
     "superseded_candidate_artifact",
 }
+ALLOWED_SOURCE_DISPOSITIONS = {"LANDED", "SUPERSEDED", "REJECTED", "DEFERRED"}
 NO_DEBT_COUNT_KEYS = {
     "collected",
     "passed",
@@ -307,6 +308,78 @@ def _validate_final_acceptance(
     _validate_final_no_debt(final["no_debt"], binding=binding)
 
 
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def _validate_source_universe(data: dict[str, Any]) -> None:
+    universe = data.get("source_universe")
+    if not isinstance(universe, dict) or set(universe) != {
+        "schema", "version", "generated_at_utc", "entries", "entry_count", "sha256"
+    }:
+        raise ValueError("candidate-ready/complete record requires source_universe")
+    if universe["schema"] != "arnold.post_m11_source_universe":
+        raise ValueError("unsupported source_universe schema")
+    if universe["version"] != 1:
+        raise ValueError("unsupported source_universe version")
+    if not isinstance(universe["generated_at_utc"], str) or not universe["generated_at_utc"].endswith("Z"):
+        raise ValueError("source_universe.generated_at_utc must be UTC")
+    entries = universe["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("source_universe.entries must be non-empty")
+    if entries != sorted(entries, key=lambda item: item["source_id"] if isinstance(item, dict) else ""):
+        raise ValueError("source_universe.entries must be deterministically sorted")
+    ids: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"source_universe.entries[{index}]"
+        if not isinstance(entry, dict) or set(entry) != {
+            "source_id", "source_kind", "head_fingerprint", "unique_delta_count",
+            "disposition", "disposition_evidence"
+        }:
+            raise ValueError(f"{label} has the wrong schema")
+        source_id = entry["source_id"]
+        if not isinstance(source_id, str) or not source_id or source_id in ids:
+            raise ValueError(f"{label}.source_id is missing or duplicated")
+        ids.add(source_id)
+        if not isinstance(entry["source_kind"], str) or not entry["source_kind"]:
+            raise ValueError(f"{label}.source_kind is missing")
+        if not isinstance(entry["head_fingerprint"], str) or not entry["head_fingerprint"]:
+            raise ValueError(f"{label}.head_fingerprint is missing")
+        if type(entry["unique_delta_count"]) is not int or entry["unique_delta_count"] < 0:
+            raise ValueError(f"{label}.unique_delta_count must be non-negative")
+        disposition = entry["disposition"]
+        if disposition not in ALLOWED_SOURCE_DISPOSITIONS:
+            raise ValueError(f"{label}.disposition is invalid")
+        evidence = entry["disposition_evidence"]
+        if not isinstance(evidence, dict) or not evidence:
+            raise ValueError(f"{label}.disposition_evidence is missing")
+        if disposition == "DEFERRED" and not all(
+            isinstance(evidence.get(key), str) and evidence[key]
+            for key in ("owner", "reason", "expiry_or_retirement_trigger")
+        ):
+            raise ValueError(f"{label} DEFERRED evidence needs owner, reason, and expiry_or_retirement_trigger")
+        if disposition in {"LANDED", "SUPERSEDED"} and not all(
+            isinstance(evidence.get(key), str) and evidence[key]
+            for key in ("exact_final_proof",)
+        ):
+            raise ValueError(f"{label} lacks exact final proof")
+    if universe["entry_count"] != len(entries):
+        raise ValueError("source_universe.entry_count disagrees with entries")
+    if _require_sha256(universe["sha256"], "source_universe.sha256") != hashlib.sha256(_canonical_json(entries)).hexdigest():
+        raise ValueError("source_universe.sha256 disagrees with canonical entries")
+
+    refs = data.get("source_refs", [])
+    by_id = {entry["source_id"]: entry for entry in entries}
+    ref_ids = {item.get("ref") for item in refs}
+    for index, item in enumerate(refs):
+        source_id = item.get("ref")
+        if source_id not in by_id:
+            raise ValueError(f"source_refs[{index}] is absent from source_universe")
+    for entry in entries:
+        if entry["unique_delta_count"] and entry["source_id"] not in ref_ids and entry["disposition"] not in {"DEFERRED", "REJECTED"}:
+            raise ValueError(f"unique-delta source {entry['source_id']} is not represented or explicitly deferred/rejected")
+
+
 def validate(path: Path) -> None:
     repo = Path(_git("rev-parse", "--show-toplevel", cwd=REPO_ROOT))
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -493,6 +566,7 @@ def validate(path: Path) -> None:
                 "residuals are pending: "
                 + ", ".join(pending_pre_deploy)
             )
+        _validate_source_universe(data)
         _validate_final_acceptance(data, residuals, repo=repo)
     elif data["record_status"] == "complete":
         pending = [item["id"] for item in residuals if item["status"] != "complete"]
@@ -501,6 +575,7 @@ def validate(path: Path) -> None:
                 "record_status cannot be complete while residuals are pending: "
                 + ", ".join(pending)
             )
+        _validate_source_universe(data)
         _validate_final_acceptance(data, residuals, repo=repo)
 
 
