@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,42 @@ class _StepResult:
     def __init__(self, outputs: dict[str, Any], envelope: Any = None) -> None:
         self.outputs = outputs
         self.envelope = envelope
+
+
+def _git_status(repo_root: Path) -> str:
+    return subprocess.run(
+        ("git", "status", "--porcelain=v1", "--untracked-files=all"),
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def test_default_artifact_root_does_not_mutate_source_tree(tmp_path: Path) -> None:
+    repo_root = Path(__file__).parents[4]
+    before = _git_status(repo_root)
+
+    @phase
+    def child_step(ctx: dict) -> dict:
+        return {"child": "done"}
+
+    @workflow(name="isolated_child")
+    def child(ctx: dict) -> dict:
+        state = yield child_step(ctx)
+        return state
+
+    @pipeline
+    def parent(ctx: dict) -> dict:
+        state = yield child(ctx)
+        return state
+
+    result = run_native_pipeline(compile_pipeline(parent))
+
+    assert result.state == {"child": "done"}
+    assert (tmp_path / ".native_wbc").is_dir()
+    assert (tmp_path / "_child_isolated_child").is_dir()
+    assert _git_status(repo_root) == before
 
 
 def test_null_hooks_implements_protocol() -> None:
