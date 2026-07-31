@@ -1558,6 +1558,11 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             prior_blast_radius = carried if isinstance(carried, dict) else None
         except Exception:
             prior_blast_radius = None
+        # Carrying canonical consumer data is safe only when the revision is
+        # deterministically identical to the prior plan.  The percentage
+        # delta is intentionally not used here: it is rounded and can report
+        # zero for a materially changed plan.
+        unchanged_plan = plan_text == previous_plan
         if revise_blast_radius is not None:
             try:
                 revise_blast_radius = _derive_plan_test_blast_radius(
@@ -1566,10 +1571,12 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
                     payload=payload,
                 )
             except Exception:
-                if prior_blast_radius is not None:
+                if unchanged_plan and prior_blast_radius is not None:
                     revise_blast_radius = prior_blast_radius
+                else:
+                    revise_blast_radius = None
         elif revise_blast_radius is None:
-            revise_blast_radius = prior_blast_radius
+            revise_blast_radius = prior_blast_radius if unchanged_plan else None
         # Step 6: validate carried blocking North Star actions are concretely
         # resolved in the worker output, then persist the normalized
         # north_star_actions_addressed[] beside the revise metadata. Fail
