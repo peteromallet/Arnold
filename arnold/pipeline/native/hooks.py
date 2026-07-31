@@ -42,7 +42,7 @@ from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 from arnold.kernel.effect import EffectDescriptor, EffectKind
 from arnold.kernel.effect_ledger import EffectLedger, EffectRecordState
 from arnold.pipeline.native.ir import NativeInstruction
-from arnold.workflow.native_wbc import NativeWbcAttempt, begin_native_wbc_attempt
+from arnold.kernel.native_wbc import NativeWbcAttempt, begin_native_wbc_attempt
 
 __all__ = [
     "DuplicateFulfilledAction",
