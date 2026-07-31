@@ -174,11 +174,13 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert '"latest_failure", "workspace_head"' in repair_wrapper
     assert "successor blocker should receive its bounded repair action" in repair_wrapper
     assert "load_json(pathlib.Path(receipt_path), default={})" not in repair_wrapper
-    assert 'pathlib.Path(receipt_path).read_text(encoding="utf-8")' in repair_wrapper
+    assert "load_bounded_investigator_receipt(receipt_path)" in repair_wrapper
     assert "<<'PY' || return 1" in repair_wrapper
     assert "load_json(pathlib.Path(receipt_path), default={})" not in wrapper
     assert "load_json(pathlib.Path(observation_path), default={})" not in wrapper
-    assert 'pathlib.Path(observation_path).read_text(encoding="utf-8")' in wrapper
+    assert "load_bounded_investigator_receipt(receipt_path)" in wrapper
+    assert "validate_investigator_receipt(" in wrapper
+    assert "expected_context_digest=digest" in wrapper
     assert "<<'PY' >>\"$RUN_LOG\" 2>&1 || return 1" in wrapper
     assert "STATE MISMATCH DETECTED — NOT CLEARED" in repair_wrapper
     assert 'mismatch_cleared = state_mismatch.get("cleared") is True' in repair_wrapper
