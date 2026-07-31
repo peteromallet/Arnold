@@ -1,8 +1,8 @@
 # Post-M11 consolidation release evidence
 
 Status: **in progress**. Evidence cut:
-`bf5449ae0e509b7a61c012daab18a66e14defd04`, tree
-`0084c438663eb40d2e30fb41c1daf290afbdc7ef`.
+`730fbf08c0a493c928ae234f0a6716098e3c672b`, tree
+`5e74be82804962e17d3a97b4949f5a191e6551ac`.
 
 This is the human-readable projection of
 [`post-m11-release-evidence-20260731.json`](post-m11-release-evidence-20260731.json).
@@ -20,9 +20,9 @@ pending.
 - Origin base containing that plan:
   `96127731661b4aeec7e049b8a7b59170a9506b06`
 - Consolidation evidence cut:
-  `bf5449ae0e509b7a61c012daab18a66e14defd04`
+  `730fbf08c0a493c928ae234f0a6716098e3c672b`
 - Exact evidence-cut tree:
-  `0084c438663eb40d2e30fb41c1daf290afbdc7ef`
+  `5e74be82804962e17d3a97b4949f5a191e6551ac`
 
 The original dirty checkout is preserved, not normalized. Its encrypted
 payload and preservation bundle each have a local copy and a hash-matched
@@ -48,7 +48,8 @@ The first-parent lineage records eleven integration steps:
 12. reconciliation of five stale cloud-supervisor test modules with the
     post-M11 contracts; and
 13. repair of M11 validation node-ID accounting, recovering all 208 omitted
-    node IDs and closing ticket `01KYV57FAPY2H0ZRQMM8MJ29EM`.
+    node IDs and closing ticket `01KYV57FAPY2H0ZRQMM8MJ29EM`; and
+14. resolution of the three packaging release-contract blockers.
 
 Every `LAND` source in the JSON names both its immutable source SHA and the
 integration commit that contains it. The two dirty-work checkpoint branches
@@ -80,12 +81,15 @@ be promoted into a final green receipt.
 
 Packaging evidence is also partial:
 
-- 132 tests passed and three concrete packaging blockers failed under the
-  framework-managed Python 3.12 runtime;
+- the earlier 132-pass run identified three concrete packaging blockers under
+  the framework-managed Python 3.12 runtime;
+- commit `81a44fd930` resolved all three, after which focused and expanded
+  matrices passed 17 and 110 tests respectively;
+- four fresh non-editable installation smoke tests passed;
 - all 47 cloud-template tests passed under that runtime;
-- candidate wheel and sdist hashes are recorded in the JSON; and
-- render, lint, and placeholder checks passed, but the image build was blocked
-  because the Docker daemon was unavailable.
+- rebuilt wheel and sdist hashes are recorded in the JSON; and
+- the packaging **code gate is complete**, but the cloud image build remains
+  pending because the Docker daemon was unavailable during the local attempt.
 
 The seven-failure run remains in the record because failure history must not be
 laundered by later fixes. A final green run must be bound to the final release
@@ -103,9 +107,8 @@ classified; this record authorizes no deletion.
 ## Remaining completion gates
 
 - Freeze and execute the final integrated and no-debt validation inventories.
-- Resolve the three packaging blockers, rebuild artifacts from the final
-  release candidate, prove installed artifacts, and run the cloud-image build
-  against an available Docker daemon.
+- Run the cloud-image build against an available Docker daemon and bind it to
+  the final release candidate.
 - Open and review the release PR; do not push the consolidation directly to
   main.
 - Record the exact main merge SHA and annotated tag.
