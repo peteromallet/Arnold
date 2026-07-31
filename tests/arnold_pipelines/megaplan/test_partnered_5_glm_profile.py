@@ -9,6 +9,7 @@ from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
 
 
 GLM_SPEC = "hermes:zhipu:glm-5.2"
+FINALIZE_SPEC = "codex:gpt-5.6-sol:high"
 FORBIDDEN_GPT_TOKENS = ("codex", "openai", "gpt")
 
 
@@ -45,6 +46,12 @@ def _replace_phase_model_gpt_specs(entries: list[str]) -> list[str]:
     return replaced
 
 
+def _expected_glm_profile(base: dict[str, Any]) -> dict[str, Any]:
+    expected = _replace_gpt_specs(base)
+    expected["finalize"] = FINALIZE_SPEC
+    return expected
+
+
 def _profile_args(profile: str) -> Namespace:
     return Namespace(
         profile=profile,
@@ -68,14 +75,14 @@ def test_partnered_5_glm_is_exact_gpt_replacement_of_partnered_5(
     base_metadata = metadata["partnered-5"]
     glm_metadata = metadata["partnered-5-glm"]
 
-    assert glm == _replace_gpt_specs(base)
+    assert glm == _expected_glm_profile(base)
     assert glm_metadata["adaptive_critique"] == base_metadata["adaptive_critique"]
     assert glm_metadata["tier_models"] == _replace_gpt_specs(
         base_metadata["tier_models"]
     )
 
 
-def test_partnered_5_glm_resolution_contains_no_gpt_route(
+def test_partnered_5_glm_resolution_contains_only_finalize_gpt_route(
     tmp_path: Path,
 ) -> None:
     args = _profile_args("partnered-5-glm")
@@ -88,7 +95,8 @@ def test_partnered_5_glm_resolution_contains_no_gpt_route(
         *_flatten_specs(args.prep_models),
     ]
     assert resolved_specs
-    assert all(not _is_gpt_spec(spec) for spec in resolved_specs)
+    gpt_specs = [spec for spec in resolved_specs if _is_gpt_spec(spec)]
+    assert gpt_specs == [f"finalize={FINALIZE_SPEC}"]
     assert GLM_SPEC in resolved_specs
 
 
@@ -101,6 +109,11 @@ def test_partnered_5_glm_preserves_non_gpt_phase_and_tier_routes(
     apply_profile_expansion(base_args, tmp_path)
     apply_profile_expansion(glm_args, tmp_path)
 
-    assert glm_args.phase_model == _replace_phase_model_gpt_specs(base_args.phase_model)
+    expected_phase_models = _replace_phase_model_gpt_specs(base_args.phase_model)
+    expected_phase_models = [
+        f"finalize={FINALIZE_SPEC}" if entry.startswith("finalize=") else entry
+        for entry in expected_phase_models
+    ]
+    assert glm_args.phase_model == expected_phase_models
     assert glm_args.tier_models == _replace_gpt_specs(base_args.tier_models)
     assert glm_args.prep_models == _replace_gpt_specs(base_args.prep_models)
