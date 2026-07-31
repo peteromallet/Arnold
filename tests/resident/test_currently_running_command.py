@@ -1306,9 +1306,17 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     class Followup:
         def __init__(self):
             self.messages = []
+            self.deletions = []
 
         async def send(self, content, **kwargs):
             self.messages.append((content, kwargs))
+            followup = self
+
+            class Message:
+                async def delete(self, **delete_kwargs):
+                    followup.deletions.append(delete_kwargs)
+
+            return Message()
 
     async def fake_collect(runtime):
         assert runtime.authorizer.__class__ is Authorizer
@@ -1332,7 +1340,11 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
         followup=Followup(),
     )
 
-    asyncio.run(command.callback(interaction))
+    async def invoke() -> None:
+        await command.callback(interaction)
+        await asyncio.sleep(0)
+
+    asyncio.run(invoke())
 
     assert [(subject.user_id, subject.channel_id) for subject in subjects] == [
         ("42", "99")
@@ -1341,7 +1353,8 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     assert len(interaction.followup.messages) == 1
     content, kwargs = interaction.followup.messages[0]
     assert content.startswith("# Currently running\n")
-    assert kwargs == {"ephemeral": True}
+    assert kwargs == {"ephemeral": True, "wait": True}
+    assert interaction.followup.deletions == [{"delay": 60.0}]
 
 
 def test_currently_running_error_response_is_ephemeral(monkeypatch) -> None:
@@ -1355,9 +1368,17 @@ def test_currently_running_error_response_is_ephemeral(monkeypatch) -> None:
     class Followup:
         def __init__(self):
             self.messages = []
+            self.deletions = []
 
         async def send(self, content, **kwargs):
             self.messages.append((content, kwargs))
+            followup = self
+
+            class Message:
+                async def delete(self, **delete_kwargs):
+                    followup.deletions.append(delete_kwargs)
+
+            return Message()
 
     async def failed_collect(_runtime):
         raise RuntimeError("status store unavailable")
@@ -1378,7 +1399,11 @@ def test_currently_running_error_response_is_ephemeral(monkeypatch) -> None:
         followup=Followup(),
     )
 
-    asyncio.run(service.handle_currently_running_interaction(interaction))
+    async def invoke() -> None:
+        await service.handle_currently_running_interaction(interaction)
+        await asyncio.sleep(0)
+
+    asyncio.run(invoke())
 
     assert interaction.response.deferred == [{"thinking": True, "ephemeral": True}]
     assert interaction.followup.messages == [
@@ -1393,9 +1418,10 @@ def test_currently_running_error_response_is_ephemeral(monkeypatch) -> None:
             "⚠️ Managed-agent inventory collection failed — no agent state available.\n"
             "\n"
             "> ⚠️ _non-authoritative — this report is a projection, not source authority._",
-            {"ephemeral": True},
+            {"ephemeral": True, "wait": True},
         )
     ]
+    assert interaction.followup.deletions == [{"delay": 60.0}]
 
 
 def test_currently_running_unauthorized_response_is_ephemeral() -> None:

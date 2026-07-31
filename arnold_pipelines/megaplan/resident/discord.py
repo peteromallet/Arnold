@@ -70,6 +70,8 @@ LOGGER = logging.getLogger(__name__)
 DISCORD_MESSAGE_LIMIT = 2000
 DISCORD_SAFE_MESSAGE_LIMIT = 1900
 DISCORD_REPLY_REACTION = "☑️"
+WHATS_COOKING_DELETE_AFTER_S = 60.0
+_WHATS_COOKING_DELETE_TASKS: set[asyncio.Task[None]] = set()
 # Hourglass is a Unicode emoji supported by Discord and intentionally differs
 # from the terminal checkbox.  Keep both transport UI conventions here.
 DISCORD_WORKING_REACTION = "⏳"
@@ -102,6 +104,25 @@ SUPPORTED_AUDIO_CONTENT_TYPES = frozenset(
 DISCORD_ATTACHMENT_HOSTS = frozenset(
     {"cdn.discordapp.com", "cdn.discordapp.net", "media.discordapp.net"}
 )
+
+
+def _schedule_whats_cooking_delete(message: Any) -> None:
+    task = asyncio.create_task(message.delete(delay=WHATS_COOKING_DELETE_AFTER_S))
+    _WHATS_COOKING_DELETE_TASKS.add(task)
+
+    def _finish(completed: asyncio.Task[None]) -> None:
+        _WHATS_COOKING_DELETE_TASKS.discard(completed)
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            LOGGER.warning(
+                "Resident whats-cooking follow-up deletion failed",
+                exc_info=True,
+            )
+
+    task.add_done_callback(_finish)
 VOICE_FAILURE_UNSUPPORTED = (
     "I couldn't transcribe that attachment. Send one MP3, MP4, MPEG, MPGA, M4A, WAV, WebM, Ogg, or Opus audio file."
 )
@@ -1631,7 +1652,11 @@ class ResidentDiscordService:
             rendered = _attach_m9_whats_cooking_metadata(report, rendered)
 
         for chunk in split_discord_message(rendered):
-            await interaction.followup.send(chunk, ephemeral=True)
+            message = await interaction.followup.send(
+                chunk, ephemeral=True, wait=True
+            )
+            if message is not None:
+                _schedule_whats_cooking_delete(message)
 
     async def handle_restart_resident_interaction(self, interaction: Any) -> None:
         """Authorize and hand ``/restart-resident`` to the guarded lifecycle API."""
