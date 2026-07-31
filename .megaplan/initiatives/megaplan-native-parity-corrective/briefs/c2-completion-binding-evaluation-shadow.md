@@ -19,7 +19,7 @@ receipt-consuming transition is the sole enablement boundary.
 Normative retained design and exhaustive redistribution map:
 
 - `../../standardized-completion-specifications/decisions/standardized-completion-spec-proposal.md`
-- `../../standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml`
+- `../../standardized-completion-specifications/evidence/SUPERSESSION_CROSSWALK.yaml`
 - `../../standardized-completion-specifications/briefs/m2.md`
 
 ## Required work

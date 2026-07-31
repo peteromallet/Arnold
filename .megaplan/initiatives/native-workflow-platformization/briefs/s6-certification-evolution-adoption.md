@@ -16,7 +16,7 @@ internal explicitly experimental.
 
 ## Normative contract and inputs
 
-[`../PLATFORM_CONTRACT.md`](../PLATFORM_CONTRACT.md) is the normative stable-
+[`../decisions/PLATFORM_CONTRACT.md`](../decisions/PLATFORM_CONTRACT.md) is the normative stable-
 certification target after the explicit S5 amendments are incorporated. Consume
 the Native Parity completion and handoff manifests plus the complete S1–S5
 content-addressed handoff chain, cumulative proof map, inherited golden/DX

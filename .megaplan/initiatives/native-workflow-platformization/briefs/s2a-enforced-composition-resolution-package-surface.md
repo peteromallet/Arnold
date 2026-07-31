@@ -12,7 +12,7 @@ harness. This is the reusable runtime hinge; it remains experimental.
 
 ## Normative contract and inputs
 
-[`../PLATFORM_CONTRACT.md`](../PLATFORM_CONTRACT.md) is normative. This brief
+[`../decisions/PLATFORM_CONTRACT.md`](../decisions/PLATFORM_CONTRACT.md) is normative. This brief
 assigns S2A work and proof; it cannot weaken that contract. Consume the exact
 Native Parity completion/handoff receipts plus S1's content-addressed candidate
 standard, extraction inventory, executable models, negative/DX corpora,
