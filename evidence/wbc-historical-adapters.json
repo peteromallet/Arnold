@@ -26,6 +26,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -56,6 +57,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -86,6 +88,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -116,6 +119,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -146,6 +150,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -176,6 +181,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -206,6 +212,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -236,6 +243,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -266,6 +274,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -296,6 +305,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -326,6 +336,7 @@
         "authority_increasing_write_allowed": false,
         "authority_increasing_writes_detected": [],
         "diagnostic_only": true,
+        "mode": "shadow",
         "read_only": true,
         "read_only_verified": true
       }
@@ -348,6 +359,6 @@
     "schema": "m6.wbc-historical-adapters.v1",
     "status": "proven_read_only",
     "status_detail": "Every listed adapter has an explicit read-only, diagnostic-only zero-authority proof.",
-    "timestamp_utc": "2026-07-31T00:48:06.990962+00:00"
+    "timestamp_utc": "2026-07-31T08:53:09.480142+00:00"
   }
 }

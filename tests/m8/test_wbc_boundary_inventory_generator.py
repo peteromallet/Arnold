@@ -221,6 +221,7 @@ def test_generator_emits_extended_inventory_and_preserves_c1_matrix(
         proof = adapter["zero_authority_caller_proof"]
         assert proof["read_only"] is True
         assert proof["diagnostic_only"] is True
+        assert proof["mode"] == "shadow"
         assert proof["authority_increasing_write_allowed"] is False
         assert proof["read_only_verified"] is True
         assert proof["authority_increasing_writes_detected"] == []

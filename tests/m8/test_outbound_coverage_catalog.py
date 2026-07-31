@@ -258,21 +258,22 @@ def _parse_coverage_doc(doc_path: Path) -> dict[str, set[tuple[str, str]]]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="module")
+def call_sites() -> list[CallSite]:
+    """Discover all production call sites for tracked functions."""
+
+    return _discover_call_sites(_find_repo_root())
+
+
+@pytest.fixture(scope="module")
+def covered() -> dict[str, set[tuple[str, str]]]:
+    """Parse the coverage document."""
+
+    return _parse_coverage_doc(_find_repo_root() / COVERAGE_DOC)
+
+
 class TestOutboundCoverageCatalog:
     """Assert that every discovered production call site appears in the catalog."""
-
-    @pytest.fixture(scope="class")
-    def call_sites(self) -> list[CallSite]:
-        """Discover all production call sites for tracked functions."""
-        repo_root = _find_repo_root()
-        return _discover_call_sites(repo_root)
-
-    @pytest.fixture(scope="class")
-    def covered(self) -> dict[str, set[tuple[str, str]]]:
-        """Parse the coverage document."""
-        repo_root = _find_repo_root()
-        doc_path = repo_root / COVERAGE_DOC
-        return _parse_coverage_doc(doc_path)
 
     # ── validate_payload_against_schema ───────────────────────────────
 
