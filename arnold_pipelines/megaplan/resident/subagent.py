@@ -2858,6 +2858,31 @@ def _attach_synthesis_owner_material(
         return record
 
 
+def _configured_timeout(value: object) -> float | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return float(value)
+
+
+def _explicit_manifest_timeout(manifest: Mapping[str, Any]) -> float | None:
+    policy = manifest.get("timeout_policy")
+    if not isinstance(policy, Mapping):
+        return None
+    if policy.get("mode") != "explicit" or policy.get("source") not in {
+        "trusted_cli", "verified_user_request"
+    }:
+        return None
+    timeout_s = _configured_timeout(policy.get("timeout_s"))
+    return timeout_s if timeout_s is not None and timeout_s > 0 else None
+
+
+def _explicit_manifest_timeout_source(manifest: Mapping[str, Any]) -> str | None:
+    if _explicit_manifest_timeout(manifest) is None:
+        return None
+    policy = manifest["timeout_policy"]
+    return str(policy["source"])
+
+
 def follow_up_managed_subagent(
     *,
     run_id: str,
@@ -3194,7 +3219,8 @@ def follow_up_managed_subagent(
                 ),
                 toolsets=str(provider_options.get("toolsets") or "file,web,terminal"),
                 max_tokens=int(provider_options.get("max_tokens") or 65_536),
-                provider_timeout_s=float(provider_options.get("timeout_s") or 600.0),
+                provider_timeout_s=_explicit_manifest_timeout(tip),
+                timeout_source=_explicit_manifest_timeout_source(tip),
                 task_kind=str(tip.get("task_kind") or target.get("task_kind") or "routine"),
                 work_intent=str(
                     tip.get("work_intent")
@@ -3365,6 +3391,7 @@ def launch_managed_subagent_detached(
     toolsets: str = "file,web,terminal",
     max_tokens: int = 65_536,
     provider_timeout_s: float | None = None,
+    timeout_source: str | None = None,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
     mutation_claim: DelegatedMutationClaim = "auto",
@@ -3403,6 +3430,7 @@ def launch_managed_subagent_detached(
         toolsets=toolsets,
         max_tokens=max_tokens,
         timeout_s=provider_timeout_s,
+        timeout_source=timeout_source,
     )
     normalized_toolsets = tuple(provider_contract["controls"]["toolsets"])
     toolsets = ",".join(normalized_toolsets)
@@ -3859,6 +3887,11 @@ def launch_managed_subagent_detached(
         "provider_options": {
             "toolsets": toolsets,
             "max_tokens": max_tokens,
+            "timeout_s": provider_timeout_s,
+        },
+        "timeout_policy": {
+            "mode": "explicit" if provider_timeout_s is not None else "not_configured",
+            "source": timeout_source,
             "timeout_s": provider_timeout_s,
         },
         "provider_contract": provider_contract,
@@ -4546,7 +4579,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
     backend = str(manifest.get("backend") or "codex")
     provider_permission_mode: str | None = None
     provider_options = dict(manifest.get("provider_options") or {})
-    timeout_s = float(provider_options.get("timeout_s") or 600.0)
+    timeout_s = _explicit_manifest_timeout(manifest)
 
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
@@ -4650,14 +4683,14 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 str(manifest["project_dir"]),
                 "--query-file",
                 str(manifest["prompt_path"]),
-                "--timeout",
-                str(timeout_s),
                 "--output-format",
                 "stream-json",
                 "--verbose",
                 "--tools",
                 claude_tools_for(toolsets),
             ]
+            if timeout_s is not None:
+                argv[argv.index("--output-format"):argv.index("--output-format")] = ["--timeout", str(timeout_s)]
             if manifest.get("run_mode") == "session_continuation":
                 argv += ["--resume", str(session_id)]
             else:
@@ -4684,6 +4717,8 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             worker_env = environment_with_provenance(worker_provenance)
         if worker_env is None:
             worker_env = os.environ.copy()
+        if backend == "hermes" and timeout_s is None:
+            worker_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
         if backend == "claude":
             worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
                 int(provider_options.get("max_tokens") or 65_536)
@@ -4732,7 +4767,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             },
         )
         try:
-            returncode = worker.wait(timeout=timeout_s)
+            returncode = worker.wait(timeout=timeout_s) if timeout_s is not None else worker.wait()
         except subprocess.TimeoutExpired:
             worker.terminate()
             try:

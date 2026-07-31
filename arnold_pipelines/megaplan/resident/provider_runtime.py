@@ -65,7 +65,8 @@ def claude_tools_for(toolsets: tuple[str, ...]) -> str:
 
 
 def provider_execution_contract(
-    *, backend: str, toolsets: str, max_tokens: int, timeout_s: float | None
+    *, backend: str, toolsets: str, max_tokens: int, timeout_s: float | None,
+    timeout_source: str | None = None,
 ) -> dict[str, Any]:
     normalized = normalize_toolsets(toolsets)
     capabilities = managed_agent_capabilities(backend)
@@ -78,6 +79,10 @@ def provider_execution_contract(
         raise ValueError("max_tokens must be positive")
     if timeout_s is not None and timeout_s <= 0:
         raise ValueError("provider timeout must be positive")
+    if timeout_s is not None and timeout_source not in {"trusted_cli", "verified_user_request"}:
+        raise ValueError("provider timeout requires trusted ingress provenance")
+    if timeout_s is None and timeout_source is not None:
+        raise ValueError("timeout source requires an explicit timeout")
     return {
         "schema_version": "arnold-managed-provider-capabilities-v1",
         "backend": backend,
@@ -89,6 +94,12 @@ def provider_execution_contract(
             "max_tokens_enforcement": capabilities.max_output_tokens,
             "timeout_s": float(timeout_s) if timeout_s is not None else None,
             "timeout_enforcement": capabilities.provider_timeout if timeout_s is not None else "not_configured",
+            "timeout_source": timeout_source,
+            "timeout_policy": {
+                "mode": "explicit" if timeout_s is not None else "not_configured",
+                "source": timeout_source,
+                "timeout_s": float(timeout_s) if timeout_s is not None else None,
+            },
         },
     }
 
