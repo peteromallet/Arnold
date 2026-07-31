@@ -306,8 +306,8 @@ def test_generate_evidence_bundle_emits_checker_records_and_scoped_boundary_proo
     assert compatibility_record["quarantine_record_count"] == len(FORBIDDEN_AUTHORITY_SCANS)
     assert compatibility_record["authority_conflicts"] == {}
     assert compatibility_record["coupling_gate"]["check_id"] == "generic-arnold-megaplan-coupling"
-    assert compatibility_record["coupling_gate"]["details"]["allowlisted_count"] == 11
-    assert compatibility_record["coupling_gate"]["details"]["coupled_count"] >= 11
+    assert compatibility_record["coupling_gate"]["details"]["allowlisted_count"] == 5
+    assert compatibility_record["coupling_gate"]["details"]["coupled_count"] == 5
     assert compatibility_record["passed"] is (
         compatibility_record["coupling_gate"]["passed"]
         and not compatibility_record["authority_conflicts"]
