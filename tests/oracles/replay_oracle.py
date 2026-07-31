@@ -189,6 +189,20 @@ def _normalized_state(state: Mapping[str, Any]) -> dict[str, Any]:
                 if path_key in environment:
                     environment[path_key] = f"{{{{{path_key}}}}}"
             meta["execution_environment"] = environment
+        raw_admission_controls = meta.get("admission_controls")
+        if isinstance(raw_admission_controls, Mapping):
+            admission_controls = dict(raw_admission_controls)
+            raw_init = admission_controls.get("init")
+            if isinstance(raw_init, Mapping):
+                init = dict(raw_init)
+                raw_extra = init.get("extra")
+                if isinstance(raw_extra, Mapping):
+                    extra = dict(raw_extra)
+                    if "project_dir" in extra:
+                        extra["project_dir"] = "{{project_dir}}"
+                    init["extra"] = extra
+                admission_controls["init"] = init
+            meta["admission_controls"] = admission_controls
     return {
         "current_state": state.get("current_state"),
         "config": config,

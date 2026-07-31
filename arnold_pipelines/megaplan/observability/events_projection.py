@@ -216,10 +216,74 @@ def ensure_events_projection(
     return write_projection(plan_dir, store, plan_id=plan_id or plan_dir.name)
 
 
+def projection_journal_cursor(plan_dir: Path) -> dict[str, Any]:
+    """Compute a rebuildable cursor from the durable ``events.ndjson`` projection.
+
+    This is **rebuildable projection evidence**: the returned mapping captures
+    how many records the projection file contains, the highest ``seq``
+    observed, and a SHA-256 digest of the canonical record stream.  Every
+    field is reproducible by re-reading the durable file — it is not authority
+    over source state and is never derived from labels, liveness, or WBC
+    receipts.
+
+    Used by restart logic to verify append-order monotonicity from durable
+    evidence rather than trusting the ``.events.projection.seq`` sidecar
+    alone.  The cursor is read-only — this function never writes.
+    """
+    plan_dir = Path(plan_dir)
+    ndjson_path = plan_dir / "events.ndjson"
+    record_count = 0
+    last_seq: int | None = None
+    hasher = hashlib.sha256()
+    if ndjson_path.exists():
+        with open(ndjson_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                record_count += 1
+                seq = event.get("seq")
+                if isinstance(seq, int | float) and seq == int(seq):
+                    seq_int = int(seq)
+                    if last_seq is None or seq_int > last_seq:
+                        last_seq = seq_int
+                canonical = _canonical_dumps(event)
+                hasher.update(canonical.encode("utf-8"))
+                hasher.update(b"\n")
+    return {
+        "plan_dir": str(plan_dir.resolve()),
+        "record_count": record_count,
+        "last_seq": last_seq,
+        "digest": "sha256:" + hasher.hexdigest(),
+    }
+
+
+def projection_append_is_monotonic(plan_dir: Path, incoming_seq: int) -> bool:
+    """Verify that *incoming_seq* extends the durable projection by exactly one.
+
+    Derives the projection's current last ``seq`` from the durable
+    ``events.ndjson`` content (not from the ``.events.projection.seq``
+    sidecar).  Returns ``True`` only when the projection exists and its
+    durable last ``seq`` equals ``incoming_seq - 1``.  This bounds restart
+    appends by new events and append order from durable evidence.
+    """
+    cursor = projection_journal_cursor(plan_dir)
+    durable_last = cursor["last_seq"]
+    if durable_last is None or cursor["record_count"] == 0:
+        return False
+    return durable_last == incoming_seq - 1
+
+
 __all__ = [
     "_canonical_dumps",
     "append_projection_event",
     "ensure_events_projection",
+    "projection_append_is_monotonic",
+    "projection_journal_cursor",
     "project_events",
     "project_events_ndjson",
     "schema_equivalence_triples",

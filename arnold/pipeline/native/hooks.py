@@ -36,16 +36,19 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 
 from arnold.kernel.effect import EffectDescriptor, EffectKind
 from arnold.kernel.effect_ledger import EffectLedger, EffectRecordState
 from arnold.pipeline.native.ir import NativeInstruction
+from arnold.workflow.native_wbc import NativeWbcAttempt, begin_native_wbc_attempt
 
 __all__ = [
     "DuplicateFulfilledAction",
     "EffectLedgerHooks",
     "NativeRuntimeHooks",
+    "NativeWbcHooks",
     "NullNativeRuntimeHooks",
 ]
 
@@ -312,6 +315,8 @@ class EffectLedgerHooks:
         *,
         duplicate_fulfilled_action: DuplicateFulfilledAction = "skip",
         effect_protocol: Any = None,
+        artifact_root: str | Path | None = None,
+        program_name: str = "",
     ) -> None:
         if duplicate_fulfilled_action not in _VALID_DUPLICATE_ACTIONS:
             raise ValueError(
@@ -332,6 +337,14 @@ class EffectLedgerHooks:
         self.wbc_intents_persisted: int = 0
         self.wbc_dispatches: int = 0
         self.wbc_zero_call_blocks: int = 0
+        # Step 4: durable effect-ledger WBC evidence surface.
+        self._wbc: NativeWbcAttempt = begin_native_wbc_attempt(
+            artifact_root,
+            producer_family="arnold_native",
+            surface="effect_ledger_hooks",
+            subject={"program": program_name},
+            start_payload={"program": program_name},
+        )
 
     def _build_effect_descriptor(self, instr: NativeInstruction) -> EffectDescriptor | None:
         if not instr.operation or not instr.idempotency_key:
@@ -419,6 +432,16 @@ class EffectLedgerHooks:
         # instruction func are never invoked (zero-call-on-failure).
         self._persist_wbc_durable_intent(instr, descriptor, ctx)
 
+        # Step 4: durable effect_intent WBC evidence.
+        self._wbc.effect_intent(
+            descriptor.effect_id,
+            payload={
+                "idempotency_key": descriptor.idempotency_key,
+                "target": descriptor.target,
+                "operation": instr.operation,
+            },
+        )
+
         prerecorded = self._ledger.prerecord(descriptor)
         record = self._ledger.get_record(descriptor.idempotency_key)
         duplicate_action: str | None = None
@@ -430,6 +453,15 @@ class EffectLedgerHooks:
                     self._duplicate_fulfilled_action
                     if record.state is EffectRecordState.FULFILLED
                     else "retry"
+                )
+                # Step 4: durable reconciliation WBC evidence for duplicates.
+                self._wbc.reconciliation(
+                    descriptor.effect_id,
+                    outcome=duplicate_action,
+                    payload={
+                        "idempotency_key": descriptor.idempotency_key,
+                        "lifecycle_state": lifecycle_state,
+                    },
                 )
 
         metadata = self._build_effect_metadata(
@@ -470,6 +502,12 @@ class EffectLedgerHooks:
                     idempotency_key=instr.idempotency_key,
                     outcome="COMPLETED",
                 )
+            # Step 4: durable effect_outcome WBC evidence.
+            self._wbc.effect_outcome(
+                instr.operation or instr.name or "step",
+                status="COMPLETED",
+                payload={"idempotency_key": instr.idempotency_key},
+            )
         return result
 
     def on_step_error(
@@ -499,6 +537,12 @@ class EffectLedgerHooks:
                     outcome="FAILED",
                     detail={"error": str(exc)},
                 )
+            # Step 4: durable effect_outcome WBC evidence.
+            self._wbc.effect_outcome(
+                instr.operation or instr.name or "step",
+                status="FAILED",
+                payload={"idempotency_key": instr.idempotency_key, "error": str(exc)},
+            )
 
     def merge_state(
         self,
@@ -559,3 +603,184 @@ class EffectLedgerHooks:
         callback = getattr(self._inner, "record_cancellation", None)
         if callable(callback):
             callback(cancellation, state=state)
+
+
+class NativeWbcHooks:
+    """Delegating ``NativeRuntimeHooks`` wrapper that emits durable WBC evidence.
+
+    Wraps an inner ``NativeRuntimeHooks`` and records start, step-effect,
+    checkpoint, error, and terminal/close events under
+    ``<artifact_root>/.native_wbc/arnold_native/hooks`` while delegating the
+    actual hook work to the inner instance.
+
+    ``close`` is idempotent — calling it more than once is a safe no-op.
+    """
+
+    halt_reason: str | None
+
+    def __init__(
+        self,
+        inner: NativeRuntimeHooks | None = None,
+        *,
+        artifact_root: str | Path | None = None,
+        program_name: str = "",
+        run_id: str = "",
+        plugin_id: str = "",
+        manifest_hash: str = "",
+    ) -> None:
+        self._inner: NativeRuntimeHooks = (
+            inner if inner is not None else NullNativeRuntimeHooks()
+        )
+        self._wbc: NativeWbcAttempt = begin_native_wbc_attempt(
+            artifact_root,
+            producer_family="arnold_native",
+            surface="hooks",
+            run_id=run_id,
+            plugin_id=plugin_id,
+            manifest_hash=manifest_hash,
+            subject={"program": program_name},
+            start_payload={"program": program_name},
+        )
+        self._closed: bool = False
+        self.halt_reason: str | None = None
+
+    # ── NativeRuntimeHooks delegation + WBC evidence ───────────────
+
+    def on_step_start(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        ctx = self._inner.on_step_start(instr, ctx)
+        self._wbc.effect(
+            "on_step_start",
+            {"op": instr.op, "name": instr.name},
+        )
+        return ctx
+
+    def on_step_end(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        result = self._inner.on_step_end(instr, ctx, result)
+        self._wbc.effect(
+            "on_step_end",
+            {"op": instr.op, "name": instr.name},
+        )
+        return result
+
+    def on_step_error(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        exc: BaseException,
+    ) -> None:
+        self._inner.on_step_error(instr, ctx, exc)
+        self._wbc.effect(
+            "on_step_error",
+            {"op": instr.op, "name": instr.name, "error": str(exc)},
+        )
+
+    def merge_state(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        outputs: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> tuple[dict[str, Any], frozenset[str]]:
+        return self._inner.merge_state(instr, state, outputs, owned_keys)
+
+    def join_envelope(
+        self,
+        instr: NativeInstruction,
+        current_envelope: Any,
+        step_envelope: Any,
+    ) -> Any:
+        return self._inner.join_envelope(instr, current_envelope, step_envelope)
+
+    def should_suspend(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        result: Any,
+    ) -> tuple[bool, str | None]:
+        return self._inner.should_suspend(instr, state, result)
+
+    def should_halt_loop(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        iteration: int,
+    ) -> tuple[bool, str | None]:
+        return self._inner.should_halt_loop(instr, state, iteration)
+
+    def on_stage_complete(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+        state: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> None:
+        self._inner.on_stage_complete(instr, ctx, result, state, owned_keys)
+
+    def on_checkpoint(
+        self,
+        cursor: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        self._inner.on_checkpoint(cursor, state)
+        self._wbc.effect("on_checkpoint", {})
+
+    def record_cancellation(
+        self,
+        cancellation: dict[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_cancellation", None)
+        if callable(callback):
+            callback(cancellation, state=state)
+        payload = dict(cancellation) if isinstance(cancellation, Mapping) else {}
+        self._wbc.effect("record_cancellation", payload)
+
+    def record_run_init(
+        self,
+        program: Any,
+        *,
+        run_path: str,
+        pack_provenance: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Preserve optional run-provenance callbacks through the wrapper."""
+        callback = getattr(self._inner, "record_run_init", None)
+        if callable(callback):
+            callback(
+                program,
+                run_path=run_path,
+                pack_provenance=pack_provenance,
+            )
+
+    # ── Idempotent close ───────────────────────────────────────────
+
+    def close(
+        self,
+        *,
+        status: str = "completed",
+        outcome: str = "result",
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Emit the terminal record for this hooks surface.
+
+        Idempotent: a second call is a silent no-op.  Also delegates to the
+        inner hook's ``close`` (if any) so that chained wrappers flush their
+        own evidence.
+        """
+        if self._closed:
+            return
+        self._wbc.terminal(status=status, outcome=outcome, payload=payload or {})
+        inner_close = getattr(self._inner, "close", None)
+        if callable(inner_close):
+            inner_close(status=status, outcome=outcome, payload=payload)
+        self._closed = True

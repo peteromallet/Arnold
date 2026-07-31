@@ -21,6 +21,7 @@ Callers:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import socket
@@ -72,6 +73,7 @@ def build_owner_metadata(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
@@ -99,6 +101,17 @@ def build_owner_metadata(
         "timeout_seconds": timeout_seconds,
         "hostname": _default_hostname() if hostname is None else hostname,
     }
+    if repair_identity is not None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        normalized_identity = repair_requests.normalize_repair_identity(
+            repair_identity
+        )
+        if normalized_identity is not None:
+            metadata["repair_identity"] = normalized_identity
+            metadata["repair_identity_key"] = (
+                repair_requests.repair_identity_key(normalized_identity)
+            )
     if boot_id is None:
         try:
             from arnold_pipelines.megaplan.custody.contracts import (
@@ -119,6 +132,7 @@ def inspect_repair_lock(
     *,
     now: datetime | None = None,
     is_pid_live: PidLivenessProbe | None = None,
+    expected_repair_identity: Mapping[str, Any] | None = None,
 ) -> RepairLockResult:
     """Inspect an existing repair lock without mutating it.
 
@@ -146,6 +160,13 @@ def inspect_repair_lock(
 
     owner: dict[str, Any] | None = owner_payload if isinstance(owner_payload, dict) else None
     pid_probe = is_pid_live or _default_is_pid_live
+    expected_identity_key = ""
+    if expected_repair_identity is not None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        expected_identity_key = repair_requests.repair_identity_key(
+            expected_repair_identity
+        )
     if owner is None:
         if owner_path.exists():
             evidence["reasons"].append("owner_metadata_invalid")
@@ -157,7 +178,10 @@ def inspect_repair_lock(
         if isinstance(pid, int):
             if not pid_probe(pid):
                 evidence["reasons"].append("owner_pid_not_live")
-            elif not _pid_matches_expected_repair_loop(owner, pid):
+            elif (
+                Path(f"/proc/{pid}").exists()
+                and not _pid_matches_expected_repair_loop(owner, pid)
+            ):
                 evidence["reasons"].append("owner_process_mismatch")
                 observed_command = _pid_command_text(pid)
                 if observed_command:
@@ -178,6 +202,18 @@ def inspect_repair_lock(
                 evidence["age_seconds"] = age_seconds
                 if age_seconds > float(timeout_seconds):
                     evidence["reasons"].append("timeout_expired")
+        if expected_identity_key:
+            observed_identity_key = str(
+                owner.get("repair_identity_key") or ""
+            )
+            if observed_identity_key != expected_identity_key:
+                evidence["reasons"].append("repair_identity_mismatch")
+                evidence["expected_repair_identity_key"] = (
+                    expected_identity_key
+                )
+                evidence["observed_repair_identity_key"] = (
+                    observed_identity_key
+                )
 
     if evidence["reasons"]:
         return RepairLockResult(
@@ -195,6 +231,7 @@ def acquire_repair_lock(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
@@ -212,6 +249,7 @@ def acquire_repair_lock(
     owner = build_owner_metadata(
         session=session,
         target_id=target_id,
+        repair_identity=repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,
@@ -225,7 +263,12 @@ def acquire_repair_lock(
     try:
         lock_path.mkdir(parents=False)
     except FileExistsError:
-        return inspect_repair_lock(lock_path, now=now, is_pid_live=is_pid_live)
+        return inspect_repair_lock(
+            lock_path,
+            now=now,
+            is_pid_live=is_pid_live,
+            expected_repair_identity=repair_identity,
+        )
 
     try:
         # Owner equality is the release fence.  Additive provenance belongs on
@@ -594,11 +637,33 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def occurrence_scoped_lock_dir(
+    claims_dir: str | Path,
+    occurrence_fingerprint: str,
+) -> Path:
+    """Return the lock directory for an exact-occurrence claim.
+
+    The directory is keyed by the deterministic occurrence fingerprint so
+    that two distinct occurrences of the same logical blocker cannot share
+    a claim slot — only one exact occurrence may be actively claimed at a
+    time.  The fingerprint MUST come from the canonical occurrence tuple
+    (the F01 repair-occurrence fields); it MUST NOT be derived from a
+    label, liveness signal, WBC receipt, or rebuildable projection, since
+    none of those uniquely and exactly identify a repair occurrence.
+    """
+
+    if not isinstance(occurrence_fingerprint, str) or not occurrence_fingerprint.strip():
+        raise ValueError("occurrence_fingerprint is required")
+    token = hashlib.sha256(occurrence_fingerprint.encode("utf-8")).hexdigest()
+    return Path(claims_dir) / f"{token}.lock"
+
+
 __all__ = [
     "RepairLockResult",
     "acquire_repair_lock",
     "build_owner_metadata",
     "inspect_repair_lock",
+    "occurrence_scoped_lock_dir",
     "owner_metadata_path",
     "release_repair_lock",
     "renew_repair_lock",

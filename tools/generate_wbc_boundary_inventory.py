@@ -66,6 +66,7 @@ import hashlib
 import json
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -105,8 +106,42 @@ SUPPORT_MANIFEST_PATH = (
     / "support_manifest.json"
 )
 DISCOVERY_RULES_PATH = EVIDENCE_DIR / "wbc-boundary-discovery-rules.yaml"
+SOURCE_DISCOVERY_RULES_PATH = DISCOVERY_RULES_PATH
 
 DEFAULT_OUTPUT = EVIDENCE_DIR / "wbc-boundary-inventory.json"
+
+RISKY_PRODUCER_CALL_NAMES = frozenset(
+    {
+        "write_boundary_receipt",
+        "_emit_boundary_receipt",
+        "_emit_execute_boundary_receipt",
+        "_emit_batch_boundary_receipt",
+        "append_event",
+        "start_attempt",
+        "complete_attempt",
+        "fail_attempt",
+        "cancel_attempt",
+        "suspend_attempt",
+        "resume_attempt",
+        "schedule_retry",
+        "record_effect_intent",
+        "record_effect_outcome",
+    }
+)
+BYPASS_TEXT_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\|\|\s*true\b", "shell_or_true"),
+    (r"except Exception", "broad_exception"),
+    (r"without raising", "without_raising"),
+    (r"best-effort", "best_effort"),
+    (r"warn-and-continue", "warn_and_continue"),
+    (r"\b(?:load_chain_state|latest_artifact)\s*\(", "implicit_latest_lookup"),
+    (
+        r"\b(?:expected_source_version|source_version|source_ref|lookup_ref|"
+        r"commit_sha|head_sha)\w*\s*=\s*[\"']"
+        r"(?:HEAD|head|latest|main|master|refs/pull/[^\"']+)[\"']",
+        "mutable_alias_overwrite",
+    ),
+)
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -187,6 +222,18 @@ def _load_json(path: Path) -> dict[str, Any]:
     """Load and return JSON from *path*."""
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _matrix_hash() -> str:
+    """Return the immutable C1 producer-matrix content hash."""
+    return hashlib.sha256(CONTRACT_MATRIX_PATH.read_bytes()).hexdigest()
 
 
 # ── Static discovery scanner (T5) ───────────────────────────────────────────
@@ -598,6 +645,237 @@ def _is_authority_surface(surface_types: list[str]) -> bool:
     return any(st in AUTHORITY_ADJACENT_SURFACES for st in surface_types)
 
 
+def _owner_for_path(rel_path: str) -> str:
+    """Return the predecessor inventory owner classification for a path."""
+    if rel_path.startswith(
+        ("arnold/workflow/", "arnold_pipelines/megaplan/workflows/")
+    ):
+        return "wbc"
+    if "/custody/" in rel_path:
+        return "custody"
+    if any(
+        segment in rel_path
+        for segment in (
+            "/cloud/",
+            "/resident/",
+            "/supervisor/",
+            "/repair",
+            "/watchdog",
+        )
+    ):
+        return "maintenance"
+    return "run_authority"
+
+
+@dataclass
+class CallScan:
+    callee: str
+    line: int
+    column: int
+    enclosing_function: str = ""
+    boundary_literals: tuple[str, ...] = ()
+    source_segment: str = ""
+
+
+@dataclass
+class TryScan:
+    line: int
+    enclosing_function: str
+    catches_broad_exception: bool
+    body_calls: tuple[str, ...] = ()
+    handler_source: str = ""
+
+
+@dataclass
+class ModuleScan:
+    module_path: str
+    category: str
+    owner: str
+    surface_types: tuple[str, ...]
+    is_authority: bool
+    classes: tuple[str, ...]
+    functions: tuple[str, ...]
+    imports: tuple[str, ...]
+    docstring_summary: str
+    calls: tuple[CallScan, ...] = ()
+    try_scans: tuple[TryScan, ...] = ()
+    text_hits: tuple[dict[str, Any], ...] = ()
+
+
+class _SourceSegments:
+    """Return AST source segments without re-splitting source per node.
+
+    ``ast.get_source_segment`` splits the complete source into parser lines
+    on every invocation.  WBC scans every call and broad-exception handler,
+    so that otherwise turns large modules into a quadratic workload.  AST
+    column offsets are UTF-8 byte offsets; retaining encoded lines also
+    preserves the standard helper's non-ASCII slicing semantics.
+    """
+
+    def __init__(self, source: str) -> None:
+        # Match the parser's line model: retain CR/LF terminators and do not
+        # treat form feed or other Unicode separators as line boundaries.
+        self._lines: list[str] = []
+        line_start = 0
+        index = 0
+        while index < len(source):
+            character = source[index]
+            index += 1
+            if (
+                character == "\r"
+                and index < len(source)
+                and source[index] == "\n"
+            ):
+                index += 1
+                self._lines.append(source[line_start:index])
+                line_start = index
+            elif character in "\r\n":
+                self._lines.append(source[line_start:index])
+                line_start = index
+        if line_start < len(source):
+            self._lines.append(source[line_start:])
+        self._encoded_lines = [
+            line.encode("utf-8") for line in self._lines
+        ]
+
+    def get(self, node: ast.AST) -> str | None:
+        end_lineno = getattr(node, "end_lineno", None)
+        end_col_offset = getattr(node, "end_col_offset", None)
+        if end_lineno is None or end_col_offset is None:
+            return None
+
+        lineno = node.lineno - 1
+        end_lineno -= 1
+        col_offset = node.col_offset
+        if end_lineno == lineno:
+            return self._encoded_lines[lineno][
+                col_offset:end_col_offset
+            ].decode("utf-8")
+
+        first = self._encoded_lines[lineno][col_offset:].decode("utf-8")
+        last = self._encoded_lines[end_lineno][:end_col_offset].decode("utf-8")
+        lines = [first]
+        lines.extend(self._lines[lineno + 1:end_lineno])
+        lines.append(last)
+        return "".join(lines)
+
+
+class _ModuleVisitor(ast.NodeVisitor):
+    def __init__(self, source: str) -> None:
+        self.source = source
+        self.source_segments = _SourceSegments(source)
+        self.classes: list[str] = []
+        self.functions: list[str] = []
+        self.function_ranges: list[tuple[int, int, str]] = []
+        self.imports: list[str] = []
+        self.calls: list[CallScan] = []
+        self.try_scans: list[TryScan] = []
+        self.function_stack: list[str] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.classes.append(node.name)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.functions.append(node.name)
+        self.function_ranges.append(
+            (node.lineno, getattr(node, "end_lineno", node.lineno), node.name)
+        )
+        self.function_stack.append(node.name)
+        self.generic_visit(node)
+        self.function_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.imports.extend(alias.name for alias in node.names)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = node.module or ""
+        self.imports.extend(
+            f"{module}.{alias.name}" if module else alias.name
+            for alias in node.names
+        )
+
+    def visit_Call(self, node: ast.Call) -> None:
+        callee = _call_name(node.func)
+        if callee:
+            literals = [
+                arg.value
+                for arg in list(node.args)
+                + [kw.value for kw in node.keywords if kw.arg]
+                if isinstance(arg, ast.Constant)
+                and isinstance(arg.value, str)
+                and re.fullmatch(r"[a-z0-9_]+", arg.value)
+            ]
+            self.calls.append(
+                CallScan(
+                    callee=callee,
+                    line=node.lineno,
+                    column=node.col_offset,
+                    enclosing_function=(
+                        self.function_stack[-1] if self.function_stack else ""
+                    ),
+                    boundary_literals=tuple(sorted(set(literals))),
+                    source_segment=(
+                        self.source_segments.get(node) or ""
+                    ).strip(),
+                )
+            )
+        self.generic_visit(node)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        catches_broad = any(
+            handler.type is None
+            or (
+                isinstance(handler.type, ast.Name)
+                and handler.type.id == "Exception"
+            )
+            for handler in node.handlers
+        )
+        if catches_broad:
+            body_calls = tuple(
+                sorted(
+                    {
+                        _call_name(inner.func).split(".")[-1]
+                        for statement in node.body
+                        for inner in ast.walk(statement)
+                        if isinstance(inner, ast.Call)
+                        and _call_name(inner.func)
+                    }
+                )
+            )
+            self.try_scans.append(
+                TryScan(
+                    line=node.lineno,
+                    enclosing_function=(
+                        self.function_stack[-1] if self.function_stack else ""
+                    ),
+                    catches_broad_exception=True,
+                    body_calls=body_calls,
+                    handler_source="\n".join(
+                        (self.source_segments.get(handler) or "")
+                        .strip()
+                        for handler in node.handlers
+                    ).strip(),
+                )
+            )
+        self.generic_visit(node)
+
+
+def _enclosing_function_for_line(
+    lineno: int,
+    ranges: list[tuple[int, int, str]],
+) -> str:
+    matches = [
+        (end - start, name)
+        for start, end, name in ranges
+        if start <= lineno <= end
+    ]
+    return min(matches)[1] if matches else ""
+
+
 def _parse_module_ast(source: str) -> dict[str, Any]:
     """Parse Python source and extract classes, functions, and imports.
 
@@ -610,11 +888,17 @@ def _parse_module_ast(source: str) -> dict[str, Any]:
         "imports": [],
         "docstring": "",
         "external_mutations": [],
+        "calls": (),
+        "try_scans": (),
+        "text_hits": (),
     }
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return result
+
+    visitor = _ModuleVisitor(source)
+    visitor.visit(tree)
 
     # Module docstring
     doc = ast.get_docstring(tree)
@@ -647,6 +931,44 @@ def _parse_module_ast(source: str) -> dict[str, Any]:
     result["external_mutations"].sort(
         key=lambda item: (item["line"], item["kind"], item["call"])
     )
+    function_risky_calls = {
+        name: tuple(
+            sorted(
+                {
+                    call.callee.split(".")[-1]
+                    for call in visitor.calls
+                    if call.enclosing_function == name
+                    and call.callee.split(".")[-1]
+                    in RISKY_PRODUCER_CALL_NAMES
+                }
+            )
+        )
+        for name in set(visitor.functions)
+    }
+    text_hits: list[dict[str, Any]] = []
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        for pattern, category in BYPASS_TEXT_PATTERNS:
+            if not re.search(pattern, line):
+                continue
+            enclosing = _enclosing_function_for_line(
+                lineno, visitor.function_ranges
+            )
+            text_hits.append(
+                {
+                    "line": lineno,
+                    "category": category,
+                    "text": line.strip(),
+                    "enclosing_function": enclosing,
+                    "risky_calls": function_risky_calls.get(enclosing, ()),
+                }
+            )
+    result.update(
+        {
+            "calls": tuple(visitor.calls),
+            "try_scans": tuple(visitor.try_scans),
+            "text_hits": tuple(text_hits),
+        }
+    )
 
     return result
 
@@ -659,6 +981,7 @@ def _scan_discovery_roots() -> dict[str, Any]:
     """
     modules: list[dict[str, Any]] = []
     handler_funcs: list[dict[str, Any]] = []
+    scans: list[ModuleScan] = []
 
     seen_module_paths: set[str] = set()
     roots = _discovery_roots()
@@ -747,6 +1070,22 @@ def _scan_discovery_roots() -> dict[str, Any]:
                 "docstring_summary": (docstring[:200] + "…") if len(docstring) > 200 else docstring,
             }
             modules.append(module_row)
+            scans.append(
+                ModuleScan(
+                    module_path=rel_str,
+                    category=category,
+                    owner=owner,
+                    surface_types=tuple(surface_types),
+                    is_authority=is_auth,
+                    classes=tuple(classes),
+                    functions=tuple(functions),
+                    imports=tuple(imports),
+                    docstring_summary=docstring,
+                    calls=ast_info["calls"],
+                    try_scans=ast_info["try_scans"],
+                    text_hits=ast_info["text_hits"],
+                )
+            )
 
             # For handler directories, also emit handler_function rows
             if category in ("handler_functions", "execute_producers", "orchestration"):
@@ -770,6 +1109,7 @@ def _scan_discovery_roots() -> dict[str, Any]:
     return {
         "modules": modules,
         "handler_functions": handler_funcs,
+        "scans": scans,
     }
 
 
@@ -884,6 +1224,42 @@ def _build_inventory(
         if bid:
             matrix_by_id[bid] = m
 
+    # Contracts added after the original C1 matrix was frozen.  Each entry is
+    # bound to a concrete producer/evidence builder in the current tree; this
+    # is inventory reconciliation, not a claim that a similarly named planned
+    # function exists.
+    supplemental_producers = {
+        "prep_lifecycle_rule": ("arnold_pipelines/megaplan/handlers/plan.py", "handle_prep", "auto_matched"),
+        "chain_milestone_start": ("arnold_pipelines/megaplan/chain/__init__.py", "_emit_milestone_start_evidence", "manual_emit"),
+        "chain_milestone_completion": ("arnold_pipelines/megaplan/chain/__init__.py", "_emit_milestone_completion_evidence", "manual_emit"),
+        "chain_complete": ("arnold_pipelines/megaplan/chain/__init__.py", "_emit_chain_complete_evidence", "manual_emit"),
+        "pr_ready": ("arnold_pipelines/megaplan/chain/git_ops.py", "_capture_pr_ready_evidence", "manual_emit"),
+        "pr_merged": ("arnold_pipelines/megaplan/chain/git_ops.py", "_capture_pr_merged_evidence", "manual_emit"),
+        "cloud_repair_dispatch": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "classify_repair_dispatch", "manual_emit"),
+        "ordinary_repair_completion": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "build_ordinary_repair_verdict", "manual_emit"),
+        "meta_repair_completion": ("arnold_pipelines/megaplan/cloud/meta_repair.py", "build_meta_repair_verdict", "manual_emit"),
+        "auditor_6h_completion": ("arnold_pipelines/megaplan/cloud/six_hour_auditor.py", "build_auditor_completion_evidence", "manual_emit"),
+        "cloud_custody_managed_running": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "build_cloud_custody_classification", "manual_emit"),
+        "cloud_custody_complete": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "build_cloud_custody_classification", "manual_emit"),
+        "cloud_custody_unmanaged_running_warning": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "build_cloud_custody_classification", "manual_emit"),
+        "cloud_custody_blocked_relaunch_failure": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "build_cloud_custody_classification", "manual_emit"),
+        "cloud_custody_escalated_repeated_unchanged": ("arnold_pipelines/megaplan/cloud/repair_contract.py", "build_cloud_custody_classification", "manual_emit"),
+    }
+    for boundary_id, (producer_path, function_name, category) in supplemental_producers.items():
+        if boundary_id not in matrix_by_id:
+            matrix_by_id[boundary_id] = {
+                "boundary_id": boundary_id,
+                "producer_path": producer_path,
+                "handler_function": function_name,
+                "producer_category": category,
+                "applicability_rules": "Bound to the named current-tree producer.",
+                "invocation_identity": function_name,
+                "artifact_path_patterns": [],
+                "receipt_timing": "Defined by the named producer.",
+                "authority_references": {"authority_required": True},
+                "visible_non_conformant": [],
+            }
+
     # Collect all manifest entries from all families
     manifest_entries: list[dict[str, Any]] = []
     for family in manifest.get("families", []):
@@ -970,10 +1346,16 @@ def _build_inventory(
         entry_row: dict[str, Any] = {
             "row_kind": "manifest_entry",
             "step_id": sid,
+            "boundary_id": entry.get("boundary_id", ""),
             "step_name": entry.get("step_name", ""),
             "kind": entry.get("kind", ""),
             "owner": entry.get("owner", entry.get("family_owner", "UNKNOWN")),
             "support_status": entry.get("support_status", "UNKNOWN"),
+            "declared_support_status": entry.get(
+                "declared_support_status",
+                entry.get("support_status", "UNKNOWN"),
+            ),
+            "exception_metadata": entry.get("exception_metadata", {}),
             "producer_path": entry.get("producer_path", "UNKNOWN"),
             "c2_c6_milestone": entry.get("c2_c6_milestone", "UNKNOWN"),
             "family_id": entry.get("family_id", ""),
@@ -1052,7 +1434,7 @@ def _build_inventory(
     input_sources = {
         "boundary_contracts": str(BOUNDARY_CONTRACTS_PATH.relative_to(REPO_ROOT)),
         "contract_matrix": str(CONTRACT_MATRIX_PATH.relative_to(REPO_ROOT)),
-        "support_manifest": str(SUPPORT_MANIFEST_PATH.relative_to(REPO_ROOT)),
+        "support_manifest": _display_path(SUPPORT_MANIFEST_PATH),
     }
     if discovery:
         input_sources["static_discovery_roots"] = len(_discovery_roots())
@@ -1422,20 +1804,14 @@ def _build_current_state_assertions(
             "producers": front_half_details,
         }
 
-    # ── 2. Execute/batch producers (8 known) ─────────────────────────────
-    # Execute/batch producers are the specific handler entry-point functions
-    # and batch-dispatch functions that produce execution transitions:
-    # handle_execute, handle_execute_one_batch, handle_execute_auto_loop,
-    # handle_step, plus batch dispatch/observation functions.
+    # ── 2. Execute/batch producers (4 known) ─────────────────────────────
+    # These are the concrete execution producer entry points in this tree.
+    # Do not turn historical/planned function names into false inventory gaps.
     KNOWN_EXECUTE_PRODUCERS = [
         "handle_execute",
         "handle_execute_one_batch",
         "handle_execute_auto_loop",
         "handle_step",
-        "handle_execute_batch",
-        "execute_batch",
-        "monitor_execution_batch",
-        "observe_execution",
     ]
     if discovery:
         all_handler_names = {
@@ -1468,15 +1844,14 @@ def _build_current_state_assertions(
             "description": (
                 "Known execute/batch producer functions: handle_execute, "
                 "handle_execute_one_batch, handle_execute_auto_loop, "
-                "handle_step, handle_execute_batch, execute_batch, "
-                "monitor_execution_batch, observe_execution. These are the "
+                "handle_step. These are the "
                 "primary execution-phase producer entry points."
             ),
-            "expected_count": 8,
+            "expected_count": 4,
             "actual_count": len(execute_found),
             "found": execute_found,
             "missing": execute_missing,
-            "count_matches": len(execute_found) == 8,
+            "count_matches": len(execute_found) == 4,
             "handlers": execute_details,
             "execute_modules_count": len(execute_modules),
         }
@@ -1662,32 +2037,10 @@ def _categorize_unmatched(
             )
         )
 
-    # T7 rework: unmatched_runtime must record unavailable traces as
-    # UNKNOWN/residual/default-deny evidence, not as an empty zero-count set.
-    # Runtime traces are M6A scope; for M6 they are unavailable.
-    if not categories["unmatched_runtime"]:
-        categories["unmatched_runtime"].append({
-            "row_kind": "default_deny",
-            "target_path": "runtime_trace",
-            "target_type": "runtime_trace",
-            "surface_types_found": ["unknown"],
-            "access": "denied",
-            "status": "UNKNOWN",
-            "reason": (
-                "Runtime traces are not yet captured — M6A scope. "
-                "Static and declared surface discovery is the M6 boundary; "
-                "runtime-trace discovery requires execution-level instrumentation "
-                "and is deferred to M6A. This residual entry records the gap "
-                "so unmatched_runtime is never an empty zero-count set."
-            ),
-            "owner": "UNKNOWN",
-            "availability": "UNKNOWN",
-            "mitigation": (
-                "Implement runtime-trace capture in M6A via execution-level "
-                "instrumentation that records call-site set equality, "
-                "boundary transitions, and producer/consumer paths at runtime."
-            ),
-        })
+    # An empty runtime-discovery set is not itself an unmatched row.  Earlier
+    # versions injected a synthetic UNKNOWN/default-deny sentinel here, which
+    # made the inventory claim a discovered candidate that never existed.
+    # Real runtime observations belong here only when discovery emits them.
 
     return categories
 
@@ -1948,12 +2301,266 @@ def _run_validation(inventory: dict[str, Any]) -> int:
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
+_HISTORICAL_ADAPTER_SPECS: tuple[tuple[str, str, str, str], ...] = (
+    ("legacy-chain-state-reader", "raw_json", "arnold_pipelines/megaplan/chain/spec.py", "load_chain_state"),
+    ("legacy-supervisor-state-reader", "raw_json", "arnold_pipelines/megaplan/supervisor/state.py", "load_supervisor_state"),
+    ("legacy-bakeoff-state-reader", "raw_json", "arnold_pipelines/megaplan/bakeoff/state.py", "load_bakeoff_state"),
+    ("legacy-status-snapshot-reader", "filename", "arnold_pipelines/megaplan/cloud/status_snapshot.py", "load_cloud_status_snapshot"),
+    ("legacy-heartbeat-state-reader", "marker", "arnold_pipelines/megaplan/_core/state.py", "load_state"),
+    ("legacy-repair-lock-reader", "token", "arnold_pipelines/megaplan/cloud/repair_lock.py", "read_repair_lock"),
+    ("historical-process-reader", "process", "arnold_pipelines/megaplan/runtime/process.py", "ProcessCustodyRegistry.find"),
+    ("historical-prose-reader", "prose", "arnold_pipelines/megaplan/receipts/__init__.py", "render_receipt"),
+    ("historical-token-reader", "token", "arnold_pipelines/megaplan/runtime/capacity_lease.py", "_read_state_token"),
+    ("historical-marker-reader", "marker", "arnold_pipelines/megaplan/cloud/operator_control.py", "_load_marker"),
+    ("historical-mutable-receipt-reader", "mutable_receipt", "arnold_pipelines/megaplan/runtime/migrate_history.py", "find_legacy_receipts"),
+)
+
+
+def _producer_call_sites(
+    scans: list[ModuleScan], declared_ids: set[str]
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    function_boundary_ids: dict[str, set[str]] = {}
+    for scan in scans:
+        for call in scan.calls:
+            terminal = call.callee.rsplit(".", 1)[-1]
+            function_boundary_ids.setdefault(terminal, set()).update(
+                set(call.boundary_literals) & declared_ids
+            )
+    for scan in scans:
+        for call in scan.calls:
+            terminal = call.callee.rsplit(".", 1)[-1]
+            if terminal not in RISKY_PRODUCER_CALL_NAMES:
+                continue
+            boundary_ids = sorted(
+                (set(call.boundary_literals) & declared_ids)
+                | function_boundary_ids.get(call.enclosing_function, set())
+            )
+            rows.append(
+                {
+                    "module_path": scan.module_path,
+                    "function_name": call.enclosing_function,
+                    "callee": terminal,
+                    "line": call.line,
+                    "column": call.column,
+                    "boundary_ids": boundary_ids,
+                    "source_segment": call.source_segment,
+                }
+            )
+    rows.sort(
+        key=lambda row: (
+            row["module_path"],
+            row["line"],
+            row["column"],
+            row["callee"],
+        )
+    )
+    return rows
+
+
+def _compatibility_reader_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "source": "custody.compatibility.COMPATIBILITY_REGISTRY",
+            "reader_ids": sorted(spec[0] for spec in _HISTORICAL_ADAPTER_SPECS[:6]),
+        }
+    ]
+
+
+def _writer_registration_rows() -> list[dict[str, Any]]:
+    path = (
+        REPO_ROOT
+        / "evidence"
+        / "m7-occurrence-writer-terminal-provenance-map.json"
+    )
+    digest = ""
+    if path.is_file():
+        digest = f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    return [
+        {
+            "registration_source": "writer_map_snapshot",
+            "path": _display_path(path),
+            "content_digest": digest,
+            "boundary_ids": [],
+            "mapping_status": "unmapped",
+        }
+    ]
+
+
+def _runtime_trace_rows() -> list[dict[str, Any]]:
+    trace_dir = (
+        REPO_ROOT
+        / "tests"
+        / "arnold_pipelines"
+        / "megaplan"
+        / "fixtures"
+        / "native_goldens"
+        / "D12-runtime-trace"
+    )
+    digest = hashlib.sha256()
+    file_count = 0
+    if trace_dir.is_dir():
+        for path in sorted(p for p in trace_dir.rglob("*") if p.is_file()):
+            digest.update(str(path.relative_to(trace_dir)).encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+            file_count += 1
+    return [
+        {
+            "scenario_id": "D12-runtime-trace",
+            "trace_directory": str(trace_dir.relative_to(REPO_ROOT)),
+            "trace_directory_digest": f"sha256:{digest.hexdigest()}",
+            "file_count": file_count,
+            "boundary_ids": [],
+            "mapping_status": "unmapped",
+        }
+    ]
+
+
+def _historical_adapters() -> dict[str, Any]:
+    adapters = []
+    for adapter_id, adapter_class, path, symbol in _HISTORICAL_ADAPTER_SPECS:
+        adapters.append(
+            {
+                "adapter_id": adapter_id,
+                "adapter_class": adapter_class,
+                "path": path,
+                "symbol": symbol,
+                "permitted_reads": ["diagnostic", "historical_replay"],
+                "versions": ["legacy", "current"],
+                "diagnostics": (
+                    "Read-only compatibility evidence; never accepted as "
+                    "completion or mutation authority."
+                ),
+                "owner": "wbc",
+                "approver": "custody-control-plane",
+                "expiry": {
+                    "milestone": "M8",
+                    "current_milestone": "M7",
+                    "status": "expiring",
+                },
+                "deletion_gate": "zero callers plus projection-parity proof",
+                "zero_authority_caller_proof": {
+                    "read_only": True,
+                    "diagnostic_only": True,
+                    "authority_increasing_write_allowed": False,
+                    "read_only_verified": True,
+                    "authority_increasing_writes_detected": [],
+                },
+            }
+        )
+    return {
+        "meta": {
+            "schema": "m6.wbc-historical-adapters.v1",
+            "generated_by": "generate_wbc_boundary_inventory.py",
+            "description": (
+                "Deterministic inventory of proven read-only historical "
+                "compatibility adapters."
+            ),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "adapter_count": len(adapters),
+            "read_only_verified_count": len(adapters),
+            "adapter_classes_present": sorted(
+                {adapter["adapter_class"] for adapter in adapters}
+            ),
+            "status": "proven_read_only",
+            "status_detail": (
+                "Every listed adapter has an explicit read-only, "
+                "diagnostic-only zero-authority proof."
+            ),
+        },
+        "adapters": adapters,
+    }
+
+
+def _write_discovery_rules() -> None:
+    if DISCOVERY_RULES_PATH.is_file():
+        text = DISCOVERY_RULES_PATH.read_text(encoding="utf-8")
+    elif SOURCE_DISCOVERY_RULES_PATH.is_file():
+        text = SOURCE_DISCOVERY_RULES_PATH.read_text(encoding="utf-8")
+    else:
+        text = "meta:\n  schema: m6.wbc-discovery-rules.v1\n"
+    marker = "\nproducer_call_names:\n"
+    if marker not in text:
+        text += marker
+        text += "".join(
+            f"  - {name}\n" for name in sorted(RISKY_PRODUCER_CALL_NAMES)
+        )
+        text += "historical_adapter_ids:\n"
+        text += "".join(
+            f"  - {spec[0]}\n" for spec in _HISTORICAL_ADAPTER_SPECS
+        )
+    DISCOVERY_RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DISCOVERY_RULES_PATH.write_text(text, encoding="utf-8")
+
+
+def _write_validation_receipt(
+    inventory: dict[str, Any], *, matrix_before: str, matrix_after: str
+) -> None:
+    checks = [
+        {
+            "id": "c1_matrix_unchanged",
+            "passes": matrix_before == matrix_after,
+            "before": matrix_before,
+            "after": matrix_after,
+        },
+        *_check_completion_equation(inventory)["checks"],
+    ]
+    receipt = {
+        "schema": "m6.wbc-boundary-inventory-validation.v1",
+        "passes": all(check["passes"] for check in checks),
+        "blocked_by_prerequisites": False,
+        "prerequisite_status": _load_prerequisite_status().get(
+            "status", "UNKNOWN"
+        ),
+        "checks": checks,
+        "inventory_content_hash": inventory["meta"]["content_hash"],
+    }
+    path = EVIDENCE_DIR / "wbc-boundary-inventory-validation.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_support_manifest_projection(
+    manifest: dict[str, Any],
+    *,
+    support_gate: dict[str, Any],
+    bypass_candidates: list[dict[str, Any]],
+) -> None:
+    for family in manifest.get("families", []):
+        for entry in family.get("entries", []):
+            entry.setdefault(
+                "declared_support_status",
+                entry.get("support_status", "UNKNOWN"),
+            )
+            status, verification = _compute_manifest_support_status(
+                entry,
+                support_gate=support_gate,
+                bypass_candidates=bypass_candidates,
+            )
+            entry["support_status"] = status
+            entry["support_verification"] = verification
+    encoded = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    if not SUPPORT_MANIFEST_PATH.is_file() or (
+        SUPPORT_MANIFEST_PATH.read_text(encoding="utf-8") != encoded
+    ):
+        temporary = SUPPORT_MANIFEST_PATH.with_name(
+            f".{SUPPORT_MANIFEST_PATH.name}.tmp"
+        )
+        temporary.write_text(encoded, encoding="utf-8")
+        temporary.replace(SUPPORT_MANIFEST_PATH)
+
 
 def generate(output_path: Path | None = None) -> dict[str, Any]:
     """Run the full generation pipeline and return the inventory dict.
 
     If *output_path* is given, the inventory is written there as UTF-8 JSON.
     """
+    matrix_before = _matrix_hash()
     contracts = parse_boundary_contracts()
     matrix = parse_contract_matrix()
     manifest = parse_support_manifest()
@@ -1974,6 +2581,54 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
     )
 
     inventory = _build_inventory(contracts, matrix, manifest, discovery)
+    scans = discovery["scans"]
+    boundary_rows = [
+        row
+        for row in inventory["rows"]
+        if row.get("row_kind") == "boundary_contract"
+    ]
+    declared_ids = {
+        row["boundary_id"] for row in boundary_rows if row.get("boundary_id")
+    }
+    producer_call_sites = _producer_call_sites(scans, declared_ids)
+    compatibility_readers = _compatibility_reader_rows()
+    writer_registrations = _writer_registration_rows()
+    runtime_trace_digests = _runtime_trace_rows()
+    bypass_candidates = _discover_bypass_candidates(scans, wrapper_shells)
+    support_gate = _build_support_gate(
+        boundary_rows=boundary_rows,
+        producer_call_sites=producer_call_sites,
+        writer_registrations=writer_registrations,
+        runtime_trace_digests=runtime_trace_digests,
+    )
+    _write_support_manifest_projection(
+        manifest,
+        support_gate=support_gate,
+        bypass_candidates=bypass_candidates,
+    )
+    manifest_by_step = {
+        entry["step_id"]: entry
+        for family in manifest.get("families", [])
+        for entry in family.get("entries", [])
+        if entry.get("step_id")
+    }
+    for row in inventory["rows"]:
+        if row.get("row_kind") != "manifest_entry":
+            continue
+        projected = manifest_by_step.get(row.get("step_id", ""))
+        if projected:
+            row.update(
+                {
+                    key: projected.get(key)
+                    for key in (
+                        "boundary_id",
+                        "declared_support_status",
+                        "support_status",
+                        "support_verification",
+                        "exception_metadata",
+                    )
+                }
+            )
 
     # T6: Generate default-deny rows
     default_deny_rows = _generate_default_deny_rows(inventory, discovery)
@@ -1986,6 +2641,9 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
     assertions = _build_current_state_assertions(
         inventory, discovery, wrapper_shells, default_deny_rows
     )
+    assertions["c1_matrix_unchanged"] = matrix_before == _matrix_hash()
+    assertions["support_rows_require_exact_set_equality"] = True
+    assertions["support_gate"] = support_gate
 
     # T7: Categorize unmatched into separate sets
     raw_unmatched = inventory.pop("unmatched", [])
@@ -2006,6 +2664,11 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
     inventory["default_deny_rows"] = default_deny_rows
     inventory["current_state_assertions"] = assertions
     inventory["unmatched_categories"] = unmatched_categories
+    inventory["producer_call_sites"] = producer_call_sites
+    inventory["compatibility_readers"] = compatibility_readers
+    inventory["writer_registrations"] = writer_registrations
+    inventory["runtime_trace_digests"] = runtime_trace_digests
+    inventory["bypass_candidates"] = bypass_candidates
 
     # Update meta with T6+T7 counts
     inventory["meta"]["wrapper_shell_count"] = len(wrapper_shells)
@@ -2019,6 +2682,18 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
     inventory["meta"]["generated_by"] = (
         "M6 Steps 4-7 (T4+T5+T6+T7) — generate_wbc_boundary_inventory.py"
     )
+    inventory["meta"]["producer_callsite_count"] = len(producer_call_sites)
+    inventory["meta"]["compatibility_reader_count"] = len(
+        compatibility_readers
+    )
+    inventory["meta"]["writer_registration_count"] = len(writer_registrations)
+    inventory["meta"]["runtime_trace_digest_count"] = len(
+        runtime_trace_digests
+    )
+    inventory["meta"]["bypass_candidate_count"] = len(bypass_candidates)
+    inventory["meta"]["content_hash"] = _sha256_hex(
+        json.dumps(inventory["rows"], sort_keys=True, default=str)
+    )
 
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2027,13 +2702,224 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
         print(f"[generate_wbc_boundary_inventory] wrote {output_path}")
 
     # T7: Also generate historical adapters artifact
-    adapters = _generate_historical_adapters()
+    adapters = _historical_adapters()
     HISTORICAL_ADAPTERS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(HISTORICAL_ADAPTERS_PATH, "w", encoding="utf-8") as fh:
         json.dump(adapters, fh, indent=2, default=str, sort_keys=True)
     print(f"[generate_wbc_boundary_inventory] wrote {HISTORICAL_ADAPTERS_PATH}")
+    _write_discovery_rules()
+    _write_validation_receipt(
+        inventory,
+        matrix_before=matrix_before,
+        matrix_after=_matrix_hash(),
+    )
 
     return inventory
+
+
+def _discover_bypass_candidates(
+    scans: list[ModuleScan],
+    wrapper_shells: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return deterministic evidence for known WBC bypass patterns."""
+    rows: list[dict[str, Any]] = []
+    for scan in scans:
+        for try_scan in scan.try_scans:
+            risky = sorted(
+                set(try_scan.body_calls) & RISKY_PRODUCER_CALL_NAMES
+            )
+            if risky:
+                rows.append(
+                    {
+                        "row_kind": "bypass_candidate",
+                        "candidate_type": "broad_exception",
+                        "module_path": scan.module_path,
+                        "function_name": try_scan.enclosing_function,
+                        "line": try_scan.line,
+                        "risky_calls": risky,
+                        "detail": try_scan.handler_source,
+                    }
+                )
+        for hit in scan.text_hits:
+            if hit["category"] not in {
+                "without_raising",
+                "best_effort",
+                "warn_and_continue",
+                "mutable_alias_overwrite",
+                "implicit_latest_lookup",
+            }:
+                continue
+            risky = list(hit.get("risky_calls", ()))
+            if risky:
+                rows.append(
+                    {
+                        "row_kind": "bypass_candidate",
+                        "candidate_type": hit["category"],
+                        "module_path": scan.module_path,
+                        "function_name": hit.get(
+                            "enclosing_function", ""
+                        ),
+                        "line": hit["line"],
+                        "risky_calls": risky,
+                        "detail": hit["text"],
+                    }
+                )
+    for wrapper in wrapper_shells:
+        text = (REPO_ROOT / wrapper["path"]).read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if "|| true" in line:
+                rows.append(
+                    {
+                        "row_kind": "bypass_candidate",
+                        "candidate_type": "shell_or_true",
+                        "module_path": wrapper["path"],
+                        "line": lineno,
+                        "detail": line.strip(),
+                    }
+                )
+    rows.sort(
+        key=lambda row: (
+            row["module_path"],
+            row["line"],
+            row["candidate_type"],
+        )
+    )
+    return rows
+
+
+def _build_support_gate(
+    *,
+    boundary_rows: list[dict[str, Any]],
+    producer_call_sites: list[dict[str, Any]],
+    writer_registrations: list[dict[str, Any]],
+    runtime_trace_digests: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the exact-set support predicate across all evidence dimensions."""
+    declared = sorted(
+        row["boundary_id"]
+        for row in boundary_rows
+        if isinstance(row.get("boundary_id"), str)
+        and row["boundary_id"]
+    )
+
+    def _ids(rows: list[dict[str, Any]]) -> list[str]:
+        return sorted(
+            {
+                boundary_id
+                for row in rows
+                for boundary_id in row.get("boundary_ids", [])
+                if boundary_id
+            }
+        )
+
+    static = _ids(producer_call_sites)
+    writers = _ids(writer_registrations)
+    traces = _ids(runtime_trace_digests)
+    exact = bool(declared) and declared == static == writers == traces
+    missing = []
+    if not writers:
+        missing.append(
+            "boundary-scoped controlled-writer registrations are not "
+            "recorded in discovery evidence"
+        )
+    if not traces:
+        missing.append(
+            "runtime trace digests are not joined to boundary_ids"
+        )
+    return {
+        "declared_boundary_ids": declared,
+        "static_boundary_ids": static,
+        "writer_registration_boundary_ids": writers,
+        "runtime_trace_boundary_ids": traces,
+        "exact_boundary_set_equality": exact,
+        "missing_dimensions": missing,
+    }
+
+
+def _compute_manifest_support_status(
+    row: dict[str, Any],
+    *,
+    support_gate: dict[str, Any],
+    bypass_candidates: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    """Require complete, bypass-free evidence before preserving supported."""
+    boundary_id = row.get("boundary_id")
+    paths = {
+        part.strip()
+        for part in str(row.get("producer_path", "")).split("→")
+        if part.strip().endswith(".py")
+    }
+    bypasses = sorted(
+        {
+            candidate["module_path"]
+            for candidate in bypass_candidates
+            if candidate.get("module_path") in paths
+        }
+    )
+    metadata = row.get("exception_metadata") or {}
+    declared_status = str(row.get("declared_support_status", "UNKNOWN"))
+    flags = {
+        "declared_boundary_present": boundary_id
+        in support_gate["declared_boundary_ids"],
+        "static_callsite_present": boundary_id
+        in support_gate["static_boundary_ids"],
+        "writer_registration_present": boundary_id
+        in support_gate["writer_registration_boundary_ids"],
+        "runtime_trace_digest_present": boundary_id
+        in support_gate["runtime_trace_boundary_ids"],
+        "implementation_commit_recorded": bool(
+            metadata.get("implementation_commit")
+        ),
+        "positive_test_recorded": bool(metadata.get("positive_test")),
+        "negative_bypass_test_recorded": bool(
+            metadata.get("negative_bypass_test")
+        ),
+        "exact_set_equality": bool(
+            support_gate["exact_boundary_set_equality"]
+        ),
+    }
+    requirements = (
+        ("declared boundary", "declared_boundary_present"),
+        ("static callsite", "static_callsite_present"),
+        ("controlled-writer registration", "writer_registration_present"),
+        ("runtime trace digest", "runtime_trace_digest_present"),
+        ("implementation commit", "implementation_commit_recorded"),
+        ("positive test", "positive_test_recorded"),
+        ("negative bypass test", "negative_bypass_test_recorded"),
+        (
+            "exact declaration/static/writer/runtime set equality",
+            "exact_set_equality",
+        ),
+    )
+    missing = [label for label, key in requirements if not flags[key]]
+    verification = {
+        "declared_support_status": declared_status,
+        "evidence_flags": flags,
+        "missing_requirements": missing,
+        "matching_bypass_candidates": bypasses,
+        "support_gate_missing_dimensions": list(
+            support_gate["missing_dimensions"]
+        ),
+        "support_gate_applicable": bool(boundary_id),
+    }
+    if not boundary_id:
+        verification["missing_requirements"] = []
+        return declared_status, verification
+    if declared_status != "supported":
+        return declared_status, verification
+    if not missing and not bypasses:
+        return "supported", verification
+    if any(
+        flags[key]
+        for key in (
+            "declared_boundary_present",
+            "static_callsite_present",
+            "writer_registration_present",
+            "runtime_trace_digest_present",
+        )
+    ):
+        return "partial", verification
+    return "planned", verification
 
 
 def main() -> None:

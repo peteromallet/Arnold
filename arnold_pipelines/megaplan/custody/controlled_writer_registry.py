@@ -516,6 +516,10 @@ class WriteGuardResult:
         return self.writer.writer_id if self.writer else None
 
     @property
+    def surface_name(self) -> str | None:
+        return self.writer.surface_name if self.writer else None
+
+    @property
     def denied(self) -> bool:
         """Return ``True`` if the write was denied (``DENIED`` or ``UNREGISTERED``)."""
         return self.decision in {

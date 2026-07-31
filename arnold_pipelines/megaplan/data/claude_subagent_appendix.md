@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 <!-- Source of truth for Claude-specific subagent orchestration. Appended only to the Claude skill via bundled_global_file('claude_skill.md'). -->
 ## Subagent Mode
 This appendix is Claude-specific. It adds a subagent path; subagent mode is the default for Claude.

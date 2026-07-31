@@ -30,6 +30,10 @@ from arnold_pipelines.megaplan.orchestration.transition_policy import (
     TransitionPolicyDecision,
     TransitionWriter,
 )
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_state_projection,
+    dispatch_review_panel,
+)
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
@@ -117,6 +121,93 @@ log = logging.getLogger(__name__)
 # M8A: Maximum number of review rework waves before the circuit opens.
 # The configured ``max_review_rework_cycles`` may be lower but never higher.
 _MAX_REWORK_WAVES: int = 5
+
+
+# ── M11 Step 23: Runtime provenance for review routing ──────────────────
+
+#: Prefix for synthetic review-only task IDs.  These are NOT runnable
+#: finalize task IDs — they are review-scoped concern markers that must
+#: not be routed to execute as generic runnable tasks.
+_SYNTHETIC_REVIEW_TASK_PREFIX: str = "REVIEW-"
+
+
+def _verify_attach_next_step_runtime() -> dict[str, Any]:
+    """Prove ``_attach_next_step_runtime`` exists in the loaded runtime.
+
+    Returns a provenance record confirming the function is importable,
+    callable, and bound to the expected module.  Raises
+    :class:`RuntimeError` if the function cannot be resolved — review
+    routing outcomes cannot be bound to runtime provenance without it.
+    """
+    from arnold_pipelines.megaplan.handlers.shared import _attach_next_step_runtime as _fn
+
+    if not callable(_fn):
+        raise RuntimeError(
+            "M11 review routing: _attach_next_step_runtime is not callable in the loaded runtime"
+        )
+    return {
+        "function": "_attach_next_step_runtime",
+        "module": _fn.__module__,
+        "qualname": getattr(_fn, "__qualname__", "_attach_next_step_runtime"),
+        "callable": True,
+        "present": True,
+    }
+
+
+def _is_synthetic_review_task_id(task_id: str) -> bool:
+    """Return True when *task_id* is a synthetic review-only concern marker.
+
+    Synthetic REVIEW-{check_id} task IDs are created when review checks
+    omit ``concerned_task_ids``.  They are NOT runnable finalize targets
+    and must never be routed as generic executable task IDs.
+    """
+    return isinstance(task_id, str) and task_id.startswith(_SYNTHETIC_REVIEW_TASK_PREFIX)
+
+
+def _reject_runnable_review_ids(task_ids: list[str]) -> list[str]:
+    """Replace synthetic REVIEW-{check_id} entries with non-runnable markers.
+
+    Returns a copy of *task_ids* where every synthetic REVIEW- prefix
+    is replaced with ``r:`` (review-scoped) so downstream routing never
+    treats them as generic runnable finalize task IDs.
+    """
+    sanitized: list[str] = []
+    for tid in task_ids:
+        if _is_synthetic_review_task_id(tid):
+            sanitized.append(f"r:{tid}")
+        else:
+            sanitized.append(tid)
+    return sanitized
+
+
+def _bind_review_routing_provenance(
+    response: StepResponse,
+    *,
+    verify_runtime: bool = True,
+) -> None:
+    """Bind review routing outcomes to runtime provenance.
+
+    Proves ``_attach_next_step_runtime`` is present (when *verify_runtime*
+    is True) and attaches a runtime provenance receipt to the response.
+    The receipt proves the routing decision was made under a known runtime.
+    """
+    provenance: dict[str, Any] = {
+        "review_routing_provenance": {
+            "schema": "arnold.megaplan.review_routing_provenance.v1",
+        }
+    }
+    if verify_runtime:
+        try:
+            rt_proof = _verify_attach_next_step_runtime()
+            provenance["review_routing_provenance"]["_attach_next_step_runtime"] = rt_proof
+        except RuntimeError:
+            provenance["review_routing_provenance"]["_attach_next_step_runtime"] = {
+                "function": "_attach_next_step_runtime",
+                "present": False,
+                "callable": False,
+                "error": "function not resolvable in loaded runtime",
+            }
+    response["review_routing_provenance"] = provenance["review_routing_provenance"]
 
 _REVIEW_SCRATCH_EXTENSION_FIELDS: frozenset[str] = frozenset(
     {"review_completion_status"}
@@ -1558,11 +1649,18 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
                 or not all(isinstance(task_id, str) and task_id for task_id in concerned_task_ids)
             ):
                 log.warning(
-                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic REVIEW-%s task id.",
+                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic r:REVIEW-%s task id.",
                     check_id,
                     check_id,
                 )
-                concerned_task_ids = [f"REVIEW-{check_id}"]
+                concerned_task_ids = [f"r:REVIEW-{check_id}"]
+            else:
+                # M11 Step 23: reject generic runnable REVIEW IDs — replace
+                # any synthetic REVIEW- prefixed entries with r: prefix so
+                # downstream routing never treats them as executable tasks.
+                concerned_task_ids = _reject_runnable_review_ids(
+                    [str(c) for c in concerned_task_ids if isinstance(c, str) and c]
+                )
             task_ids = [str(candidate) for candidate in concerned_task_ids if isinstance(candidate, str) and candidate]
             for task_id in concerned_task_ids:
                 item = {
@@ -1971,7 +2069,9 @@ def _finalize_review_outcome(
                 explicit_root=plan_dir,
             ),
         )
-        state["current_state"] = STATE_EXECUTED
+        apply_state_projection(
+            state, STATE_EXECUTED, route_signal=str(ReviewOutcome.BLOCKED)
+        )
         apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
         append_history(
             state,
@@ -2043,6 +2143,7 @@ def _finalize_review_outcome(
             )
         clear_active_step(state)
         save_state_merge_meta(plan_dir, state)
+        _bind_review_routing_provenance(response)
         _attach_next_step_runtime(response)
         attach_agent_fallback(response, args)
         return response
@@ -2074,7 +2175,9 @@ def _finalize_review_outcome(
             "retry_strategy": "manual_review",
             "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
         }
-    state["current_state"] = next_state
+    apply_state_projection(
+        state, next_state, route_signal=str(decision.route_signal)
+    )
     try:
         from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
 
@@ -2240,6 +2343,7 @@ def _finalize_review_outcome(
             )
     clear_active_step(state)
     save_state_merge_meta(plan_dir, state)
+    _bind_review_routing_provenance(response)
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     return response
@@ -2488,7 +2592,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _emit_phase_notice("review")
                 save_state_merge_meta(plan_dir, state)
                 checks = review_checks.checks_for_robustness("extreme")
-                parallel_result = _pkg.run_parallel_review(
+                parallel_result = dispatch_review_panel(
                     state,
                     plan_dir,
                     root=root,

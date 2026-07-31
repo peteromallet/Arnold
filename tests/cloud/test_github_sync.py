@@ -117,9 +117,39 @@ def test_sync_persistent_problems_creates_redacted_issue_and_appends_publication
     payload = events[-1]["payload"]
     assert payload["type"] == "github_sync.issue_published"
     assert payload["problem_id"] == "prob-sync-1"
-    assert payload["next_expected_event"] == "six_hour_auditor.diagnosis"
+    assert payload["next_expected_event"] == "next_three_hour_auditor.diagnosis"
     assert payload["evidence"][-1]["url"] == "https://github.com/acme/repo/issues/42"
     assert payload["links"]["publication"]["occurrence_count"] == 2
+
+
+def test_github_sync_publishes_next_three_hour_diagnosis_event(tmp_path: Path) -> None:
+    """T34/Step 49: GitHub sync publishes next_three_hour_auditor.diagnosis.
+
+    GitHub publication is a sink — it must hand off to next_three_hour
+    diagnosis/reconciliation, NOT to six_hour auditor or repair authority.
+    """
+    # Use a direct bridge call to verify event shape
+    result = append_github_issue_published(
+        incident_id="inc-t34-gh",
+        problem_id="prob-t34-gh",
+        summary="GitHub publication for T34",
+        repo="acme/repo",
+        number=99,
+        url="https://github.com/acme/repo/issues/99",
+        action="created",
+        next_expected_event="next_three_hour_auditor.diagnosis",
+        root=tmp_path,
+    )
+    assert result["kind"] == "incident.github_sync.issue_published"
+    payload = result["payload"]
+    assert payload["type"] == "github_sync.issue_published"
+    assert payload["next_expected_event"] == "next_three_hour_auditor.diagnosis"
+    assert payload["actor"] == "github_sync"
+
+    # Verify the next_expected_event is NOT six_hour or repair authority
+    assert payload["next_expected_event"] != "six_hour_auditor.diagnosis"
+    assert payload["next_expected_event"] != "immediate_repair.repair_attempt"
+    assert payload["next_expected_event"] != "meta_repair.repair_attempt"
 
 
 def test_sync_persistent_problems_comments_existing_issue_when_threshold_crosses_multiple_of_five(tmp_path: Path) -> None:

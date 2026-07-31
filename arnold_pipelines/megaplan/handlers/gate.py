@@ -15,6 +15,11 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_state_projection,
+    resolve_next_steps,
+    resolve_transition,
+)
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
     validate_gate_input_custody,
@@ -207,13 +212,13 @@ def _resolve_revise_transition(state: PlanState, plan_dir: Path) -> tuple[bool, 
     recommendation = gate_summary.get("recommendation") or gate_summary.get("verdict")
     if has_gate and recommendation != "ITERATE":
         raise CliError("invalid_transition", "Revise requires a gate recommendation of ITERATE", valid_next=infer_next_steps(state))
-    revise_transition = workflow_transition(state, "revise")
+    revise_transition = resolve_transition(state, "revise")
     if revise_transition is None:
         raise CliError("invalid_transition", "Revise is not available from the current workflow state", valid_next=infer_next_steps(state))
     return has_gate, revise_transition
 
 def _next_progress_step(state: PlanState) -> str | None:
-    next_steps = workflow_next(state)
+    next_steps = resolve_next_steps(state)
     return next((step for step in next_steps if step not in {"plan", "step"}), next_steps[0] if next_steps else None)
 
 def _remaining_significant_flags(plan_dir: Path) -> list[dict[str, str]]:
@@ -565,7 +570,7 @@ def _critique_terminate_branch(
     open_critical = _open_blocking_flags(gate_summary)
     termination_policy = _revise_loop_termination_policy()
     if open_critical:
-        state["current_state"] = STATE_BLOCKED
+        apply_state_projection(state, STATE_BLOCKED, route_signal="blocked")
         outcome = termination_policy["cap_outcomes"]["critical_or_security_blockers"]
         summary = (
             f"{reason} with {len(open_critical)} unresolved correctness/security "
@@ -582,7 +587,7 @@ def _critique_terminate_branch(
                 "reason": "correctness_or_security_flags",
             },
         }
-    state["current_state"] = STATE_GATED
+    apply_state_projection(state, STATE_GATED, route_signal="proceed")
     outcome = termination_policy["cap_outcomes"]["cosmetic_only"]
     summary = (
         f"{reason}. Force-proceeding to finalize despite remaining cosmetic flags "
@@ -676,7 +681,7 @@ def _build_gate_route_signal(
             update_flags_after_gate(plan_dir, valid_resolutions)
 
         if blocking_unresolved_ids:
-            state["current_state"] = STATE_CRITIQUED
+            apply_state_projection(state, STATE_CRITIQUED, route_signal="retry_gate")
             return {
                 "result": "unresolved_flags",
                 "route_signal": GateOutcome.RETRY_GATE,
@@ -689,7 +694,7 @@ def _build_gate_route_signal(
             }
 
     if gate_summary["recommendation"] == "PROCEED" and gate_summary["passed"]:
-        state["current_state"] = STATE_GATED
+        apply_state_projection(state, STATE_GATED, route_signal="proceed")
         state["meta"].pop("user_approved_gate", None)
         return {
             "result": result,
@@ -698,7 +703,7 @@ def _build_gate_route_signal(
             "blocking_unresolved_ids": [],
             "fallback_payload": None,
         }
-    state["current_state"] = STATE_CRITIQUED
+    apply_state_projection(state, STATE_CRITIQUED, route_signal="iterate")
     if gate_summary["recommendation"] == "PROCEED":
         result = "blocked"
         preflight_results = gate_summary.get("preflight_results", {})

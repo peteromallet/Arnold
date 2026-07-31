@@ -1130,6 +1130,20 @@ def project_repair_custody(
         _as_text(target_current_refs.get("chain_current_plan_name")),
         _as_text(target_current_refs.get("marker_plan_name")),
     )
+    current_repair_identity = repair_requests.derive_repair_identity(
+        session=target_session,
+        plan_state=plan_payload,
+        current_target=target_payload,
+        blocker_id=blocker_id or "",
+        blocker_fingerprint=fingerprint,
+    )
+    current_repair_identity_key = repair_requests.repair_identity_key(
+        current_repair_identity
+    )
+    exact_identity_required = repair_requests.exact_repair_identity_available(
+        plan_state=plan_payload,
+        current_target=target_payload,
+    )
 
     requests: list[RepairCustodyRequestRecord] = []
     for record in queue_requests:
@@ -1176,6 +1190,18 @@ def project_repair_custody(
         if request_fingerprint is None and exact_request_id:
             request_fingerprint = blocker_fingerprint_from_exact_request(record)
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
+        request_repair_identity = repair_requests.normalize_repair_identity(
+            _as_mapping(record.get("repair_identity"))
+        )
+        request_repair_identity_key = repair_requests.repair_identity_key(
+            request_repair_identity
+        )
+        if (
+            exact_identity_required
+            and current_repair_identity_key
+            and request_repair_identity_key != current_repair_identity_key
+        ):
+            continue
         if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
             continue
         if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
@@ -5813,7 +5839,39 @@ def has_repairable_semantic_finding(
     }
 
 
+_REPAIR_DISPATCH_IDENTITY_REEXPORTS = frozenset(
+    {
+        "REPAIR_ACTION_ADOPTION",
+        "REPAIR_ACTION_CANCELLATION",
+        "REPAIR_ACTION_ESCALATION",
+        "REPAIR_ACTION_KINDS",
+        "REPAIR_ACTION_REPAIR",
+        "REPAIR_ACTION_RETRY",
+        "RepairDispatchIdentity",
+        "SourceRereadVerdict",
+        "derive_dispatch_identity_from_source_reread",
+        "repair_dispatch_identity_key",
+        "require_source_reread_for_action",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _REPAIR_DISPATCH_IDENTITY_REEXPORTS:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        value = getattr(repair_requests, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_REPAIR_DISPATCH_IDENTITY_REEXPORTS))
+
+
 __all__ = [
+    *_REPAIR_DISPATCH_IDENTITY_REEXPORTS,
     "ADDITIVE_FIELD_DEFAULTS",
     "ATTEMPT_STATE_CLAIMED",
     "ATTEMPT_STATE_RUNNING",

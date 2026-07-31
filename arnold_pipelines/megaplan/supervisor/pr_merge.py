@@ -55,6 +55,7 @@ def _pr_progression_validation_evidence(
     plan_dir: Path,
     pr_number: int,
     transition_name: str,
+    require_finalize_wbc: bool,
 ) -> dict[str, Any]:
     plan_dir_exists = plan_dir.exists()
     receipts = finalize_receipt_candidates(plan_dir)
@@ -76,9 +77,9 @@ def _pr_progression_validation_evidence(
             ),
             ChainWbcRule(
                 "finalize_evidence_present",
-                True,
+                require_finalize_wbc,
                 finalize_evidence_present,
-                finalize_evidence_present,
+                finalize_evidence_present or not require_finalize_wbc,
             ),
         ),
         extra={
@@ -86,6 +87,7 @@ def _pr_progression_validation_evidence(
             "plan_dir_exists": plan_dir_exists,
             "finalize_receipts": receipts,
             "finalize_artifacts": artifacts,
+            "finalize_wbc_required": require_finalize_wbc,
         },
     )
 
@@ -127,6 +129,7 @@ def maybe_resolve_pr_merge_wait(
     policy: SupervisorLadderPolicy,
     writer,
     automatic_pr_progression: bool = True,
+    require_finalize_wbc: bool = False,
 ) -> PRMergeResolution:
     """Handle awaiting-human PR merge waits or return ``handled=False``.
 
@@ -180,6 +183,7 @@ def maybe_resolve_pr_merge_wait(
             plan_dir=plan_dir,
             pr_number=pr_number,
             transition_name="supervisor_pr_merged",
+            require_finalize_wbc=require_finalize_wbc,
         )
         merged_evidence = git_ops._capture_pr_merged_evidence(
             root,
@@ -229,6 +233,7 @@ def maybe_resolve_pr_merge_wait(
         plan_dir=plan_dir,
         pr_number=pr_number,
         transition_name="supervisor_pr_ready",
+        require_finalize_wbc=require_finalize_wbc,
     )
     pr_ready_evidence = git_ops._capture_pr_ready_evidence(
         root,

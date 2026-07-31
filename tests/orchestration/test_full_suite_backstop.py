@@ -657,10 +657,6 @@ def _patch_light_chain(
     )
 
 
-@pytest.mark.xfail(
-    reason="M11: reconciled completion must replay the shadow full-suite backstop",
-    strict=False,
-)
 def test_run_chain_full_suite_backstop_shadow_records_and_advances(
     tmp_path: Path,
 ) -> None:
@@ -726,10 +722,6 @@ def test_run_chain_full_suite_backstop_shadow_records_and_advances(
     assert saved.completed[-1]["full_suite_backstop"]["blocks"] is False
 
 
-@pytest.mark.xfail(
-    reason="M11: reconciled completion must enforce the full-suite backstop before advancement",
-    strict=False,
-)
 def test_run_chain_full_suite_backstop_enforce_blocks_before_commit(
     tmp_path: Path,
 ) -> None:

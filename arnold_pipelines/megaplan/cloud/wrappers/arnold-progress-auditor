@@ -152,7 +152,10 @@ AUDIT_GITHUB_LABELS="${MEGAPLAN_AUDIT_GITHUB_LABELS:-incident-control-plane,pers
 RECOVERY_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_ENABLED:-1}"
 RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
 WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
-REPAIR_TRIGGER_BIN="${MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
+# Step 51: the legacy REPAIR_TRIGGER_BIN argv handoff has been retired.  The
+# progress-auditor wrapper repair-trigger handoff now routes through the shared
+# repair-delegation shim (see the L3 escalation controller below); the
+# arnold-repair-trigger binary is no longer plumbed by this wrapper.
 ESCALATION_STATE_ROOT="${MEGAPLAN_AUDIT_ESCALATION_STATE_ROOT:-/workspace/.megaplan/progress-auditor-escalations}"
 
 # Legacy direct DeepSeek launcher contract retained here for watchdog contract
@@ -6377,34 +6380,62 @@ record_incident_audits "$GATHER_DIR/findings.json"
 
 # Explicit effect phase. Deterministic gather/report above never creates repair
 # custody. This controller is pure when authority is absent; when authorized it
-# can enqueue only a coherent true-stall receipt and delegates launch/claiming
-# to the canonical central trigger.
+# can enqueue only a coherent true-stall receipt. Step 51 reroutes the
+# progress-auditor wrapper repair-trigger handoff through the shared
+# repair-delegation shim: the legacy arnold-repair-trigger argv is no longer
+# plumbed as trigger_argv, so the wrapper boundary cannot launch repair
+# authority.  Repair authority remains with the canonical simple_fixer
+# delegation that processes the occurrence-compatible queue identities
+# produced by the controller (Steps 43/46).  Audit reporting, human
+# escalation, GitHub sync, and model audit behaviour are intentionally left
+# non-authoritative and are NOT routed through this shim.
 L3_ESCALATION_RESULT="$(
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
     "$GATHER_DIR/findings.json" \
     "$ESCALATION_STATE_ROOT" \
     "$REPAIR_QUEUE_ROOT" \
-    "$AUDIT_MUTATION_AUTHORIZED_FLAG" \
-    "$REPAIR_TRIGGER_BIN" <<'PY'
+    "$AUDIT_MUTATION_AUTHORIZED_FLAG" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_controller import run_file_controller
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    emit_zero_authority_rejection,
+)
 
-findings, state_root, queue_root, authorized, trigger = sys.argv[1:6]
+findings, state_root, queue_root, authorized = sys.argv[1:5]
 result = run_file_controller(
     Path(findings),
     state_root=Path(state_root),
     queue_root=Path(queue_root),
     authorized=authorized == "1",
-    trigger_argv=[trigger],
+    trigger_argv=(),
+)
+# Step 51: route the progress-auditor wrapper repair-trigger handoff through
+# the shared repair-delegation shim.  The auditor wrapper boundary never
+# holds an exact F01 occurrence tuple at this point (the controller above
+# performs the true-stall gate and enqueues an occurrence-compatible
+# identity), so the handoff emits a typed zero-authority rejection via the
+# shim instead of invoking a repair-trigger binary.  Repair authority stays
+# with the canonical simple_fixer delegation that drains the queue.
+repair_handoff = emit_zero_authority_rejection(
+    "terminal_audit",
+    "arnold-progress-auditor",
+    reason=(
+        "wrapper repair-trigger handoff routed through shared repair "
+        "delegation shim; auditor boundary holds no exact F01 occurrence "
+        "tuple, so repair authority remains with canonical simple_fixer "
+        "delegation"
+    ),
 )
 summary = result.get("l3_escalation_summary") or {}
 print(json.dumps({
     "authorized": bool(summary.get("authorized")),
     "evaluated": int(summary.get("evaluated") or 0),
     "dispatched": int(summary.get("dispatched") or 0),
+    "repair_handoff_outcome": repair_handoff.outcome,
+    "repair_handoff_routed_through_shim": True,
 }, sort_keys=True))
 PY
 )" || L3_ESCALATION_RESULT='{"authorized":false,"evaluated":0,"dispatched":0,"controller_error":true}'

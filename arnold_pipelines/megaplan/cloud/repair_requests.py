@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     RepairLockResult,
     acquire_repair_lock,
     inspect_repair_lock,
+    occurrence_scoped_lock_dir,
     release_repair_lock,
     owner_metadata_path,
 )
@@ -31,8 +32,10 @@ from arnold_pipelines.megaplan.custody.contracts import (
     CustodyLeaseEvent,
     CustodyTargetKey,
     RepairOccurrenceKey,
+    F01_REPAIR_OCCURRENCE_FIELDS,
     build_custody_target_key,
     build_repair_occurrence_key,
+    normalize_repair_occurrence_key,
     process_birth_identity,
 )
 from arnold_pipelines.megaplan.custody.lease_store import (
@@ -41,13 +44,465 @@ from arnold_pipelines.megaplan.custody.lease_store import (
     StaleSequenceError,
     LeaseIdempotencyConflict,
 )
+from arnold_pipelines.megaplan.run_state.model import NormalizedFailureToken
+from arnold_pipelines.run_authority.contracts import ContractError
 
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
 DECISIONS_DIR_NAME = "decisions"
 ATTEMPTS_DIR_NAME = "attempts"
 ACTIVE_CLAIMS_DIR_NAME = "active-claims"
+OCCURRENCE_CLAIMS_DIR_NAME = "occurrence-claims"
 CURRENT_SCHEMA_VERSION = 1
+
+
+def normalize_repair_identity(
+    payload: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Normalize the exact repair occurrence tuple for custody comparison."""
+    normalized = normalize_repair_occurrence_key(payload)
+    if normalized is not None:
+        return normalized.to_dict()
+    if not isinstance(payload, Mapping):
+        return None
+    legacy_fields = (
+        "environment_id",
+        "session_id",
+        "chain_id",
+        "plan_revision",
+        "phase",
+        "task_id",
+        "attempt_number",
+        "failure_kind",
+        "blocker_digest",
+        "coordinator_fence_token",
+    )
+    if any(field not in payload for field in legacy_fields):
+        return None
+    try:
+        result = {
+            field: (
+                int(payload[field])
+                if field == "attempt_number"
+                else str(payload[field]).strip()
+            )
+            for field in legacy_fields
+        }
+    except (ContractError, TypeError, ValueError):
+        return None
+    if result["attempt_number"] <= 0 or any(
+        not value
+        for field, value in result.items()
+        if field != "attempt_number"
+    ):
+        return None
+    return result
+
+
+def repair_identity_key(payload: Mapping[str, Any] | None) -> str:
+    """Return the deterministic key for a normalized repair occurrence."""
+    normalized = normalize_repair_occurrence_key(payload)
+    if normalized is not None:
+        return normalized.key
+    legacy = normalize_repair_identity(payload)
+    if legacy is None:
+        return ""
+    return "repair-occurrence:" + hashlib.sha256(
+        json.dumps(
+            legacy,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = _text(value)
+        if text:
+            return text
+    return ""
+
+
+def derive_repair_identity(
+    *,
+    session: str,
+    problem_signature: Mapping[str, Any] | None = None,
+    target: Mapping[str, Any] | None = None,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    blocker_id: str = "",
+    blocker_fingerprint: Mapping[str, Any] | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build the exact predecessor occurrence tuple used to fence custody."""
+    if repair_identity is not None:
+        return normalize_repair_identity(repair_identity)
+
+    signature = _mapping(problem_signature)
+    target_payload = _mapping(target)
+    state_payload = _mapping(plan_state)
+    current_payload = _mapping(current_target)
+    if not (
+        state_payload
+        or current_payload
+        or any(
+            _text(target_payload.get(field))
+            for field in (
+                "environment_id",
+                "chain_id",
+                "plan_revision",
+                "coordinator_fence_token",
+                "fence_token",
+            )
+        )
+    ):
+        return None
+
+    current_refs = _mapping(current_payload.get("current_refs"))
+    marker = _mapping(current_payload.get("marker"))
+    current_plan_state = _mapping(current_payload.get("plan_state"))
+    latest_failure = _mapping(state_payload.get("latest_failure"))
+    latest_failure_meta = _mapping(latest_failure.get("metadata"))
+    active_step = _mapping(current_payload.get("active_step_heartbeat"))
+    evidence_cursor = _mapping(
+        latest_failure.get("evidence_cursor")
+        or latest_failure_meta.get("evidence_cursor")
+        or _mapping(state_payload.get("resume_cursor")).get("evidence_cursor")
+        or target_payload.get("evidence_cursor")
+    )
+    environment_id = _first_text(
+        target_payload.get("environment_id"),
+        target_payload.get("workspace_path"),
+        current_refs.get("workspace"),
+        marker.get("workspace"),
+        target_payload.get("plan_dir"),
+        marker.get("path"),
+    )
+    session_id = _first_text(
+        session,
+        current_payload.get("target_session"),
+        marker.get("session"),
+    )
+    chain_id = _first_text(
+        target_payload.get("chain_id"),
+        target_payload.get("remote_spec"),
+        current_refs.get("remote_spec"),
+        marker.get("remote_spec"),
+        target_payload.get("plan_dir"),
+        current_refs.get("run_kind"),
+    )
+    plan_revision = _first_text(
+        target_payload.get("plan_revision"),
+        state_payload.get("plan_revision"),
+        _mapping(state_payload.get("meta")).get("plan_revision"),
+        current_refs.get("plan_revision"),
+        current_plan_state.get("fingerprint"),
+        current_payload.get("target_id"),
+        evidence_cursor.get("review_artifact_hash"),
+        signature.get("milestone_or_plan"),
+    )
+    phase = _first_text(
+        target_payload.get("phase"),
+        latest_failure.get("phase"),
+        active_step.get("phase"),
+        signature.get("phase_or_step"),
+        state_payload.get("current_state"),
+    )
+    task_id = _first_text(
+        target_payload.get("task_id"),
+        latest_failure.get("blocked_task_id"),
+        latest_failure.get("task_id"),
+        latest_failure_meta.get("blocked_task_id"),
+        latest_failure_meta.get("task_id"),
+        signature.get("blocked_task_id"),
+        f"phase:{phase}" if phase else "",
+    )
+    attempt_number = (
+        _positive_int(target_payload.get("attempt_number"))
+        or _positive_int(target_payload.get("attempt"))
+        or _positive_int(latest_failure.get("attempt_number"))
+        or _positive_int(latest_failure_meta.get("attempt_number"))
+        or _positive_int(latest_failure_meta.get("attempt"))
+        or _positive_int(active_step.get("attempt"))
+        or 1
+    )
+    failure_kind = _first_text(
+        target_payload.get("failure_kind"),
+        latest_failure.get("kind"),
+        signature.get("failure_kind"),
+        _mapping(current_payload.get("event_cursors")).get("latest_failure_kind"),
+        state_payload.get("current_state"),
+    )
+    blocker_digest = _first_text(
+        target_payload.get("blocker_digest"),
+        blocker_id,
+        repair_contract.blocker_id_for_fingerprint(blocker_fingerprint),
+        problem_signature_key(signature) if signature else "",
+        current_payload.get("target_id"),
+    )
+    coordinator_fence_token = _first_text(
+        target_payload.get("coordinator_fence_token"),
+        target_payload.get("fence_token"),
+        state_payload.get("fence_token"),
+        _mapping(state_payload.get("meta")).get("fence_token"),
+        latest_failure_meta.get("coordinator_fence_token"),
+        latest_failure_meta.get("fence_token"),
+        current_refs.get("fence_token"),
+        current_plan_state.get("fingerprint"),
+        evidence_cursor.get("review_artifact_hash"),
+        blocker_digest,
+    )
+    try:
+        occurrence = RepairOccurrenceKey(
+            environment_id=environment_id,
+            session_id=session_id,
+            chain_id=chain_id,
+            plan_revision=plan_revision,
+            phase=phase,
+            task_id=task_id,
+            attempt_number=attempt_number,
+            failure_kind=failure_kind,
+            blocker_digest=blocker_digest,
+            coordinator_fence_token=coordinator_fence_token,
+        )
+    except (TypeError, ValueError):
+        return None
+    return occurrence.to_dict()
+
+
+def exact_repair_identity_available(
+    *,
+    target: Mapping[str, Any] | None = None,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+) -> bool:
+    """Whether revision and fence both come from explicit current evidence."""
+    target_payload = _mapping(target)
+    state_payload = _mapping(plan_state)
+    current_payload = _mapping(current_target)
+    current_refs = _mapping(current_payload.get("current_refs"))
+    latest_failure = _mapping(state_payload.get("latest_failure"))
+    latest_failure_meta = _mapping(latest_failure.get("metadata"))
+    plan_revision = _first_text(
+        target_payload.get("plan_revision"),
+        state_payload.get("plan_revision"),
+        _mapping(state_payload.get("meta")).get("plan_revision"),
+        current_refs.get("plan_revision"),
+    )
+    coordinator_fence_token = _first_text(
+        target_payload.get("coordinator_fence_token"),
+        target_payload.get("fence_token"),
+        state_payload.get("fence_token"),
+        _mapping(state_payload.get("meta")).get("fence_token"),
+        latest_failure_meta.get("coordinator_fence_token"),
+        latest_failure_meta.get("fence_token"),
+        current_refs.get("fence_token"),
+    )
+    return bool(plan_revision and coordinator_fence_token)
+
+REPAIR_ACTION_REPAIR = "repair"
+REPAIR_ACTION_RETRY = "retry"
+REPAIR_ACTION_ESCALATION = "escalation"
+REPAIR_ACTION_CANCELLATION = "cancellation"
+REPAIR_ACTION_ADOPTION = "adoption"
+REPAIR_ACTION_KINDS: frozenset[str] = frozenset(
+    {
+        REPAIR_ACTION_REPAIR,
+        REPAIR_ACTION_RETRY,
+        REPAIR_ACTION_ESCALATION,
+        REPAIR_ACTION_CANCELLATION,
+        REPAIR_ACTION_ADOPTION,
+    }
+)
+
+
+@dataclass(frozen=True)
+class RepairDispatchIdentity:
+    """Exact, read-only occurrence tuple used to revalidate repair dispatch."""
+
+    environment_id: str
+    session_id: str
+    chain_id: str
+    plan_revision: str
+    phase: str
+    task_id: str
+    attempt_number: int
+    normalized_failure_kind: str
+    dispatch_digest_kind: str
+    dispatch_digest: str
+    coordinator_fence_token: str
+    source_reread_at: str = ""
+    source_digest: str = ""
+    raw_failure_kind: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "environment_id": self.environment_id,
+            "session_id": self.session_id,
+            "chain_id": self.chain_id,
+            "plan_revision": self.plan_revision,
+            "phase": self.phase,
+            "task_id": self.task_id,
+            "attempt_number": self.attempt_number,
+            "normalized_failure_kind": self.normalized_failure_kind,
+            "dispatch_digest_kind": self.dispatch_digest_kind,
+            "dispatch_digest": self.dispatch_digest,
+            "coordinator_fence_token": self.coordinator_fence_token,
+            "source_reread_at": self.source_reread_at,
+            "source_digest": self.source_digest,
+            "raw_failure_kind": self.raw_failure_kind,
+            "authority": "evidence_extracted_non_authoritative",
+        }
+
+
+@dataclass(frozen=True)
+class SourceRereadVerdict:
+    action: str
+    permitted: bool
+    reason: str
+    current_fence_token: str = ""
+    fresh_fence_token: str = ""
+    current_tuple_digest: str = ""
+    fresh_tuple_digest: str = ""
+
+
+def derive_dispatch_identity_from_source_reread(
+    *,
+    environment_id: str,
+    session_id: str,
+    chain_id: str,
+    plan_revision: str,
+    phase: str,
+    task_id: str,
+    attempt_number: int,
+    raw_failure_kind: str,
+    blocker_digest: str = "",
+    phase_result_digest: str = "",
+    coordinator_fence_token: str,
+    source_reread_at: str,
+    source_digest: str,
+) -> RepairDispatchIdentity | None:
+    required = (
+        environment_id,
+        session_id,
+        chain_id,
+        plan_revision,
+        phase,
+        coordinator_fence_token,
+        source_reread_at,
+        source_digest,
+    )
+    if not all(required):
+        return None
+    try:
+        attempt = int(attempt_number)
+    except (TypeError, ValueError):
+        return None
+    if attempt <= 0:
+        return None
+    digest_kind = "phase_result" if phase_result_digest else "blocker"
+    dispatch_digest = phase_result_digest or blocker_digest
+    if not dispatch_digest:
+        return None
+    token = NormalizedFailureToken.normalize(raw_failure_kind or "")
+    return RepairDispatchIdentity(
+        environment_id=environment_id,
+        session_id=session_id,
+        chain_id=chain_id,
+        plan_revision=plan_revision,
+        phase=phase,
+        task_id=task_id or "",
+        attempt_number=attempt,
+        normalized_failure_kind=token.canonical,
+        dispatch_digest_kind=digest_kind,
+        dispatch_digest=dispatch_digest,
+        coordinator_fence_token=coordinator_fence_token,
+        source_reread_at=source_reread_at,
+        source_digest=source_digest,
+        raw_failure_kind=token.raw,
+    )
+
+
+def repair_dispatch_identity_key(identity: RepairDispatchIdentity | None) -> str:
+    if identity is None:
+        return ""
+    payload = {
+        "environment_id": identity.environment_id,
+        "session_id": identity.session_id,
+        "chain_id": identity.chain_id,
+        "plan_revision": identity.plan_revision,
+        "phase": identity.phase,
+        "task_id": identity.task_id,
+        "attempt_number": identity.attempt_number,
+        "normalized_failure_kind": identity.normalized_failure_kind,
+        "dispatch_digest_kind": identity.dispatch_digest_kind,
+        "dispatch_digest": identity.dispatch_digest,
+        "coordinator_fence_token": identity.coordinator_fence_token,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def require_source_reread_for_action(
+    action: str,
+    *,
+    current_identity: RepairDispatchIdentity | None,
+    fresh_identity: RepairDispatchIdentity | None,
+) -> SourceRereadVerdict:
+    if action not in REPAIR_ACTION_KINDS:
+        return SourceRereadVerdict(
+            action, False, f"unknown repair action kind: {action!r}"
+        )
+    if fresh_identity is None:
+        return SourceRereadVerdict(
+            action, False, "no fresh source reread supplied for dispatch action"
+        )
+    if current_identity is None:
+        return SourceRereadVerdict(
+            action, False, "no current occurrence tuple to bind dispatch action against"
+        )
+    current_key = repair_dispatch_identity_key(current_identity)
+    fresh_key = repair_dispatch_identity_key(fresh_identity)
+    evidence = {
+        "current_fence_token": current_identity.coordinator_fence_token,
+        "fresh_fence_token": fresh_identity.coordinator_fence_token,
+        "current_tuple_digest": current_key,
+        "fresh_tuple_digest": fresh_key,
+    }
+    if current_key != fresh_key:
+        return SourceRereadVerdict(
+            action,
+            False,
+            "fresh source reread occurrence tuple disagrees with current tuple",
+            **evidence,
+        )
+    if fresh_identity.source_reread_at < current_identity.source_reread_at:
+        return SourceRereadVerdict(
+            action, False, "fresh source reread predates the current reread (stale)", **evidence
+        )
+    return SourceRereadVerdict(
+        action, True, "fresh source reread occurrence tuple matches current tuple", **evidence
+    )
 
 DecisionKind = Literal[
     "accepted",
@@ -151,6 +606,30 @@ def active_repair_claim_lock_dir(queue_dir: str | Path, blocker_id: str) -> Path
     return active_claims_dir(queue_dir) / f"{_claim_path_token(normalized)}.lock"
 
 
+def occurrence_claims_dir(queue_dir: str | Path) -> Path:
+    """Return the exact-occurrence claims directory beneath the queue root."""
+
+    return validate_queue_root(queue_dir) / OCCURRENCE_CLAIMS_DIR_NAME
+
+
+def singleton_occurrence_claim_lock_dir(
+    queue_dir: str | Path,
+    occurrence_fingerprint: str,
+) -> Path:
+    """Return the singleton exact-occurrence claim lock directory.
+
+    Built on the same queue-root validation and ``mkdir`` lock primitive as
+    the plural repair queue claim API (:func:`active_repair_claim_lock_dir`),
+    but keyed by the deterministic occurrence fingerprint so that only one
+    exact occurrence is active at a time.  The fingerprint MUST come from the
+    canonical occurrence tuple (the F01 repair-occurrence fields) — never
+    from a label, liveness signal, WBC receipt, or rebuildable projection.
+    """
+
+    normalized = _normalize_claim_identity(occurrence_fingerprint, "occurrence_fingerprint")
+    return occurrence_scoped_lock_dir(occurrence_claims_dir(queue_dir), normalized)
+
+
 def normalize_problem_signature(
     problem_signature: Mapping[str, Any],
     *,
@@ -195,6 +674,7 @@ def request_id_for(
     problem_signature: Mapping[str, Any],
     root_cause_hint: Any = "",
     extra_signature_fields: tuple[str, ...] = (),
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> str:
     """Return a stable request id unaffected by timestamps or raw hint text.
 
@@ -211,6 +691,7 @@ def request_id_for(
                 problem_signature, extra_fields=extra_signature_fields
             ),
             "root_cause_hint_hash": redacted_hint_hash(root_cause_hint),
+            "repair_identity": normalize_repair_identity(repair_identity),
         }
     )
 
@@ -470,6 +951,7 @@ def enqueue_repair_request(
         problem_signature=extended_signature,
         root_cause_hint=root_cause_hint,
         extra_signature_fields=extra_fields,
+        repair_identity=repair_identity,
     )
     request_path = requests_dir(queue_root) / f"{request_id}.json"
     predecessor_request_id = ""
@@ -531,8 +1013,9 @@ def enqueue_repair_request(
     # record so later recovery joins bind the same tuple.  Additive and
     # optional: legacy callers omitting it produce an empty identity block and
     # a ``pending`` shadow lease (see ``_shadow_acquire_custody_lease``).
-    normalized_identity: dict[str, Any] = {}
-    if repair_identity:
+    normalized_identity = normalize_repair_identity(repair_identity) or {}
+    if repair_identity and not normalized_identity:
+        # Standard custody identity fields.
         for identity_field in (
             "run_id",
             "run_revision",
@@ -549,7 +1032,19 @@ def enqueue_repair_request(
         ):
             if identity_field in repair_identity:
                 normalized_identity[identity_field] = repair_identity[identity_field]
+        # ── Step 39 (T25): exact occurrence identity (F01 tuple) ──
+        for f01_field in F01_REPAIR_OCCURRENCE_FIELDS:
+            if f01_field in repair_identity:
+                normalized_identity[f01_field] = repair_identity[f01_field]
+        # ── Step 39: evidence cursor digest ──
+        if "evidence_cursor_digest" in repair_identity:
+            normalized_identity["evidence_cursor_digest"] = repair_identity["evidence_cursor_digest"]
+        # ── Step 39: terminal receipt expectations ──
+        terminal = repair_identity.get("terminal_receipt_expectations")
+        if isinstance(terminal, list):
+            normalized_identity["terminal_receipt_expectations"] = list(terminal)
     record["repair_identity"] = normalized_identity
+    record["repair_identity_key"] = repair_identity_key(normalized_identity)
 
     if stale_reason:
         _write_once_json(request_path, record)
@@ -578,6 +1073,7 @@ def enqueue_repair_request(
         extra_fields=extra_fields,
         session=str(session or "").strip(),
         blocker_id=blocker_id,
+        repair_identity=normalized_identity,
     )
     if existing is not None and existing["request_id"] != request_id:
         decision = write_decision(
@@ -660,36 +1156,136 @@ def enqueue_human_gate_repair_request(
     artifact_stage: str,
     step_name: str,
     prompt: str,
+    # ── Step 40 (T26): occurrence identity for human-gate enqueue ──
+    occurrence_identity: Mapping[str, Any] | None = None,
+    evidence_cursor_digest: str = "",
+    terminal_receipt_expectations: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Megaplan-owned hook used by the neutral human-gate step."""
+    """Megaplan-owned hook used by the neutral human-gate step.
+
+    Step 40 (T26): converts human-gate enqueue to occurrence-compatible
+    requests or typed zero-authority rejection.  When *occurrence_identity*
+    is provided with all ten F01 fields non-empty the request is delegated
+    to :func:`enqueue_occurrence_bound_repair_request`.  When the identity
+    is missing or incomplete a typed ``zero_authority_rejected`` outcome is
+    emitted with the current authority and custody evidence (plan, pipeline,
+    step, session, workspace) so that a human-gate suspension cannot become
+    repair authority on its own.
+    """
 
     from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
+    from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+        emit_zero_authority_rejection,
+    )
+    from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
 
     if not repair_request_queue_enabled():
         return None
-    return enqueue_repair_request(
-        queue_root=queue_root,
-        marker_dir=marker_dir,
-        session=session,
-        source="human_gate",
-        workspace=workspace,
-        run_kind=run_kind,
-        target={
-            "plan_dir": str(marker_dir),
-            "plan_name": plan_name,
-            "pipeline_name": pipeline_name,
-            "workspace_path": str(workspace),
-        },
-        problem_signature={
-            "failure_kind": "human_gate",
-            "current_state": pipeline_name,
-            "phase_or_step": artifact_stage,
-            "milestone_or_plan": step_name,
-            "gate_recommendation": "",
-            "blocked_task_id": "",
-        },
-        root_cause_hint=prompt,
+
+    # ── Build custody evidence payload for rejection outcomes ──────────
+    custody_evidence: dict[str, Any] = {
+        "plan_name": plan_name,
+        "pipeline_name": pipeline_name,
+        "artifact_stage": artifact_stage,
+        "step_name": step_name,
+        "session": str(session or "").strip(),
+        "workspace": str(workspace),
+        "marker_dir": str(marker_dir),
+        "run_kind": str(run_kind or "").strip(),
+    }
+
+    # ── Validate and normalize occurrence identity ─────────────────────
+    if occurrence_identity:
+        f01_present = 0
+        normalized_identity: dict[str, Any] = {}
+        for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
+            value = str(occurrence_identity.get(field_name, "")).strip()
+            normalized_identity[field_name] = value
+            if value:
+                f01_present += 1
+        # Carry forward standard custody fields.
+        for std_field in (
+            "run_authority_grant_id",
+            "coordinator_fence_token",
+            "lease_id",
+            "custody_epoch",
+        ):
+            if std_field in occurrence_identity:
+                normalized_identity[std_field] = occurrence_identity[std_field]
+        if evidence_cursor_digest:
+            normalized_identity["evidence_cursor_digest"] = evidence_cursor_digest
+        if terminal_receipt_expectations:
+            normalized_identity["terminal_receipt_expectations"] = list(
+                terminal_receipt_expectations
+            )
+
+        if f01_present == len(F01_REPAIR_OCCURRENCE_FIELDS):
+            # Full F01 tuple — delegate to occurrence-bound enqueue.
+            return enqueue_occurrence_bound_repair_request(
+                queue_root=queue_root,
+                session=session,
+                problem_signature={
+                    "failure_kind": "human_gate",
+                    "current_state": pipeline_name,
+                    "phase_or_step": artifact_stage,
+                    "milestone_or_plan": step_name,
+                    "gate_recommendation": "",
+                    "blocked_task_id": "",
+                },
+                root_cause_hint=prompt,
+                source="human_gate",
+                marker_dir=marker_dir,
+                target={
+                    "plan_dir": str(marker_dir),
+                    "plan_name": plan_name,
+                    "pipeline_name": pipeline_name,
+                    "workspace_path": str(workspace),
+                },
+                workspace=workspace,
+                run_kind=run_kind,
+                occurrence_identity=normalized_identity,
+                evidence_cursor_digest=evidence_cursor_digest,
+                terminal_receipt_expectations=terminal_receipt_expectations,
+            )
+
+        # Partial identity — reject with typed outcome.
+        rejection = emit_zero_authority_rejection(
+            "enqueue_producer",
+            "human_gate",
+            reason=(
+                "insufficient occurrence identity for human-gate enqueue: "
+                f"{f01_present}/{len(F01_REPAIR_OCCURRENCE_FIELDS)} "
+                "F01 fields non-empty; all ten are required"
+            ),
+        )
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": {
+                **custody_evidence,
+                **(rejection.evidence or {}),
+            },
+        }
+
+    # A human-gate label, suspension, or liveness observation is not repair
+    # authority.  Producers that cannot supply the exact F01 occurrence tuple
+    # must fail closed instead of creating even a coalescible legacy request.
+    rejection = emit_zero_authority_rejection(
+        "enqueue_producer",
+        "human_gate",
+        reason=(
+            "manual/liveness context cannot become repair authority without "
+            "a complete F01 occurrence identity"
+        ),
     )
+    return {
+        "status": "zero_authority_rejected",
+        "outcome": "zero_authority_rejected",
+        "evidence": {
+            **custody_evidence,
+            **(rejection.evidence or {}),
+        },
+    }
 
 
 def iter_repair_requests(
@@ -802,8 +1398,10 @@ def find_pending_by_signature(
     extra_fields: tuple[str, ...] = (),
     session: str = "",
     blocker_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     key = problem_signature_key(problem_signature, extra_fields=extra_fields)
+    identity_key = repair_identity_key(repair_identity)
     decided = _decided_request_ids(queue_dir)
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
@@ -815,6 +1413,10 @@ def find_pending_by_signature(
         if blocker_id and str(record.get("blocker_id") or "").strip() != blocker_id:
             continue
         if record.get("problem_signature_key") == key:
+            if identity_key and str(
+                record.get("repair_identity_key") or ""
+            ) != identity_key:
+                continue
             return record
     return None
 
@@ -883,6 +1485,7 @@ def write_dispatch_attempt(
     managed_run_id: str,
     managed_manifest_path: str,
     created_at: str | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write immutable proof that a claimed request launched a managed child."""
 
@@ -913,6 +1516,8 @@ def write_dispatch_attempt(
         "managed_manifest_path": str(managed_manifest_path or "").strip(),
         "status": "launched",
         "created_at": when,
+        "repair_identity": normalize_repair_identity(repair_identity) or {},
+        "repair_identity_key": repair_identity_key(repair_identity),
     }
     for field in (
         "request_id",
@@ -1008,6 +1613,7 @@ def claim_active_repair_request(
     is_pid_live: Any | None = None,
     extra: Mapping[str, Any] | None = None,
     lease_store_dir: str | Path | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> ActiveRepairClaimResult:
     """Atomically claim active repair ownership for one blocker.
 
@@ -1021,6 +1627,10 @@ def claim_active_repair_request(
     normalized_request_id = _normalize_claim_identity(request_id, "request_id")
     normalized_actor = _normalize_claim_identity(actor, "actor")
     normalized_session = _normalize_claim_identity(session, "session")
+    normalized_repair_identity = normalize_repair_identity(repair_identity)
+    normalized_repair_identity_key = repair_identity_key(
+        normalized_repair_identity
+    )
     claim_lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
     metadata = {
         "kind": "active_repair_request_claim",
@@ -1030,6 +1640,8 @@ def claim_active_repair_request(
         "request_id": normalized_request_id,
         "blocker_id": normalized_blocker_id,
         "blocker_fingerprint": dict(blocker_fingerprint or {}),
+        "repair_identity": normalized_repair_identity or {},
+        "repair_identity_key": normalized_repair_identity_key,
     }
     if extra:
         metadata.update(dict(extra))
@@ -1038,6 +1650,7 @@ def claim_active_repair_request(
         claim_lock_dir,
         session=normalized_session,
         target_id=normalized_blocker_id,
+        repair_identity=normalized_repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,
@@ -1119,6 +1732,8 @@ def bind_managed_run_to_active_claim(
     expected_owner_pid: int | None,
     new_owner_pid: int,
     lease_store_dir: str | Path | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
+    expected_repair_identity_key: str = "",
 ) -> bool:
     """Fence an already-authorized claim to the process that really executes it.
 
@@ -1132,6 +1747,10 @@ def bind_managed_run_to_active_claim(
     normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
     normalized_request_id = _normalize_claim_identity(request_id, "request_id")
     normalized_run_id = _normalize_claim_identity(managed_run_id, "managed_run_id")
+    normalized_repair_identity_key = (
+        str(expected_repair_identity_key or "").strip()
+        or repair_identity_key(repair_identity)
+    )
     lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
     owner_path = owner_metadata_path(lock_dir)
     bind_lock = lock_dir.with_name(lock_dir.name + ".managed-run-bind")
@@ -1149,6 +1768,12 @@ def bind_managed_run_to_active_claim(
         if str(owner.get("request_id") or "") != normalized_request_id:
             return False
         if str(owner.get("blocker_id") or "") != normalized_blocker_id:
+            return False
+        if (
+            normalized_repair_identity_key
+            and str(owner.get("repair_identity_key") or "")
+            != normalized_repair_identity_key
+        ):
             return False
         owner_run_id = str(owner.get("managed_agent_run_id") or "")
         if owner_run_id and owner_run_id != normalized_run_id:
@@ -1302,13 +1927,23 @@ def _settle_owner_write_race(
 ) -> RepairLockResult:
     evidence = result.stale_evidence or {}
     reasons = evidence.get("reasons")
-    if not result.stale or reasons != ["owner_metadata_missing"]:
+    transient_owner_reasons = {
+        ("owner_metadata_missing",),
+        ("owner_metadata_invalid",),
+    }
+    if not result.stale or tuple(reasons or ()) not in transient_owner_reasons:
         return result
-    for _ in range(20):
+    # The mkdir winner can be descheduled before its atomic owner write while
+    # many same-process contenders are inspecting the new directory.  Allow a
+    # full second for that bounded write race before classifying it as stale.
+    for _ in range(100):
         time.sleep(0.01)
         inspected = inspect_repair_lock(result.lock_dir, now=now, is_pid_live=is_pid_live)
         inspected_reasons = (inspected.stale_evidence or {}).get("reasons")
-        if inspected.status != "stale" or inspected_reasons != ["owner_metadata_missing"]:
+        if (
+            inspected.status != "stale"
+            or tuple(inspected_reasons or ()) not in transient_owner_reasons
+        ):
             return inspected
     return result
 
@@ -1735,6 +2370,140 @@ def persist_failure_occurrence(
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 39 (T25) — Occurrence-bound enqueue for lifecycle & supervise producers
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def enqueue_occurrence_bound_repair_request(
+    *,
+    queue_root: str | Path,
+    session: str,
+    problem_signature: Mapping[str, Any],
+    root_cause_hint: Any = "",
+    source: str,
+    marker_dir: str | Path | None = None,
+    target: Mapping[str, Any] | None = None,
+    workspace: str | Path | None = None,
+    run_kind: str = "",
+    created_at: str | None = None,
+    stale_reason: str = "",
+    superseded_by: str = "",
+    acceptance_predicate_failure: Mapping[str, Any] | None = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
+    lease_store_dir: str | Path | None = None,
+    # ── Occurrence identity fields (F01 tuple) ──
+    occurrence_identity: Mapping[str, Any] | None = None,
+    evidence_cursor_digest: str = "",
+    terminal_receipt_expectations: list[str] | None = None,
+) -> dict[str, Any]:
+    """Enqueue a repair request bound to an exact occurrence identity.
+
+    This is the canonical enqueue path for lifecycle failure and
+    supervised-run-exhausted producers.  It accepts the full F01 tuple
+    fields through *occurrence_identity*, an *evidence_cursor_digest*,
+    and *terminal_receipt_expectations*, then funnels them into
+    :func:`enqueue_repair_request` as ``repair_identity`` so later
+    recovery joins bind the same exact occurrence.
+
+    A producer that cannot supply the full F01 tuple emits
+    ``zero_authority_rejected`` instead of enqueuing a request with
+    partial identity (which would be indistinguishable from an
+    authority derived from a label, liveness signal, WBC receipt, or
+    rebuildable projection).
+
+    Returns the same result shape as :func:`enqueue_repair_request` on
+    success, or a typed rejection dict on identity failure.
+    """
+    from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+        CALLER_KINDS,
+        emit_zero_authority_rejection,
+    )
+
+    # ── Validate and normalize occurrence identity ──────────────────────
+    normalized_identity: dict[str, Any] = {}
+    if occurrence_identity:
+        # Normalize F01 fields.
+        f01_present = 0
+        for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
+            value = str(occurrence_identity.get(field_name, "")).strip()
+            normalized_identity[field_name] = value
+            if value:
+                f01_present += 1
+
+        # Carry forward standard custody fields.
+        for std_field in (
+            "run_authority_grant_id",
+            "coordinator_fence_token",
+            "lease_id",
+            "custody_epoch",
+        ):
+            if std_field in occurrence_identity:
+                normalized_identity[std_field] = occurrence_identity[std_field]
+
+        # Evidence cursor digest.
+        if evidence_cursor_digest:
+            normalized_identity["evidence_cursor_digest"] = evidence_cursor_digest
+
+        # Terminal receipt expectations.
+        if terminal_receipt_expectations:
+            normalized_identity["terminal_receipt_expectations"] = list(
+                terminal_receipt_expectations
+            )
+
+        # Reject partial identity: all ten F01 fields must be non-empty
+        # so authority is never derived from labels/liveness/WBC
+        # receipts/rebuildable projections.
+        if f01_present != len(F01_REPAIR_OCCURRENCE_FIELDS):
+            rejection = emit_zero_authority_rejection(
+                "enqueue_producer",
+                source,
+                reason=(
+                    "insufficient occurrence identity: "
+                    f"{f01_present}/{len(F01_REPAIR_OCCURRENCE_FIELDS)} "
+                    "F01 fields non-empty; all ten are required"
+                ),
+            )
+            return {
+                "status": "zero_authority_rejected",
+                "outcome": "zero_authority_rejected",
+                "evidence": rejection.evidence,
+            }
+    else:
+        # No occurrence identity supplied: emit typed rejection.
+        rejection = emit_zero_authority_rejection(
+            "enqueue_producer",
+            source,
+            reason="occurrence_identity is required for occurrence-bound enqueue",
+        )
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": rejection.evidence,
+        }
+
+    return enqueue_repair_request(
+        queue_root=queue_root,
+        session=session,
+        problem_signature=problem_signature,
+        root_cause_hint=root_cause_hint,
+        source=source,
+        marker_dir=marker_dir,
+        target=target,
+        workspace=workspace,
+        run_kind=run_kind,
+        created_at=created_at,
+        stale_reason=stale_reason,
+        superseded_by=superseded_by,
+        acceptance_predicate_failure=acceptance_predicate_failure,
+        acceptance_transaction_id=acceptance_transaction_id,
+        acceptance_snapshot_hash=acceptance_snapshot_hash,
+        lease_store_dir=lease_store_dir,
+        repair_identity=normalized_identity if normalized_identity else None,
+    )
+
+
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
     "ATTEMPTS_DIR_NAME",
@@ -1742,6 +2511,7 @@ __all__ = [
     "DECISIONS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
     "QUEUE_DIR_NAME",
+    "OCCURRENCE_CLAIMS_DIR_NAME",
     "ActiveRepairClaimResult",
     "ActiveRepairClaimStatus",
     "DecisionKind",
@@ -1751,6 +2521,7 @@ __all__ = [
     "claim_active_repair_request",
     "bind_managed_run_to_active_claim",
     "enqueue_human_gate_repair_request",
+    "enqueue_occurrence_bound_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
     "has_claimable_repair_request_contract",
@@ -1760,11 +2531,13 @@ __all__ = [
     "normalize_problem_signature",
     "persist_failure_occurrence",
     "problem_signature_key",
+    "occurrence_claims_dir",
     "record_malformed_file",
     "redacted_hint_hash",
     "repair_queue_dir",
     "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
+    "singleton_occurrence_claim_lock_dir",
     "repair_request_contract_violations",
     "request_id_for",
     "validate_queue_root",

@@ -114,3 +114,71 @@ def test_current_recovery_verifier_rejects_missing_occurrences() -> None:
 
     assert result.verdict == VerificationVerdict.REJECTED_LOST
     assert result.ordering == OccurrenceOrder.LOST
+
+
+def test_terminal_audit_rejects_arbitrary_repair_loop_bin() -> None:
+    """Step 78: terminal audit must reject arbitrary ``--repair-loop-bin`` execution.
+
+    The terminal audit module routes through typed delegation shim.  It must
+    never directly subprocess-execute an arbitrary repair-loop binary and treat
+    its returncode as accepted repair.  Instead it emits typed rejection or
+    delegates through ``delegate_to_simple_fixer``.
+    """
+    import ast
+    from pathlib import Path
+
+    source_path = (
+        Path(__file__).resolve().parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "terminal_audit.py"
+    )
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Collect all function definitions and their subprocess/exec calls.
+    subprocess_calls: list[str] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:
+            if isinstance(node.func, ast.Attribute):
+                full = f"{ast.unparse(node.func.value)}.{node.func.attr}" if hasattr(ast, 'unparse') else str(node.func.attr)
+                if "subprocess" in full or "os.system" in full:
+                    subprocess_calls.append(full)
+            elif isinstance(node.func, ast.Name):
+                if node.func.id in ("exec", "eval"):
+                    subprocess_calls.append(node.func.id)
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+
+    # The terminal_audit module must not contain any direct subprocess.run,
+    # subprocess.Popen, subprocess.call, os.system, or exec calls that
+    # execute arbitrary repair-loop binaries.
+    for call in subprocess_calls:
+        assert "subprocess.run" not in call, (
+            f"terminal_audit.py must not use {call} — "
+            "repair-loop execution must route through typed delegation shim"
+        )
+
+    # Must import from the delegation shim.
+    assert "from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import" in source
+    assert "build_repair_delegation" in source
+    assert "emit_zero_authority_rejection" in source
+    assert "delegate_to_simple_fixer" in source
+
+    # The run_terminal_audit function must accept repair_loop_bin as a parameter
+    # but never execute it via subprocess.
+    run_func_start = source.index("def run_terminal_audit(")
+    run_func_end = source.index("\ndef main(", run_func_start)
+    run_func = source[run_func_start:run_func_end]
+
+    # Must have delegation code path (not just subprocess execution).
+    assert "delegation = build_repair_delegation" in run_func
+    assert "emit_zero_authority_rejection" in run_func
+    assert "delegate_to_simple_fixer" in run_func
+
+    # The comment must document the delegation intent.
+    assert "Route retrigger through typed delegation shim (Step 76-80)" in source
+    assert "Terminal audit never directly executes a repair-loop binary" in source

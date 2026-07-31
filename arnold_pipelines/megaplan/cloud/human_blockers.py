@@ -72,6 +72,8 @@ class HumanBlockerClassification:
     # ── M9: source-cursor vectors ──
     source_cursor: dict[str, Any] | None = None
     source_cursor_vector_id: str = ""
+    source_cursor_vector: dict[str, Any] | None = None
+    evidence_gaps: dict[str, Any] = field(default_factory=dict)
     # ── M9: drift evidence when source records disagree ──
     drift: list[dict[str, Any]] = field(default_factory=list)
     drift_evidence_ids: list[str] = field(default_factory=list)
@@ -195,6 +197,7 @@ def classify_needs_human_blocker(
     needs_human_path: str | Path | None = None,
     needs_human_payload: Mapping[str, Any] | None = None,
     resolver_record: Mapping[str, Any] | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
     session_is_live: Any = None,
     pid_is_live: Any = None,
 ) -> HumanBlockerClassification:
@@ -255,6 +258,11 @@ def classify_needs_human_blocker(
             human_gate_view=None,
             source_cursor=None,
             source_cursor_vector_id="",
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=False,
+                has_resolver=False,
+            ),
             drift=[],
             drift_evidence_ids=[],
         )
@@ -273,6 +281,7 @@ def classify_needs_human_blocker(
             session,
             marker_dir=marker_dir,
             repair_data_dir=effective_repair_data_dir,
+            source_cursor_vector=source_cursor_vector,
             session_is_live=session_is_live,
             pid_is_live=pid_is_live,
         )
@@ -305,6 +314,7 @@ def classify_needs_human_blocker(
 
     resolver_plan_refs = record.get("needs_human", {}).get("plan_refs", [])
     resolver_current_plan = record.get("current_refs", {}).get("current_plan_name", "")
+    has_current_target_proof = False
 
     # --- M9: detect drift between needs-human payload and resolver ---
     payload_plan_name = _safe_marker_text(payload.get("plan_name"))
@@ -334,6 +344,15 @@ def classify_needs_human_blocker(
             human_gate_view=human_gate_view,
             source_cursor=_source_cursor_dict,
             source_cursor_vector_id=_source_cursor_vector_id,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True,
+                has_resolver=True,
+                stale_kinds=stale_kinds,
+                resolver_plan_refs=list(resolver_plan_refs),
+                current_plan=current_plan,
+                has_current_target_proof=has_current_target_proof,
+            ),
             drift=list(drift_entries),
             drift_evidence_ids=list(drift_evidence_ids),
         )
@@ -1087,6 +1106,81 @@ def _build_current_pointer(
         "plan_name": plan_name,
         "run_kind": repair_payload.get("run_kind"),
     }
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Format canonical source-cursor evidence without granting authority."""
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    if cursor_vector is not None:
+        return {
+            "authority": "absent",
+            "reason": "no_source_cursor_vector_provided",
+        }
+    return None
+
+
+def _collect_human_blocker_evidence_gaps(
+    *,
+    has_payload: bool,
+    has_resolver: bool,
+    stale_kinds: set[str] | None = None,
+    resolver_plan_refs: list[str] | None = None,
+    current_plan: str = "",
+    has_current_target_proof: bool = False,
+) -> dict[str, Any]:
+    """Return predecessor-compatible, non-authoritative blocker evidence gaps."""
+    gaps: dict[str, Any] = {}
+    kinds = stale_kinds or set()
+    refs = resolver_plan_refs or []
+    if not has_payload:
+        gaps["needs_human_payload"] = {
+            "gap": "needs_human_payload_missing",
+            "reason": "needs-human sidecar missing or unreadable",
+            "evidence_status": "missing",
+        }
+    if not has_resolver:
+        gaps["resolver_record"] = {
+            "gap": "resolver_record_missing",
+            "reason": "no resolver evidence record available for current-target proof",
+            "evidence_status": "missing",
+        }
+    if "stale_needs_human_plan_ref" in kinds:
+        gaps["needs_human_plan_ref"] = {
+            "gap": "stale_needs_human_plan_ref",
+            "reason": "needs-human sidecar references an older plan",
+            "evidence_status": "stale",
+        }
+    if has_payload and has_resolver and not refs:
+        gaps["plan_refs"] = {
+            "gap": "plan_refs_empty",
+            "reason": "resolver did not produce plan_refs from needs-human sidecar",
+            "evidence_status": "degraded",
+        }
+    if has_payload and has_resolver and refs and current_plan and current_plan not in refs:
+        gaps["plan_mismatch"] = {
+            "gap": "current_plan_not_in_needs_human_refs",
+            "reason": (
+                f"needs-human sidecar references plans {refs} "
+                f"but current plan is {current_plan!r}"
+            ),
+            "evidence_status": "stale",
+        }
+    if has_payload and has_resolver and refs and not has_current_target_proof:
+        gaps["current_target_proof"] = {
+            "gap": "current_target_proof_missing",
+            "reason": (
+                "needs-human references current plan but resolver lacks "
+                "current-target proof (no plan/chain state or live evidence)"
+            ),
+            "evidence_status": "degraded",
+        }
+    return gaps
 
 
 def _safe_marker_text(value: object) -> str:

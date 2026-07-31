@@ -1,8 +1,13 @@
 # Progress Auditor Signal Swarm Synthesis
 
+> **Authority status (M11):** Zero-authority history. All auditor authority has
+> been migrated to canonical delegation. This synthesis is retained as
+> non-runnable telemetry — it must not be used to launch repair actions,
+> grant authority, or materialize commands.
+
 Date: 2026-07-04
 
-Scope: signal ideas for the megaplan 6-hour progress auditor, including low-level execution signals, cloud/runtime signals, human/PR/CI gates, repair/meta-repair custody, and high-level process inefficiencies.
+Scope: signal ideas for the megaplan next-three-hour progress auditor, including low-level execution signals, cloud/runtime signals, human/PR/CI gates, repair/meta-repair custody, and high-level process inefficiencies.
 
 Source: 9 DeepSeek subagents, one per plane:
 

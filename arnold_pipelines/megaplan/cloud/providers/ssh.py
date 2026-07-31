@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import logging
 import os
@@ -120,6 +121,29 @@ class SshProvider(Provider):
             surface=surface,
         )
 
+    def _remote_run_compatible(
+        self,
+        command: str,
+        *,
+        capture_output: bool = True,
+        input: str | None = None,
+        surface: str,
+    ) -> subprocess.CompletedProcess[str]:
+        """Preserve provenance while supporting predecessor provider overrides."""
+        parameters = inspect.signature(self._remote_run).parameters
+        if "surface" in parameters:
+            return self._remote_run(
+                command,
+                capture_output=capture_output,
+                input=input,
+                surface=surface,
+            )
+        return self._remote_run(
+            command,
+            capture_output=capture_output,
+            input=input,
+        )
+
     def _sync_deploy_dir(self, deploy_dir: Path) -> None:
         remote_dir = shlex.quote(self._ssh.remote_dir)
         if self._rsync_binary is not None:
@@ -235,7 +259,7 @@ class SshProvider(Provider):
         env_path = f"{self._ssh.remote_dir}/.env"
         env_lines = [f"PORT={self._spec.resources.port}"]
         env_lines.extend(f"{name}={value}" for name, value in secrets.items())
-        self._remote_run(
+        self._remote_run_compatible(
             "mkdir -p "
             f"{shlex.quote(self._ssh.remote_dir)} "
             f"{shlex.quote(self._ssh.workspace_dir)} "
@@ -243,16 +267,16 @@ class SshProvider(Provider):
             f"{shlex.quote(f'{self._ssh.cache_dir}/npm')}",
             surface="deploy_prepare",
         )
-        self._remote_run(
+        self._remote_run_compatible(
             f"cat > {shlex.quote(env_path)}",
             input="\n".join(env_lines) + "\n",
             surface="deploy_env",
         )
-        self._remote_run(
+        self._remote_run_compatible(
             f"docker rm -f {shlex.quote(self._ssh.container)} >/dev/null 2>&1 || true",
             surface="deploy_remove_existing",
         )
-        self._remote_run(
+        self._remote_run_compatible(
             " ".join(
                 [
                     "docker run -d",

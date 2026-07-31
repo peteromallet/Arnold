@@ -513,3 +513,92 @@ def test_controller_appends_l3_drift_evidence(tmp_path: Path) -> None:
             "expected": {"brief_outcome": "started"},
         }
     ]
+
+
+# ── T30 / Step 43: trigger argv shim validation ─────────────────────────────
+
+
+def test_controller_rejects_noncanonical_trigger_argv(tmp_path: Path) -> None:
+    """T30 / Step 43: noncanonical trigger argv is rejected as a typed outcome.
+
+    The controller no longer executes arbitrary argv via subprocess.  Each
+    legacy binary name, shell token, caller-runner marker, and deep-superfixer
+    identity is rejected with a closed ``trigger_argv_rejection_kind`` and a
+    delegation-shim ``zero_authority_rejected`` outcome, without dispatching a
+    child process or claiming authority from a label, liveness signal, WBC
+    receipt, or rebuildable projection.
+    """
+    noncanonical_cases = [
+        (["/usr/local/bin/arnold-repair-trigger"], "legacy_binary_name"),
+        (["sh", "-c", "echo pwn ; rm -rf /"], "shell_token"),
+        (
+            ["python", "-m", "arnold_pipelines.megaplan.cloud.repair"],
+            "caller_runner",
+        ),
+        (["deep-superfixer-run", "--identity"], "deep_superfixer_identity"),
+        (["python", "-m", "module", "--repair-bin", "x"], "legacy_binary_name"),
+    ]
+
+    for idx, (argv, expected_kind) in enumerate(noncanonical_cases):
+        result = run_escalation_controller(
+            {"findings": [_true_stall()], "green_checks": []},
+            state_root=tmp_path / f"ws-{idx}" / "audit-escalations",
+            queue_root=tmp_path / f"ws-{idx}" / ".megaplan" / "repair-queue",
+            authorized=True,
+            trigger_argv=argv,
+        )
+
+        item = result["l3_escalation_summary"]["items"][0]
+        assert item["decision"] == "trigger_argv_rejected", (
+            f"argv={argv} should be rejected; got decision={item['decision']!r}"
+        )
+        assert item["repair_dispatched"] is False, (
+            f"argv={argv} must never dispatch a repair"
+        )
+        assert item["trigger_argv_rejection_kind"] == expected_kind, (
+            f"argv={argv} expected kind {expected_kind!r}; "
+            f"got {item.get('trigger_argv_rejection_kind')!r}"
+        )
+        assert item["delegation_outcome"] == "zero_authority_rejected", (
+            f"argv={argv} must carry the shim zero-authority rejection outcome"
+        )
+        assert result["l3_escalation_summary"]["dispatched"] == 0
+
+
+def test_controller_canonical_runner_test_seam_still_dispatches(tmp_path: Path) -> None:
+    """T30 / Step 43: a caller-supplied trigger_runner remains a controlled
+    test seam.  Managed-launch receipts keep flowing through it, so the
+    retirement only removes the *arbitrary* (subprocess) default path.
+    """
+    calls: list[list[str]] = []
+
+    def runner(argv):
+        calls.append(list(argv))
+        request_id = argv[-1]
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "launch_failed",
+                    "request_id": request_id,
+                    "managed_run_id": "managed-seam",
+                    "managed_manifest_path": str(tmp_path / "missing-seam.json"),
+                }
+            ),
+            stderr="seam runner exercised",
+        )
+
+    result = run_escalation_controller(
+        {"findings": [_true_stall()], "green_checks": []},
+        state_root=tmp_path / "ws-seam" / "audit-escalations",
+        queue_root=tmp_path / "ws-seam" / ".megaplan" / "repair-queue",
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+    )
+
+    item = result["l3_escalation_summary"]["items"][0]
+    assert calls, "the supplied test-seam runner must be exercised"
+    assert item["decision"] == "launch_failed"
+    assert item["repair_dispatched"] is False

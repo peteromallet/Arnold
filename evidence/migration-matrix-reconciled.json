@@ -1,6 +1,6 @@
 {
   "schema": "m6.migration-matrix-reconciled.v1",
-  "generated_at": "2026-07-21T23:36:19.581097+00:00",
+  "generated_at": "2026-07-31T00:32:04.957762+00:00",
   "generator": "tools/reconcile_m6_migration_matrix.py",
   "source_matrix": ".megaplan/initiatives/custody-control-plane/research/migration-matrix.md",
   "source_matrix_hash": "7665789b417d64371ce9d9cd73c537d2f2f8155a4bf92fbbc53405744dfbac08",
@@ -12,7 +12,7 @@
     "retired": 2,
     "out-of-supported-scope": 1
   },
-  "composite_hash": "9854a2761ca04006e346a26bb854cdc7a102503ba682fdd4637dde88ebd77521",
+  "composite_hash": "377c276bb91ed5e2eaf18f399b8575159e6139bebfc06446f179626b6d629f55",
   "prerequisite_status": "INCOHERENT",
   "evidence_artifacts_loaded": {
     "prerequisite_verification": true,
@@ -75,7 +75,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -114,6 +114,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -121,7 +122,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "8d586eaf85fd1f4ea2095004aa7333f83fe63fcc612cd7c9dead95ae82d49959"
+      "row_hash": "09e7a3af6710f1b40c0d07eb8268221ad40f074098b9f88dfb13d59e7b2dd90d"
     },
     {
       "row_index": 1,
@@ -153,7 +154,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -192,6 +193,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -199,7 +201,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "a65600930eb9323dcfced443d7fa76142f330b19ee1011801ba1ed466ad66d42"
+      "row_hash": "994197bdb80e28895572eda9ff3217d631315e573e01bc313379a815586be0ef"
     },
     {
       "row_index": 6,
@@ -230,7 +232,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -269,6 +271,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -276,7 +279,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "674e5c371d1d96432e38f59c09c8675218065e90903456dda3857505be91b820"
+      "row_hash": "1111d56d9c4645061654c86f28687be27edaa5107e7276e01281f16991f95cb1"
     },
     {
       "row_index": 9,
@@ -304,7 +307,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -343,6 +346,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -350,7 +354,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "831ffb5b3f042aaadea152d39e53cab03fc8aa9c0b0fa70802c39de4bb778797"
+      "row_hash": "9218293fa3cf6e4998f591c3ce21e8fe4c5b82e2c1397e493354ea7ad1b51dde"
     },
     {
       "row_index": 66,
@@ -387,7 +391,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -426,6 +430,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -433,7 +438,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "2143e7fcca88c13e94045fd391c05ed74fe39f2fa58d3e37ea700fa68414765c"
+      "row_hash": "109a5f646d5896237a1e4811bd050cc261405aef53f4b58405822acc4eac33a3"
     },
     {
       "row_index": 67,
@@ -468,7 +473,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -507,6 +512,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -514,7 +520,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "bac12f1c92fac8304f2e9a3b113d1d284740a52904982368dc7f0ab1b82a4345"
+      "row_hash": "94b1c4179f6809bcb50830f781affb797a53a6ce828d9ab16ebdca83e9ff3833"
     },
     {
       "row_index": 68,
@@ -549,7 +555,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -588,6 +594,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -595,7 +602,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "52f31d67c02e1b33d5faf6046351a7f051661e525d704e8c79f468d2c68e749d"
+      "row_hash": "4fbd636307a8718f8664181f7c9dfd6a4956874f237af5925264f98a7aab52f2"
     },
     {
       "row_index": 69,
@@ -630,7 +637,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -669,6 +676,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -676,7 +684,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "e0cca71ea9b9d8022844dbac10cc7db2afc511ab39c970e422d442f9bbe8ce26"
+      "row_hash": "2a03193d6c20b10037e451f731d06ee94f4cb9b28ad5240742caaefb7f09f6a4"
     },
     {
       "row_index": 70,
@@ -711,7 +719,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -750,6 +758,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -757,7 +766,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "0cd99a7921fb3406dd4f3d32b4f3a21e9bbe0e81e52db5d9ef876ec1bf4c37db"
+      "row_hash": "ca6715c341053cadd144ad4e277e68f8ed8c6080a009b9b4d7cdaa5b3534dd53"
     },
     {
       "row_index": 72,
@@ -785,7 +794,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -824,6 +833,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -831,7 +841,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "26ac2257a33b1c0f0f10ea349b76abf8b9a296ad348fee32eab40e1dfbf89861"
+      "row_hash": "052fe024ba39a9aac3e72c49653d07ece378f01a7c22353d53ccf5ee7c10a7c7"
     },
     {
       "row_index": 78,
@@ -852,6 +862,29 @@
       "handoff_milestone": null,
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider"
         ],
         "prerequisite_verification": {
@@ -862,7 +895,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -901,6 +934,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -908,7 +942,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "d9eff1b0c3a36f73a4e749b07a90015b124c9f09ce44628f7bb8aab2f903d860"
+      "row_hash": "261b51fe6cfbdf7302b9881ed0ffb1d2f97e20dd5d126038bd251461c5f641e0"
     },
     {
       "row_index": 91,
@@ -939,7 +973,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -978,6 +1012,7 @@
         }
       },
       "blocked_by_prerequisites": [
+        "m5_final_attestation",
         "m5_bound_head_vs_current_head",
         "wbc_file_hashes"
       ],
@@ -985,7 +1020,7 @@
         "wbc_package_metadata",
         "activation_receipt_evidence"
       ],
-      "row_hash": "2441610f7ab09833e03c9537118513d32f70539e989a8b04208ccc93378bb336"
+      "row_hash": "0e3b32d6751517d91bc1243bfd8c07bb224a6d72efce1638a36d685f871cb893"
     },
     {
       "row_index": 71,
@@ -1019,7 +1054,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1057,7 +1092,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "4fbda74297d6123783fee2b1110be085a0812c4b4d0b40e46a259d4c0035ee22"
+      "row_hash": "d576722f6a1749fef1e818495384a86ae3c732082c717cd0cf2279660910294a"
     },
     {
       "row_index": 2,
@@ -1088,7 +1123,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1126,7 +1161,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "345694948f9667847b9d13b493d0903c485470281c6264ad9e842f034e02eb69"
+      "row_hash": "469bce495f88bbda4cd5c264f153df290f5308dd245c51c79203e0f5cec8bde6"
     },
     {
       "row_index": 3,
@@ -1154,7 +1189,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1192,7 +1227,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "5ef3c41968e7325c50dce75421c07a3b6bc7dc5f0bf10f340ab41d7f048e50af"
+      "row_hash": "fd09b67ce31f9e0e794b5c9a0c7044362a96ff86001acff3f4d0b71df07e10d4"
     },
     {
       "row_index": 4,
@@ -1220,7 +1255,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1258,7 +1293,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "ba888baaabde88d26796ccbe79234b0205fa1e51ab4d1c481aaec04e74908ec6"
+      "row_hash": "e67225438c105f0e2632f1fa88ad5f66b07fc24e6a0957646ef430a022e25799"
     },
     {
       "row_index": 5,
@@ -1286,7 +1321,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1324,7 +1359,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "80cf8c2c1b40fef1adc80a40e1cf5dc8994567c271d776b65d2de036237a25f0"
+      "row_hash": "a60c06c48fc2d9c6d133bc417cd789a33dc94858758e26143b660c194d2dd3bd"
     },
     {
       "row_index": 7,
@@ -1352,7 +1387,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1390,7 +1425,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "c7ec71436165866911ec1fa33765aebed9c28200f32b9a897a526269b7a2baf9"
+      "row_hash": "3be5f9c3467cd53973b7b2aff4247615e8e50099eaaaa45363e1e0d37ee3c091"
     },
     {
       "row_index": 8,
@@ -1426,7 +1461,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1464,7 +1499,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "aa68281319379ea286ef1cd0c46f57bd49381d8b83d26be2b64b2c28958d1410"
+      "row_hash": "8545eaa9ac3896f295e45d767994a80980167dee23a19f192657dda80f6edb85"
     },
     {
       "row_index": 10,
@@ -1492,7 +1527,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1530,7 +1565,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "006b1979762007ba77a2465072a1690e2a805a43e4b7a1e3f43f6b6db9c3737f"
+      "row_hash": "413ad851b380bd7db7991f3700e515aab72f1887696479b1d73ce6039736d486"
     },
     {
       "row_index": 11,
@@ -1561,7 +1596,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1599,7 +1634,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "5bc61bd7ceb503d213e18b8d96be41bef7bca46f24b5d513810ef80f319abc43"
+      "row_hash": "74f1e22b8bc88bceb25341f9e5a3565b229da57e8d8921af56d166660e6c5b67"
     },
     {
       "row_index": 12,
@@ -1627,7 +1662,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1665,7 +1700,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "b76452a1b586867e082364e2fc9a5a084ed4b43a385e32372c2b72be62854c61"
+      "row_hash": "4766c520fca26fa8192e9d6fde2f4dd1a1eb951bffa1d9d094d784fc34d36a6c"
     },
     {
       "row_index": 13,
@@ -1693,7 +1728,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1731,7 +1766,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "dd3dd95d7add89b96037ec2b348462be8d390f75e7335c0fb375c6bb9e186e2c"
+      "row_hash": "fe4a6788bcd37bbae1184d0e22361b50c2bd201ddedd93164bbf14fb96d784e4"
     },
     {
       "row_index": 14,
@@ -1759,7 +1794,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1797,7 +1832,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "4fb1471ddb10c635ded06540e0439970a16f58b67a5cedc63125eeaf3f7616bb"
+      "row_hash": "3d2f07d40666c8904ee092a3efa02c5d46ab31f2adbdb1bd422a1db11d74ad08"
     },
     {
       "row_index": 15,
@@ -1825,7 +1860,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1863,7 +1898,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "183a94e6f16f38094a00ba5eeed9113edf8c24062edf9723685a12b4d70874ab"
+      "row_hash": "bd8b058c99f553b7dc6c486f5bcc7dce842833e5761991b583e86cd402f918c3"
     },
     {
       "row_index": 16,
@@ -1891,7 +1926,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1929,7 +1964,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "559fa553463053752859d7029387524ceb51f5196d5a8e78860fd091acbf49fd"
+      "row_hash": "a87b4e42cfc42f27d90639ad87e08caa1ad4495860e02bde6b53a718dec27566"
     },
     {
       "row_index": 17,
@@ -1957,7 +1992,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -1995,7 +2030,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "62658631ee6ca5a66d841533eef84263c427769534cb535b61a435709bcd2b30"
+      "row_hash": "fa088526747060fc49d3c125fb8cb7da644b48ff7c75e2c94f1f2a9d6391cd00"
     },
     {
       "row_index": 18,
@@ -2027,7 +2062,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2065,7 +2100,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "f58b9185c3322d7121e52b7501384b15c0e0ff287cd97713feb5f18eb93656f3"
+      "row_hash": "6592bc3935dbccf9201d5d029eb242ba3f2b5b8604f4abe76559250626eeab8a"
     },
     {
       "row_index": 19,
@@ -2097,7 +2132,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2135,7 +2170,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "4a8faab9d9ab3e4c1c8128f13a79bd4f5011c14adde91a048bd5af04027740c7"
+      "row_hash": "45eab1860ed23f65e0e37854b8b020fa5d9d8d5a95743b699e592db40e4d0627"
     },
     {
       "row_index": 20,
@@ -2163,7 +2198,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2201,7 +2236,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "9a403cb274ebe785e66402d678090516fa1539fed96da48fdd0174d44415d1ba"
+      "row_hash": "49cf3d8e173d7ed55c652f1362dbcb15644249059d5c8273d52c31a029833fc0"
     },
     {
       "row_index": 21,
@@ -2229,7 +2264,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2267,7 +2302,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "64a78fb271875b872beac99afab8396c75b587d8d0ac4f8b96a4d4d5855af871"
+      "row_hash": "9770fc7de4ba3aaf5fc8cb609c49f05807b8186b4cb4313d9b4ce3a073c65362"
     },
     {
       "row_index": 22,
@@ -2301,7 +2336,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2339,7 +2374,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "55be030c96e197c98f37739a137d75ae49e4b1a128c3efa5d8680815023a8613"
+      "row_hash": "3927f568ff1ebcac3eb4e5e4833c463d590adb47267615736ed054c90ad029d1"
     },
     {
       "row_index": 23,
@@ -2367,7 +2402,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2405,7 +2440,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "aa9d2c4994ff1a43f4d3859773c37d8fc8258a94dc737b55749e366c15085fc0"
+      "row_hash": "f25777dbf3b7ffe7bc316d749a2489bf0af5de82265546e9bef670f8b910c139"
     },
     {
       "row_index": 24,
@@ -2436,7 +2471,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2474,7 +2509,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "03e575083e4cfaba0ce604ec188d0db104d2fce164f34a3170e71ad9a3587ec2"
+      "row_hash": "7d0eae1ba6921dbfa3811d048d1048e252d91bdf34047c5d37ad8d2880dde280"
     },
     {
       "row_index": 25,
@@ -2506,7 +2541,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2544,7 +2579,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "27933a25786653bf593169cc313456457f6fffaba0b4b6c57c297ec06726dcfc"
+      "row_hash": "b8b3db39c6e0a95ad07de893e9033d9098b1883a3647e377566dd4586f540f88"
     },
     {
       "row_index": 26,
@@ -2575,7 +2610,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2613,7 +2648,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "35cc641ddb2b5ec89cdf5a61af5897e9b5216b127315679e786cacc7eb3731b4"
+      "row_hash": "f9dda015a5a9b2834bbc47a387a3f2c4208539cefad690a38f02045a00269f4a"
     },
     {
       "row_index": 27,
@@ -2641,7 +2676,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2679,7 +2714,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "5a483b305c3b930a136e793cc174fed277811f474c8f1fd8b4ecb4d8b41846db"
+      "row_hash": "07f6c45c0fa51f537f4eec36b445fe534798fdc3ff9f8d65605d1983bf8b93b6"
     },
     {
       "row_index": 28,
@@ -2711,7 +2746,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2749,7 +2784,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "422ad3e11d89b6cf6c867c36533f150ac8557e88aaa9e119314f120e1945d690"
+      "row_hash": "7d39858556680d30b4151f1c02b00eb3af3cc2866e8223a5abdf8d605ad33eb8"
     },
     {
       "row_index": 29,
@@ -2781,7 +2816,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2819,7 +2854,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "cb31c9c2a69d337624e882683346b5c5d492ab5e563636e90b9bb6746dba128e"
+      "row_hash": "197da2c962ef08599b564ad20ae441a917e2060bd312bffccdda9ca8b2b4c106"
     },
     {
       "row_index": 30,
@@ -2851,7 +2886,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2889,7 +2924,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "1304e72c1137e1408dbeecc237ca7bc1884c4fac0b34ffd04adcc139d8e7b9e1"
+      "row_hash": "729e01120f8e181ece1f7e612ff308c4c6682c97ff488aa213bb7a144480f7d5"
     },
     {
       "row_index": 31,
@@ -2917,7 +2952,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -2955,7 +2990,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "8ec0c6f841709ac0295aeddf00ebf12f8353b8053286224670cdf1792610d784"
+      "row_hash": "07bfe9875dbe7cebb6654e2db59954a2b51ab7d4465bf80939dd06b9dc0e0dfe"
     },
     {
       "row_index": 32,
@@ -2993,7 +3028,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3031,7 +3066,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "47cc8f9963f1ee4207e129949a10e826baae49dd5ac0020b3c46ecf92ced63ff"
+      "row_hash": "e760c63a9040263bcba041fcbf79f204bc0d20dca2497a3eb8ad873fa8e3fdb2"
     },
     {
       "row_index": 33,
@@ -3067,7 +3102,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3105,7 +3140,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "93f20ac4bedf3ad0b6a0b37557110906e6c4b4d38952e642d6e5e8a21a9b26e7"
+      "row_hash": "4a7de54061e9c0c4ebb8b236700989563716a81ec7cf86185beab03ecc722b27"
     },
     {
       "row_index": 34,
@@ -3133,7 +3168,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3171,7 +3206,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "003c60824f2bffdd9d50bd4e8431a9c934bd5ddec6c0567f72e6d9e2d8f66522"
+      "row_hash": "b5b58e8f66bd3894ae8c7bc09f0eb62427202f20f8f7f428331c2c0b8a5aca37"
     },
     {
       "row_index": 35,
@@ -3207,7 +3242,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3245,7 +3280,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "4c92fa763c52b9efb132f0ef057d19555612ca9a303f5a2e7e62c9b80e986f40"
+      "row_hash": "97134c90dcdf375bfce9242acd5dfac4e99a89f86d7d69895e01bcf632069e4a"
     },
     {
       "row_index": 36,
@@ -3266,6 +3301,29 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider"
         ],
         "prerequisite_verification": {
@@ -3276,7 +3334,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3314,7 +3372,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "39e83a02170de10c55c9b51dd29658c5880d4c7f181f7f2490ebc5cf2cc7b16d"
+      "row_hash": "15169d14b5d752693eace2cdadcd87ca052da7e56f7621b4042712946827ee05"
     },
     {
       "row_index": 37,
@@ -3335,6 +3393,29 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider"
         ],
         "prerequisite_verification": {
@@ -3345,7 +3426,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3383,7 +3464,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "be085a95d6f53ab26b609df6e6681c73e84e4ae83f500bae3ecff4c442a5a6f4"
+      "row_hash": "95a71fb540eeffbe11f9c0fe35436e9d0173ec3347a13536cf05654d45dd5816"
     },
     {
       "row_index": 38,
@@ -3404,6 +3485,29 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider"
         ],
         "prerequisite_verification": {
@@ -3414,7 +3518,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3452,7 +3556,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "47af084628f49cfbb3ebf5001fcda3dfc7cf6a90138d0b9844bce770914676b6"
+      "row_hash": "05ccdb2e0a9cd7af3d67ab0a3df6327675f945a961c828cef17b162b4db8080c"
     },
     {
       "row_index": 39,
@@ -3476,12 +3580,53 @@
           "writer.arnold.workflow.__init__",
           "writer.arnold.workflow.boundary_conformance",
           "writer.arnold.workflow.handler_semantics",
+          "writer.arnold.workflow.ledger_payload_store",
           "writer.arnold.workflow.source_compiler",
+          "writer.arnold_pipelines.megaplan._core.dispatch",
+          "writer.arnold_pipelines.megaplan._core.io",
+          "writer.arnold_pipelines.megaplan.agent.tools.terminal_tool",
+          "writer.arnold_pipelines.megaplan.audits.hermes_vendoring",
+          "writer.arnold_pipelines.megaplan.audits.quality_gates",
+          "writer.arnold_pipelines.megaplan.authority.binding",
+          "writer.arnold_pipelines.megaplan.auto",
+          "writer.arnold_pipelines.megaplan.bakeoff.handlers",
+          "writer.arnold_pipelines.megaplan.bakeoff.judge",
+          "writer.arnold_pipelines.megaplan.bakeoff.merge",
+          "writer.arnold_pipelines.megaplan.bakeoff.orchestrator",
+          "writer.arnold_pipelines.megaplan.bakeoff.worktree",
+          "writer.arnold_pipelines.megaplan.blocker_recovery",
+          "writer.arnold_pipelines.megaplan.briefs",
+          "writer.arnold_pipelines.megaplan.chain.__init__",
+          "writer.arnold_pipelines.megaplan.chain.ci_hook",
+          "writer.arnold_pipelines.megaplan.chain.epic_chain",
+          "writer.arnold_pipelines.megaplan.chain.execution_binding",
+          "writer.arnold_pipelines.megaplan.chain.git_ops",
+          "writer.arnold_pipelines.megaplan.chain.hinge_gate",
+          "writer.arnold_pipelines.megaplan.chain.m3_dual_green",
+          "writer.arnold_pipelines.megaplan.chain.seed_rematerialize",
+          "writer.arnold_pipelines.megaplan.chain.spec",
+          "writer.arnold_pipelines.megaplan.chain.target_rebind",
+          "writer.arnold_pipelines.megaplan.cli.__init__",
+          "writer.arnold_pipelines.megaplan.cli.feedback",
+          "writer.arnold_pipelines.megaplan.cli.status_view",
+          "writer.arnold_pipelines.megaplan.control",
+          "writer.arnold_pipelines.megaplan.control_interface",
+          "writer.arnold_pipelines.megaplan.custody.__init__",
+          "writer.arnold_pipelines.megaplan.custody.common_worker_dispatch",
+          "writer.arnold_pipelines.megaplan.custody.repair_adoption",
+          "writer.arnold_pipelines.megaplan.custody.repair_receipt",
+          "writer.arnold_pipelines.megaplan.custody.worker_dispatch_wbc",
+          "writer.arnold_pipelines.megaplan.discord_dm",
+          "writer.arnold_pipelines.megaplan.drivers.__init__",
+          "writer.arnold_pipelines.megaplan.drivers.subprocess_isolated",
           "writer.arnold_pipelines.megaplan.execute._binding.__init__",
           "writer.arnold_pipelines.megaplan.execute._binding.reducer",
           "writer.arnold_pipelines.megaplan.execute._binding.tier",
           "writer.arnold_pipelines.megaplan.execute.aggregation",
           "writer.arnold_pipelines.megaplan.execute.batch",
+          "writer.arnold_pipelines.megaplan.execute.preflight",
+          "writer.arnold_pipelines.megaplan.execute.quality",
+          "writer.arnold_pipelines.megaplan.execute.validation_runner",
           "writer.arnold_pipelines.megaplan.handlers.__init__",
           "writer.arnold_pipelines.megaplan.handlers._tiebreaker_impl",
           "writer.arnold_pipelines.megaplan.handlers.anchors",
@@ -3493,17 +3638,73 @@
           "writer.arnold_pipelines.megaplan.handlers.override",
           "writer.arnold_pipelines.megaplan.handlers.plan",
           "writer.arnold_pipelines.megaplan.handlers.review",
+          "writer.arnold_pipelines.megaplan.handlers.schema_parity",
           "writer.arnold_pipelines.megaplan.handlers.shared",
           "writer.arnold_pipelines.megaplan.handlers.strategy",
           "writer.arnold_pipelines.megaplan.handlers.structured_output",
           "writer.arnold_pipelines.megaplan.handlers.tickets",
           "writer.arnold_pipelines.megaplan.handlers.tiebreaker",
           "writer.arnold_pipelines.megaplan.handlers.verifiability",
+          "writer.arnold_pipelines.megaplan.loop.engine",
+          "writer.arnold_pipelines.megaplan.loop.git",
+          "writer.arnold_pipelines.megaplan.loop.handlers",
+          "writer.arnold_pipelines.megaplan.managed_agent",
+          "writer.arnold_pipelines.megaplan.observability.__init__",
+          "writer.arnold_pipelines.megaplan.observability.doctor",
+          "writer.arnold_pipelines.megaplan.observability.introspect",
+          "writer.arnold_pipelines.megaplan.observability.routing_ledger",
+          "writer.arnold_pipelines.megaplan.orchestration.acceptance_transaction",
+          "writer.arnold_pipelines.megaplan.orchestration.authority_readers",
+          "writer.arnold_pipelines.megaplan.orchestration.completion_contract",
           "writer.arnold_pipelines.megaplan.orchestration.completion_io",
           "writer.arnold_pipelines.megaplan.orchestration.critique_runtime",
+          "writer.arnold_pipelines.megaplan.orchestration.execution_evidence",
+          "writer.arnold_pipelines.megaplan.orchestration.oracle",
           "writer.arnold_pipelines.megaplan.orchestration.override_authority",
+          "writer.arnold_pipelines.megaplan.orchestration.repair_adoption",
+          "writer.arnold_pipelines.megaplan.orchestration.review_evidence",
           "writer.arnold_pipelines.megaplan.orchestration.rubber_stamp",
-          "writer.arnold_pipelines.megaplan.orchestration.suite_runner"
+          "writer.arnold_pipelines.megaplan.orchestration.suite_runner",
+          "writer.arnold_pipelines.megaplan.orchestration.task_satisfaction",
+          "writer.arnold_pipelines.megaplan.orchestration.transition_policy",
+          "writer.arnold_pipelines.megaplan.pipelines.creative.prompts.execute_creative",
+          "writer.arnold_pipelines.megaplan.pipelines.doc.prompts.execute_doc",
+          "writer.arnold_pipelines.megaplan.planning.control_binding",
+          "writer.arnold_pipelines.megaplan.planning.operations",
+          "writer.arnold_pipelines.megaplan.planning.source_binding",
+          "writer.arnold_pipelines.megaplan.prompts.execute",
+          "writer.arnold_pipelines.megaplan.receipts.__init__",
+          "writer.arnold_pipelines.megaplan.receipts.canonical",
+          "writer.arnold_pipelines.megaplan.receipts.drift",
+          "writer.arnold_pipelines.megaplan.receipts.extractors",
+          "writer.arnold_pipelines.megaplan.receipts.query",
+          "writer.arnold_pipelines.megaplan.receipts.report",
+          "writer.arnold_pipelines.megaplan.receipts.schema",
+          "writer.arnold_pipelines.megaplan.receipts.writer",
+          "writer.arnold_pipelines.megaplan.resident.agent_loop",
+          "writer.arnold_pipelines.megaplan.resident.delivery_effects",
+          "writer.arnold_pipelines.megaplan.resident.discord",
+          "writer.arnold_pipelines.megaplan.resident.git_custody",
+          "writer.arnold_pipelines.megaplan.resident.knowledge_context",
+          "writer.arnold_pipelines.megaplan.resident.runtime",
+          "writer.arnold_pipelines.megaplan.resident.scheduler",
+          "writer.arnold_pipelines.megaplan.resident.subagent",
+          "writer.arnold_pipelines.megaplan.route_dispatch",
+          "writer.arnold_pipelines.megaplan.runtime.execution_environment",
+          "writer.arnold_pipelines.megaplan.runtime.migrate_history",
+          "writer.arnold_pipelines.megaplan.runtime.process",
+          "writer.arnold_pipelines.megaplan.semantic_health",
+          "writer.arnold_pipelines.megaplan.skills.subagent_launcher.launch_claude_agent",
+          "writer.arnold_pipelines.megaplan.skills.subagent_launcher.launch_hermes_agent",
+          "writer.arnold_pipelines.megaplan.tickets.identity",
+          "writer.arnold_pipelines.megaplan.watchdog.processes",
+          "writer.arnold_pipelines.megaplan.watchdog.repair_runner",
+          "writer.arnold_pipelines.megaplan.watchdog.tmux_scan",
+          "writer.arnold_pipelines.megaplan.watchdog.worker_identity",
+          "writer.arnold_pipelines.megaplan.workers._impl",
+          "writer.arnold_pipelines.megaplan.workers.hermes",
+          "writer.arnold_pipelines.megaplan.workers.shannon",
+          "writer.arnold_pipelines.megaplan.workflows.handler_contract"
         ],
         "reader_registry_matches": [
           "reader.arnold.workflow.__init__",
@@ -3556,7 +3757,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3594,7 +3795,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "94127dadcf2de5cc50d86bf189acf730ab789944f85e089ee416b4ba909ac109"
+      "row_hash": "1d283c5ab39a05b9fd50c46dc6b09821e49479df2f441cab0d7f6d57b9e1923d"
     },
     {
       "row_index": 40,
@@ -3622,7 +3823,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3660,7 +3861,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "52ef18c13e9a75f9dc46057066703c4b9bf0d3fce41f314d16486cfd71b62168"
+      "row_hash": "084fda4c27672815df1ff6219deb5d45510059ebcc9731126d47721223e871b9"
     },
     {
       "row_index": 41,
@@ -3688,7 +3889,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3726,7 +3927,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "a3d1191324ebdae4b1b540024aa0730f68943aea06b18d2690984df117a5fe48"
+      "row_hash": "28655a300dcf8c88705a4ee860df3f6b463743948b1cd4b916199571400987a5"
     },
     {
       "row_index": 42,
@@ -3758,7 +3959,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3796,7 +3997,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "fb312844596c7afabaee233bafe903ef5227f546bdad1c9fc0e7032cc19e20d0"
+      "row_hash": "e9721b8386b33a23e031895999a53b97dd5f143ddfff2dccaba2a875bf49afa9"
     },
     {
       "row_index": 43,
@@ -3824,7 +4025,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3862,7 +4063,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "b7642477bc5faa9ca17e4d4254d6e16223728236ddde7e4773b75998e9fb6dda"
+      "row_hash": "a1b374262c3db5fe4ffef5e7e159e4630518b6c6ebb8ab7bba0c0ed07add17a1"
     },
     {
       "row_index": 44,
@@ -3894,7 +4095,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -3932,7 +4133,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "cd5f1e496d05a9d99a6fc31beacaa6b63f166baab81a08c4a4fdd295e8f29b85"
+      "row_hash": "241aca831f213497a44c60b088b1cbb22ba382f97172c165b6091158a72751d7"
     },
     {
       "row_index": 45,
@@ -3965,7 +4166,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4003,7 +4204,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "ac3af2eda54529feb06398548bbadffaf85f82c8c55bfb1ac04db1398b0a6917"
+      "row_hash": "5d608ff3a624e048010d98776af0b5ca6576b8f8eaa13a3eda98add773794318"
     },
     {
       "row_index": 46,
@@ -4036,7 +4237,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4074,7 +4275,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "455389443548bd54eba24ce566fc890b43ec3602ee3c7cc7433273dec0549762"
+      "row_hash": "a26df1a4489d9ff294edb3ab0b2a3d2841e84b5cda5ddcc6007d574723b43425"
     },
     {
       "row_index": 47,
@@ -4107,7 +4308,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4145,7 +4346,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "1d51efcfdca2cbfba36d803d1089a3be805a873c07103179993e69380e6b9283"
+      "row_hash": "dcbfa44f4baf2200f7d5e51019705113641eb91ed1086901c607d4c045281acd"
     },
     {
       "row_index": 48,
@@ -4178,7 +4379,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4216,7 +4417,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "544b08c43d4e5332ccfd091ab0d54085fb749c11813b827ead66597c68877232"
+      "row_hash": "d046dfe756fd1c3c07f7e92798a584989f3f1a6c490e4fdbd2f60cd81c68f010"
     },
     {
       "row_index": 49,
@@ -4249,7 +4450,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4287,7 +4488,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "6f4b23d0b04d7f3322ccacb2755a84823f062e8b0d9f9062b72b554cc784e7ff"
+      "row_hash": "352921ff2d6a936b39547fcddb7a6abd224fc3d0e69435e5a5514b679926555d"
     },
     {
       "row_index": 50,
@@ -4320,7 +4521,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4358,7 +4559,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "61db1b53789114c867981a980a787ebaa38b19a056a068576b95660899bb4934"
+      "row_hash": "8570abbcd0cfa3efd8dd3615f63cf677eb3b97ca3ce9ac4af2c2ae42d6dc3928"
     },
     {
       "row_index": 51,
@@ -4391,7 +4592,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4429,7 +4630,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "e56c42cf373226f225f1f0d213cecb508453c1dd56997fa30fe441bb9afc8f27"
+      "row_hash": "3f2d220d20ccea27c6ae82b56a79decf1763765131ac0cdcf5a8fe4c293e4e1a"
     },
     {
       "row_index": 52,
@@ -4460,7 +4661,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4498,7 +4699,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "81195faadccf6db3db71c9c7a44697b5d06c8834cb1a1f9b9d4f482ae9261a0e"
+      "row_hash": "1c27abff708711c31c81eadf88c048baff8663bc1c5e793010b9a4ef09ec0554"
     },
     {
       "row_index": 53,
@@ -4520,7 +4721,11 @@
       "evidence": {
         "writer_registry_matches": [
           "writer.arnold.execution.runner",
-          "writer.arnold.kernel.__init__"
+          "writer.arnold.kernel.__init__",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_binding",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.chain_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.pr_merge"
         ],
         "reader_registry_matches": [
           "reader.arnold.execution.__init__",
@@ -4568,7 +4773,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4606,7 +4811,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "2a1ba4b6b73984e7da18ff330f6b11b8c2030a02994fcb4c2369aedb8db986fd"
+      "row_hash": "f81f5c786515f6b2342b9cbf8c74f9f3d7f69ab79178718a85588415956ee3bd"
     },
     {
       "row_index": 54,
@@ -4628,7 +4833,11 @@
       "evidence": {
         "writer_registry_matches": [
           "writer.arnold.execution.runner",
-          "writer.arnold.kernel.__init__"
+          "writer.arnold.kernel.__init__",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_binding",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.chain_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.pr_merge"
         ],
         "reader_registry_matches": [
           "reader.arnold.execution.__init__",
@@ -4676,7 +4885,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4714,7 +4923,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "8d29260267efee289520cb3770675458decd1826d73195ef47030eb119997e0e"
+      "row_hash": "355a2b4509e7640fc91adee510c4a6b4e29c3e9a9d40465ed34f566d69c0ade7"
     },
     {
       "row_index": 55,
@@ -4736,7 +4945,11 @@
       "evidence": {
         "writer_registry_matches": [
           "writer.arnold.execution.runner",
-          "writer.arnold.kernel.__init__"
+          "writer.arnold.kernel.__init__",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_binding",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.chain_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.pr_merge"
         ],
         "reader_registry_matches": [
           "reader.arnold.execution.__init__",
@@ -4784,7 +4997,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4822,7 +5035,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "950ab8b1ae423ee05716a2ea275d7f1054f9bb008f185fe4a84920925efc1ab2"
+      "row_hash": "3fd44e45ac8431a55bd1d716ed0aa75377930b3bc8e319d7807fa54d8cdbbe5c"
     },
     {
       "row_index": 56,
@@ -4844,7 +5057,11 @@
       "evidence": {
         "writer_registry_matches": [
           "writer.arnold.execution.runner",
-          "writer.arnold.kernel.__init__"
+          "writer.arnold.kernel.__init__",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_binding",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.chain_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.pr_merge"
         ],
         "reader_registry_matches": [
           "reader.arnold.execution.__init__",
@@ -4892,7 +5109,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4930,7 +5147,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "2b66a223fb8faef168813c9d27f52daf466c20cfdce96276ba54c48315c1e94a"
+      "row_hash": "c724beeab43ab268ed71129538bdcf7f49db0986156c422604c90ed5b76d6152"
     },
     {
       "row_index": 57,
@@ -4958,7 +5175,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -4996,7 +5213,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "df829d5a9f5c9e68302b9c24b1c83e9265f04aba2e8a00286b3f28570b3cee46"
+      "row_hash": "ace6de3bd5458b92128a094af2c22a41c8391a4108c793c0a16897f64961f5a2"
     },
     {
       "row_index": 58,
@@ -5018,7 +5235,11 @@
       "evidence": {
         "writer_registry_matches": [
           "writer.arnold.execution.runner",
-          "writer.arnold.kernel.__init__"
+          "writer.arnold.kernel.__init__",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_binding",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.chain_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.pr_merge"
         ],
         "reader_registry_matches": [
           "reader.arnold.execution.__init__",
@@ -5066,7 +5287,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5104,7 +5325,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "1350deec01b4546903efae0c2c6335b3a94f239ec5a474d347ad104ecbdec33d"
+      "row_hash": "d365565df090ccc24754e9ee82b5b6fae364a9895b1b0937c05138d88ca608a0"
     },
     {
       "row_index": 59,
@@ -5132,7 +5353,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5170,7 +5391,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "c4165cdfaaa0630f506b6e70bb838698025a7b910b8d38219e6284b86d102fe8"
+      "row_hash": "8700f8c6c01dc594653e3bfe2fa77f32e0635239ef9feeac5e25e7f9bca77a42"
     },
     {
       "row_index": 60,
@@ -5198,7 +5419,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5236,7 +5457,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "7d28cc84c553f6c41979bbb261e249b1fe229cf78f60021c08164a998063d353"
+      "row_hash": "7322fdcc9282b294e8362da992dfcc168e147f93538a58e3dd2efb7129d1d78b"
     },
     {
       "row_index": 61,
@@ -5259,6 +5480,33 @@
         "writer_registry_matches": [
           "writer.arnold.execution.runner",
           "writer.arnold.kernel.__init__",
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_binding",
+          "writer.arnold_pipelines.megaplan.supervisor.bakeoff_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.chain_runner",
+          "writer.arnold_pipelines.megaplan.supervisor.pr_merge",
           "writer.dynamic.cloud_provider"
         ],
         "reader_registry_matches": [
@@ -5307,7 +5555,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5345,7 +5593,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "800aae27d464c9b02eff989a82980a8b93b1b5bafc8a116fcff59135b0c1a71a"
+      "row_hash": "9352180a066d93d9151b297df6947f44ddd81072611eac421c3586da9d0c946c"
     },
     {
       "row_index": 62,
@@ -5366,6 +5614,29 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider",
           "writer.dynamic.generated_code",
           "writer.dynamic.import_side_effect",
@@ -5384,7 +5655,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5422,7 +5693,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "15a60db8453ed6b2a0d4b90e786dcdd7427a5ebdea3c6d361a1b641a8c3b484d"
+      "row_hash": "02a6ec4309b40c6853b72e342feaf6d8a4c411876374b5b0eca9c9f4b1fcd597"
     },
     {
       "row_index": 63,
@@ -5443,6 +5714,29 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider"
         ],
         "finding_register_matches": [
@@ -5458,7 +5752,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5496,7 +5790,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "89c64039043163d4dbb6bca6abd7560f9c02ec1a2c152ab06ba9fa84954087cb"
+      "row_hash": "94d3b7e668d53198638f2f594de784b46b5360307fbc39661f640a9c3e151e80"
     },
     {
       "row_index": 64,
@@ -5517,6 +5811,29 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
+          "writer.arnold_pipelines.megaplan.cloud.auth",
+          "writer.arnold_pipelines.megaplan.cloud.cli",
+          "writer.arnold_pipelines.megaplan.cloud.github_sync",
+          "writer.arnold_pipelines.megaplan.cloud.m11_live_canary",
+          "writer.arnold_pipelines.megaplan.cloud.manual_repair_trigger",
+          "writer.arnold_pipelines.megaplan.cloud.meta_repair",
+          "writer.arnold_pipelines.megaplan.cloud.operator_control",
+          "writer.arnold_pipelines.megaplan.cloud.preflight",
+          "writer.arnold_pipelines.megaplan.cloud.providers.base",
+          "writer.arnold_pipelines.megaplan.cloud.providers.local",
+          "writer.arnold_pipelines.megaplan.cloud.providers.on_box",
+          "writer.arnold_pipelines.megaplan.cloud.providers.ssh",
+          "writer.arnold_pipelines.megaplan.cloud.repair_contract",
+          "writer.arnold_pipelines.megaplan.cloud.repair_goal",
+          "writer.arnold_pipelines.megaplan.cloud.repair_investigation",
+          "writer.arnold_pipelines.megaplan.cloud.repair_lock",
+          "writer.arnold_pipelines.megaplan.cloud.repair_recurrence",
+          "writer.arnold_pipelines.megaplan.cloud.repair_revalidation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_attestation",
+          "writer.arnold_pipelines.megaplan.cloud.runtime_provenance",
+          "writer.arnold_pipelines.megaplan.cloud.session_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_retirement",
+          "writer.arnold_pipelines.megaplan.cloud.status_snapshot",
           "writer.dynamic.cloud_provider"
         ],
         "finding_register_matches": [
@@ -5532,7 +5849,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5570,7 +5887,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "0cd5f907608f0abcd21103c1661489880327f01b9ddfa6dd29def6e054eb92e2"
+      "row_hash": "c9d6305d0ba28a7d49f1a99ad246bba5db3aaf8a7bce6790fb35c26f30a4eac5"
     },
     {
       "row_index": 65,
@@ -5598,7 +5915,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5636,7 +5953,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "32c019b4d438b8f67c176f45ac5709ac6358a7806f9d498c9e19fcefc08bcaac"
+      "row_hash": "22c624d662ba84cffa2c70594aad39521f2d3114a2ef5c33bf8217e9ed2a866e"
     },
     {
       "row_index": 73,
@@ -5664,7 +5981,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5702,7 +6019,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "b2ed91076fbd5055b2c00f7d0e8a4da730412c63ed57c2340331195cf76ae5bc"
+      "row_hash": "b972735e5be1f36123b1e86a7917b61898cdc1791f22d04818ccc3178ec60342"
     },
     {
       "row_index": 77,
@@ -5730,7 +6047,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5768,7 +6085,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "178d57bb46217d8b31ccddf2f48f874e82ca5007607cb39dc3463b5ce61732bc"
+      "row_hash": "057020b07ef1db14ede87016f0ff8cc10e9f39d8d08e5eab3e0d19a3469080c3"
     },
     {
       "row_index": 79,
@@ -5789,7 +6106,28 @@
       "handoff_milestone": "M8",
       "evidence": {
         "writer_registry_matches": [
-          "writer.arnold.workflow.boundary_compatibility"
+          "writer.arnold.workflow.boundary_compatibility",
+          "writer.arnold_pipelines.megaplan._compatibility",
+          "writer.arnold_pipelines.megaplan.agent_adapters.__init__",
+          "writer.arnold_pipelines.megaplan.agent_adapters._oneshot",
+          "writer.arnold_pipelines.megaplan.agent_adapters.codex",
+          "writer.arnold_pipelines.megaplan.agent_adapters.shannon",
+          "writer.arnold_pipelines.megaplan.agent_runtime.adapters",
+          "writer.arnold_pipelines.megaplan.agentbox_adapter",
+          "writer.arnold_pipelines.megaplan.chain.git_effect_adapter",
+          "writer.arnold_pipelines.megaplan.cloud.incident_bridge",
+          "writer.arnold_pipelines.megaplan.cloud.publication_adapter",
+          "writer.arnold_pipelines.megaplan.cloud.ssh_effect_adapter",
+          "writer.arnold_pipelines.megaplan.compatibility.__init__",
+          "writer.arnold_pipelines.megaplan.compatibility.wbc_compat",
+          "writer.arnold_pipelines.megaplan.custody.compatibility",
+          "writer.arnold_pipelines.megaplan.custody.fake_prep_to_plan_adapter",
+          "writer.arnold_pipelines.megaplan.custody.process_adapter_wbc",
+          "writer.arnold_pipelines.megaplan.runtime.bridge",
+          "writer.arnold_pipelines.megaplan.runtime.schema_registry_adapter",
+          "writer.arnold_pipelines.megaplan.runtime.step_io_policy_adapter",
+          "writer.arnold_pipelines.megaplan.store.compat",
+          "writer.arnold_pipelines.megaplan.wbc_adapter"
         ],
         "reader_registry_matches": [
           "reader.arnold.workflow.boundary_compatibility",
@@ -5806,7 +6144,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5844,7 +6182,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "a1de37dd04f1618db02b8264e6069546a77d5374f41482d497762368edadb110"
+      "row_hash": "8c88959d3eb6213b31a63f24fea74b5b6b3d068ad70982839998e4c7a8252396"
     },
     {
       "row_index": 80,
@@ -5872,7 +6210,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5910,7 +6248,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "9d8d4feaf182e943e1cb999c9ff3a7721a197fb2976393d3ea1d2af3406f2346"
+      "row_hash": "37ddfc869dcbfe0ecb32f6dd59828f840e317feb4cbd425d5f209b85a7bff7af"
     },
     {
       "row_index": 81,
@@ -5944,7 +6282,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -5982,7 +6320,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "b90699add6a895a9089f88cd1eab7476aa006addaa250c2bd7f19db5722be037"
+      "row_hash": "f6849675ef69346c24f469a4ebfb1969f8dcb42421b87b72eb4da0aa83aae1cc"
     },
     {
       "row_index": 82,
@@ -6017,7 +6355,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6055,7 +6393,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "b27715a0b74fc7a5d575207268acf2ee625b40f0257a109e39f470456cccfd2f"
+      "row_hash": "090dabd6b197aeede2c568b89df9669abbcf6e823f35c5628f9c738c86544efc"
     },
     {
       "row_index": 83,
@@ -6088,7 +6426,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6126,7 +6464,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "a565dc8c87baf3154c62593415cef93d1e1b0ce1f47bdb6b8a5a37c18b99a3ec"
+      "row_hash": "902321a3b17d1ee003e063e66925284ec50edf68806de97b32bd5c927d3e91bd"
     },
     {
       "row_index": 84,
@@ -6154,7 +6492,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6192,7 +6530,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "3322e967dce69765ddcdc1a66f769d4162699fa13938c0eb03fece53b1ac32b4"
+      "row_hash": "6c14387c36b80d7066c729199fde944886d584b3d03984c9b4c96a5fb7f49f20"
     },
     {
       "row_index": 85,
@@ -6233,7 +6571,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6271,7 +6609,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "42fc178c22ccbcdaf763abb270df207fc82d7a3e15a808b0b39dfd87fc3c5630"
+      "row_hash": "212cf241dff4dcb29c901c692cba0abda2b8d1df6c50ee53dcac38bd252f5690"
     },
     {
       "row_index": 86,
@@ -6303,7 +6641,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6341,7 +6679,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "bf50c5f5fedb68280fb0834e3de305401f9155daf692e62fe06ad7c2aea22db4"
+      "row_hash": "2631eeb1b68f664d54aa28c2ebd1f24c71e1ede9958088a5844c709d00a11d0e"
     },
     {
       "row_index": 87,
@@ -6374,7 +6712,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6412,7 +6750,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "af9dbdbcdd263a06b1ae8b3af709f677a51ecde4ffdf7fdba4eab95f3d4b0f1a"
+      "row_hash": "d9edabb96c9e76b50fa895bced34710eb44ab11bb61c5b9b90f2d6b42cb857a5"
     },
     {
       "row_index": 88,
@@ -6447,7 +6785,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6485,7 +6823,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "3035b3cb1d8ff8dbeb1d8a6742f476d2a74d2c13761e0bbdb717168f09227289"
+      "row_hash": "9b6dc425c72a0e8dbfb46c3f1594d4f1d5365a212b8d7d7998d2dad6846a4cae"
     },
     {
       "row_index": 89,
@@ -6516,7 +6854,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6554,7 +6892,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "2c9c18b233a919b0d4f15b4fffa60aa2b81b1cd1848ee0198cfd30129305cd2f"
+      "row_hash": "64842a9a6e8acc1d5662a0fdbb70a8848273ab7dfaee27309843787285e808a0"
     },
     {
       "row_index": 90,
@@ -6585,7 +6923,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6623,7 +6961,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "1b15d1d71835315a4a8c407c0b682d5baff616ac781d42bb09436984b4f0101d"
+      "row_hash": "d183ad8a41b35fa9bdfe9376c333310177fbcfbc3c25c986bf79607c37d1c8ee"
     },
     {
       "row_index": 74,
@@ -6651,7 +6989,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6689,7 +7027,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "4e99fe28931121f55a9148925551e6d7771c197b8fb761a727b85ce4afaed7bd"
+      "row_hash": "1b19eafffb3c3492d45cb6fe7a6893c0f444983d24787eb86d70e993784a2414"
     },
     {
       "row_index": 75,
@@ -6717,7 +7055,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6755,7 +7093,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "01cd1c61c97deb4e08a68a4d853d10fe0bbe38d9e548f71b969fed7d1a595fad"
+      "row_hash": "abaddfc1ddef73a15b816b54ce38277c64674d467253dfe44497a9eb0d13800d"
     },
     {
       "row_index": 76,
@@ -6783,7 +7121,7 @@
             },
             {
               "check": "m5_final_attestation",
-              "status": "PASS"
+              "status": "INCOHERENT"
             },
             {
               "check": "m5_bound_head_vs_current_head",
@@ -6821,7 +7159,7 @@
           "overall": "INCOHERENT"
         }
       },
-      "row_hash": "3d083be2d868f298333ee7af30c8629e689dd52b9139bb0f1957531676dbc66b"
+      "row_hash": "d0203ddb609259ce0e8e95869ab5a551c446c4c6312c5b6474d279c4fe4124f5"
     }
   ]
 }

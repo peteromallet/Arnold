@@ -577,6 +577,23 @@ def _evidence_id(
     return sha256_text(canonical)
 
 
+def _custody_present(value: Any) -> bool:
+    """Return True if *value* is a non-empty scalar (string/int) or non-empty list.
+
+    Used by :class:`ProcessCustodyReceiptProvider` to check required receipt
+    fields.  Empty strings, ``None``, ``0``, and ``[]`` are treated as absent.
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip() != ""
+    if isinstance(value, (list, tuple)):
+        return len(value) > 0
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
+
+
 def _artifact_ref_for_path(path: Path, *, root: Path, artifact_type: str) -> ArtifactRef | None:
     try:
         if not path.is_file():
@@ -3419,6 +3436,157 @@ class RetirementOrderProvider:
         return issues
 
 
+class ProcessCustodyReceiptProvider:
+    """process_custody — validate validation-process custody receipts.
+
+    Reads custody receipts recorded under the plan directory and validates that
+    each binds coordinator birth identity (PID + host), process group, command
+    hash, receipt path, adoption/termination policy, and a deterministic log
+    path.  The receipt is durable *evidence* that a validation process was
+    under custody; it is NOT authority to skip re-verification or to signal a
+    process (authority flows from the custody lease / Run Authority grant —
+    Step 10 — not from this receipt, labels, liveness, or WBC receipts).
+
+    Shadow-mode / fail-open: a missing receipt directory yields ``unknown``
+    (non-blocking in shadow mode).  A present-but-malformed receipt yields
+    ``unsatisfied``.  Any internal error degrades to ``unknown`` (caught by the
+    verdict computation's per-provider wrapper).
+    """
+
+    kind = "process_custody"
+
+    _RECEIPT_DIR_CANDIDATES: tuple[str, ...] = ("process_custody", "_custody")
+    _REQUIRED_FIELDS: tuple[str, ...] = (
+        "receipt_id",
+        "coordinator_pid",
+        "coordinator_host",
+        "command_hash",
+        "receipt_path",
+        "adoption_policy",
+        "deterministic_log_path",
+        "validation_outcome",
+    )
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        from arnold_pipelines.megaplan.runtime.process import (
+            CUSTODY_ADOPTION_POLICIES,
+            PROCESS_CUSTODY_RECEIPT_SCHEMA,
+            command_hash,
+        )
+
+        receipt_dir: Path | None = None
+        for candidate in self._RECEIPT_DIR_CANDIDATES:
+            d = ctx.plan_dir / candidate
+            if d.is_dir():
+                receipt_dir = d
+                break
+        if receipt_dir is None:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no process_custody receipt directory found (non-blocking)",
+                details={
+                    "candidates_checked": list(self._RECEIPT_DIR_CANDIDATES),
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="process_custody/",
+                provider=type(self).__name__,
+            )
+
+        files = sorted(receipt_dir.glob("*.json"))
+        if not files:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="process_custody directory has no receipts (non-blocking)",
+                details={"receipt_dir": str(receipt_dir.relative_to(ctx.plan_dir))},
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="process_custody/",
+                provider=type(self).__name__,
+            )
+
+        issues: list[str] = []
+        valid_receipt_ids: list[str] = []
+        artifacts: list[ArtifactRef] = []
+        for f in files:
+            artifact = _artifact_ref_for_path(
+                f, root=ctx.plan_dir, artifact_type="application/json"
+            )
+            if artifact is not None:
+                artifacts.append(artifact)
+            try:
+                raw = f.read_text(encoding="utf-8")
+                data = json.loads(raw)
+            except Exception as exc:
+                issues.append(f"{f.name}: unreadable JSON ({exc})")
+                continue
+            if not isinstance(data, dict):
+                issues.append(f"{f.name}: not a JSON object")
+                continue
+            schema = data.get("schema", "")
+            if schema and schema != PROCESS_CUSTODY_RECEIPT_SCHEMA:
+                issues.append(f"{f.name}: unexpected schema {schema!r}")
+                continue
+            missing = [
+                k for k in self._REQUIRED_FIELDS if not _custody_present(data.get(k))
+            ]
+            if missing:
+                issues.append(f"{f.name}: missing required fields {missing}")
+                continue
+            cmd = data.get("command")
+            if isinstance(cmd, list) and all(isinstance(p, str) for p in cmd):
+                expected_hash = command_hash(cmd)
+                if expected_hash != data.get("command_hash"):
+                    issues.append(
+                        f"{f.name}: command_hash mismatch (receipt does not bind argv)"
+                    )
+                    continue
+            policy = data.get("adoption_policy")
+            if policy not in CUSTODY_ADOPTION_POLICIES:
+                issues.append(
+                    f"{f.name}: invalid adoption_policy {policy!r}"
+                )
+                continue
+            valid_receipt_ids.append(str(data.get("receipt_id")))
+
+        details: dict[str, Any] = {
+            "receipt_count": len(files),
+            "valid_count": len(valid_receipt_ids),
+            "valid_receipt_ids": valid_receipt_ids,
+            "issues": issues,
+        }
+        if issues:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=(
+                    f"{len(issues)} process_custody receipt issue(s): "
+                    + "; ".join(issues[:3])
+                ),
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifacts=tuple(artifacts),
+                source="process_custody/",
+                provider=type(self).__name__,
+            )
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary=(
+                f"{len(valid_receipt_ids)} process_custody receipt(s) valid"
+            ),
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            artifacts=tuple(artifacts),
+            source="process_custody/",
+            provider=type(self).__name__,
+        )
+
+
 # The shared, phase-agnostic provider set. Reused verbatim across plan +
 # milestone subjects (the generalization the design calls for).
 DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
@@ -3430,6 +3598,7 @@ DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
     ReviewDispositionProvider(),
     DeclaredNoopProvider(),
     AcceptanceReceiptProvider(),
+    ProcessCustodyReceiptProvider(),
     DivergenceProvider(),
     ManifestFreshnessProvider(),
     RetirementOrderProvider(),

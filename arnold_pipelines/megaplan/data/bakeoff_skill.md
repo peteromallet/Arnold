@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: megaplan-bakeoff
 description: Methodology for running multi-profile LLM bake-offs via megaplan and presenting fair, blind-assessed comparisons. Cost/quality discipline, prompt hygiene, pre-merge gates, and reporting patterns. Use when the user says "bakeoff", "bake off", "megaplan bakeoff", or asks to compare profile mixes head-to-head.

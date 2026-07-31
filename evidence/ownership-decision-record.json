@@ -1,15 +1,15 @@
 {
   "schema": "m6.ownership-decision-record.v1",
-  "generated_at": "2026-07-21T23:36:18.298792+00:00",
+  "generated_at": "2026-07-31T00:31:58.706799+00:00",
   "generator": "tools/generate_m6_ownership_decision.py",
   "source_evidence": {
-    "prerequisite_verification": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",
-    "migration_matrix_reconciled": "/workspace/custody-control-plane-20260714/Arnold/evidence/migration-matrix-reconciled.json",
-    "controlled_writer_registry": "/workspace/custody-control-plane-20260714/Arnold/evidence/controlled-writer-registry.json",
-    "authority_reader_registry": "/workspace/custody-control-plane-20260714/Arnold/evidence/authority-reader-registry.json",
-    "finding_prevention_register": "/workspace/custody-control-plane-20260714/Arnold/evidence/finding-prevention-register.json",
-    "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
-    "lineage_audit": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/authority-lineage-and-gap-audit-20260711.md"
+    "prerequisite_verification": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/m6-prerequisite-verification.json",
+    "migration_matrix_reconciled": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/migration-matrix-reconciled.json",
+    "controlled_writer_registry": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/controlled-writer-registry.json",
+    "authority_reader_registry": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/authority-reader-registry.json",
+    "finding_prevention_register": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/finding-prevention-register.json",
+    "unified_authority_research": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
+    "lineage_audit": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/.megaplan/initiatives/custody-control-plane/research/authority-lineage-and-gap-audit-20260711.md"
   },
   "north_star_principles": [
     "One exact-version Run Authority reducer decides which attempts and claims are accepted.",
@@ -351,6 +351,7 @@
           "row_index": 6,
           "consumer_surface": "`.pypeline` and named subworkflows",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -361,6 +362,7 @@
           "row_index": 72,
           "consumer_surface": "Native Parity Corrective",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -368,7 +370,7 @@
           "milestone": "M6/M8"
         }
       ],
-      "row_hash": "7f9b0f705e9f8a7ad8096378acdae9993b72815c450f70821833605862819d87"
+      "row_hash": "9afbb008002204fef96eacbf4a93573cec37d86276f2c88faee63fc2fef71585"
     },
     {
       "owner": "Native Platform",
@@ -552,6 +554,7 @@
           "row_index": 78,
           "consumer_surface": "installed/editable/cloud runtime",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -562,6 +565,7 @@
           "row_index": 91,
           "consumer_surface": "PC adjacent work",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -569,7 +573,7 @@
           "milestone": "M6"
         }
       ],
-      "row_hash": "5507df0a204a4c7586690e97fad864ef811008c4939d1e8fe5ad88bb8d14f6c1"
+      "row_hash": "771b9ca759ea31f8b0353689f334031b86156ba19e200c9cce0e21ed04ccd82a"
     },
     {
       "owner": "Run Authority",
@@ -655,6 +659,7 @@
           "row_index": 0,
           "consumer_surface": "Run Authority M1-M3 completion receipts",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -665,6 +670,7 @@
           "row_index": 1,
           "consumer_surface": "Canonical `runauthority-epic` retirement",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -675,6 +681,7 @@
           "row_index": 9,
           "consumer_surface": "`RunAuthorityKernel` grants",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -682,7 +689,7 @@
           "milestone": "M7"
         }
       ],
-      "row_hash": "2ff8fd75cc9632153a77a6e5f59b6c11571d498a91841cd4814717088687bfbd"
+      "row_hash": "e54d4cddb34e73e5220af270cfc10eba449216b3e6ece250f9eb3ec67a7cab7c"
     },
     {
       "owner": "TransitionWriter/repair custody",
@@ -847,6 +854,7 @@
           "row_index": 66,
           "consumer_surface": "WBC declarations/attempt ledger",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -857,6 +865,7 @@
           "row_index": 67,
           "consumer_surface": "WBC payload/privacy/retention/encryption",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -867,6 +876,7 @@
           "row_index": 68,
           "consumer_surface": "WBC schema/data migration",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -877,6 +887,7 @@
           "row_index": 69,
           "consumer_surface": "WBC universal producer adoption",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -887,6 +898,7 @@
           "row_index": 70,
           "consumer_surface": "WBC universal consumer adoption",
           "blocked_by": [
+            "m5_final_attestation",
             "m5_bound_head_vs_current_head",
             "wbc_file_hashes"
           ],
@@ -894,7 +906,7 @@
           "milestone": "M9/M11"
         }
       ],
-      "row_hash": "a3d33e98a6c6766e6ec5284c6682f99741d33f4898a679aecb6eb70e666eed79"
+      "row_hash": "0f76c262cebd3d0002b0b40ff1fdb46c7ec8df86a48dab305f1887e13013ec88"
     },
     {
       "owner": "custody-control-plane",
@@ -1326,5 +1338,5 @@
       ]
     }
   ],
-  "composite_hash": "fffd53345726b1b5c1050d2ea228806d8c5e78c07dce6ec560f61685551e00cb"
+  "composite_hash": "92353205726e83ce4d379983fdf477c664a1bf5b3594838a788395529dcb5bb4"
 }

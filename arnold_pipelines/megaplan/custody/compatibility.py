@@ -688,7 +688,7 @@ def validate_rollback_safety(
 
     reason_parts = [
         f"{total_quarantined} quarantined entr{'y' if total_quarantined == 1 else 'ies'} preserved",
-        "legacy authoritative writers remain retired",
+        "no legacy authoritative writers re-enabled",
         "adopter promotion disabled",
         "real effects disabled",
     ]

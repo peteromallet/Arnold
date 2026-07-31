@@ -348,6 +348,8 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
 
 from .git_ops import (
     _branch_head,
+    _capture_pr_merged_evidence,
+    _capture_pr_ready_evidence,
     _capture_sync_state,
     _checkout_milestone_branch,
     _claimed_nested_repo_paths,
@@ -1756,6 +1758,95 @@ def _run_full_suite_backstop_gate(
         }
 
 
+def _full_suite_backstop_block_reason(
+    milestone_label: str,
+    plan_name: str,
+    result: dict[str, Any] | None,
+) -> str:
+    newly_failing = result.get("newly_failing") if isinstance(result, dict) else None
+    deleted_tests = result.get("deleted_tests") if isinstance(result, dict) else None
+    failing_suffix = (
+        f"; newly_failing={newly_failing[:10]}"
+        if isinstance(newly_failing, list) and newly_failing
+        else (
+            f"; deleted_tests={deleted_tests[:10]}"
+            if isinstance(deleted_tests, list) and deleted_tests
+            else ""
+        )
+    )
+    return (
+        "full_suite_backstop_mode=enforce: milestone "
+        f"{milestone_label!r} blocked before reconciliation advance; see "
+        f"{plan_name}/full_suite_backstop.json{failing_suffix}"
+    )
+
+
+def _run_pending_reconciliation_backstops(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    writer,
+) -> str | None:
+    """Verify provisional completed records before reconciliation trusts them.
+
+    A terminal plan projection may leave a ``finalized`` completed record in
+    chain state before the cursor has advanced.  Reconciliation must not turn
+    that projection into completion authority without replaying the same
+    full-suite gate used by the ordinary advancement path.
+    """
+
+    fail_closed, _ = _reconciliation_fail_closed(state)
+    if fail_closed:
+        return None
+
+    changed = False
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") in {STATE_DONE, "complete"}:
+            continue
+        if isinstance(record.get("full_suite_backstop"), dict):
+            continue
+        milestone_label = record.get("label")
+        plan_name = record.get("plan")
+        if not isinstance(milestone_label, str) or not milestone_label:
+            continue
+        if not isinstance(plan_name, str) or not plan_name:
+            continue
+        gate = _run_full_suite_backstop_gate(
+            root,
+            spec_path,
+            plan_name,
+            milestone_label,
+            state.full_suite_backstop_mode,
+            log_fn=lambda message: writer(f"[chain] {message}\n"),
+        )
+        if gate.get("blocks"):
+            chain_spec.save_chain_state(spec_path, state)
+            result = gate.get("result")
+            return _full_suite_backstop_block_reason(
+                milestone_label,
+                plan_name,
+                result if isinstance(result, dict) else None,
+            )
+        summary = gate.get("summary")
+        if isinstance(summary, dict):
+            record["full_suite_backstop"] = dict(summary)
+            changed = True
+        result = gate.get("result")
+        if isinstance(result, dict):
+            _persist_full_suite_backstop_baseline(
+                spec_path,
+                result,
+                captured_at_sha=_current_head_sha(root),
+                milestone_label=milestone_label,
+            )
+    if changed:
+        chain_spec.save_chain_state(spec_path, state)
+    return None
+
+
 def _latest_execution_batch_all_tasks_done(
     plan_dir: Path,
     *,
@@ -2947,10 +3038,28 @@ def _validate_pr_progression_wbc(
         validate_chain_wbc_transition,
     )
 
-    plan_dir = resolve_plan_dir(root, plan_name)
+    binding = execution_binding_report(spec_path, state)
+    if not binding.get("required"):
+        # Legacy unbound chain specs predate the controlled-writer contract.
+        # Their existing completion guard remains authoritative; WBC becomes
+        # mandatory once execution_binding is declared required.
+        return {
+            "schema": "arnold.megaplan.chain_wbc_transition_evidence.v1",
+            "transition": transition_name,
+            "subject": f"{milestone.label}:pr#{pr_number}",
+            "migration_status": "legacy_unbound_spec",
+            "execution_binding": binding,
+        }
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        # Preserve a failed, inspectable WBC result for synthetic/recovery
+        # callers whose plan record is absent. The artifact/receipt rules below
+        # remain false; no completion guard is relaxed.
+        plan_dir = root / ".megaplan" / "plans" / plan_name
     plan_state = _plan_state_payload_from_name(root, plan_name)
     current_state = plan_state.get("current_state")
-    binding = execution_binding_report(spec_path, state)
     finalize_receipts = finalize_receipt_candidates(plan_dir)
     finalize_artifacts = finalize_artifact_candidates(plan_dir)
     binding_ok = (
@@ -3894,6 +4003,7 @@ def _append_reconciled_completed_record_with_guard(
     root: Path,
     state: ChainState,
     *,
+    spec_path: Path | None = None,
     plan_name: str,
     milestone: MilestoneSpec,
     pr_number: int | None,
@@ -3913,6 +4023,33 @@ def _append_reconciled_completed_record_with_guard(
             f"{milestone.label} in atomic mode: {fail_reason}\n"
         )
         return False, fail_reason
+    backstop_gate: dict[str, Any] = {
+        "blocks": False,
+        "summary": None,
+        "result": None,
+    }
+    if spec_path is not None:
+        backstop_gate = _run_full_suite_backstop_gate(
+            root,
+            spec_path,
+            plan_name,
+            milestone.label,
+            state.full_suite_backstop_mode,
+            log_fn=lambda message: writer(f"[chain] {message}\n"),
+        )
+    if backstop_gate.get("blocks"):
+        result = backstop_gate.get("result")
+        state.metadata["reconciliation_full_suite_backstop_block"] = {
+            "milestone": milestone.label,
+            "plan": plan_name,
+            "result": dict(result) if isinstance(result, dict) else {},
+        }
+        return False, _full_suite_backstop_block_reason(
+            milestone.label,
+            plan_name,
+            result if isinstance(result, dict) else None,
+        )
+    state.metadata.pop("reconciliation_full_suite_backstop_block", None)
     record = {
         "label": milestone.label,
         "plan": plan_name,
@@ -3920,6 +4057,17 @@ def _append_reconciled_completed_record_with_guard(
         "pr_number": pr_number,
         "pr_state": pr_state,
     }
+    summary = backstop_gate.get("summary")
+    if isinstance(summary, dict):
+        record["full_suite_backstop"] = dict(summary)
+    result = backstop_gate.get("result")
+    if spec_path is not None and isinstance(result, dict):
+        _persist_full_suite_backstop_baseline(
+            spec_path,
+            result,
+            captured_at_sha=_current_head_sha(root),
+            milestone_label=milestone.label,
+        )
     if pr_number is None:
         local_commit_sha = _current_git_head(root)
         if local_commit_sha is not None:
@@ -5581,6 +5729,7 @@ def _reconcile_chain_from_ground_truth(
         appended, reason = _append_reconciled_completed_record_with_guard(
             root,
             state,
+            spec_path=spec_path,
             plan_name=plan_name,
             milestone=active_milestone,
             pr_number=state.pr_number if active_uses_pr else None,
@@ -5616,6 +5765,7 @@ def _reconcile_chain_from_ground_truth(
                 appended, reason = _append_reconciled_completed_record_with_guard(
                     root,
                     state,
+                    spec_path=spec_path,
                     plan_name=plan_name,
                     milestone=active_milestone,
                     pr_number=state.pr_number,
@@ -5634,6 +5784,7 @@ def _reconcile_chain_from_ground_truth(
             appended, reason = _append_reconciled_completed_record_with_guard(
                 root,
                 state,
+                spec_path=spec_path,
                 plan_name=plan_name,
                 milestone=active_milestone,
                 pr_number=None,
@@ -6271,6 +6422,20 @@ def run_chain(
         "yes",
         "YES",
     }
+    reconciliation_backstop_block = _run_pending_reconciliation_backstops(
+        root,
+        spec_path,
+        state,
+        writer=writer,
+    )
+    if reconciliation_backstop_block is not None:
+        return _result(
+            "blocked",
+            state,
+            [],
+            spec=spec,
+            reason=reconciliation_backstop_block,
+        )
     completed_before_reconciliation = len(state.completed)
     state = _reconcile_chain_from_ground_truth(
         root,
@@ -6280,6 +6445,22 @@ def run_chain(
         writer=writer,
         push_enabled=push_enabled,
     )
+    reconciliation_block = state.metadata.get(
+        "reconciliation_full_suite_backstop_block"
+    )
+    if isinstance(reconciliation_block, dict):
+        result = reconciliation_block.get("result")
+        return _result(
+            "blocked",
+            state,
+            [],
+            spec=spec,
+            reason=_full_suite_backstop_block_reason(
+                str(reconciliation_block.get("milestone") or "unknown"),
+                str(reconciliation_block.get("plan") or "unknown"),
+                result if isinstance(result, dict) else None,
+            ),
+        )
 
     events: list[dict[str, Any]] = []
 
@@ -6370,7 +6551,9 @@ def run_chain(
                     metadata=payload,
                 )
         except Exception:
-            log.debug("Work ledger chain event emission skipped", exc_info=True)
+            logging.getLogger("megaplan").debug(
+                "Work ledger chain event emission skipped", exc_info=True
+            )
 
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:

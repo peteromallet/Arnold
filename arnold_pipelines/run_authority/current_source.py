@@ -151,8 +151,8 @@ def _accepted_decision(
         if decision.decision_id != request.decision_id:
             continue
         # Only an *accepted* decision authorizes; anything else denies.
-        verdict = str(getattr(decision, "verdict", "")).strip().lower()
-        if verdict and verdict != "accepted":
+        outcome = str(decision.outcome).strip().lower()
+        if outcome != "accepted":
             return None
         return decision
     return None

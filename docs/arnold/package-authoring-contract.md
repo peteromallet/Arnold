@@ -139,17 +139,14 @@ contract.
 
 ## Native-First Authoring Example
 
-A native-first package declares phases and topology via decorators,
-compiles the native program, and projects it into a `Pipeline` shell.
-The package must not hand-author `WorkflowManifest`, `NativeProgram`
-builder objects, executor objects, or `_forward_m2_m3` graph objects.
+A package declares steps and topology through the public workflow decorators.
+The compiler derives the executable program, manifest, and package adapter.
+Authors must not hand-author those derived objects.
 
 ```python
 from typing import Any
 
-from arnold.pipeline import step, workflow, decision
-from arnold.pipeline.native import compile_pipeline, parallel_map, project_graph
-from arnold.pipeline.types import Pipeline
+from arnold.pipeline import decision, step, workflow
 
 name = "hello-world"
 description = "A compositional native-first package with nested workflows."
@@ -199,15 +196,12 @@ def hello_world_native(ctx: object) -> Any:
     return state
 
 
-def build_pipeline() -> Pipeline:
-    native = compile_pipeline(hello_world_native)
-    return project_graph(native, key_mode="phase")
+workflow_entrypoint = hello_world_native
 ```
 
-The returned `Pipeline` carries a non-null `native_program`. Pattern
-constructors from `arnold.pipeline.native` (`parallel`, `parallel_map`,
-`decision`, `start_from_trace`) may be used to build composite topologies
-inside the `@workflow`-decorated generator.
+The package-generation command consumes `workflow_entrypoint` and emits the
+runtime adapter and manifest. Composite topology uses the public workflow
+constructors; generated projection files are never edited as source.
 
 ## M6 Dispatch Substrate Boundary
 

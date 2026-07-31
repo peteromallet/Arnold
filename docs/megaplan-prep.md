@@ -3,6 +3,15 @@ name: megaplan-prep
 description: Set up a megaplan run before invoking it — size the work, write the brief, score overall plan difficulty, and choose robustness/depth. Consult before every `python -m arnold_pipelines.megaplan init`.
 ---
 
+> **Authority status (M11):** This document is retained as zero-authority history.
+> All repair, audit, and deployment authority has been migrated to canonical
+> delegation (see `arnold_pipelines/megaplan/cloud/wrappers/repair_delegation.py`).
+> Content below is historical reference only and must not be used to materialize
+> commands, grant authority, or drive automated repair actions.  For current
+> operator guidance consult the M11 acceptance suite and delegation contracts.
+
+
+
 # Megaplan Setup
 
 Three dials decide how to run a sprint:

@@ -163,10 +163,21 @@ class ActionGateConfig:
 
     The ``enforced_families`` set controls Step 12C staging: only
     families in this set enforce.  All others run in shadow mode.
+
+    M11 Step 10 (``wbc_evidence_only``):
+        When ``True``, the gate requires current Run Authority grant/fence
+        **and** current Custody lease/epoch as authority sources.  Absent
+        RA or Custody checks BLOCK (stale-half fix) — they do not fall
+        through to AUTHORIZED.  WBC is treated as evidence-only: it is
+        recorded in the decision diagnostics but never gates the verdict.
+
+        When ``False`` (default, pre-M11 behaviour), WBC remains a blocking
+        authority source alongside RA and Custody.
     """
 
     enforced_families: frozenset[ActionFamily] = _DEFAULT_ENFORCED
     require_wbc_store_evidence: bool = True
+    wbc_evidence_only: bool = False
 
     def is_enforced(self, family: ActionFamily) -> bool:
         return family in self.enforced_families
@@ -271,6 +282,7 @@ class ActionGate:
             ra_result=ra_result,
             custody_active=custody_active,
             wbc_evidence=wbc_evidence,
+            wbc_evidence_only=self._config.wbc_evidence_only,
         )
 
         result = ActionGateResult(
@@ -284,6 +296,7 @@ class ActionGate:
                 "action_target": action_target,
                 "enforcement_enabled": enforcement,
                 "gate_schema_version": "m10-action-gate-v1",
+                "wbc_evidence_only": self._config.wbc_evidence_only,
             },
             enforcement_enabled=enforcement,
         )
@@ -348,15 +361,39 @@ class ActionGate:
         ra_result: Optional[CurrentSourceResult],
         custody_active: Optional[bool],
         wbc_evidence: WbcEvidence,
+        wbc_evidence_only: bool = False,
     ) -> ActionGateVerdict:
-        """Compute the overall verdict (second fence)."""
+        """Compute the overall verdict (second fence).
+
+        When *wbc_evidence_only* is ``True`` (M11 Step 10), authority is
+        created **only** from current Run Authority grant/fence and current
+        Custody lease/epoch.  Absent authority checks BLOCK (stale-half fix).
+        WBC is recorded as evidence but never gates the verdict.
+        """
         if not enforcement:
             # Shadow mode: check but don't block
             if ra_result is not None and not ra_result.status.is_satisfied:
                 return ActionGateVerdict.SHADOW_BLOCKED
             return ActionGateVerdict.SHADOW_AUTHORIZED
 
-        # Enforced mode: every source must be SATISFIED
+        # ── M11 Step 10: RA + Custody required, WBC evidence-only ──────
+        if wbc_evidence_only:
+            # Run Authority: required authority source.
+            # Stale-half fix: absent RA BLOCKS — it must not fall through.
+            if ra_result is None:
+                return ActionGateVerdict.BLOCKED_RA_UNSATISFIED
+            if not ra_result.status.is_satisfied:
+                return ActionGateVerdict.BLOCKED_RA_UNSATISFIED
+
+            # Custody lease: required authority source.
+            # Stale-half fix: absent custody BLOCKS.
+            if custody_active is None or not custody_active:
+                return ActionGateVerdict.BLOCKED_CUSTODY
+
+            # WBC: evidence-only — recorded in diagnostics, never gates.
+            return ActionGateVerdict.AUTHORIZED
+
+        # ── Legacy behaviour (pre-M11): WBC is a blocking authority source
 
         # Run Authority
         if ra_result is not None and not ra_result.status.is_satisfied:

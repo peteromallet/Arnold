@@ -225,7 +225,20 @@ from arnold_pipelines.megaplan.resident.managed_child_custody import (
 )
 from arnold_pipelines.megaplan.workflows.boundary_contracts import prep_to_plan
 from arnold_pipelines.run_authority import CapabilityGrant, CoordinatorFence
-from tools import generate_wbc_boundary_inventory as inventory_tool
+import importlib.util
+
+_GENERATOR_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "generate_wbc_boundary_inventory.py"
+)
+_GENERATOR_SPEC = importlib.util.spec_from_file_location(
+    "m8_wbc_acceptance_inventory_generator", _GENERATOR_PATH
+)
+assert _GENERATOR_SPEC is not None and _GENERATOR_SPEC.loader is not None
+inventory_tool = importlib.util.module_from_spec(_GENERATOR_SPEC)
+sys.modules[_GENERATOR_SPEC.name] = inventory_tool
+_GENERATOR_SPEC.loader.exec_module(inventory_tool)
 
 
 RUNTIME_TARGET = CustodyTargetKey(

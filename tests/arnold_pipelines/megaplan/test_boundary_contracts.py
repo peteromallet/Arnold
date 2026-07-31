@@ -41,6 +41,12 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     REQUIRED_FIELD_PROFILES_BY_KIND,
     TYPED_BOUNDARY_TEMPLATES,
     TYPED_BOUNDARY_TEMPLATES_BY_ID,
+    LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY,
+    M11_PREREQUISITE_INCOMPLETE,
+    NEXT_THREE_HOUR_RECONCILIATION,
+    WBC_STATIC_RUNTIME_EQUAL,
+    WBC_STATIC_RUNTIME_MISMATCH,
+    WbcStaticRuntimeEqualityResult,
     ApprovalBoundary,
     ArtifactHandoffBoundary,
     RevisionBoundary,
@@ -53,6 +59,7 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     chain_milestone_start,
     chain_milestone_template,
     challenger_to_synthesis,
+    check_wbc_static_runtime_equality,
     cloud_custody_blocked_relaunch_failure,
     cloud_custody_complete,
     cloud_custody_escalated_repeated_unchanged,
@@ -119,6 +126,9 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
 ROOT = Path(__file__).resolve().parents[3]
 BOUNDARY_FIXTURE_ROOT = (
     ROOT / "docs" / "arnold" / "megaplan-native-representation-boundary-fixtures"
+)
+SUPPORT_MANIFEST_PATH = (
+    ROOT / "arnold_pipelines" / "megaplan" / "workflows" / "support_manifest.json"
 )
 
 
@@ -1751,3 +1761,180 @@ def test_adapter_required_field_profiles_count() -> None:
 
     assert len(ADAPTER_REQUIRED_FIELD_PROFILES) == 7
     assert len(ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND) == 7
+
+
+# ── Step 50 (T35): next-three-hour reconciliation boundary contracts ────────
+
+
+def test_next_three_hour_reconciliation_boundary_contracts() -> None:
+    """Step 50 (T35): auditor reconciliation boundary contracts and the WBC
+    support manifest carry next-three-hour producer/consumer vocabulary.
+
+    The six-hour row identifiers (boundary_id/row_id/auditor_kind) are retained
+    as compatibility-only exact-version evidence; they must not be promoted
+    into repair authority, and incomplete reconciliation prerequisites fail
+    closed. No authority is created from the reconciliation label, liveness,
+    a WBC receipt, or a rebuildable projection.
+    """
+    # ── Boundary contract row migrated to next-three-hour reconciliation ──
+    assert auditor_6h_completion.details["time_window"] == NEXT_THREE_HOUR_RECONCILIATION
+    assert (
+        auditor_6h_completion.details["reconciliation_interval"]
+        == NEXT_THREE_HOUR_RECONCILIATION
+    )
+    assert (
+        auditor_6h_completion.details["legacy_six_hour_names_compatibility_only"]
+        is LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY
+    )
+    assert LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY is True
+
+    # Stable six-hour identifiers retained as compatibility-only evidence only.
+    assert auditor_6h_completion.boundary_id == "auditor_6h_completion"
+    assert auditor_6h_completion.row_id == "auditor.6h_complete.1"
+    assert auditor_6h_completion.details["auditor_kind"] == "six_hour_auditor"
+
+    # Authority semantics unchanged: the verdict boundary carries authority
+    # from the auditor producer contract — NOT from the reconciliation label,
+    # liveness, a WBC receipt, or a rebuildable projection.
+    assert auditor_6h_completion.authority_required is True
+    assert auditor_6h_completion.receipt_required is True
+    assert auditor_6h_completion.phase_result_required is True
+
+    # The reconciliation label must not mint a brand-new authority contract.
+    assert NEXT_THREE_HOUR_RECONCILIATION not in BOUNDARY_CONTRACTS_BY_ID
+    assert "next_three_hour_reconciliation" not in BOUNDARY_CONTRACTS_BY_ID
+
+    # The migrated row still satisfies its auditor_completion required-field
+    # profile (reconciliation_interval/legacy markers are additive evidence,
+    # not authority substitutions).
+    profile = get_profile_by_kind("auditor_completion")
+    assert profile is not None
+    satisfied, missing = contract_satisfies_profile(auditor_6h_completion, profile)
+    assert satisfied, f"auditor_6h_completion missing profile keys: {missing}"
+
+    # ── Template migrated in lockstep ─────────────────────────────────────
+    assert (
+        auditor_completion_template.details["time_window"]
+        == NEXT_THREE_HOUR_RECONCILIATION
+    )
+    assert (
+        auditor_completion_template.details["reconciliation_interval"]
+        == NEXT_THREE_HOUR_RECONCILIATION
+    )
+    assert (
+        auditor_completion_template.details["legacy_six_hour_names_compatibility_only"]
+        is True
+    )
+
+    # ── Support manifest records the next-three-hour producer/consumer ────
+    # cadence, keeping WBC rows exact-version evidence only (no new boundary
+    # ids invented, no exception past C6, supported rows carry no noise).
+    manifest = json.loads(SUPPORT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert manifest["meta"]["reconciliation_interval"] == NEXT_THREE_HOUR_RECONCILIATION
+    assert manifest["meta"]["legacy_six_hour_names_compatibility_only"] is True
+
+    megaplan = next(f for f in manifest["families"] if f["family_id"] == "megaplan")
+    for entry in megaplan["entries"]:
+        assert entry["owner"] in {"wbc", "run_authority", "maintenance"}
+        assert entry["c2_c6_milestone"] in {"c2", "c3", "c4", "c5", "c6"}
+        if entry["support_status"] == "supported":
+            assert entry["visible_non_conformant"] == []
+        # The reconciliation migration must not invent a producer_path that
+        # references authority outside the real arnold source tree.
+        path = entry.get("producer_path")
+        if path is not None:
+            assert (
+                path.startswith("arnold_pipelines/megaplan")
+                or path.startswith("arnold/")
+                or path.startswith("arnold_pipelines.megaplan")
+                or path.startswith("arnold.")
+            ), f"entry {entry['step_id']} invented authority path: {path}"
+
+
+# ── Step 96 (T46): WBC static/runtime equality gate ─────────────────────────
+
+
+def test_wbc_static_runtime_equality_requires_prerequisite_readiness() -> None:
+    """Step 96 (T46): WBC rows are exact-version evidence only.
+
+    Equality among generated call sites, runtime traces, and exact-version WBC
+    rows is proven ONLY after M11 prerequisite readiness. Incomplete
+    prerequisites produce only ``m11_prerequisite_incomplete`` — no positive
+    equality is ever claimed from a label, liveness, a WBC receipt, or a
+    rebuildable projection. This is decision data; it never writes authority.
+    """
+    call_sites = ("wbc.audit.1", "wbc.repair.1", "wbc.ledger.1")
+
+    # ── 1. Incomplete prerequisites fail closed — even when all three agree ──
+    blocked = check_wbc_static_runtime_equality(
+        generated_call_sites=call_sites,
+        runtime_traces=call_sites,
+        wbc_rows=call_sites,
+        prerequisites_ready=False,
+    )
+    assert isinstance(blocked, WbcStaticRuntimeEqualityResult)
+    assert blocked.outcome == M11_PREREQUISITE_INCOMPLETE
+    assert blocked.outcome == "m11_prerequisite_incomplete"
+    assert blocked.equal is False
+    # Prerequisite unreadiness is the ONLY outcome reported — it does not
+    # masquerade as equality even though the three sources happen to agree.
+    assert blocked.outcome != WBC_STATIC_RUNTIME_EQUAL
+    # The WBC rows alone (a receipt/evidence source) must never satisfy
+    # equality while prerequisites are unready.
+    assert "not proven" in blocked.reason
+
+    # ── 2. Prerequisites ready + exact agreement ⇒ proven equal ─────────────
+    proven = check_wbc_static_runtime_equality(
+        generated_call_sites=call_sites,
+        runtime_traces=call_sites,
+        wbc_rows=call_sites,
+        prerequisites_ready=True,
+    )
+    assert proven.outcome == WBC_STATIC_RUNTIME_EQUAL
+    assert proven.equal is True
+    assert proven.missing_runtime == ()
+    assert proven.extra_runtime == ()
+    assert proven.wbc_not_in_static == ()
+
+    # ── 3. Prerequisites ready + disagreement ⇒ typed mismatch ──────────────
+    mismatch = check_wbc_static_runtime_equality(
+        generated_call_sites=("wbc.audit.1", "wbc.ledger.1"),
+        runtime_traces=("wbc.audit.1", "wbc.ghost.1"),  # ghost not generated
+        wbc_rows=("wbc.audit.1", "wbc.ledger.1", "wbc.unknown.1"),  # WBC drift
+        prerequisites_ready=True,
+    )
+    assert mismatch.outcome == WBC_STATIC_RUNTIME_MISMATCH
+    assert mismatch.equal is False
+    assert mismatch.missing_runtime == ("wbc.ghost.1",)
+    assert mismatch.extra_runtime == ("wbc.ledger.1",)
+    assert mismatch.wbc_not_in_static == ("wbc.unknown.1",)
+    # The mismatch must not be flattened into a prerequisite-incomplete banner:
+    # with prerequisites ready the disagreement is reported precisely.
+    assert mismatch.outcome != M11_PREREQUISITE_INCOMPLETE
+
+    # ── 4. No authority is created from labels/liveness/receipts/projections ─
+    # The result is frozen, pure decision data. It carries no grant/fence/lease/
+    # capability/label/liveness/projection/authority keys — only typed outcome
+    # evidence. Equality derives strictly from the set comparison above.
+    assert isinstance(blocked, WbcStaticRuntimeEqualityResult)
+    payload = proven.to_dict()
+    forbidden = {
+        "grant", "fence", "lease", "epoch", "wbc_receipt", "label",
+        "liveness", "projection", "authority", "capability", "evidence_only",
+    }
+    assert not (forbidden & set(payload)), forbidden & set(payload)
+    # Frozen: cannot be mutated to smuggle in authority after construction.
+    with pytest.raises(FrozenInstanceError):
+        blocked.equal = True  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        blocked.outcome = WBC_STATIC_RUNTIME_EQUAL  # type: ignore[misc]
+
+    # ── 5. WBC rows as the sole differing input never yield equality ─────────
+    wbc_drift = check_wbc_static_runtime_equality(
+        generated_call_sites=call_sites,
+        runtime_traces=call_sites,
+        wbc_rows=("wbc.audit.1",),  # WBC evidence alone differs
+        prerequisites_ready=True,
+    )
+    assert wbc_drift.equal is False
+    assert wbc_drift.outcome == WBC_STATIC_RUNTIME_MISMATCH

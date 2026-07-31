@@ -357,6 +357,16 @@ def _enqueue_human_gate_repair_request(
     hook = hook_extensions.get("human_gate_repair_request_hook")
     if not callable(hook):
         return
+
+    # ── Step 40 (T26): extract occurrence identity from hook_extensions ──
+    occurrence_identity = hook_extensions.get("occurrence_identity")
+    evidence_cursor_digest = str(
+        hook_extensions.get("evidence_cursor_digest") or ""
+    ).strip()
+    terminal_receipt_expectations = hook_extensions.get(
+        "terminal_receipt_expectations"
+    )
+
     try:
         hook(
             queue_root=queue_root,
@@ -369,6 +379,13 @@ def _enqueue_human_gate_repair_request(
             artifact_stage=artifact_stage,
             step_name=step_name,
             prompt=prompt,
+            occurrence_identity=occurrence_identity,
+            evidence_cursor_digest=evidence_cursor_digest,
+            terminal_receipt_expectations=(
+                list(terminal_receipt_expectations)
+                if isinstance(terminal_receipt_expectations, list)
+                else None
+            ),
         )
     except Exception:
         _LOG.warning(

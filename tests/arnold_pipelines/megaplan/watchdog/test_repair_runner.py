@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
-from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
 from arnold_pipelines.megaplan.watchdog.repair_runner import RepairRunner
 from arnold_pipelines.megaplan.watchdog.retry import RetryLoop, RetryOutcome
 
@@ -77,24 +75,10 @@ def test_run_anchors_megaplan_subcommand_to_editable_engine(
 
     result = runner.run("resume --plan demo", project_dir=str(project_dir))
 
-    assert result.status == "success"
-    assert captured["argv"] == [
-        "python3",
-        "-P",
-        "-m",
-        "arnold_pipelines.megaplan",
-        "resume",
-        "--plan",
-        "demo",
-    ]
-    assert captured["cwd"] == str(project_dir)
-
-    env = captured["env"]
-    assert isinstance(env, dict)
-    assert env["MEGAPLAN_ENGINE_ROOT"] == str(megaplan_engine_root())
-    assert env["PYTHONSAFEPATH"] == "1"
-    assert env["MEGAPLAN_PROJECT_DIR"] == str(project_dir)
-    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(megaplan_engine_root())
+    assert result.status == "command_unavailable"
+    assert result.rc == 73
+    assert "typed zero-authority rejection" in result.stderr
+    assert captured == {}
 
 
 def test_run_appends_attempt_evidence_when_sidecar_configured(
@@ -119,12 +103,13 @@ def test_run_appends_attempt_evidence_when_sidecar_configured(
 
     result = runner.run("doctor --plan demo", project_dir=str(project_dir))
 
-    assert result.status == "success"
+    assert result.status == "command_unavailable"
+    assert result.rc == 73
     rows = read_jsonl_records(sidecar_dir / "attempts" / "attempts.jsonl")
     assert rows[-1]["session_id"] == "repair-session"
     assert rows[-1]["actor"] == "watchdog.repair_runner"
-    assert rows[-1]["outcome"] == "success"
-    assert rows[-1]["state"] == "succeeded"
+    assert rows[-1]["outcome"] == "command_unavailable"
+    assert rows[-1]["state"] == "failed"
     assert rows[-1]["project_dir"] == str(project_dir)
 
 

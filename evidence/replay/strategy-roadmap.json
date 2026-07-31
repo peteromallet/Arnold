@@ -1,6 +1,6 @@
 {
-  "composite_hash": "0c3342e3d2b5de9fa001368de272e264c0410712ca7276eb125472c37af9d853",
-  "generated_at": "2026-07-19T22:34:46.811797+00:00",
+  "composite_hash": "3e81a677646eddf8c5260bb0831ce2dcd421202fb4ac9b38dda1663db4898c5f",
+  "generated_at": "2026-07-31T00:31:58.389024+00:00",
   "generator": "tools/generate_m6_replay_fixtures.py",
   "limitations": {
     "compaction_and_productive_baselines_unknown": {
@@ -32,14 +32,14 @@
       "pattern": "/workspace/[REDACTED:<sha256-prefix>]"
     }
   },
-  "repository_root": "/workspace/[REDACTED:6899d7db6ccd]",
+  "repository_root": "/repository/[REDACTED:5bf0194c0eca]",
   "schema": "m6.strategy-roadmap-replay-fixture.v1",
   "section_hashes": {
     "compaction_baseline": "008d97a300031265d1d40fc59d8fa69e46bbec71369461cab928a8986204491e",
     "handoff_context": "e68f0fb995c8d3d16eec2ba278e8ed1d8db94bf2f5b2629095e8f56533507f48",
-    "incident_data": "e2f6a59d92bf02c880812c9a82bf07dfb99db6ff42d32ae16c4e0f33d2c14331",
+    "incident_data": "bf2ddea0b61afd0863828c674e90e6a6627bc413b0363e586124f73c803915f8",
     "initiative_artifacts": "ac4270256654130f53405657304e0e4754767fe78d102694c38c513be0268a6f",
-    "repair_data": "385b4a89b78690cc2f9384a5a721b23b97fc9b934b1f436de905c6aa67233489"
+    "repair_data": "0af2ef91345bd3db3a533a32a5ae1511ed80d63bd4de9f40e6c07793ab60ed1f"
   },
   "sections": {
     "compaction_baseline": {
@@ -62,9 +62,9 @@
       "strategy_excerpt_preview": "- Strategy Roadmap contributor: `subagent-20260714-101356-fc5f6cae`\n- Synthesis owner: `subagent-20260714-101421-463e5e9c`\n\n## Verified outcome\n\nBoth contributor manifests reached `completed`, and their durable results and\nevidence reports were consumed. At the snapshot, the canonical display state\nfor both active plans was `executing`; neither plan was restarted or killed.\n\nTransaction Spine attempt 4 had a fresh active-step start at 10:33:58 and\nactivity at 10:34:02. Strategy Roadmap attempt 2 had activity at 10:34:13 and\nintrospection reported a one-second-old event. Transaction introspection\nnevertheless reported `stalled` from a 990-second-old event. This contradicts\nthe active-step evidence and reproduces the non-atomic compatibility-journal\nrace found by the Transaction Spine investigation. An earlier Strategy read at\n10:28:07 produced the same false-stall shape while its journal, state, and token\nheartbeats were updating. Canonical `display_state` plus direct activity\nevidence therefore governs this snapshot; raw liveness is degraded until the\nprojection fix is deployed.\n\n## Consolidated causal model\n\n### Legitimate workload\n\n- Strategy M4 produced 8,327 additions and 41 deletions across 20 files. Its\n  2h03m17s first execute was 99.6% enclosed by 15 worker calls; this was mostly\n  real implementation rather than queue idle. The 7m56s review found five\n  deterministic defects missed by scoped passing tests and should remain.\n- Transaction Spine's stopped attempts also produced real implementation and\n  two useful repairs. The three stopped execute attempts consumed 3h27m40s,\n  $3.12684, and 40.7M input tokens, but that total must not be labelled waste.\n\n### Instance-specific avoidable latency\n\n- Transaction Spine admitted a 30-task, 29-edge serial chain. Complexity-7 T7\n  and T12 each exhausted the same 90-iteration ceiling after implementing the\n  core change but before required proof tests. Four later complexity-8/9 tasks\n  remain recurrence risks. Hourly "
     },
     "incident_data": {
-      "content_hash": "40be383f9dcca6a936405f399ad3116f1ffd4556faa11ed2c917ec3ee4b2f2b7",
+      "content_hash": "1367fe0123ec7b09b483dbd3bb3813d16d13dfbd80ae43aeee3448eb3c9ad3f8",
       "incident": {
-        "content_sha256": "95f60b995cb17a331059a66d75b4a90bbac57abf440c4e7fba791004a408a2b5",
+        "content_sha256": "3bfe7c24272e4aff7b10a9e54686abc7da927b6e98dcb9d7eeb1717481a7a1e8",
         "incident_id": "inc-repository-strategy-roadmap",
         "latest_actor": "github_sync",
         "outcome": "published",
@@ -85,8 +85,8 @@
           "inc-superfixer-alive-but-failed-recovery",
           "inc-workflow-boundary-contracts-corrective-20260710"
         ],
-        "occurrence_count": 19,
-        "owner_actor": "immediate_repair",
+        "occurrence_count": 23,
+        "owner_actor": "github_sync",
         "problem_id": "problem-72f87afd3954",
         "recurred_after_fix": false,
         "status": "present",
@@ -138,7 +138,7 @@
       "source_directory": ".megaplan/initiatives/repository-strategy-roadmap"
     },
     "repair_data": {
-      "content_hash": "1b38e0339c32b76ab7602432a9651e38ffaa29583562c6aaf7276587de6ebc54",
+      "content_hash": "1cdbbefb5beeccc7ee4cf8346c88947a2ef21c28932c0f0ff4641fe6bdba1248",
       "incident_summaries": [
         {
           "decision_count": 4,

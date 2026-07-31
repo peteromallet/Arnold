@@ -143,12 +143,17 @@ class GateResult(StrEnum):
     AUTHORIZED = "authorized"
     SHADOW_PASS = "shadow_pass"
     BLOCKED_MISSING_GRANT = "blocked_missing_grant"
+    BLOCKED_STALE_GRANT = "blocked_stale_grant"
     BLOCKED_FENCE_MISMATCH = "blocked_fence_mismatch"
+    BLOCKED_SUBJECT_SCOPE_MISMATCH = "blocked_subject_scope_mismatch"
+    BLOCKED_CAPABILITY_MISMATCH = "blocked_capability_mismatch"
     BLOCKED_NO_LEASE = "blocked_no_lease"
     BLOCKED_EXPIRED_LEASE = "blocked_expired_lease"
     BLOCKED_STALE_EPOCH = "blocked_stale_epoch"
+    BLOCKED_TARGET_MISMATCH = "blocked_target_mismatch"
     BLOCKED_WBC_MISSING = "blocked_wbc_missing"
     BLOCKED_WBC_CONFLICT = "blocked_wbc_conflict"
+    BLOCKED_WBC_VERSION_MISMATCH = "blocked_wbc_version_mismatch"
     BLOCKED_NOT_OWNER = "blocked_not_owner"
     BLOCKED_RA_UNSATISFIED = "blocked_ra_unsatisfied"
     ERROR = "error"
@@ -166,6 +171,7 @@ class SourceCheck:
     detail: str = ""
     observed_at: str = ""
     observed_value: Mapping[str, Any] = field(default_factory=dict)
+    identity: str = ""
 
     def __post_init__(self) -> None:
         if not self.observed_at:
@@ -186,6 +192,7 @@ class SourceCheck:
             "detail": self.detail,
             "observed_at": self.observed_at,
             "observed_value": dict(self.observed_value),
+            "identity": self.identity,
         }
 
 
@@ -220,6 +227,13 @@ class ActionBoundaryContext:
     owner_boot_id: str = ""
     expected_custody_epoch: int = 0
     expected_lease_id: str = ""
+    # Predecessor M8/M9 evidence objects remain accepted for exact stale/torn
+    # compatibility checks.  They are evidence inputs only and never bearer
+    # authority.
+    run_authority_grant: Any | None = None
+    coordinator_fence: Any | None = None
+    required_capability: str = ""
+    required_wbc_evidence_version: str = ""
 
     def __post_init__(self) -> None:
         if self.action_type not in ACTION_BOUNDARY_TYPES:
@@ -620,10 +634,26 @@ def _reread_wbc_attempt(
 def _compute_gate_result(
     checks: tuple[SourceCheck, ...],
     enforcement_enabled: bool,
+    *,
+    wbc_evidence_only: bool = False,
 ) -> GateResult:
     """Compute the overall gate result from per-source checks.
 
-    The order of precedence is:
+    When *enforcement_enabled* is ``False`` the result is always
+    ``SHADOW_PASS`` regardless of individual check outcomes.
+
+    When *wbc_evidence_only* is ``True`` (M11 Step 10):
+
+      - Run Authority grant/fence and Custody lease/epoch are **required**
+        authority sources.  Absent checks BLOCK (stale-half fix) — they
+        do not fall through to AUTHORIZED.
+      - WBC is **evidence-only**: its outcome is recorded in diagnostics
+        but never gates the result.
+
+    The default ordering (``wbc_evidence_only=False``) keeps the legacy
+    precedence documented below.
+
+    Legacy precedence:
       1. If enforcement is disabled → SHADOW_PASS (regardless of check outcomes)
       2. If any check has ERROR → ERROR
       3. If run_authority_grant is MISSING → BLOCKED_MISSING_GRANT
@@ -645,6 +675,46 @@ def _compute_gate_result(
     for c in checks:
         if c.outcome == ValidationOutcome.ERROR:
             return GateResult.ERROR
+
+    # ── M11 Step 10: RA + Custody required, WBC evidence-only ──────
+    if wbc_evidence_only:
+        # Run Authority grant: required authority source (stale-half fix)
+        grant = checks_by_source.get("run_authority_grant")
+        if grant is None:
+            return GateResult.BLOCKED_MISSING_GRANT
+        if grant.outcome == ValidationOutcome.MISSING:
+            return GateResult.BLOCKED_MISSING_GRANT
+        if grant.outcome != ValidationOutcome.SATISFIED:
+            return GateResult.BLOCKED_RA_UNSATISFIED
+
+        # Run Authority fence: required authority source (stale-half fix)
+        fence = checks_by_source.get("run_authority_fence")
+        if fence is None:
+            return GateResult.BLOCKED_FENCE_MISMATCH
+        if fence.outcome == ValidationOutcome.FENCED:
+            return GateResult.BLOCKED_FENCE_MISMATCH
+        if fence.outcome != ValidationOutcome.SATISFIED:
+            return GateResult.BLOCKED_RA_UNSATISFIED
+
+        # Custody lease: required authority source (stale-half fix)
+        lease = checks_by_source.get("custody_lease")
+        if lease is None:
+            return GateResult.BLOCKED_NO_LEASE
+        if lease.outcome == ValidationOutcome.MISSING:
+            return GateResult.BLOCKED_NO_LEASE
+        if lease.outcome == ValidationOutcome.EXPIRED:
+            return GateResult.BLOCKED_EXPIRED_LEASE
+        if lease.outcome == ValidationOutcome.STALE:
+            return GateResult.BLOCKED_STALE_EPOCH
+        if lease.outcome == ValidationOutcome.NOT_OWNER:
+            return GateResult.BLOCKED_NOT_OWNER
+        if lease.outcome != ValidationOutcome.SATISFIED:
+            return GateResult.BLOCKED_NO_LEASE
+
+        # WBC: evidence-only — recorded in diagnostics but never gates.
+        return GateResult.AUTHORIZED
+
+    # ── Legacy precedence (pre-M11): WBC is a blocking authority source
 
     # Run Authority grant
     grant = checks_by_source.get("run_authority_grant")
@@ -711,6 +781,218 @@ def _build_diagnostics(
     return diag
 
 
+def _legacy_evidence_checks(
+    context: ActionBoundaryContext,
+    *,
+    lease_store: CustodyLeaseStore | None,
+    outbox: CustodyOutbox | None,
+) -> tuple[SourceCheck, ...]:
+    """Reread the predecessor M8/M9 evidence objects when supplied.
+
+    M10 retained the context fields but regressed to syntactic grant/fence
+    checks.  Keep the current F01 contract path intact while restoring the
+    exact-evidence compatibility path used by the M8/M9 acceptance suite.
+    """
+    grant = context.run_authority_grant
+    if grant is None:
+        grant_check = SourceCheck(
+            source="run_authority_grant",
+            outcome=ValidationOutcome.MISSING,
+            identity="grant",
+            detail="missing current Run Authority grant",
+        )
+    elif grant.grant_id != context.run_authority_grant_id:
+        grant_check = SourceCheck(
+            source="run_authority_grant",
+            outcome=ValidationOutcome.STALE,
+            identity="grant_id",
+            detail=(
+                f"stale Run Authority grant: expected "
+                f"{context.run_authority_grant_id!r}, observed {grant.grant_id!r}"
+            ),
+            observed_value={
+                "expected_grant_id": context.run_authority_grant_id,
+                "observed_grant_id": grant.grant_id,
+            },
+        )
+    elif context.target.subject_id not in grant.subject_ids:
+        grant_check = SourceCheck(
+            source="run_authority_grant",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="subject_id",
+            detail="Run Authority grant does not cover the exact subject",
+            observed_value={"subject_ids": grant.subject_ids},
+        )
+    elif (
+        context.required_capability
+        and context.required_capability not in grant.capabilities
+    ):
+        grant_check = SourceCheck(
+            source="run_authority_grant",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="capability",
+            detail="Run Authority grant lacks the required capability",
+            observed_value={"capabilities": grant.capabilities},
+        )
+    else:
+        grant_check = SourceCheck(
+            source="run_authority_grant",
+            outcome=ValidationOutcome.SATISFIED,
+            identity="grant_id",
+            detail=f"grant {grant.grant_id!r} is current",
+            observed_value={"grant_id": grant.grant_id},
+        )
+
+    fence = context.coordinator_fence
+    if fence is None:
+        fence_check = SourceCheck(
+            source="run_authority_fence",
+            outcome=ValidationOutcome.MISSING,
+            identity="fence",
+            detail="missing current coordinator fence",
+        )
+    elif fence.token != context.coordinator_fence_token:
+        fence_check = SourceCheck(
+            source="run_authority_fence",
+            outcome=ValidationOutcome.FENCED,
+            identity="fence_token",
+            detail=(
+                f"stale coordinator fence: expected "
+                f"{context.coordinator_fence_token!r}, observed {fence.token!r}"
+            ),
+            observed_value={
+                "expected_fence_token": context.coordinator_fence_token,
+                "observed_fence_token": fence.token,
+            },
+        )
+    else:
+        fence_check = SourceCheck(
+            source="run_authority_fence",
+            outcome=ValidationOutcome.SATISFIED,
+            identity="fence_token",
+            detail=f"coordinator fence {fence.token!r} is current",
+            observed_value={"fence_token": fence.token},
+        )
+
+    lease_check = _reread_custody_lease(
+        lease_store,
+        context.target.target_digest,
+        context.owner_host,
+        context.owner_pid,
+        context.owner_boot_id,
+        expected_custody_epoch=context.expected_custody_epoch,
+        expected_lease_id=context.expected_lease_id,
+    )
+    if lease_store is not None and context.expected_lease_id:
+        lease = lease_store.current_lease(context.expected_lease_id)
+        if lease is not None:
+            lease_observed = dict(lease_check.observed_value)
+            lease_observed["status"] = lease.status
+            lease_check = SourceCheck(
+                source=lease_check.source,
+                outcome=lease_check.outcome,
+                identity=(
+                    "lease_id"
+                    if lease_check.outcome in {
+                        ValidationOutcome.EXPIRED,
+                        ValidationOutcome.MISSING,
+                    }
+                    else "custody_epoch"
+                ),
+                detail=lease_check.detail,
+                observed_at=lease_check.observed_at,
+                observed_value=lease_observed,
+            )
+
+    wbc_check = _reread_wbc_attempt(
+        outbox,
+        context.wbc_attempt_reference,
+        context.target.target_digest,
+    )
+    if (
+        outbox is not None
+        and context.required_wbc_evidence_version
+        and wbc_check.outcome == ValidationOutcome.SATISFIED
+    ):
+        matching = [
+            record
+            for record in outbox.list_records()
+            if record.wbc_attempt_reference == context.wbc_attempt_reference
+        ]
+        versions = set()
+        for record in matching:
+            payload = record.payload or {}
+            if not isinstance(payload, Mapping):
+                continue
+            for field_name in ("schema_version", "evidence_version", "version"):
+                value = str(payload.get(field_name, "")).strip()
+                if value:
+                    versions.add(value)
+                    break
+        versions.discard("")
+        if versions != {context.required_wbc_evidence_version}:
+            wbc_check = SourceCheck(
+                source="wbc_attempt",
+                outcome=ValidationOutcome.STALE,
+                identity="wbc_evidence_version",
+                detail=(
+                    "WBC evidence version mismatch: expected "
+                    f"{context.required_wbc_evidence_version!r}, "
+                    f"observed {sorted(versions)!r}"
+                ),
+                observed_value={"versions": sorted(versions)},
+            )
+    if wbc_check.outcome == ValidationOutcome.CONFLICT:
+        wbc_check = SourceCheck(
+            source=wbc_check.source,
+            outcome=wbc_check.outcome,
+            identity="status",
+            detail=wbc_check.detail,
+            observed_at=wbc_check.observed_at,
+            observed_value=wbc_check.observed_value,
+        )
+    return grant_check, fence_check, lease_check, wbc_check
+
+
+def _compute_legacy_evidence_gate(
+    checks: tuple[SourceCheck, ...],
+    *,
+    enforcement_enabled: bool,
+) -> GateResult:
+    if not enforcement_enabled:
+        return GateResult.SHADOW_PASS
+    for check in checks:
+        if check.outcome == ValidationOutcome.ERROR:
+            return GateResult.ERROR
+        if check.outcome == ValidationOutcome.SATISFIED:
+            continue
+        if check.source == "run_authority_grant":
+            if check.outcome == ValidationOutcome.MISSING:
+                return GateResult.BLOCKED_MISSING_GRANT
+            if check.identity == "capability":
+                return GateResult.BLOCKED_CAPABILITY_MISMATCH
+            if check.identity == "subject_id":
+                return GateResult.BLOCKED_SUBJECT_SCOPE_MISMATCH
+            return GateResult.BLOCKED_STALE_GRANT
+        if check.source == "run_authority_fence":
+            return GateResult.BLOCKED_FENCE_MISMATCH
+        if check.source == "custody_lease":
+            if check.outcome == ValidationOutcome.MISSING:
+                return GateResult.BLOCKED_NO_LEASE
+            if check.outcome == ValidationOutcome.EXPIRED:
+                return GateResult.BLOCKED_EXPIRED_LEASE
+            if check.outcome == ValidationOutcome.NOT_OWNER:
+                return GateResult.BLOCKED_NOT_OWNER
+            return GateResult.BLOCKED_STALE_EPOCH
+        if check.source == "wbc_attempt":
+            if check.outcome == ValidationOutcome.MISSING:
+                return GateResult.BLOCKED_WBC_MISSING
+            if check.identity == "wbc_evidence_version":
+                return GateResult.BLOCKED_WBC_VERSION_MISMATCH
+            return GateResult.BLOCKED_WBC_CONFLICT
+    return GateResult.AUTHORIZED
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════
@@ -722,6 +1004,7 @@ def validate_action_boundary(
     lease_store: CustodyLeaseStore | None = None,
     outbox: CustodyOutbox | None = None,
     enforcement_enabled: bool | None = None,
+    wbc_evidence_only: bool = False,
 ) -> ActionBoundaryResult:
     """Validate that an action may proceed at this boundary.
 
@@ -744,6 +1027,11 @@ def validate_action_boundary(
         Override the production enforcement flag.  If ``None`` (default),
         reads ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` from the
         environment (defaults to ``False``).
+    wbc_evidence_only:
+        When ``True`` (M11 Step 10), authority is created **only** from
+        RA grant/fence and Custody lease/epoch.  WBC is recorded as
+        evidence but never gates the result.  Absent RA or Custody
+        checks BLOCK (stale-half fix).
 
     Returns
     -------
@@ -760,6 +1048,28 @@ def validate_action_boundary(
         enforcement_enabled = _production_enforcement_enabled()
 
     target_digest = context.target.target_digest
+
+    if context.run_authority_grant is not None or context.coordinator_fence is not None:
+        legacy_checks = _legacy_evidence_checks(
+            context,
+            lease_store=lease_store,
+            outbox=outbox,
+        )
+        return ActionBoundaryResult(
+            gate_result=_compute_legacy_evidence_gate(
+                legacy_checks,
+                enforcement_enabled=enforcement_enabled,
+            ),
+            action_type=context.action_type,
+            target_digest=target_digest,
+            checks=legacy_checks,
+            enforcement_enabled=enforcement_enabled,
+            diagnostics=_build_diagnostics(
+                legacy_checks,
+                enforcement_enabled,
+                context.action_type,
+            ),
+        )
 
     checks: list[SourceCheck] = []
 
@@ -799,7 +1109,11 @@ def validate_action_boundary(
 
     # Compute the conjunctive gate result
     checks_tuple = tuple(checks)
-    gate_result = _compute_gate_result(checks_tuple, enforcement_enabled)
+    gate_result = _compute_gate_result(
+        checks_tuple,
+        enforcement_enabled,
+        wbc_evidence_only=wbc_evidence_only,
+    )
     diagnostics = _build_diagnostics(checks_tuple, enforcement_enabled, context.action_type)
 
     return ActionBoundaryResult(
@@ -834,6 +1148,7 @@ def validate_action_boundary_simple(
     wbc_attempt_reference: str = "",
     lease_store_dir: str | Path | None = None,
     outbox_dir: str | Path | None = None,
+    wbc_evidence_only: bool = False,
 ) -> ActionBoundaryResult:
     """Validate an action boundary with default store/outbox setup.
 
@@ -858,6 +1173,9 @@ def validate_action_boundary_simple(
         Directory for the lease store (default: ``~/.megaplan/custody/leases``).
     outbox_dir:
         Directory for the outbox (default: ``~/.megaplan/custody/outbox``).
+    wbc_evidence_only:
+        When ``True`` (M11 Step 10), authority is created only from RA
+        grant/fence and Custody lease/epoch; WBC is evidence-only.
 
     Returns
     -------
@@ -922,7 +1240,9 @@ def validate_action_boundary_simple(
     if outbox_dir is not None:
         ob = open_outbox(Path(outbox_dir), flock=False)
 
-    return validate_action_boundary(context, lease_store=ls, outbox=ob)
+    return validate_action_boundary(
+        context, lease_store=ls, outbox=ob, wbc_evidence_only=wbc_evidence_only
+    )
 
 
 __all__ = [

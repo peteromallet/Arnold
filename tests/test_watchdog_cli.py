@@ -869,3 +869,72 @@ class TestWatchdogAuditorReasonAgreement:
         hex_part = finding["evidence_id"].split(":")[-1]
         assert len(hex_part) == 16
         assert all(c in "0123456789abcdef" for c in hex_part)
+
+
+def test_live_watchdog_and_simulation_do_not_execute_direct_repair() -> None:
+    """Step 76-80: live watchdog and simulation must not execute direct repair.
+
+    The live watchdog CLI and the simulation script route repair through the
+    typed delegation shim.  Direct megaplan subcommand execution is blocked;
+    return-code success is never treated as accepted repair without canonical
+    delegation.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+
+    # ── Live watchdog script ────────────────────────────────────────────
+    wd_path = repo_root / "scripts" / "megaplan_live_watchdog.py"
+    wd_source = wd_path.read_text(encoding="utf-8")
+
+    # Must document Step 76-80 delegation intent.
+    assert "Step 76-80" in wd_source
+    assert "Repair execution is gated through typed delegation" in wd_source
+    assert "RepairRunner no longer directly executes megaplan subcommands" in wd_source
+    assert "never treated as accepted repair" in wd_source
+
+    # Must import RepairRunner from the delegation-gated module.
+    assert (
+        "from arnold_pipelines.megaplan.watchdog.repair_runner import RepairRunner"
+        in wd_source
+    )
+
+    # ── Simulation script ───────────────────────────────────────────────
+    sim_path = repo_root / "scripts" / "simulate_watchdog_end_to_end.py"
+    sim_source = sim_path.read_text(encoding="utf-8")
+
+    # Must document delegation intent.
+    assert "Step 76-80" in sim_source
+    assert "Repairs are gated through typed delegation" in sim_source
+    assert "direct execution" in sim_source
+    assert "is blocked" in sim_source
+    assert "return-code success is not accepted repair" in sim_source
+    assert "canonical delegation through the typed delegation shim" in sim_source
+
+    # ── RepairRunner module itself ──────────────────────────────────────
+    rr_path = (
+        repo_root
+        / "arnold_pipelines"
+        / "megaplan"
+        / "watchdog"
+        / "repair_runner.py"
+    )
+    rr_source = rr_path.read_text(encoding="utf-8")
+
+    # RepairRunner must route megaplan subcommands through delegation.
+    assert "routes through the typed delegation shim" in rr_source
+    assert "Direct subprocess execution is blocked" in rr_source or (
+        "Direct subprocess execution is no longer accepted repair" in rr_source
+    )
+    assert "_run_through_delegation" in rr_source
+    assert "emit_zero_authority_rejection" in rr_source
+    assert "build_repair_delegation" in rr_source
+
+    # Must never treat return-code success as accepted repair.
+    assert (
+        "Return-code success is never treated" in rr_source
+        or "return-code success is not accepted repair" in rr_source
+    )
+    assert "never treated as accepted" in rr_source or (
+        "not accepted repair" in rr_source
+    )

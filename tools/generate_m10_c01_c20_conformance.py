@@ -40,6 +40,9 @@ if str(_REPO_ROOT) not in sys.path:
 from arnold_pipelines.megaplan.orchestration.criteria_verifiability import (  # noqa: E402
     check_criteria,
 )
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (  # noqa: E402
+    AUDITOR_RECONCILIATION_INTERVAL,
+)
 
 EVIDENCE_DIR = _REPO_ROOT / "evidence"
 PLAN_DIR = (
@@ -229,14 +232,31 @@ def generate_conformance_receipt() -> dict:
     }
 
     # ── C18: recovery SLO ────────────────────────────────────────────────
+    slo_constraints = slo_receipt.get("constraints", {}) if slo_receipt else {}
+    reconciliation_section = (
+        slo_receipt.get("next_three_hour_reconciliation") if slo_receipt else None
+    )
+    six_hour_backstop_section = (
+        slo_receipt.get("six_hour_backstop") if slo_receipt else None
+    )
     c18 = {
         "criterion_index": 16,
         "slo_receipt_present": slo_receipt is not None,
         "p95_seconds": slo_receipt.get("p95_seconds") if slo_receipt else None,
         "slo_target_seconds": slo_receipt.get("slo_target_seconds", 300.0) if slo_receipt else 300.0,
         "auditor_is_primary_mutator": (
-            slo_receipt.get("constraints", {}).get("auditor_is_primary_mutator", True)
+            slo_constraints.get("auditor_is_primary_mutator", True)
             if slo_receipt else True
+        ),
+        "positive_proof_cadence": AUDITOR_RECONCILIATION_INTERVAL,
+        "next_three_hour_reconciliation_present": reconciliation_section is not None,
+        "six_hour_names_compatibility_only": (
+            slo_constraints.get("six_hour_names_compatibility_only", False)
+            if slo_receipt else False
+        ),
+        "six_hour_backstop_is_compatibility_alias": (
+            bool(six_hour_backstop_section.get("compatibility_only"))
+            if six_hour_backstop_section else False
         ),
         "recovery_verifier_hash": bound_hashes["recovery/recovery_verifier"],
         "six_hour_auditor_hash": bound_hashes["recovery/six_hour_auditor"],

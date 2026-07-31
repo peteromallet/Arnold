@@ -266,6 +266,7 @@ class TestNativeGoldenComparison:
             "stages.json": ["prep"],
             "artifacts.json": {"prep/v1.md": "sha256:abcdef"},
             "checkpoint.json": {"status": "done"},
+            "tree.json": {"path": "root", "children": []},
         }
         if mutate:
             for filename, value in mutate.items():
@@ -407,7 +408,12 @@ class TestNativeGoldenComparison:
         )
 
         # Write remaining files identically
-        for filename in ("stages.json", "artifacts.json", "checkpoint.json"):
+        for filename in (
+            "stages.json",
+            "artifacts.json",
+            "checkpoint.json",
+            "tree.json",
+        ):
             for d in (golden_dir, actual_dir):
                 (d / filename).write_text('{"dummy":true}', encoding="utf-8")
 

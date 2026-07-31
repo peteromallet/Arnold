@@ -934,3 +934,105 @@ def test_policy_rejects_child_authority_above_root_ceiling() -> None:
 
     assert result["valid"] is False
     assert "child_authority_ceiling_invalid" in result["errors"]
+
+
+def test_escalation_policy_uses_next_three_hour_occurrence_contract() -> None:
+    """Step 44: escalation eligibility, cooldown, deep-repair planning,
+    managed-launch validation, and source/target identity bind to the
+    next-three-hour occurrence contract — never to a label, liveness signal,
+    WBC receipt, or rebuildable projection.  Queue state is non-authoritative.
+    """
+
+    from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+        NEXT_THREE_HOUR_BINDING_SCHEMA,
+        next_three_hour_occurrence_binding,
+    )
+    from arnold_pipelines.megaplan.cloud.simple_fixer import (
+        FORBIDDEN_AUTHORITY_SOURCES,
+        build_simple_fixer_occurrence,
+    )
+
+    # A complete F01 repair-occurrence tuple — the ONLY identity basis for
+    # escalation authority.
+    f01 = {
+        "environment": "production",
+        "session": "stuck-chain",
+        "chain": "demo",
+        "plan_revision": "rev-7",
+        "phase": "execute",
+        "task": "oauth-token-refresh",
+        "attempt": "3",
+        "normalized_failure_kind": "token_refresh_timeout",
+        "blocker_or_phase_result_hash": "blocker-123",
+        "fence": "fence-2026-07-13T22",
+    }
+    expected = build_simple_fixer_occurrence(f01)
+    assert expected is not None
+
+    # Build a finding whose nested blocks carry the F01 fields.
+    base = _true_stall()
+    target = dict(base["current_target"])
+    target.update(
+        {
+            "environment": "production",
+            "chain": "demo",
+            "plan_revision": "rev-7",
+            "phase": "execute",
+            "task": "oauth-token-refresh",
+            "attempt": "3",
+        }
+    )
+    custody = dict(base["repair_custody_summary"])
+    custody.update(
+        {
+            "normalized_failure_kind": "token_refresh_timeout",
+            "fence": "fence-2026-07-13T22",
+            "custody_epoch": "epoch-9",
+        }
+    )
+    finding = {
+        **base,
+        "current_target": target,
+        "repair_custody_summary": custody,
+        "l3_escalation_gate": {
+            "fence": "fence-2026-07-13T22",
+            "custody_epoch": "epoch-9",
+        },
+    }
+
+    binding = next_three_hour_occurrence_binding(finding, now=NOW)
+
+    assert binding["binding_schema"] == NEXT_THREE_HOUR_BINDING_SCHEMA
+    assert binding["occurrence_present"] is True
+    assert binding["occurrence_fingerprint"] == expected.occurrence_fingerprint
+    assert binding["fence"] == "fence-2026-07-13T22"
+    assert binding["custody_epoch"] == "epoch-9"
+    assert binding["eligible"] is True
+    assert binding["queue_authoritative"] is False
+    assert binding["forbidden_authority_source"] is None
+    assert binding["deep_repair_run_kind"] == DEEP_REPAIR_RUN_KIND
+    assert binding["deep_repair_model"] == DEEP_REPAIR_MODEL
+    assert binding["deep_repair_difficulty"] == DEEP_REPAIR_DIFFICULTY
+
+    # A finding whose F01 tuple is partial (fence removed from both the
+    # custody summary and the escalation gate) cannot derive authority — the
+    # partial identity would rely on a forbidden source, and queue state
+    # cannot substitute for the exact occurrence contract.
+    partial_target = dict(target)
+    partial_custody = {
+        **custody,
+        "fence": "",
+    }
+    partial = {
+        **finding,
+        "current_target": partial_target,
+        "repair_custody_summary": partial_custody,
+        "l3_escalation_gate": {"custody_epoch": "epoch-9"},
+    }
+
+    forbidden = next_three_hour_occurrence_binding(partial, now=NOW)
+    assert forbidden["occurrence_present"] is False
+    assert forbidden["occurrence_fingerprint"] == ""
+    assert forbidden["eligible"] is False
+    assert forbidden["forbidden_authority_source"] in FORBIDDEN_AUTHORITY_SOURCES
+    assert forbidden["queue_authoritative"] is False

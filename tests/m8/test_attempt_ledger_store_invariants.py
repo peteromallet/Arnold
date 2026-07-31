@@ -19,6 +19,7 @@ import pytest
 from arnold.workflow.attempt_ledger_store import (
     AppendResult,
     CausalPredecessorError,
+    DivergentDuplicateError,
     DuplicateTerminalError,
     GateStatus,
     MissingStartEventError,
@@ -524,8 +525,8 @@ class TestIdempotency:
         assert r2.sequence == r1.sequence  # original sequence, not 999
         assert r2.event.idempotency_key == "my-key"
 
-    def test_idempotency_dedup_wins_over_missing_start(self, store, attempt_id):
-        """Idempotency dedup is checked before lifecycle precedence."""
+    def test_divergent_duplicate_wins_over_missing_start(self, store, attempt_id):
+        """Divergent duplicate detection precedes lifecycle validation."""
         # Append a valid STARTED event first.
         r1 = _append(
             store, attempt_id,
@@ -534,44 +535,40 @@ class TestIdempotency:
         )
         assert not r1.is_duplicate
 
-        # Replay with a different event type — dedup returns the original
-        r2 = _append(
-            store, attempt_id,
-            event_type=AttemptEventType.COMPLETED,
-            idempotency_key="persist-key",
-            sequence=2,
-            causal_predecessor_sequence=1,
-            outcome=AttemptOutcome.SUCCEEDED,
-        )
-        assert r2.is_duplicate
-        assert r2.event.event_type == AttemptEventType.STARTED
+        with pytest.raises(DivergentDuplicateError):
+            _append(
+                store, attempt_id,
+                event_type=AttemptEventType.COMPLETED,
+                idempotency_key="persist-key",
+                sequence=2,
+                causal_predecessor_sequence=1,
+                outcome=AttemptOutcome.SUCCEEDED,
+            )
 
-    def test_idempotency_dedup_wins_over_sequence_gap(self, store, attempt_id):
-        """Idempotency dedup returns original even if new event has a gap."""
+    def test_divergent_duplicate_wins_over_sequence_gap(self, store, attempt_id):
+        """Divergent duplicate detection precedes sequence validation."""
         _append(store, attempt_id, sequence=1, idempotency_key="dup-key")
-        r2 = _append(
-            store, attempt_id,
-            event_type=AttemptEventType.COMPLETED,
-            idempotency_key="dup-key",
-            sequence=99,
-            causal_predecessor_sequence=0,
-            outcome=AttemptOutcome.SUCCEEDED,
-        )
-        assert r2.is_duplicate
-        assert r2.sequence == 1  # original sequence
+        with pytest.raises(DivergentDuplicateError):
+            _append(
+                store, attempt_id,
+                event_type=AttemptEventType.COMPLETED,
+                idempotency_key="dup-key",
+                sequence=99,
+                causal_predecessor_sequence=0,
+                outcome=AttemptOutcome.SUCCEEDED,
+            )
 
-    def test_idempotency_dedup_wins_over_causal_predecessor(self, store, attempt_id):
-        """Idempotency dedup returns original even if causal predecessor is wrong."""
+    def test_divergent_duplicate_wins_over_causal_predecessor(self, store, attempt_id):
+        """Divergent duplicate detection precedes causal validation."""
         _append(store, attempt_id, sequence=1, idempotency_key="causal-key")
-        r2 = _append(
-            store, attempt_id,
-            event_type=AttemptEventType.SUSPENDED,
-            idempotency_key="causal-key",
-            sequence=1,
-            causal_predecessor_sequence=0,
-        )
-        assert r2.is_duplicate
-        assert r2.event.causal_predecessor_sequence == 0
+        with pytest.raises(DivergentDuplicateError):
+            _append(
+                store, attempt_id,
+                event_type=AttemptEventType.SUSPENDED,
+                idempotency_key="causal-key",
+                sequence=1,
+                causal_predecessor_sequence=0,
+            )
 
     def test_different_idempotency_keys_are_distinct(self, store, attempt_id):
         r1 = _append(store, attempt_id, idempotency_key="key-a")

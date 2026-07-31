@@ -1,9 +1,9 @@
 [Unit]
-Description=Run Megaplan progress auditor every 6 hours
+Description=Run Megaplan progress auditor on the next-three-hour reconciliation cadence
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=6h
+OnUnitActiveSec=3h
 AccuracySec=5min
 Persistent=true
 Unit=megaplan-progress-audit.service

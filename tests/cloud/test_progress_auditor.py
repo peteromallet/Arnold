@@ -1077,6 +1077,133 @@ def _read_stub_calls(path: Path) -> list[dict]:
     ]
 
 
+# ── Step 47 (T33): timer cadence is next-three-hour reconciliation ───────
+
+
+def test_progress_audit_timer_uses_next_three_hour_reconciliation() -> None:
+    """The auditor timer must reconcile on the next-three-hour cadence.
+
+    Step 47 (T33): positive proof flows through next-three-hour
+    reconciliation.  The timer unit must not advertise a six-hour-only
+    cadence, and its description must reference three-hour reconciliation.
+    """
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        AUDITOR_RECONCILIATION_INTERVAL,
+    )
+
+    timer = _systemd_file("megaplan-progress-audit.timer")
+
+    # The active reconciliation cadence is three hours, not six.
+    assert "OnUnitActiveSec=3h" in timer
+    assert "OnUnitActiveSec=6h" not in timer
+    # No six-hour-only cadence may remain as the schedule contract.
+    assert "three" in timer.lower()
+    # The module-level reconciliation interval agrees with the timer.
+    assert AUDITOR_RECONCILIATION_INTERVAL == "next_three_hour"
+
+
+# ── Step 51 (T36): wrapper repair-trigger handoff routes through the shim ──
+
+
+def test_progress_auditor_wrapper_repair_handoff_uses_shim() -> None:
+    """Step 51 (T36): the progress-auditor wrapper repair-trigger handoff
+    routes through the shared repair-delegation shim.
+
+    The wrapper must no longer plumb the legacy ``arnold-repair-trigger``
+    binary as ``trigger_argv`` to the L3 escalation controller; instead the
+    repair handoff emits a typed zero-authority rejection via the shared
+    ``repair_delegation`` shim (the auditor boundary holds no exact F01
+    occurrence tuple, so repair authority stays with the canonical
+    simple_fixer delegation that drains the queue).  Audit reporting, human
+    escalation, GitHub sync, and model audit behaviour must remain
+    non-authoritative: they may NOT be routed through the shim.
+    """
+    text = _wrapper("arnold-progress-auditor")
+
+    # ── Legacy argv handoff retired ────────────────────────────────────
+    # The legacy binary is no longer plumbed as trigger_argv to the
+    # controller, and the dead env-var override is gone.
+    assert 'trigger_argv=[trigger]' not in text, (
+        "legacy trigger_argv=[trigger] handoff must be retired"
+    )
+    assert 'MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN' not in text, (
+        "legacy MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN override must be retired"
+    )
+    # The argv unpacking dropped the legacy ``trigger`` positional.
+    assert "authorized, trigger = sys.argv[1:6]" not in text, (
+        "controller heredoc must no longer unpack the legacy trigger argv"
+    )
+
+    # ── Repair handoff routed through the shared shim ──────────────────
+    # The controller is invoked without a launch argv...
+    assert "trigger_argv=()" in text, (
+        "L3 escalation controller must be invoked with trigger_argv=()"
+    )
+    # ...and the shared shim is imported and used for the handoff.
+    assert (
+        "from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation"
+        in text
+    ), "wrapper must import the shared repair-delegation shim"
+    assert "emit_zero_authority_rejection" in text, (
+        "wrapper must route the repair handoff through "
+        "emit_zero_authority_rejection"
+    )
+    assert 'repair_handoff = emit_zero_authority_rejection(' in text, (
+        "repair-trigger handoff must call emit_zero_authority_rejection"
+    )
+    # The typed caller kind is ``terminal_audit`` (one of the closed
+    # CALLER_KINDS), and the routing records a typed outcome marker.
+    assert '"terminal_audit"' in text or "'terminal_audit'" in text, (
+        "repair handoff must declare the terminal_audit caller kind"
+    )
+    assert "repair_handoff_outcome" in text, (
+        "handoff result must carry the typed repair_handoff_outcome"
+    )
+    assert "repair_handoff_routed_through_shim" in text, (
+        "handoff result must record the shim-routing marker"
+    )
+
+    # ── The repair handoff is the ONLY path routed through the shim ────
+    # The wrapper mixes reporting and repair handoff behaviour; the shim
+    # import and the zero-authority rejection must appear exactly once each,
+    # confined to the L3 escalation controller (the repair-trigger handoff
+    # point).  This guarantees no report path was accidentally made
+    # authoritative and no trigger handoff was left unguarded.
+    assert text.count("from arnold_pipelines.megaplan.cloud.wrappers."
+                      "repair_delegation") == 1, (
+        "the repair-delegation shim must be imported exactly once "
+        "(only the repair-trigger handoff)"
+    )
+    # Count only CALLS (the open paren), not the import statement
+    # (``emit_zero_authority_rejection,`` in the import has no paren).
+    assert text.count("emit_zero_authority_rejection(") == 1, (
+        "emit_zero_authority_rejection must be CALLED exactly once "
+        "(only the repair-trigger handoff)"
+    )
+    # The wrapper never attempts a full delegation (it has no exact F01
+    # tuple at this boundary), so delegate_to_simple_fixer must NOT appear.
+    assert "delegate_to_simple_fixer" not in text, (
+        "the auditor wrapper boundary must not attempt full delegation "
+        "(no exact F01 tuple here); it must emit a typed rejection instead"
+    )
+
+    # ── Non-authoritative report paths remain present and unrouted ────
+    # Audit reporting, human escalation, GitHub sync, and model audit
+    # behaviour are intentionally left non-authoritative: they still run
+    # but are NOT routed through the repair-delegation shim.
+    assert "record_incident_audits" in text, (
+        "audit incident reporting must remain present (non-authoritative)"
+    )
+    assert "human_escalation" in text or "human-escalation" in text, (
+        "human escalation must remain present (non-authoritative)"
+    )
+    # The report assembler (final JSON + Markdown + log) is a separate
+    # heredoc that must not reference the shim at all.
+    assert "github_sync" in text or "GitHubSync" in text, (
+        "GitHub sync must remain present (non-authoritative)"
+    )
+
+
 class TestGreenChecksNoFindings:
     """Report shape when all plans are healthy (no suspicious signals)."""
 
@@ -1085,8 +1212,11 @@ class TestGreenChecksNoFindings:
         timer = _systemd_file("megaplan-progress-audit.timer")
         service = _systemd_file("megaplan-progress-audit.service")
 
-        assert "OnUnitActiveSec=6h" in timer
-        assert "Description=Megaplan 6-hour DeepSeek plan progress audit" in service
+        # Step 47 (T33): the timer cadence moved to next-three-hour
+        # reconciliation; the service Description follows the new
+        # next-three-hour contract (legacy six-hour names are compatibility-only).
+        assert "OnUnitActiveSec=3h" in timer
+        assert "Description=Megaplan next-three-hour DeepSeek plan progress audit" in service
         assert "Codex then reads the subagent-launcher skill" in text
         assert "DeepSeek research subagents" in text
         assert "First audit the repair system itself" in text

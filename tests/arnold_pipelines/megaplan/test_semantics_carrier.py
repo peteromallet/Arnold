@@ -14,6 +14,7 @@ depending on runtime state.
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -41,16 +42,24 @@ from arnold.workflow.handler_semantics import (
 )
 
 
-_M11_STATE_MUTATION_DEBT = {"handle_execute", "handle_finalize"}
-_M11_FANOUT_DEBT = {"handle_review"}
-_M11_LOCAL_ROUTE_DEBT = {
-    "handle_finalize",
-    "handle_gate",
-    "handle_override",
-    "handle_review",
-    "handle_tiebreaker_decide",
-    "handle_tiebreaker_run",
-}
+def test_m11_semantic_carrier_has_no_unowned_xfails() -> None:
+    """M11 cannot retire while this semantic carrier contains xfail calls."""
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    xfail_lines = sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "pytest"
+        and node.func.attr == "xfail"
+    )
+    assert xfail_lines == [], (
+        "semantic-carrier debt remains: pytest.xfail call sites at lines "
+        f"{xfail_lines}; M11 no-debt acceptance must remain blocked"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -281,11 +290,6 @@ class TestM6RetainedHandlerBodyPurity:
 
         mutation_visitor = StateMutationVisitor()
         mutation_visitor.visit(func)
-        if handler_name in _M11_STATE_MUTATION_DEBT and mutation_visitor.violations:
-            pytest.xfail(
-                "M11 legacy debt: remove retained-handler direct state mutation "
-                "after the authority cutover"
-            )
         assert len(mutation_visitor.violations) == 0, (
             f"M6 retained handler '{handler_name}' mutates state directly: "
             f"{mutation_visitor.violations}. M6 purity bar requires state "
@@ -318,11 +322,6 @@ class TestM6RetainedHandlerBodyPurity:
 
         calls = collect_call_names(func)
         fanout = calls & M6_FANOUT_DISPATCH_CALLS
-        if handler_name in _M11_FANOUT_DEBT and fanout:
-            pytest.xfail(
-                "M11 legacy debt: move review fanout dispatch out of the "
-                "retained handler"
-            )
         assert len(fanout) == 0, (
             f"M6 retained handler '{handler_name}' performs handler-resident "
             f"fanout dispatch: {sorted(fanout)}. M6 purity bar requires "
@@ -353,11 +352,6 @@ class TestM6NoLocalRouteDecisionFunctions:
         )
         detector.visit(tree)
 
-        if handler_name in _M11_LOCAL_ROUTE_DEBT and detector.violations:
-            pytest.xfail(
-                "M11 legacy debt: retire local handler route-decision bridges "
-                "after the authority cutover"
-            )
         assert len(detector.violations) == 0, (
             f"M6 retained handler module for '{handler_name}' defines local "
             f"route-decision functions: {dict(detector.violations)}. "
@@ -401,10 +395,6 @@ class TestM6SharedHandlerPurity:
             if func_violations:
                 all_violations[node.name] = func_violations
 
-        if set(all_violations) == {"_finish_step"}:
-            pytest.xfail(
-                "M11 legacy debt: retire shared._finish_step routing/state bridge"
-            )
         assert len(all_violations) == 0, (
             f"Shared handler-infrastructure module contains functions with "
             f"forbidden M6 patterns: {all_violations}. "

@@ -426,9 +426,8 @@ class TestLifecycleFailureEnqueue:
 class TestHumanGateEnqueue:
     """Tests for the _enqueue_human_gate_repair_request hook in human_gate.py."""
 
-    def test_halt_path_enqueues_repair_request(self, tmp_path: Path) -> None:
-        """On halt (no resume choice), HumanGateStep enqueues a human_gate
-        repair request with proper marker content."""
+    def test_halt_path_without_occurrence_does_not_enqueue(self, tmp_path: Path) -> None:
+        """A suspension without F01 occurrence authority must not enqueue."""
         from arnold_pipelines.megaplan.cloud.repair_requests import (
             iter_repair_requests,
         )
@@ -463,22 +462,9 @@ class TestHumanGateEnqueue:
         # The step should halt
         assert result.next == "halt"
 
-        # A repair request should have been enqueued
+        # A human-gate label alone is not repair authority.
         requests = _read_requests(_queue_root(tmp_path))
-        assert len(requests) == 1
-        req = requests[0]
-
-        assert req["source"] == "human_gate"
-        sig = req["problem_signature"]
-        assert sig["failure_kind"] == "human_gate"
-        assert sig["current_state"] == "demo_judges"
-        assert sig["phase_or_step"] == "review"
-        assert sig["milestone_or_plan"] == "human_gate"
-
-        target = req["target"]
-        assert target["plan_dir"] == str(markers)
-        assert target["workspace_path"] == str(tmp_path)
-        assert target["pipeline_name"] == "demo_judges"
+        assert requests == []
 
     def test_resume_path_does_not_enqueue(self, tmp_path: Path) -> None:
         """On resume (valid _resume_choice), no repair request is enqueued."""
@@ -698,9 +684,10 @@ class TestHumanGateEnqueue:
         assert result.next == "halt"
         assert result.state_patch.get("_pipeline_paused") is True
 
-    def test_duplicate_human_gate_enqueue_coalesces(self, tmp_path: Path) -> None:
-        """Two sequential human-gate halts with the same pipeline/step/session
-        coalesce into a single request."""
+    def test_duplicate_human_gate_without_occurrence_never_enqueues(
+        self, tmp_path: Path
+    ) -> None:
+        """Repeated suspension labels cannot accumulate repair authority."""
         from arnold_pipelines.megaplan.cloud.repair_requests import (
             iter_repair_requests,
         )
@@ -747,11 +734,7 @@ class TestHumanGateEnqueue:
         result2 = step2.run(ctx2)
         assert result2.next == "halt"
 
-        # Only one unique request should exist
+        # Neither suspension has an F01 occurrence identity.
         requests = _read_requests(_queue_root(tmp_path))
-        assert len(requests) == 1
-
-        # A coalesced decision should exist
-        decisions = _read_decisions(_queue_root(tmp_path))
-        coalesced = [d for d in decisions if d.get("decision") == "coalesced"]
-        assert len(coalesced) >= 1
+        assert requests == []
+        assert _read_decisions(_queue_root(tmp_path)) == []

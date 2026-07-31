@@ -20,6 +20,7 @@ from arnold_pipelines.megaplan.authority.batch_scope import (
     BatchScopeQuarantine,
     DISPATCH_IDENTITY_KEY,
     RESULT_ENVELOPES_KEY,
+    batch_owned_write_paths,
     resolve_batch_authority_metadata,
     resolve_batch_scope,
 )
@@ -807,8 +808,15 @@ def _merge_validated_entries(
     merge_fields: tuple[str, ...],
     issues: list[str],
     label: str,
+    preserve_accepted: bool = True,
 ) -> int:
-    """Merge validated entries into targets, deduplicating by ID. Returns unique merge count."""
+    """Merge validated entries into targets, deduplicating by ID. Returns unique merge count.
+
+    When ``preserve_accepted`` is set and a target task is already in an
+    *accepted* terminal status (done/completed/skipped), the existing accepted
+    receipt is never overwritten — the incoming entry is recorded as a no-op so
+    that a re-execution or reconcile cannot clobber valid accepted work.
+    """
     seen: set[str] = set()
     for entry in entries:
         entry_id = entry[id_field]
@@ -818,6 +826,17 @@ def _merge_validated_entries(
             continue
         if entry_id in seen:
             issues.append(f"Duplicate {label} for '{entry_id}' — last entry wins.")
+        if (
+            preserve_accepted
+            and id_field == "task_id"
+            and str(target.get("status", "")) in ACCEPTED_TASK_STATUSES
+        ):
+            if entry_id not in seen:
+                issues.append(
+                    f"Preserved accepted {label} for '{entry_id}' — existing receipt not overwritten."
+                )
+            seen.add(entry_id)
+            continue
         for field in merge_fields:
             if field in entry:
                 target[field] = entry[field]
@@ -841,6 +860,7 @@ def _validate_and_merge_batch(
     nonempty_fields: set[str] | None = None,
     array_fields: tuple[str, ...] = (),
     object_fields: tuple[str, ...] = (),
+    preserve_accepted: bool = False,
 ) -> tuple[int, int]:
     valid_entries = _validate_merge_inputs(
         entries,
@@ -861,6 +881,7 @@ def _validate_and_merge_batch(
         merge_fields=merge_fields,
         issues=issues,
         label=merge_label,
+        preserve_accepted=preserve_accepted,
     )
     _apply_task_update_guardrails(
         valid_entries,
@@ -1046,6 +1067,69 @@ def _enforce_task_write_budgets(
         issues.append(f"Task {task_id} blocked by admitted write set: {reason}")
 
 
+#: Terminal statuses that represent *accepted* (successfully completed) work.
+#: ``blocked`` is terminal but is NOT accepted — a blocked task may legitimately
+#: be retried, so its prior receipt must not freeze out a later attempt.
+ACCEPTED_TASK_STATUSES: frozenset[str] = frozenset({"done", "completed", "skipped"})
+
+
+def _enforce_batch_file_ownership(
+    entries: Iterable[dict[str, Any]],
+    *,
+    batch_owned_paths: frozenset[str],
+    targets_by_id: Mapping[str, dict[str, Any]],
+    issues: list[str],
+) -> None:
+    """Require full batch ownership before claimed-file mutation.
+
+    A task may only mutate (claim) a file when the *whole batch* collectively
+    owns that file — i.e. the path was admitted in some dispatched task's
+    ``write_set``.  Files owned by no batch task are unrelated to this batch and
+    are preserved by blocking the entry that tried to touch them.
+
+    This is additive to the stricter per-task check: it catches the case where a
+    task has no declared ``write_set`` (and so was skipped by the per-task
+    enforcer) yet still claims files the batch does not own.  Already-blocked
+    entries are left untouched so the issues list stays clean.
+    """
+
+    # Stored v1 batches did not declare write sets. Preserve their established
+    # merge behavior; this guard only applies once the batch owns at least one
+    # explicit path under the v2 contract.
+    if not batch_owned_paths:
+        return
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("status", "")) == "blocked":
+            continue  # per-task or per-test enforcer already failed this entry.
+        files_changed = entry.get("files_changed")
+        if not isinstance(files_changed, list):
+            continue
+        claimed = {
+            path.strip().replace("\\", "/").lstrip("./")
+            for path in files_changed
+            if isinstance(path, str) and path.strip()
+        }
+        if not claimed:
+            continue
+        escaped = sorted(claimed - batch_owned_paths)
+        if not escaped:
+            continue
+        task_id = entry.get("task_id")
+        reason = (
+            "batch_file_ownership_violation: claimed paths not owned by any"
+            f" batch task {escaped!r}"
+        )
+        entry["status"] = "blocked"
+        notes = str(entry.get("executor_notes") or "").strip()
+        entry["executor_notes"] = f"{notes} [harness] {reason}".strip()
+        issues.append(
+            f"Task {task_id} blocked by batch ownership: {reason}"
+        )
+
+
 def _merge_batch_results(
     *,
     finalize_data: dict[str, Any],
@@ -1056,12 +1140,14 @@ def _merge_batch_results(
     mode: str = "code",
     state: PlanState | None = None,
     source_path: str | Path = "<merge-payload>",
+    preserve_accepted: bool = False,
+    require_dispatch_wbc: bool = True,
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
-    should_validate_dispatch_wbc = _payload_has_authority_metadata(payload) or (
-        EXECUTE_DISPATCH_WBC_KEY in payload
-    )
+    should_validate_dispatch_wbc = (
+        require_dispatch_wbc and _payload_has_authority_metadata(payload)
+    ) or EXECUTE_DISPATCH_WBC_KEY in payload
     dispatch_wbc_reason = (
         validate_dispatch_wbc_payload(payload, state=state)
         if should_validate_dispatch_wbc
@@ -1148,6 +1234,16 @@ def _merge_batch_results(
         targets_by_id=merge_targets_by_id,
         issues=issues,
     )
+    batch_owned_paths = batch_owned_write_paths(
+        finalize_data.get("tasks", []),
+        scope_task_ids=batch_task_id_set,
+    )
+    _enforce_batch_file_ownership(
+        task_authority.entries,
+        batch_owned_paths=batch_owned_paths,
+        targets_by_id=merge_targets_by_id,
+        issues=issues,
+    )
     merged_count, _ = _validate_and_merge_batch(
         task_authority.entries,
         required_fields=required_fields,
@@ -1163,6 +1259,7 @@ def _merge_batch_results(
         nonempty_fields={"executor_notes"},
         array_fields=array_fields,
         object_fields=object_fields,
+        preserve_accepted=preserve_accepted,
     )
     # Check batch-specific coverage: how many of THIS batch's tasks got updates?
     # Any terminal status counts as "tracked" — the executor reported back.
@@ -1243,6 +1340,8 @@ def _merge_scoped_batch_artifact_through_validator(
     known_sense_check_ids: Iterable[str],
     mode: str,
     state: PlanState,
+    preserve_accepted: bool = False,
+    require_dispatch_wbc: bool = True,
 ) -> _ScopedBatchArtifactMergeResult:
     """Prove compatibility scope, then let the grant-aware validator arbitrate rows."""
 
@@ -1276,6 +1375,8 @@ def _merge_scoped_batch_artifact_through_validator(
         mode=mode,
         state=state,
         source_path=artifact_path,
+        preserve_accepted=preserve_accepted,
+        require_dispatch_wbc=require_dispatch_wbc,
     )
     return _ScopedBatchArtifactMergeResult(
         payload=payload,

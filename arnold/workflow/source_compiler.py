@@ -6178,7 +6178,7 @@ def _package_parts_for_source_path(source_path: str) -> tuple[str, ...]:
         except ValueError:
             continue
         return relative.parts[:-1]
-    return resolved.with_suffix("").parts[:-1]
+    return path.with_suffix("").parts[:-1]
 
 
 def _module_path_part(part: str) -> str:

@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: megaplan-observe
 description: Observe an in-flight megaplan — introspect state, trace events, diagnose blockages, detect drift. Companion to megaplan-prep. Use during and after a run, not before.

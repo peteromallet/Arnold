@@ -95,6 +95,11 @@ from arnold_pipelines.megaplan.execute.merge import (
     _merge_batch_results,
     _merge_scoped_batch_artifact_through_validator,
 )
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_DISPATCH_WBC_KEY,
+    build_execute_batch_dispatch_spec,
+    dispatch_wbc_summary,
+)
 from arnold_pipelines.megaplan.execute.quality import (
     AttributionResult,
     _auto_attribute_unclaimed_paths,
@@ -1095,6 +1100,7 @@ def _run_execute_worker_with_configured_fallback(
     prompt_override: str | None,
     configured_specs: tuple[str, ...],
     batch_number: int,
+    wbc_dispatch: Any = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     """Advance execute only after a retryable, side-effect-free provider outage."""
 
@@ -1145,6 +1151,7 @@ def _run_execute_worker_with_configured_fallback(
                 root=root,
                 resolved=resolved,
                 prompt_override=rendered_prompt,
+                wbc_dispatch=wbc_dispatch,
                 worker_options={"_suppress_ambient_agent_fallback": True},
                 ledger_step_label=f"batch_{batch_number}",
                 ledger_selected_spec=selected_spec,
@@ -1620,26 +1627,118 @@ def _sense_check_result_envelope(
     )
 
 
+PRIOR_RESULT_ENVELOPES_KEY = "prior_result_envelopes"
+ACCEPTED_RECEIPT_STATUSES: frozenset[str] = frozenset({"done", "completed", "skipped"})
+
+
+def _persisted_envelope_dict_subject(envelope: Mapping[str, Any]) -> str | None:
+    attempt = envelope.get("attempt")
+    subject = attempt.get("subject_id") if isinstance(attempt, Mapping) else None
+    if isinstance(subject, str) and subject.strip():
+        return subject.strip()
+    claim = envelope.get("claim")
+    subject = claim.get("subject_id") if isinstance(claim, Mapping) else None
+    if isinstance(subject, str) and subject.strip():
+        return subject.strip()
+    return None
+
+
+def _persisted_envelope_dict_ordinal(envelope: Mapping[str, Any]) -> int:
+    attempt = envelope.get("attempt")
+    ordinal = attempt.get("ordinal") if isinstance(attempt, Mapping) else None
+    return ordinal if isinstance(ordinal, int) else 0
+
+
+def _persisted_envelope_dict_status(envelope: Mapping[str, Any]) -> str | None:
+    evidence = envelope.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return None
+    head = evidence[0]
+    if not isinstance(head, Mapping):
+        return None
+    payload = head.get("payload")
+    result = payload.get("result") if isinstance(payload, Mapping) else None
+    status = result.get("status") if isinstance(result, Mapping) else None
+    return status if isinstance(status, str) else None
+
+
+def _persisted_envelope_dict_matches_identity(
+    envelope: Mapping[str, Any], identity: DispatchIdentity
+) -> bool:
+    dispatch = envelope.get("dispatch")
+    if not isinstance(dispatch, Mapping):
+        return False
+    try:
+        return DispatchIdentity.from_dict(dispatch).digest() == identity.digest()
+    except Exception:
+        return False
+
+
 def _stamp_result_envelopes(
     payload: dict[str, Any],
     *,
     identity: DispatchIdentity,
     artifact_path: Path,
 ) -> tuple[ResultEnvelope, ...]:
-    """Attach worker-result authority echoes built from persisted dispatch."""
+    """Attach worker-result authority echoes built from persisted dispatch.
+
+    Receipts are append-only across fences: when a later fence (N+1) re-stamps
+    the same checkpoint, fence-N envelopes are moved into
+    ``PRIOR_RESULT_ENVELOPES_KEY`` so they remain byte-addressable by their
+    stable ``attempt_id`` while ``RESULT_ENVELOPES_KEY`` keeps only envelopes
+    bound to the current dispatch identity (so the authority resolver stays a
+    single-identity proof).  Ordinals continue from the highest persisted value
+    so attempt addresses never collide.  A subject that already holds an
+    *accepted* receipt (done/completed/skipped) is never re-stamped — valid
+    accepted work is not re-executed and its receipt is never overwritten.
+    """
 
     source = str(artifact_path)
-    envelopes: list[ResultEnvelope] = []
+    prior_store = payload.get(PRIOR_RESULT_ENVELOPES_KEY)
+    if not isinstance(prior_store, list):
+        prior_store = []
+    current_existing: list[dict[str, Any]] = []
+    carried_prior: list[dict[str, Any]] = []
+    for store in (payload.get(RESULT_ENVELOPES_KEY), prior_store):
+        if not isinstance(store, list):
+            continue
+        for envelope in store:
+            if not isinstance(envelope, Mapping):
+                continue
+            if _persisted_envelope_dict_matches_identity(envelope, identity):
+                current_existing.append(dict(envelope))
+            else:
+                carried_prior.append(dict(envelope))
+
+    all_persisted = current_existing + carried_prior
+    next_ordinal = max(
+        (_persisted_envelope_dict_ordinal(env) for env in all_persisted),
+        default=0,
+    ) + 1
+    accepted_subjects = {
+        _persisted_envelope_dict_subject(env)
+        for env in all_persisted
+        if _persisted_envelope_dict_status(env) in ACCEPTED_RECEIPT_STATUSES
+    }
+    accepted_subjects.discard(None)
+
+    new_envelopes: list[ResultEnvelope] = []
+    skipped_reexecutions: list[str] = []
+
     task_entries = payload.get("task_updates")
     if isinstance(task_entries, list):
-        for index, entry in enumerate(task_entries, start=1):
+        for entry in task_entries:
             if not isinstance(entry, dict):
+                continue
+            task_id = entry.get("task_id")
+            if isinstance(task_id, str) and task_id in accepted_subjects:
+                skipped_reexecutions.append(task_id)
                 continue
             try:
                 envelope = _task_result_envelope(
                     identity=identity,
                     entry=entry,
-                    ordinal=index,
+                    ordinal=next_ordinal,
                     source=source,
                 )
             except ContractError as error:
@@ -1647,19 +1746,24 @@ def _stamp_result_envelopes(
                 continue
             if envelope is None:
                 continue
+            next_ordinal += 1
             entry["authority"] = _result_authority_echo(envelope)
-            envelopes.append(envelope)
+            new_envelopes.append(envelope)
 
     sense_check_entries = payload.get("sense_check_acknowledgments")
     if isinstance(sense_check_entries, list):
-        for index, entry in enumerate(sense_check_entries, start=1):
+        for entry in sense_check_entries:
             if not isinstance(entry, dict):
+                continue
+            sense_check_id = entry.get("sense_check_id")
+            if isinstance(sense_check_id, str) and sense_check_id in accepted_subjects:
+                skipped_reexecutions.append(sense_check_id)
                 continue
             try:
                 envelope = _sense_check_result_envelope(
                     identity=identity,
                     entry=entry,
-                    ordinal=index,
+                    ordinal=next_ordinal,
                     source=source,
                 )
             except ContractError as error:
@@ -1667,11 +1771,19 @@ def _stamp_result_envelopes(
                 continue
             if envelope is None:
                 continue
+            next_ordinal += 1
             entry["authority"] = _result_authority_echo(envelope)
-            envelopes.append(envelope)
+            new_envelopes.append(envelope)
 
-    payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict() for envelope in envelopes]
-    return tuple(envelopes)
+    current_dicts = current_existing + [env.to_dict() for env in new_envelopes]
+    payload[RESULT_ENVELOPES_KEY] = current_dicts
+    if carried_prior or PRIOR_RESULT_ENVELOPES_KEY in payload:
+        payload[PRIOR_RESULT_ENVELOPES_KEY] = carried_prior
+    if skipped_reexecutions:
+        payload.setdefault("append_only_attempts", {})["skipped_reexecutions"] = sorted(
+            set(skipped_reexecutions)
+        )
+    return tuple(new_envelopes)
 
 
 def _prepare_scoped_batch_checkpoint(
@@ -1799,6 +1911,8 @@ def _replay_proven_batch_artifacts(
             known_sense_check_ids=known_sense_check_ids,
             mode=mode,
             state=state,
+            preserve_accepted=False,
+            require_dispatch_wbc=False,
         )
         if merge_result.quarantine is not None:
             _emit_batch_scope_quarantine(plan_dir, merge_result.quarantine)
@@ -2484,6 +2598,28 @@ def _run_and_merge_batch(
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
+    batch_artifact_path = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
+    )
+    dispatch_scope = BatchScope.create(
+        batch_number=batch_number,
+        task_ids=batch_task_ids,
+        sense_check_ids=batch_sense_check_ids,
+    )
+    dispatch_identity = _build_dispatch_identity(
+        plan_dir=plan_dir,
+        state=state,
+        scope=dispatch_scope,
+        finalize_data=finalize_data,
+    )
+    wbc_dispatch = build_execute_batch_dispatch_spec(
+        plan_dir=plan_dir,
+        state=state,
+        dispatch_identity=dispatch_identity,
+        batch_number=batch_number,
+        batch_task_ids=batch_task_ids,
+        batch_sense_check_ids=batch_sense_check_ids,
+    )
     if is_prose_mode(state):
         before_snapshot: dict[str, str] = {}
         before_error: str | None = None
@@ -2578,6 +2714,7 @@ def _run_and_merge_batch(
             prompt_override=prompt_override,
             configured_specs=configured_specs,
             batch_number=batch_number,
+            wbc_dispatch=wbc_dispatch,
         )
         selected = parse_agent_spec(configured_specs[worker.attempt_index])
         am_for_worker = AgentMode(
@@ -2679,6 +2816,17 @@ def _run_and_merge_batch(
         resolved_model=resolved_model,
         payload=dict(worker.payload),
     )
+    dispatch_summary = dispatch_wbc_summary(
+        auth_metadata=(
+            worker.auth_metadata
+            if isinstance(worker.auth_metadata, Mapping)
+            else None
+        ),
+        dispatch_identity=dispatch_identity,
+        batch_number=batch_number,
+    )
+    if dispatch_summary is not None:
+        payload[EXECUTE_DISPATCH_WBC_KEY] = dispatch_summary
     routing_degradations = _finalize_routing_record(
         routing_record,
         actual_agent=agent,
@@ -2734,9 +2882,6 @@ def _run_and_merge_batch(
             )
         )
     _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
-    batch_artifact_path = execute_batch_artifact_path(
-        plan_dir, batch_number, batch_task_ids
-    )
     scope = _stamp_batch_scope(
         payload,
         batch_number=batch_number,
@@ -4268,6 +4413,22 @@ def _review_rework_task_ids(
     return runnable, unrunnable
 
 
+def _partition_review_rework_tasks(
+    task_ids: list[str],
+    *,
+    ceiling: int = _MAX_SERIAL_REWORK,
+) -> list[list[str]]:
+    """Partition one review wave without changing its ordered task frontier.
+
+    The serial ceiling constrains a single worker dispatch, not the total
+    number of legitimate findings a review may return. Preserve every routed
+    task exactly once and let the existing review-cycle/non-convergence guards
+    bound the overall loop.
+    """
+
+    return split_oversized_batches([list(task_ids)], ceiling) if task_ids else []
+
+
 def _stable_string_list(values: Iterable[Any]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -4304,11 +4465,17 @@ def _review_rework_context(
     context_items: list[dict[str, Any]] = []
     scope_candidates: list[Any] = []
     for item in review_data.get("rework_items", []) or []:
-        if not isinstance(item, dict) or item.get("task_id") not in wanted:
+        if not isinstance(item, dict):
+            continue
+        candidate_task_ids, _ = _rework_item_target_task_ids(item)
+        matched_task_ids = [task_id for task_id in candidate_task_ids if task_id in wanted]
+        if not matched_task_ids:
             continue
         evidence_file = item.get("evidence_file", "")
         normalized = {
             "task_id": item.get("task_id"),
+            "task_ids": matched_task_ids,
+            "target": item.get("target"),
             "issue": item.get("issue", ""),
             "expected": item.get("expected", ""),
             "actual": item.get("actual", ""),
@@ -5049,57 +5216,44 @@ def handle_execute_auto_loop(
     }
     task_to_batch_number = _task_to_global_batch_number_map(global_batches)
     no_pending_execution = not pending_tasks and not rework_mode
-    # M8A T14 - rework-wave ceiling + normalized circuit for serial review
-    # rework. A wave larger than the ceiling, or an opened review-quality
-    # circuit, halts with a typed STATE_TRANSITION event + CliError.
+    # The review-wave ceiling is a per-dispatch bound. A legitimate review may
+    # route more tasks than that, so partition the ordered frontier while
+    # preserving the existing cycle and non-convergence limits.
     if rework_mode and isinstance(review_rework_task_ids, list) and review_rework_task_ids:
         _wave_size = len(review_rework_task_ids)
-        _we = _ReworkWaveError(
-            f"review rework wave of {_wave_size} task(s)",
-            code="review_quality_block",
-            kind="quality_gate_blocked",
+        review_rework_batches = _partition_review_rework_tasks(
+            review_rework_task_ids,
+            ceiling=_MAX_SERIAL_REWORK,
         )
-        _circ_state, _circ_decision, _circ_fclass = _advance_batch_circuit(
-            _we, task_id="rework_wave", attempt_id="serial"
-        )
-        _wave_exceeds = (
-            _wave_size > _MAX_SERIAL_REWORK
-            or bool(getattr(_circ_state, "circuit_open", False))
-        )
-        if _wave_exceeds:
-            _summary = (
-                f"Rework wave exceeds ceiling: {_wave_size} rework task(s) "
-                f"exceeds the {_MAX_SERIAL_REWORK}-task serial rework ceiling "
-                f"(circuit_open={bool(getattr(_circ_state, 'circuit_open', False))}, "
-                f"failure_class={_circ_fclass})."
+        if len(review_rework_batches) > 1:
+            log.info(
+                "partitioning review rework wave of %d task(s) into %d "
+                "bounded dispatches (ceiling=%d)",
+                _wave_size,
+                len(review_rework_batches),
+                _MAX_SERIAL_REWORK,
             )
-            log.warning("M8A rework-wave ceiling: %s", _summary)
             try:
-                from arnold_pipelines.megaplan.eventlog import (
-                    STATE_TRANSITION,
-                    append_event,
-                )
-                append_event(
-                    plan_dir,
-                    STATE_TRANSITION,
-                    {
+                from arnold_pipelines.megaplan.observability.events import EventKind, emit
+
+                emit(
+                    EventKind.STATE_TRANSITION,
+                    plan_dir=plan_dir,
+                    phase="execute",
+                    payload={
                         "rework_wave_size": _wave_size,
                         "ceiling": _MAX_SERIAL_REWORK,
                         "rework_task_ids": list(review_rework_task_ids),
-                        "failure_class": _circ_fclass,
-                        "circuit_open": bool(getattr(_circ_state, "circuit_open", False)),
-                        "reason": "rework_wave_exceeds_ceiling",
+                        "subwaves": review_rework_batches,
+                        "reason": "review_rework_wave_partitioned",
                     },
                 )
             except Exception:
                 pass
-            raise CliError(
-                "rework_wave_exceeds_ceiling",
-                f"Rework wave of {_wave_size} task(s) exceeds the "
-                f"{_MAX_SERIAL_REWORK}-task serial rework ceiling.",
-            )
+    else:
+        review_rework_batches = []
     batches_to_run = (
-        [review_rework_task_ids]
+        review_rework_batches
         if rework_mode
         else ([] if no_pending_execution else ([all_task_ids] if single_batch_mode else split_batches))
     )

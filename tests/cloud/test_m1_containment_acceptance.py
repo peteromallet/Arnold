@@ -293,10 +293,11 @@ def test_all_repair_producers_share_explicit_central_queue(tmp_path: Path) -> No
         step_name="approval",
         prompt="approval required",
     )
-    assert generic["request"]["queue_dir"] == human["request"]["queue_dir"] == str(queue_root)
+    assert generic["request"]["queue_dir"] == str(queue_root)
+    assert human["status"] == "zero_authority_rejected"
+    assert human["outcome"] == "zero_authority_rejected"
     assert {item["session"] for item in repair_requests.iter_repair_requests(queue_root)} == {
         "generic",
-        "human",
     }
     with pytest.raises(ValueError):
         repair_requests.validate_queue_root(workspace / ".megaplan" / "plans" / "m1")

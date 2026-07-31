@@ -295,7 +295,7 @@ def _thaw_sorted(value: Any) -> Any:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class CustodyTargetKey(Contract):
     """Canonical custody target identity.
 
@@ -319,12 +319,134 @@ class CustodyTargetKey(Contract):
     fence: str
     chain_identity: str = ""
 
+    def __init__(self, *args: str, **kwargs: str) -> None:
+        """Build either the current F01 key or the predecessor six-field key.
+
+        M10 changed this public contract while predecessor M8/M9 consumers
+        were still in the supported acceptance set.  Keep those legacy reads
+        non-authoritative, but do not make them unconstructable: six positional
+        values or the six legacy keyword names are mapped into a deterministic
+        compatibility F01 tuple.  Current callers still must provide every F01
+        field and retain the strict fail-closed validation below.
+        """
+        legacy_names = (
+            "subject_type",
+            "subject_id",
+            "action",
+            "target_kind",
+            "target_id",
+            "contract_id",
+        )
+        f01_names = F01_REPAIR_OCCURRENCE_FIELDS
+        legacy_values: tuple[str, ...] | None = None
+
+        if args:
+            if kwargs or len(args) != len(legacy_names):
+                raise TypeError(
+                    "CustodyTargetKey positional construction requires the "
+                    "six predecessor target fields"
+                )
+            legacy_values = tuple(args)
+        elif any(name in kwargs for name in legacy_names):
+            missing = [name for name in legacy_names if name not in kwargs]
+            unknown = set(kwargs) - set(legacy_names)
+            if missing or unknown:
+                raise TypeError(
+                    "legacy CustodyTargetKey requires exactly "
+                    f"{legacy_names}; missing={missing}, unknown={sorted(unknown)}"
+                )
+            legacy_values = tuple(kwargs[name] for name in legacy_names)
+
+        if legacy_values is not None:
+            for name, value in zip(legacy_names, legacy_values, strict=True):
+                _required_str(value, name)
+            compatibility_hash = hashlib.sha256(
+                canonical_json(dict(zip(legacy_names, legacy_values, strict=True))).encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+            mapped = {
+                "environment": legacy_values[0],
+                "session": legacy_values[1],
+                "chain": legacy_values[2],
+                "plan_revision": legacy_values[3],
+                "phase": legacy_values[4],
+                "task": legacy_values[5],
+                "attempt": "legacy",
+                "normalized_failure_kind": "legacy_target_compatibility",
+                "blocker_or_phase_result_hash": compatibility_hash,
+                "fence": "legacy-non-authoritative",
+                "chain_identity": "",
+            }
+            object.__setattr__(self, "_legacy_values", legacy_values)
+        else:
+            missing = [name for name in f01_names if name not in kwargs]
+            unknown = set(kwargs) - set(f01_names) - {"chain_identity"}
+            if missing or unknown:
+                raise TypeError(
+                    "CustodyTargetKey requires the complete F01 tuple; "
+                    f"missing={missing}, unknown={sorted(unknown)}"
+                )
+            mapped = {name: kwargs[name] for name in f01_names}
+            mapped["chain_identity"] = kwargs.get("chain_identity", "")
+            object.__setattr__(self, "_legacy_values", None)
+
+        for name, value in mapped.items():
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+
     def __post_init__(self) -> None:
         for name in F01_REPAIR_OCCURRENCE_FIELDS:
             _required_str(getattr(self, name), name)
         # chain_identity is optional but must be a string
         if not isinstance(self.chain_identity, str):
             raise ContractError("chain_identity must be a string")
+
+    @property
+    def subject_type(self) -> str:
+        return self._legacy_component(0, self.environment)
+
+    @property
+    def subject_id(self) -> str:
+        return self._legacy_component(1, self.session)
+
+    @property
+    def action(self) -> str:
+        return self._legacy_component(2, self.chain)
+
+    @property
+    def target_kind(self) -> str:
+        return self._legacy_component(3, self.plan_revision)
+
+    @property
+    def target_id(self) -> str:
+        return self._legacy_component(4, self.phase)
+
+    @property
+    def contract_id(self) -> str:
+        return self._legacy_component(5, self.task)
+
+    def _legacy_component(self, index: int, fallback: str) -> str:
+        values = getattr(self, "_legacy_values", None)
+        return values[index] if values is not None else fallback
+
+    @property
+    def key(self) -> str:
+        return self.target_digest
+
+    def to_dict(self) -> dict[str, Any]:
+        values = getattr(self, "_legacy_values", None)
+        if values is not None:
+            names = (
+                "subject_type",
+                "subject_id",
+                "action",
+                "target_kind",
+                "target_id",
+                "contract_id",
+            )
+            return dict(zip(names, values, strict=True))
+        return super().to_dict()
 
     def to_tuple(self) -> tuple[str, ...]:
         """Return the F01 tuple representation."""
@@ -345,6 +467,18 @@ def normalize_custody_target_key(payload: Mapping[str, Any] | None) -> CustodyTa
     if not isinstance(payload, Mapping):
         return None
     try:
+        legacy_names = (
+            "subject_type",
+            "subject_id",
+            "action",
+            "target_kind",
+            "target_id",
+            "contract_id",
+        )
+        if all(name in payload for name in legacy_names):
+            return CustodyTargetKey(
+                **{name: str(payload[name]) for name in legacy_names}
+            )
         return CustodyTargetKey(
             environment=payload.get("environment", ""),
             session=payload.get("session", ""),
@@ -400,7 +534,7 @@ def build_custody_target_key(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RepairOccurrenceKey(Contract):
     """Canonical repair-occurrence identity.
 
@@ -420,6 +554,102 @@ class RepairOccurrenceKey(Contract):
     wbc_attempt_reference: str
     occurrence_digest: str = field(init=False)
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the current occurrence contract or its predecessor F01 form."""
+        legacy_names = (
+            "environment_id",
+            "session_id",
+            "chain_id",
+            "plan_revision",
+            "phase",
+            "task_id",
+            "attempt_number",
+            "failure_kind",
+            "blocker_digest",
+            "coordinator_fence_token",
+        )
+        current_names = (
+            "target",
+            "run_id",
+            "run_revision",
+            "coordinator_attempt_id",
+            "fence_token",
+            "wbc_attempt_reference",
+        )
+        legacy: dict[str, Any] | None = None
+        if args:
+            if kwargs or len(args) != len(legacy_names):
+                raise TypeError(
+                    "RepairOccurrenceKey positional construction requires the "
+                    "ten predecessor occurrence fields"
+                )
+            legacy = dict(zip(legacy_names, args, strict=True))
+        elif any(name in kwargs for name in legacy_names):
+            missing = [name for name in legacy_names if name not in kwargs]
+            unknown = sorted(set(kwargs) - set(legacy_names))
+            if missing or unknown:
+                raise TypeError(
+                    "legacy RepairOccurrenceKey requires exactly "
+                    f"{legacy_names}; missing={missing}, unknown={unknown}"
+                )
+            legacy = {name: kwargs[name] for name in legacy_names}
+
+        if legacy is not None:
+            for name in legacy_names:
+                if name == "attempt_number":
+                    _required_pos_int(legacy[name], name)
+                else:
+                    _required_str(legacy[name], name)
+            target = CustodyTargetKey(
+                environment=legacy["environment_id"],
+                session=legacy["session_id"],
+                chain=legacy["chain_id"],
+                plan_revision=legacy["plan_revision"],
+                phase=legacy["phase"],
+                task=legacy["task_id"],
+                attempt=str(legacy["attempt_number"]),
+                normalized_failure_kind=legacy["failure_kind"],
+                blocker_or_phase_result_hash=legacy["blocker_digest"],
+                fence=legacy["coordinator_fence_token"],
+                chain_identity=legacy["chain_id"],
+            )
+            mapped = {
+                "target": target,
+                "run_id": legacy["session_id"],
+                "run_revision": legacy["plan_revision"],
+                "coordinator_attempt_id": (
+                    f"{legacy['task_id']}:{legacy['attempt_number']}"
+                ),
+                "fence_token": (
+                    int(legacy["coordinator_fence_token"])
+                    if str(legacy["coordinator_fence_token"]).isdigit()
+                    else int.from_bytes(
+                        hashlib.sha256(
+                            str(legacy["coordinator_fence_token"]).encode("utf-8")
+                        ).digest()[:8],
+                        "big",
+                    )
+                ),
+                "wbc_attempt_reference": legacy["blocker_digest"],
+            }
+            object.__setattr__(self, "_legacy_values", legacy)
+            for name, value in legacy.items():
+                object.__setattr__(self, name, value)
+        else:
+            missing = [name for name in current_names if name not in kwargs]
+            unknown = sorted(set(kwargs) - set(current_names))
+            if missing or unknown:
+                raise TypeError(
+                    "RepairOccurrenceKey requires the current occurrence fields; "
+                    f"missing={missing}, unknown={unknown}"
+                )
+            mapped = {name: kwargs[name] for name in current_names}
+            object.__setattr__(self, "_legacy_values", None)
+
+        for name, value in mapped.items():
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+
     def __post_init__(self) -> None:
         _required_str(self.run_id, "run_id")
         _required_str(self.run_revision, "run_revision")
@@ -436,6 +666,9 @@ class RepairOccurrenceKey(Contract):
         object.__setattr__(self, "occurrence_digest", f"sha256:{digest}")
 
     def to_dict(self) -> dict[str, Any]:
+        legacy = getattr(self, "_legacy_values", None)
+        if legacy is not None:
+            return dict(legacy)
         result = {
             "contract_type": self.contract_type,
             "schema_version": self.schema_version,
@@ -449,6 +682,32 @@ class RepairOccurrenceKey(Contract):
         }
         return result
 
+    @property
+    def f01_tuple(self) -> tuple[Any, ...]:
+        legacy = getattr(self, "_legacy_values", None)
+        if legacy is not None:
+            return tuple(legacy[name] for name in (
+                "environment_id",
+                "session_id",
+                "chain_id",
+                "plan_revision",
+                "phase",
+                "task_id",
+                "attempt_number",
+                "failure_kind",
+                "blocker_digest",
+                "coordinator_fence_token",
+            ))
+        return self.target.to_tuple()
+
+    @property
+    def key(self) -> str:
+        legacy = getattr(self, "_legacy_values", None)
+        if legacy is not None:
+            material = canonical_json(dict(legacy)).encode("utf-8")
+            return hashlib.sha256(material).hexdigest()
+        return self.occurrence_digest.removeprefix("sha256:")
+
 
 def normalize_repair_occurrence_key(
     payload: Mapping[str, Any] | None,
@@ -456,6 +715,25 @@ def normalize_repair_occurrence_key(
     """Return a canonical RepairOccurrenceKey or None for invalid inputs."""
     if not isinstance(payload, Mapping):
         return None
+    legacy_names = (
+        "environment_id",
+        "session_id",
+        "chain_id",
+        "plan_revision",
+        "phase",
+        "task_id",
+        "attempt_number",
+        "failure_kind",
+        "blocker_digest",
+        "coordinator_fence_token",
+    )
+    if all(name in payload for name in legacy_names):
+        try:
+            return RepairOccurrenceKey(
+                **{name: payload[name] for name in legacy_names}
+            )
+        except (ContractError, TypeError, ValueError):
+            return None
     target_raw = payload.get("target")
     target = normalize_custody_target_key(target_raw)
     if target is None:
@@ -501,7 +779,7 @@ def build_repair_occurrence_key(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class CustodyLease(Contract):
     """Immutable custody lease record.
 
@@ -544,6 +822,113 @@ class CustodyLease(Contract):
     idempotency_key: str
     causal_predecessor: str = ""
 
+    def __init__(self, **kwargs: Any) -> None:
+        legacy = "target_key" in kwargs or "owner" in kwargs or "epoch" in kwargs
+        if legacy:
+            allowed = {
+                "lease_id",
+                "target_key",
+                "owner",
+                "epoch",
+                "acquired_at",
+                "expires_at",
+                "fence_token",
+                "status",
+                "causal_predecessor",
+                "run_authority_grant_id",
+                "wbc_attempt_reference",
+            }
+            required = {
+                "lease_id",
+                "target_key",
+                "owner",
+                "epoch",
+                "acquired_at",
+                "expires_at",
+                "fence_token",
+                "status",
+                "run_authority_grant_id",
+                "wbc_attempt_reference",
+            }
+            missing = sorted(required - set(kwargs))
+            unknown = sorted(set(kwargs) - allowed)
+            if missing or unknown:
+                raise TypeError(
+                    "legacy CustodyLease fields invalid; "
+                    f"missing={missing}, unknown={unknown}"
+                )
+            target = kwargs["target_key"]
+            if not isinstance(target, CustodyTargetKey):
+                raise TypeError("target_key must be a CustodyTargetKey")
+            owner = tuple(kwargs["owner"])
+            if len(owner) != 3:
+                raise ContractError("owner must be a host/pid/boot-id tuple")
+            fence = int(kwargs["fence_token"])
+            grant = str(kwargs["run_authority_grant_id"])
+            wbc = str(kwargs["wbc_attempt_reference"])
+            occurrence = RepairOccurrenceKey(
+                target=target,
+                run_id=f"legacy:{grant}",
+                run_revision="legacy-non-authoritative",
+                coordinator_attempt_id="legacy-non-authoritative",
+                fence_token=fence,
+                wbc_attempt_reference=wbc,
+            )
+            mapped = {
+                "lease_id": kwargs["lease_id"],
+                "occurrence_key": occurrence,
+                "owner_host": str(owner[0]),
+                "owner_pid": str(owner[1]),
+                "owner_boot_id": str(owner[2]),
+                "run_authority_grant_id": grant,
+                "coordinator_fence_token": fence,
+                "wbc_attempt_reference": wbc,
+                "custody_epoch": int(kwargs["epoch"]),
+                "acquired_at": kwargs["acquired_at"],
+                "expires_at": kwargs["expires_at"],
+                "idempotency_key": hashlib.sha256(
+                    canonical_json(
+                        {
+                            "lease_id": kwargs["lease_id"],
+                            "target": target.to_dict(),
+                            "epoch": int(kwargs["epoch"]),
+                        }
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "causal_predecessor": kwargs.get("causal_predecessor", ""),
+            }
+            object.__setattr__(self, "_legacy_target_key", target)
+            object.__setattr__(self, "_legacy_status", str(kwargs["status"]))
+        else:
+            names = {
+                "lease_id",
+                "occurrence_key",
+                "owner_host",
+                "owner_pid",
+                "owner_boot_id",
+                "run_authority_grant_id",
+                "coordinator_fence_token",
+                "wbc_attempt_reference",
+                "custody_epoch",
+                "acquired_at",
+                "expires_at",
+                "idempotency_key",
+            }
+            missing = sorted(names - set(kwargs))
+            unknown = sorted(set(kwargs) - names - {"causal_predecessor"})
+            if missing or unknown:
+                raise TypeError(
+                    "CustodyLease fields invalid; "
+                    f"missing={missing}, unknown={unknown}"
+                )
+            mapped = {name: kwargs[name] for name in names}
+            mapped["causal_predecessor"] = kwargs.get("causal_predecessor", "")
+            object.__setattr__(self, "_legacy_target_key", None)
+            object.__setattr__(self, "_legacy_status", "")
+        for name, value in mapped.items():
+            object.__setattr__(self, name, value)
+        self.__post_init__()
+
     def __post_init__(self) -> None:
         _required_str(self.lease_id, "lease_id")
         _required_str(self.owner_host, "owner_host")
@@ -566,7 +951,10 @@ class CustodyLease(Contract):
             expires_dt = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
         except (ValueError, TypeError) as exc:
             raise ContractError(f"invalid ISO-8601 timestamp: {exc}") from exc
-        if expires_dt <= acquired_dt:
+        if (
+            expires_dt <= acquired_dt
+            and getattr(self, "_legacy_target_key", None) is None
+        ):
             raise ContractError("expires_at must be strictly after acquired_at")
 
     def to_dict(self) -> dict[str, Any]:
@@ -602,6 +990,27 @@ class CustodyLease(Contract):
     def owner_identity(self) -> tuple[str, str, str]:
         """Return the (host, pid, boot_id) owner identity tuple."""
         return (self.owner_host, self.owner_pid, self.owner_boot_id)
+
+    @property
+    def target_key(self) -> CustodyTargetKey:
+        legacy = getattr(self, "_legacy_target_key", None)
+        return legacy if legacy is not None else self.occurrence_key.target
+
+    @property
+    def owner(self) -> tuple[str, str, str]:
+        return self.owner_identity
+
+    @property
+    def epoch(self) -> int:
+        return self.custody_epoch
+
+    @property
+    def fence_token(self) -> str:
+        return str(self.coordinator_fence_token)
+
+    @property
+    def status(self) -> str:
+        return getattr(self, "_legacy_status", "")
 
     def assert_monotonic_epoch(self, previous: CustodyLease) -> None:
         """Validate that this lease's epoch is strictly greater than the predecessor's."""
