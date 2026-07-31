@@ -7,6 +7,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import Mapping
 
 import pytest
 
@@ -22,10 +23,19 @@ from scripts.run_m11_validation_shard import (
 )
 
 
-def _git_project(tmp_path: Path, body: str) -> tuple[Path, str, str]:
+def _git_project(
+    tmp_path: Path,
+    body: str,
+    *,
+    extra_files: Mapping[str, str] | None = None,
+) -> tuple[Path, str, str]:
     root = tmp_path / "project"
     root.mkdir()
     (root / "test_sample.py").write_text(body, encoding="utf-8")
+    for name, contents in (extra_files or {}).items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(
         ["git", "-C", str(root), "config", "user.email", "test@example.com"],
@@ -197,12 +207,101 @@ def test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly
     assert receipt["exact_inventory"] is True
 
 
+def test_inherited_test_provenance_preserves_frozen_nodeid(
+    tmp_path: Path,
+) -> None:
+    root, revision, tree = _git_project(
+        tmp_path,
+        "from conformance_base import ConformanceBase\n"
+        "\n"
+        "class TestConcreteConformance(ConformanceBase):\n"
+        "    pass\n",
+        extra_files={
+            "conformance_base.py": (
+                "class ConformanceBase:\n"
+                "    def test_inherited_contract(self):\n"
+                "        assert True\n"
+            )
+        },
+    )
+    receipt = _run(tmp_path, root, revision, tree, kind="full_suite")
+    assert receipt["inventory"] == [
+        "test_sample.py::TestConcreteConformance::test_inherited_contract"
+    ]
+    assert receipt["counts"]["passed"] == 1
+    assert receipt["exact_inventory"] is True
+
+
+def test_outcome_parser_preserves_arrows_spaces_and_status_words() -> None:
+    nodeid = (
+        "test_sample.py::test_case[opaque <- text.py PASSED marker with spaces]"
+    )
+    counts, executed = _parse_outcomes(
+        f"{nodeid} PASSED [100%]",
+        expected_inventory=[nodeid],
+    )
+    assert executed == [nodeid]
+    assert counts["passed"] == 1
+
+
+def test_outcome_parser_accepts_inherited_provenance_after_opaque_arrow() -> None:
+    nodeid = "test_sample.py::test_case[opaque <- token.py FAILED marker]"
+    counts, executed = _parse_outcomes(
+        f"{nodeid} <- tests/helpers/conformance_base.py PASSED [100%]",
+        expected_inventory=[nodeid],
+    )
+    assert executed == [nodeid]
+    assert counts["passed"] == 1
+
+
+def test_outcome_parser_does_not_strip_arbitrary_arrow_suffix() -> None:
+    nodeid = "test_sample.py::test_case"
+    counts, executed = _parse_outcomes(
+        f"{nodeid} <- not pytest provenance PASSED [100%]",
+        expected_inventory=[nodeid],
+    )
+    assert executed == []
+    assert counts["collected"] == 0
+
+
+def test_outcome_parser_rejects_ambiguous_frozen_inventory_match() -> None:
+    short = "test_sample.py::test_case"
+    long = f"{short} PASSED opaque"
+    with pytest.raises(ValidationShardError, match="ambiguous"):
+        _parse_outcomes(
+            f"{long} PASSED [100%]",
+            expected_inventory=[short, long],
+        )
+
+
+def test_outcome_parser_rejects_direct_vs_provenance_ambiguity() -> None:
+    inherited = "test_sample.py::test_case"
+    opaque = f"{inherited} <- tests/helpers/base.py"
+    with pytest.raises(ValidationShardError, match="ambiguous"):
+        _parse_outcomes(
+            f"{opaque} PASSED [100%]",
+            expected_inventory=[inherited, opaque],
+        )
+
+
 def test_outcome_parser_rejects_duplicate_terminal_nodeid() -> None:
     nodeid = "test_sample.py::test_case[param with spaces]"
     output = "\n".join(
         [
             f"{nodeid} PASSED [ 50%]",
             f"{nodeid} PASSED [100%]",
+        ]
+    )
+    with pytest.raises(ValidationShardError, match="duplicate terminal outcome"):
+        _parse_outcomes(output, expected_inventory=[nodeid])
+
+
+def test_outcome_parser_rejects_duplicate_inherited_terminal_nodeid() -> None:
+    nodeid = "test_sample.py::TestConcrete::test_inherited"
+    output = "\n".join(
+        [
+            f"{nodeid} <- tests/helpers/base.py PASSED [ 50%]",
+            f"{nodeid} <- tests/helpers/base.py PASSED [100%]",
         ]
     )
     with pytest.raises(ValidationShardError, match="duplicate terminal outcome"):
