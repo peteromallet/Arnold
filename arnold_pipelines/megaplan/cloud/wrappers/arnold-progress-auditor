@@ -84,7 +84,8 @@ if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE=1
   exec bash "$progress_auditor_snapshot" "$@"
 fi
-trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
+trap 'rm -f -- "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH"' EXIT
 
 WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/../../../.." && pwd)"
 
