@@ -21,7 +21,7 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T06:54:31+00:00'
+last_edited_at: '2026-07-31T09:45:00+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -260,3 +260,75 @@ one clean release vector, and deployed live canaries. The broader replacement
 of transport write modes with an explicit lifecycle write-intent/delta API is
 follow-up architecture recorded in `01KTH21EXMWBHWBA62QC5Y8D3D`; it is not a
 reason to defer this proven release correction.
+
+## 2026-07-31 shard 016 release-discovery residual
+
+The exact shard 016 discovery run on `f149b56870` collected 641 nodes and
+terminated with 612 passed, 21 failed, four errors, and four skipped. There
+were no xfails or xpasses. The immutable custody receipt and complete pytest
+log are preserved under
+`Arnold-validation-checkpoints/f149b568-shards016-037-discovery-20260731/receipts/`;
+their SHA-256 digests are respectively
+`bb9ad6e7392c655ad3e84e1c8e71ef477c57d56a44e78a98e56966e7c6f9a5e3`
+and
+`f6c3910d906b0d23173dab6e216032ae4c6e43ff5625ebd319d0a9d6d2acf4be`.
+
+The outcomes resolve into four defect families:
+
+- One retired-initiative test reached generic git-worktree preflight before
+  retirement admission, returning `chain_git_worktree_required` instead of
+  the authoritative `initiative_retired` disposition. Commit `ad03c09542`
+  makes retirement a fail-closed, pre-mutation chain-admission guard and proves
+  it for both valid and invalid worktree roots; merge commit `8c77044ec0`
+  carries it into the release vector.
+- Four installed-package composition tests invoked `python -m pip` through the
+  frozen shard interpreter, whose intentionally pipless environment could not
+  build a wheel. Commit `0c7e75bf90` creates an explicit disposable build
+  environment with pip before building and installing the artifact; merge
+  commit `1e632e968c` carries the hermetic wheel fixture.
+- All twenty remaining M6 prerequisite failures came from loading the same tool
+  under two module identities, so monkeypatches changed one module while the
+  tested functions read globals from the other. The M6 acceptance generator
+  tests could also write regenerated evidence into the source checkout.
+  Commit `7fd618348d` imports the prerequisite tool through one canonical module
+  identity, binds every generator output to an attempt-local copied evidence
+  root, routes WBC side artifacts beside the requested output, and asserts the
+  source checkout is byte-for-byte git-status stable. Merge commit
+  `a53ee96b43` carries the correction.
+- The four skipped `test_live_smoke.py` cases were credential-gated
+  placeholders: they asserted only that a temporary directory existed and
+  therefore could never prove deployed behavior. The nonlanded experiment
+  `c88ebe00ac` attempted to replace them with a content-addressed deployed
+  workflow-canary receipt, but independent review rejected it as acceptance
+  laundering: its verifier trusted caller-supplied pass booleans, evidence-kind
+  labels, and arbitrary hashed JSON instead of deriving the semantic outcomes
+  from canonical event/projection evidence. That commit is rejected evidence,
+  is not a fix, and must not be merged or cited as satisfying release
+  acceptance.
+
+The first three fixes close their discovered local defect mechanisms, but they
+do not by themselves close this ticket. The exact shard rerun and complete
+frozen inventory remain release evidence. The four fake live placeholders
+remain an unresolved immediate release blocker until the release selects and
+proves one honest alternative:
+
+1. a deployed semantic verifier derives each required workflow outcome from
+   canonical event-journal and authoritative projection evidence, with exact
+   deployment/runtime/revision and source-window bindings; or
+2. the fake suite is honestly removed from the executable inventory while an
+   explicit pending live obligation remains fail-closed in the release manifest
+   and cannot project release completion.
+
+Local schema tests, hashes over producer-authored claims, status fields, and
+manufactured labels are not deployed proof. No live-canary implementation is
+selected or accepted by this ticket update.
+
+No standalone live-canary ticket is warranted yet: resolving the blocker is
+already a direct acceptance obligation of this release umbrella and the final
+cloud promotion runbook. If the chosen implementation is deliberately deferred
+beyond this release, that decision must first create an explicit pending live
+ticket/obligation and amend the release gate rather than silently deleting the
+proof. The long-term reusable owners are narrower: Platformization owns
+product-neutral retirement/tombstone admission and hermetic
+conformance-generator contracts; the release process retains ownership of this
+concrete M11 wheel and semantic deployed-canary proof.
