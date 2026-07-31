@@ -3272,6 +3272,29 @@ def test_broken_contract_chain_milestone_start_missing_artifact(
     assert by_id[fid].contract_ref == "chain_milestone_start"
 
 
+def test_broken_contract_chain_milestone_completion_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken chain contract: missing milestone_complete.json → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_boundary_receipt(
+        plan_dir,
+        chain_milestone_completion.boundary_id,
+        row_id=chain_milestone_completion.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = (
+        "SH-chain_milestone_completion-"
+        "missing-artifact-milestone_complete.json"
+    )
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "chain_milestone_completion"
+
+
 def test_broken_contract_chain_complete_missing_receipt(
     tmp_path: Path,
 ) -> None:
@@ -3447,6 +3470,24 @@ def test_broken_contract_custody_complete_missing_artifact(
     assert by_id[fid].severity == FindingSeverity.ERROR
     assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
     assert by_id[fid].contract_ref == "cloud_custody_complete"
+
+
+def test_broken_contract_custody_unmanaged_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken unmanaged-custody warning: missing snapshot → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = (
+        "SH-cloud_custody_unmanaged_running_warning-"
+        "missing-artifact-custody_snapshot.json"
+    )
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "cloud_custody_unmanaged_running_warning"
 
 
 def test_broken_contract_custody_blocked_missing_artifact(
