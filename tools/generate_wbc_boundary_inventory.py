@@ -2446,6 +2446,7 @@ def _historical_adapters() -> dict[str, Any]:
                 "zero_authority_caller_proof": {
                     "read_only": True,
                     "diagnostic_only": True,
+                    "mode": "shadow",
                     "authority_increasing_write_allowed": False,
                     "read_only_verified": True,
                     "authority_increasing_writes_detected": [],
