@@ -3742,6 +3742,30 @@ def _append_reconciled_completed_record(
     return True
 
 
+def _revalidate_local_no_push_completed_record(
+    root: Path,
+    state: ChainState,
+    record: dict[str, Any],
+) -> tuple[bool, str]:
+    """Revalidate an explicitly accepted local-only completion record."""
+
+    if record.get("status") != STATE_DONE:
+        return False, "local/no-push completion record is not terminal done"
+    if record.get("pr_number") is not None:
+        return False, "local/no-push completion record unexpectedly has PR metadata"
+    if record.get("publication_evidence") != "local_no_push_reconciliation":
+        return False, "completed record has no explicit local/no-push publication evidence"
+    local_commit_sha = record.get("local_commit_sha")
+    if not isinstance(local_commit_sha, str) or not local_commit_sha.strip():
+        return False, "local/no-push completion record has no local commit SHA"
+    return _chain_completion_guard(
+        root,
+        record,
+        implementation_milestone=True,
+        chain_state=state,
+    )
+
+
 def _reconcile_chain_from_ground_truth(
     root: Path,
     spec_path: Path,
@@ -3779,7 +3803,23 @@ def _reconcile_chain_from_ground_truth(
             continue
         record = dict(record)
         pr_number = _record_pr_number(record)
-        if push_enabled and milestone.branch and pr_number is not None:
+        if push_enabled and milestone.branch and pr_number is None:
+            accepted, accepted_reason = _revalidate_local_no_push_completed_record(
+                root, state, record
+            )
+            if not accepted:
+                writer(
+                    f"[chain] completed record for {milestone.label} is not "
+                    "authoritative yet: branch milestone is missing PR context "
+                    f"and local/no-push revalidation failed: {accepted_reason}\n"
+                )
+                removed_completed[milestone.label] = dict(record)
+                continue
+            writer(
+                f"[chain] preserved accepted local/no-push completion for "
+                f"{milestone.label}: {accepted_reason}\n"
+            )
+        elif push_enabled and milestone.branch and pr_number is not None:
             live_pr_state = _pr_state(root, pr_number, writer=writer)
             if record.get("pr_state") != live_pr_state:
                 writer(
@@ -3988,6 +4028,8 @@ def _reconcile_chain_from_ground_truth(
             state.pr_state = None
             if next_index >= len(spec.milestones):
                 state.last_state = "done"
+            else:
+                state.last_state = "between_milestones"
 
     _append_reconciliation_audit(
         state,
@@ -5577,11 +5619,22 @@ def _reconcile_chain_from_ground_truth(
         pr_number = _record_pr_number(record)
         if push_enabled and milestone.branch:
             if pr_number is None:
-                writer(
-                    f"[chain] completed record for {milestone.label} is not "
-                    "authoritative yet: branch milestone is missing PR context\n"
+                accepted, accepted_reason = _revalidate_local_no_push_completed_record(
+                    root, state, record
                 )
-                removed_completed[milestone.label] = dict(record)
+                if not accepted:
+                    writer(
+                        f"[chain] completed record for {milestone.label} is not "
+                        "authoritative yet: branch milestone is missing PR context "
+                        f"and local/no-push revalidation failed: {accepted_reason}\n"
+                    )
+                    removed_completed[milestone.label] = dict(record)
+                    continue
+                writer(
+                    f"[chain] preserved accepted local/no-push completion for "
+                    f"{milestone.label}: {accepted_reason}\n"
+                )
+                reconciled_completed.append(record)
                 continue
             live_pr_state = _pr_state(root, pr_number, writer=writer)
             if record.get("pr_state") != live_pr_state:
@@ -5820,6 +5873,8 @@ def _reconcile_chain_from_ground_truth(
             state.pr_state = None
             if next_index >= len(spec.milestones):
                 state.last_state = "done"
+            else:
+                state.last_state = "between_milestones"
 
     _append_reconciliation_audit(
         state,
@@ -7401,6 +7456,13 @@ def run_chain(
                 _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
                 state.current_milestone_index = idx
                 state.current_plan_name = plan_name
+                # The chain cursor and lifecycle projection must move together.
+                # Leaving the predecessor's terminal ``last_state`` in place
+                # makes a live successor look canonically complete to repair
+                # and resident consumers until the entire plan driver returns.
+                state.last_state = (
+                    _plan_current_state_from_payload(root, plan_name) or "initialized"
+                )
                 _emit_milestone_start_evidence(
                     state,
                     milestone_label=milestone.label,
@@ -7735,6 +7797,79 @@ def run_chain(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
             )
             state = chain_spec.load_chain_state(spec_path)
+            # The atomic acceptance transaction may have committed the
+            # completed record and advanced the durable cursor before the
+            # publication/sync refresh above reloaded ChainState. In that
+            # case PR context is intentionally cleared by the same
+            # transaction. Re-check the accepted durable boundary instead of
+            # passing ``None`` to gh and manufacturing a closed PR.
+            accepted_during_sync = next(
+                (
+                    record
+                    for record in state.completed
+                    if isinstance(record, dict)
+                    and record.get("label") == milestone.label
+                    and record.get("status") == STATE_DONE
+                    and record.get("pr_number") is None
+                    and record.get("publication_evidence")
+                    == "local_no_push_reconciliation"
+                    and record.get("local_commit_sha")
+                ),
+                None,
+            )
+            if (
+                accepted_during_sync is not None
+                and state.current_milestone_index > idx
+                and state.pr_number is None
+            ):
+                accepted, accepted_reason = _chain_completion_guard(
+                    root,
+                    accepted_during_sync,
+                    implementation_milestone=True,
+                    chain_state=state,
+                )
+                if not accepted:
+                    state.last_state = STATE_BLOCKED
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} durable local completion "
+                            f"failed revalidation after sync: {accepted_reason}"
+                        ),
+                    )
+                log(
+                    f"milestone {milestone.label} advanced by accepted local "
+                    "completion during sync; continuing without PR metadata"
+                )
+                _mark_plan_completed_by_chain(
+                    root,
+                    plan_name,
+                    milestone_label=milestone.label,
+                    completion_reason=accepted_reason,
+                    writer=writer,
+                    state=state,
+                )
+                idx = state.current_milestone_index
+                _emit_milestone_completion_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx - 1,
+                    plan_name=plan_name,
+                )
+                chain_spec.save_chain_state(spec_path, state)
+                if one:
+                    return _result(
+                        "paused",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"completed one milestone: {milestone.label}",
+                    )
+                continue
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
