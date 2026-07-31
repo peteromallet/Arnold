@@ -2428,11 +2428,17 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     """Extract plausible JSON payload objects from raw agent output."""
     # Some models (DeepSeek/Kimi) answer with write-style tool markup containing
     # the JSON payload. Recover that first so downstream extraction sees JSON.
-    from arnold_pipelines.megaplan.workers.hermes import _extract_json_from_mutating_tool_markup
+    from arnold_pipelines.megaplan.workers.hermes import (
+        _deescape_double_encoded_json,
+        _extract_json_from_mutating_tool_markup,
+    )
 
     recovered = _extract_json_from_mutating_tool_markup(raw)
     if recovered is not None:
         raw = recovered
+    deescaped = _deescape_double_encoded_json(raw)
+    if deescaped is not None:
+        raw = deescaped
 
     def _iter_nested_json_dicts(value: Any) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -2572,9 +2578,18 @@ def _extract_plan_capture_input(raw_text: str) -> str | dict[str, Any]:
 
 def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     """Return a representative JSON decode error for malformed model output."""
+    from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+
     text = raw.strip()
     if not text:
         return None
+    deescaped = _deescape_double_encoded_json(text)
+    if deescaped is not None:
+        try:
+            json.loads(deescaped)
+            return None
+        except json.JSONDecodeError:
+            pass
     candidates = [text]
     fenced = re.findall(r"```json\s*\n(.*?)```", raw, re.DOTALL)
     candidates.extend(block.strip() for block in fenced if block.strip())
