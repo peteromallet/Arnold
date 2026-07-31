@@ -35,6 +35,22 @@ def _require_sha1(value: Any, label: str) -> str:
     return value
 
 
+def _validate_sha256_fields(value: Any, label: str = "record") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_label = f"{label}.{key}"
+            if key == "sha256" or key.endswith("_sha256"):
+                if not isinstance(child, str) or not SHA256.fullmatch(child):
+                    raise ValueError(
+                        f"{child_label} must be a lowercase 64-character SHA-256"
+                    )
+            else:
+                _validate_sha256_fields(child, child_label)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_sha256_fields(child, f"{label}[{index}]")
+
+
 def validate(path: Path) -> None:
     repo = Path(_git("rev-parse", "--show-toplevel", cwd=REPO_ROOT))
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -52,6 +68,7 @@ def validate(path: Path) -> None:
         raise ValueError("unsupported schema")
     if data.get("record_status") not in ALLOWED_RECORD_STATUS:
         raise ValueError("invalid record_status")
+    _validate_sha256_fields(data)
 
     authority = data["authority"]
     plan_path = repo / authority["plan_path"]
@@ -114,6 +131,19 @@ def validate(path: Path) -> None:
                     f"validation_observations[{index}].bound_tree",
                 )
             )
+
+    for collection_name in (
+        "historical_superseded_attempts",
+        "packaging_artifacts",
+    ):
+        for index, item in enumerate(data.get(collection_name, [])):
+            if "bound_commit" in item:
+                git_objects.add(
+                    _require_sha1(
+                        item["bound_commit"],
+                        f"{collection_name}[{index}].bound_commit",
+                    )
+                )
 
     for sha in sorted(git_objects):
         _git("cat-file", "-e", f"{sha}^{{object}}", cwd=repo)
