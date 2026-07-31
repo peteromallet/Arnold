@@ -11,7 +11,7 @@ tags:
 - managed-recovery-custody
 codebase_id: null
 created_at: '2026-07-29T10:09:24.064192+00:00'
-last_edited_at: '2026-07-30T20:28:00.000000+00:00'
+last_edited_at: '2026-07-31T03:21:00.000000+00:00'
 epics: []
 ---
 
@@ -61,3 +61,18 @@ This closes the Railway bootstrap/persistence subcase only. Keep this ticket
 open: the canonical recovery launch-envelope resolver and its resident
 rotation, trusted-container, and provider-preflight acceptance cases remain
 outstanding.
+
+## 2026-07-31 pinned repair-route evidence
+
+The post-M11 recovery wrappers now prefer `MEGAPLAN_RUNTIME_SRC` when selecting
+sibling repair launchers, preserve the dedicated `editible-install` branch as
+the fallback source, and pass the selected runtime into repair children through
+`ARNOLD_REPAIR_RUNTIME_SRC`. Watchdog dispatch and regenerated chain relaunches
+also carry the same repair queue root, marker directory, session, and run kind.
+Focused wrapper tests cover pinned-source selection and route-context
+propagation.
+
+This closes the sibling-wrapper/source-selection subcase only. Keep this ticket
+open: the single canonical launch-envelope resolver, credential-channel
+preflight, resident-generation rotation fixture, and provider-route acceptance
+proof remain outstanding.
