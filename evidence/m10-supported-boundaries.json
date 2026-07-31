@@ -3,7 +3,7 @@
     "schema": "m10.supported-boundaries.v1",
     "description": "Disjoint supported, deferred, historical_read_only, and non_mutating row-ID sets derived from the WBC boundary inventory. Every deferred row carries owner, reason, expiry, source hash, action-off runtime evidence, and bypass-test ID. Deferred rows are excluded from supported counts and must not dispatch or authorize effects in M10.",
     "generated_by": "M10 Step 13J \u2014 generate_m10_supported_boundaries.py",
-    "timestamp_utc": "2026-07-31T00:48:07.166872+00:00",
+    "timestamp_utc": "2026-07-31T06:15:11.492693+00:00",
     "source_inventory": "evidence/wbc-boundary-inventory.json",
     "source_inventory_hash": "583d241291243ae76bbeb3a144d6d9d71c21d28b83dba07943b7fe0f05e34ce9",
     "set_counts": {
@@ -14,8 +14,21 @@
     },
     "total_rows_in_inventory": 1328,
     "deduplicated_handler_rows_removed": 37,
-    "classified_total": 1291
+    "classified_total": 1291,
+    "effect_fault_coverage_scope_hash": "sha256:89dec42168c3f132f413634ed7624484e89c18fdc68d072b64ab61b5dbbf5ab3"
   },
+  "effect_fault_coverage_required": [
+    {
+      "identity": "bc:execute_approval",
+      "source_hash": "sha256:c8d6f2d26d45460afedcc98dd3b6fc72c937a120cbcca0c7a9a91214e4a61144",
+      "support_hash": "sha256:065a4eb83d08e18a7ac97c4b4f07008f1d286250181b21b5bb0b27b42da34aa4"
+    },
+    {
+      "identity": "bc:gate_to_revise",
+      "source_hash": "sha256:c8b59c06905000ea7aefb4ad18f87cf4411460796234473d51ee6634ef8ad7fa",
+      "support_hash": "sha256:6f53be76c3f4515d820aad39efba9ca3dfde3524d2272f1905fc261ecd7221fe"
+    }
+  ],
   "supported": [
     {
       "identity": "bc:auditor_6h_completion",

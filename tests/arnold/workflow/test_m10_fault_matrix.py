@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -373,12 +374,28 @@ def _write_json(payload: dict, suffix: str = ".json") -> Path:
     return Path(tmp.name)
 
 
+def _content_hash(payload: object) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def _row_identity(row: dict) -> str | None:
+    if row.get("identity"):
+        return str(row["identity"])
+    if row.get("row_kind") == "boundary_contract" and row.get("boundary_id"):
+        return f"bc:{row['boundary_id']}"
+    if row.get("row_kind") == "manifest_entry" and row.get("step_id"):
+        return f"me:{row['step_id']}"
+    return None
+
+
 def _coverage_artifacts(
     *,
     inventory_rows: list[dict],
     supported_rows: list[dict],
     deferred_rows: list[dict] | None = None,
     scenarios: list[dict] | None = None,
+    effect_required: list[str] | None = None,
 ) -> tuple[Path, Path, Path]:
     """Build temp matrix, inventory, and supported-boundaries artifacts."""
     matrix_scenarios = scenarios if scenarios is not None else [
@@ -386,7 +403,35 @@ def _coverage_artifacts(
     ]
     matrix = _write_json({"schema_version": 1, "scenarios": matrix_scenarios})
     inventory = _write_json({"rows": inventory_rows})
+    required_identities = effect_required
+    if required_identities is None:
+        required_identities = [
+            str(row["identity"])
+            for row in supported_rows
+            if row.get("row_kind") == "boundary_contract"
+        ]
+    inventory_by_identity = {
+        identity: row
+        for row in inventory_rows
+        for identity in [_row_identity(row)]
+        if identity is not None
+    }
+    supported_by_identity = {
+        str(row["identity"]): row
+        for row in supported_rows
+        if row.get("identity")
+    }
+    scope = [
+        {
+            "identity": identity,
+            "source_hash": _content_hash(inventory_by_identity[identity]),
+            "support_hash": _content_hash(supported_by_identity[identity]),
+        }
+        for identity in required_identities
+    ]
     supported = _write_json({
+        "meta": {"effect_fault_coverage_scope_hash": _content_hash(scope)},
+        "effect_fault_coverage_required": scope,
         "supported": supported_rows,
         "deferred": deferred_rows or [],
     })
@@ -401,6 +446,36 @@ def test_default_inventory_coverage_valid() -> None:
         f"{[e.message for e in report.errors]}"
     )
     assert report.scenarios_validated == 17
+
+
+def test_default_effect_fault_scope_is_exact_and_content_bound() -> None:
+    """The M10 compatibility scope is exactly the two real fault consumers."""
+    root = _project_root()
+    with open(root / "evidence" / "m10-supported-boundaries.json") as fh:
+        supported = json.load(fh)
+    with open(root / "evidence" / "wbc-boundary-inventory.json") as fh:
+        inventory = json.load(fh)
+
+    scope = supported["effect_fault_coverage_required"]
+    assert [row["identity"] for row in scope] == [
+        "bc:execute_approval",
+        "bc:gate_to_revise",
+    ]
+
+    inventory_by_identity = {
+        identity: row
+        for row in inventory["rows"]
+        for identity in [_row_identity(row)]
+        if identity is not None
+    }
+    supported_by_identity = {
+        row["identity"]: row for row in supported["supported"]
+    }
+    for row in scope:
+        identity = row["identity"]
+        assert row["source_hash"] == _content_hash(inventory_by_identity[identity])
+        assert row["support_hash"] == _content_hash(supported_by_identity[identity])
+    assert supported["meta"]["effect_fault_coverage_scope_hash"] == _content_hash(scope)
 
 
 def test_default_matrix_status_is_reconciled() -> None:
@@ -541,6 +616,7 @@ def test_inventory_coverage_step_id_ref_resolves() -> None:
             {"identity": "me:step_one", "row_kind": "manifest_entry"},
         ],
         scenarios=scenarios,
+        effect_required=["bc:covered", "me:step_one"],
     )
     report = validate_inventory_coverage(matrix, inventory, supported)
     assert report.is_valid, (
@@ -567,4 +643,107 @@ def test_inventory_coverage_runtime_module_not_required() -> None:
     assert report.is_valid, (
         f"Expected valid coverage (runtime_module not required), "
         f"got: {[e.message for e in report.errors]}"
+    )
+
+
+def test_supported_evidence_boundary_does_not_require_effect_fault_ref() -> None:
+    """WBC support does not implicitly make an evidence boundary an effect."""
+    scenarios = [_minimal_valid_scenario("F01")]
+    scenarios[0]["inventory_row_refs"] = ["bc:real_effect"]
+    matrix, inventory, supported = _coverage_artifacts(
+        inventory_rows=[
+            {
+                "identity": "bc:real_effect",
+                "row_kind": "boundary_contract",
+            },
+            {
+                "identity": "bc:evidence_only",
+                "row_kind": "boundary_contract",
+            },
+        ],
+        supported_rows=[
+            {"identity": "bc:real_effect", "row_kind": "boundary_contract"},
+            {"identity": "bc:evidence_only", "row_kind": "boundary_contract"},
+        ],
+        scenarios=scenarios,
+        effect_required=["bc:real_effect"],
+    )
+    report = validate_inventory_coverage(matrix, inventory, supported)
+    assert report.is_valid, [error.message for error in report.errors]
+
+
+def test_declared_effect_boundary_without_scenario_is_rejected() -> None:
+    """Adding a real effect to the declared scope requires matrix coverage."""
+    scenarios = [_minimal_valid_scenario("F01")]
+    scenarios[0]["inventory_row_refs"] = ["bc:covered"]
+    matrix, inventory, supported = _coverage_artifacts(
+        inventory_rows=[
+            {"identity": "bc:covered", "row_kind": "boundary_contract"},
+            {"identity": "bc:new_effect", "row_kind": "boundary_contract"},
+        ],
+        supported_rows=[
+            {"identity": "bc:covered", "row_kind": "boundary_contract"},
+            {"identity": "bc:new_effect", "row_kind": "boundary_contract"},
+        ],
+        scenarios=scenarios,
+        effect_required=["bc:covered", "bc:new_effect"],
+    )
+    report = validate_inventory_coverage(matrix, inventory, supported)
+    assert not report.is_valid
+    assert any(
+        "Declared effect boundary 'bc:new_effect' has no fault-matrix coverage"
+        in error.message
+        for error in report.errors
+    )
+
+
+def test_undeclared_supported_boundary_ref_is_rejected_as_proxy_coverage() -> None:
+    """A dummy ref cannot launder an evidence-only boundary into F coverage."""
+    scenarios = [_minimal_valid_scenario("F01")]
+    scenarios[0]["inventory_row_refs"] = ["bc:real_effect", "bc:evidence_only"]
+    matrix, inventory, supported = _coverage_artifacts(
+        inventory_rows=[
+            {"identity": "bc:real_effect", "row_kind": "boundary_contract"},
+            {"identity": "bc:evidence_only", "row_kind": "boundary_contract"},
+        ],
+        supported_rows=[
+            {"identity": "bc:real_effect", "row_kind": "boundary_contract"},
+            {"identity": "bc:evidence_only", "row_kind": "boundary_contract"},
+        ],
+        scenarios=scenarios,
+        effect_required=["bc:real_effect"],
+    )
+    report = validate_inventory_coverage(matrix, inventory, supported)
+    assert not report.is_valid
+    assert any(
+        "not declared effect-fault-applicable" in error.message
+        for error in report.errors
+    )
+
+
+def test_effect_fault_scope_hash_drift_is_visible() -> None:
+    """Changing a bound source row without regeneration fails closed."""
+    scenarios = [_minimal_valid_scenario("F01")]
+    scenarios[0]["inventory_row_refs"] = ["bc:real_effect"]
+    matrix, inventory, supported = _coverage_artifacts(
+        inventory_rows=[
+            {"identity": "bc:real_effect", "row_kind": "boundary_contract"},
+        ],
+        supported_rows=[
+            {"identity": "bc:real_effect", "row_kind": "boundary_contract"},
+        ],
+        scenarios=scenarios,
+        effect_required=["bc:real_effect"],
+    )
+    with open(inventory) as fh:
+        changed_inventory = json.load(fh)
+    changed_inventory["rows"][0]["producer_path"] = "changed.py"
+    inventory.write_text(json.dumps(changed_inventory), encoding="utf-8")
+
+    report = validate_inventory_coverage(matrix, inventory, supported)
+    assert not report.is_valid
+    assert any(
+        error.field == "effect_fault_coverage_required.source_hash"
+        and "source hash drifted" in error.message
+        for error in report.errors
     )

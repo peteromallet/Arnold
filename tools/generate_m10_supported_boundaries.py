@@ -69,9 +69,28 @@ AUTHORITY_ADJACENT: frozenset[str] = frozenset({
     "authority_writer",
 })
 
+# M10's F01-F17 matrix tests provider/effect failure behavior.  Applicability
+# is deliberately orthogonal to WBC support: most supported boundary contracts
+# describe evidence or classification transitions and must not acquire fake
+# provider-fault coverage merely because they are authority-bearing.
+#
+# This explicit seed is the M10 compatibility authority.  A later mutation /
+# effect registry may replace it as the generator input, but row_kind must
+# never infer effect-fault applicability.
+EFFECT_FAULT_COVERAGE_REQUIRED: tuple[str, ...] = (
+    "bc:execute_approval",
+    "bc:gate_to_revise",
+)
+
 
 def _sha256_hex(data: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _content_hash(payload: Any) -> str:
+    """Return a stable content hash for a JSON-compatible evidence row."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return f"sha256:{_sha256_hex(canonical)}"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -405,6 +424,34 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
                 )
             all_identities.add(ident)
 
+    # ── Bind the provider/effect fault-matrix applicability scope ─────────
+    inventory_rows_by_identity = {
+        _row_identity(row): row
+        for row in rows
+        if isinstance(row, dict)
+    }
+    supported_by_identity = {row["identity"]: row for row in supported}
+    effect_fault_entries: list[dict[str, str]] = []
+    for identity in EFFECT_FAULT_COVERAGE_REQUIRED:
+        source_row = inventory_rows_by_identity.get(identity)
+        support_row = supported_by_identity.get(identity)
+        if source_row is None:
+            raise ValueError(
+                f"Effect-fault coverage identity '{identity}' is absent from "
+                "the WBC boundary inventory."
+            )
+        if support_row is None:
+            raise ValueError(
+                f"Effect-fault coverage identity '{identity}' is not in the "
+                "generated supported set."
+            )
+        effect_fault_entries.append({
+            "identity": identity,
+            "source_hash": _content_hash(source_row),
+            "support_hash": _content_hash(support_row),
+        })
+    effect_fault_scope_hash = _content_hash(effect_fault_entries)
+
     # ── Build artifact ──────────────────────────────────────────────────
     artifact: dict[str, Any] = {
         "meta": {
@@ -432,7 +479,9 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
                 len(supported) + len(deferred) + len(historical_read_only) + len(non_mutating)
             ),
             "classified_total": len(supported) + len(deferred) + len(historical_read_only) + len(non_mutating),
+            "effect_fault_coverage_scope_hash": effect_fault_scope_hash,
         },
+        "effect_fault_coverage_required": effect_fault_entries,
         "supported": supported,
         "deferred": deferred,
         "historical_read_only": historical_read_only,
