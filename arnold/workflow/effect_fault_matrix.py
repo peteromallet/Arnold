@@ -5,15 +5,16 @@ edge, expected assertion, provider/query behavior, custody precondition,
 replay expectation, and inventory-row references.
 
 After Step 18A reconciliation, the matrix is no longer provisional: every
-supported mutating/provider inventory row must have applicable fault and
-replay coverage, every referenced row must exist in the inventory, and no
-deferred row may appear in a scenario's coverage set.
+content-bound effect-fault-applicable inventory row must have fault and replay
+coverage, every referenced row must exist and be supported, and no deferred
+or evidence-only row may be claimed as provider-fault coverage.
 
 All scenarios are action-off in M10.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -401,6 +402,26 @@ def _collect_inventory_identities(inventory_rows: Iterable[Mapping[str, Any]]) -
     return identities
 
 
+def _inventory_row_identity(row: Mapping[str, Any]) -> str | None:
+    """Return the canonical identity used to bind an inventory source row."""
+    ident = row.get("identity")
+    if isinstance(ident, str) and ident:
+        return ident
+    boundary_id = row.get("boundary_id")
+    if row.get("row_kind") == "boundary_contract" and isinstance(boundary_id, str):
+        return f"bc:{boundary_id}"
+    step_id = row.get("step_id")
+    if row.get("row_kind") == "manifest_entry" and isinstance(step_id, str):
+        return f"me:{step_id}"
+    return None
+
+
+def _content_hash(payload: Any) -> str:
+    """Return the canonical content hash used by the generated scope."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
 def validate_inventory_coverage(
     matrix_path: Path | str,
     inventory_path: Path | str,
@@ -413,8 +434,10 @@ def validate_inventory_coverage(
     join requires:
 
     1. Every referenced row exists in the inventory (no orphans).
-    2. Every supported mutating/provider boundary contract is referenced by
-       at least one scenario (no missing coverage).
+    2. The matrix references exactly the content-bound
+       ``effect_fault_coverage_required`` scope (no missing or dummy
+       coverage). WBC support alone does not imply provider-fault
+       applicability.
     3. No deferred row appears in any scenario's coverage set (deferred rows
        are action-off and must not be claimed as fault evidence).
     4. No reference resolves to a non-supported inventory row (unsupported
@@ -465,17 +488,128 @@ def validate_inventory_coverage(
 
     supported_rows = supported_data.get("supported", []) if isinstance(supported_data, Mapping) else []
     deferred_rows = supported_data.get("deferred", []) if isinstance(supported_data, Mapping) else []
+    scope_rows = (
+        supported_data.get("effect_fault_coverage_required", [])
+        if isinstance(supported_data, Mapping)
+        else []
+    )
 
     supported_identities = {r.get("identity") for r in supported_rows if isinstance(r, Mapping)}
     deferred_identities = {r.get("identity") for r in deferred_rows if isinstance(r, Mapping)}
 
-    # The supported mutating/provider boundary contracts (row_kind ==
-    # "boundary_contract") are the rows that *must* have fault coverage.
-    required_coverage = {
-        r.get("identity")
-        for r in supported_rows
-        if isinstance(r, Mapping) and r.get("row_kind") == "boundary_contract"
+    inventory_rows_by_identity = {
+        identity: row
+        for row in inventory_rows
+        if isinstance(row, Mapping)
+        for identity in [_inventory_row_identity(row)]
+        if identity is not None
     }
+    supported_rows_by_identity = {
+        str(row.get("identity")): row
+        for row in supported_rows
+        if isinstance(row, Mapping) and row.get("identity")
+    }
+
+    # Effect-fault applicability is explicit and content-bound.  It must not
+    # be inferred from row_kind or authority_required: evidence/classification
+    # contracts are supported WBC without being provider-effect surfaces.
+    required_coverage: set[str] = set()
+    if not isinstance(scope_rows, list) or not scope_rows:
+        report.errors.append(
+            ScenarioValidationError(
+                scenario_id="<matrix>",
+                field="effect_fault_coverage_required",
+                message="Effect-fault coverage scope is absent or empty.",
+            )
+        )
+        scope_rows = []
+    for scope_row in scope_rows:
+        if not isinstance(scope_row, Mapping):
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required",
+                    message="Effect-fault coverage entry must be an object.",
+                )
+            )
+            continue
+        identity = scope_row.get("identity")
+        if not isinstance(identity, str) or not identity:
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required.identity",
+                    message="Effect-fault coverage entry has no identity.",
+                )
+            )
+            continue
+        if identity in required_coverage:
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required.identity",
+                    message=f"Duplicate effect-fault coverage identity '{identity}'.",
+                )
+            )
+        required_coverage.add(identity)
+
+        source_row = inventory_rows_by_identity.get(identity)
+        support_row = supported_rows_by_identity.get(identity)
+        expected_source_hash = _content_hash(source_row) if source_row is not None else None
+        expected_support_hash = _content_hash(support_row) if support_row is not None else None
+        if source_row is None:
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required.source_hash",
+                    message=f"Declared effect boundary '{identity}' has no inventory source row.",
+                )
+            )
+        elif scope_row.get("source_hash") != expected_source_hash:
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required.source_hash",
+                    message=(
+                        f"Declared effect boundary '{identity}' source hash drifted: "
+                        f"expected {expected_source_hash}, got {scope_row.get('source_hash')}."
+                    ),
+                )
+            )
+        if support_row is None:
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required.support_hash",
+                    message=f"Declared effect boundary '{identity}' is not supported.",
+                )
+            )
+        elif scope_row.get("support_hash") != expected_support_hash:
+            report.errors.append(
+                ScenarioValidationError(
+                    scenario_id="<matrix>",
+                    field="effect_fault_coverage_required.support_hash",
+                    message=(
+                        f"Declared effect boundary '{identity}' support hash drifted: "
+                        f"expected {expected_support_hash}, got {scope_row.get('support_hash')}."
+                    ),
+                )
+            )
+
+    meta = supported_data.get("meta", {}) if isinstance(supported_data, Mapping) else {}
+    declared_scope_hash = meta.get("effect_fault_coverage_scope_hash") if isinstance(meta, Mapping) else None
+    expected_scope_hash = _content_hash(scope_rows)
+    if declared_scope_hash != expected_scope_hash:
+        report.errors.append(
+            ScenarioValidationError(
+                scenario_id="<matrix>",
+                field="effect_fault_coverage_scope_hash",
+                message=(
+                    "Effect-fault coverage scope hash drifted: "
+                    f"expected {expected_scope_hash}, got {declared_scope_hash}."
+                ),
+            )
+        )
 
     scenarios = matrix_data.get("scenarios", []) if isinstance(matrix_data.get("scenarios"), list) else []
 
@@ -517,7 +651,7 @@ def validate_inventory_coverage(
                 scenario_id="<matrix>",
                 field="inventory_row_refs",
                 message=(
-                    f"Supported boundary contract '{ident}' has no fault-matrix "
+                    f"Declared effect boundary '{ident}' has no fault-matrix "
                     f"coverage (no scenario references it)."
                 ),
             )
@@ -549,6 +683,22 @@ def validate_inventory_coverage(
                     f"Scenario ref '{ref}' resolves to a non-supported inventory "
                     f"row and must not appear in fault-matrix coverage. "
                     f"Referenced by {referenced[ref]}."
+                ),
+            )
+        )
+
+    # (5) Dummy/proxy refs — supported evidence-only rows are not effect-fault
+    # coverage unless the generated, content-bound scope explicitly says so.
+    undeclared_refs = covered_identities - required_coverage
+    for ref in sorted(undeclared_refs):
+        report.errors.append(
+            ScenarioValidationError(
+                scenario_id="<matrix>",
+                field="inventory_row_refs",
+                message=(
+                    f"Scenario ref '{ref}' is not declared effect-fault-applicable "
+                    f"and must not be used as proxy coverage. Referenced by "
+                    f"{referenced[ref]}."
                 ),
             )
         )

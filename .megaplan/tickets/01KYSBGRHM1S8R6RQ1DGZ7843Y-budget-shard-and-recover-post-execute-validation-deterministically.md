@@ -21,7 +21,7 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T03:17:11+00:00'
+last_edited_at: '2026-07-31T06:17:01+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -164,3 +164,30 @@ source-tree stability, and durable WBC emission for explicit roots.
 The rejected shard log, custody receipt, source-mutation patch, status snapshot,
 and checksums are preserved under
 `Arnold-validation-checkpoints/e9c88f6f93-shards005-037-discovery-20260731/shard008-defect/`.
+
+## 2026-07-31 shard 010 release-discovery residual
+
+The exact 743-node shard 010 run on the shard-008 candidate completed 742 tests
+and failed one default inventory-coverage assertion. The WBC inventory and its
+supported-boundary projection correctly included fourteen authority-bearing
+contracts introduced after M10, but the older F01-F17 artifact still named only
+`execute_approval` and `gate_to_revise`. The join therefore exposed real
+cross-milestone evidence drift rather than a test-runner failure.
+
+The resolution makes provider/effect-fault applicability orthogonal to generic
+WBC support. The generated supported-boundary artifact now declares an exact,
+content-bound `effect_fault_coverage_required` scope for the two M10 fault
+consumers (`execute_approval` and `gate_to_revise`), including inventory-source
+and supported-projection hashes. The validator requires exact matrix coverage
+of that scope, rejects undeclared proxy references, and surfaces source,
+support, or scope-hash drift. A newly supported evidence/classification
+boundary therefore does not acquire fake F01-F17 coverage, while a newly
+declared effect boundary fails closed until a real scenario references it.
+
+Independent semantic-health gaps found during the investigation are also
+covered by negative fixtures for `chain_milestone_completion` and
+`cloud_custody_unmanaged_running_warning`; these tests remain separate from
+provider-fault applicability.
+
+The ticket remains open until the final consolidated revision passes the whole
+frozen no-debt inventory and the release-level acceptance conditions above.
