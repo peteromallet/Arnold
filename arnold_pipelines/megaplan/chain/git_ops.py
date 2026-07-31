@@ -32,6 +32,8 @@ _NON_FAST_FORWARD_PUSH_MARKERS = (
 
 _MISSING_PR_MARKERS = (
     "could not resolve to a pullrequest",
+    "could not resolve to a pull request",
+    "pull request not found",
     "no pull requests found",
     "pull request was not found",
 )
