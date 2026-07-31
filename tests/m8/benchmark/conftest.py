@@ -1,7 +1,8 @@
 """Pytest configuration for M8 benchmark tests.
 
-Registers the ``--m8-benchmark`` option and the ``m8_benchmark`` marker,
-and defaults benchmark tests to skip unless explicitly opted in.
+Registers the legacy ``--m8-benchmark`` option and the ``m8_benchmark`` marker.
+The acceptance benchmarks now run in the default suite; the option remains a
+compatibility no-op for existing CI invocations.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--m8-benchmark",
         action="store_true",
         default=False,
-        help="Run M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
+        help="Compatibility flag; M8 acceptance benchmarks run by default",
     )
 
 
@@ -23,18 +24,5 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register the custom marker so pytest does not warn about it."""
     config.addinivalue_line(
         "markers",
-        "m8_benchmark: M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
+        "m8_benchmark: M8 acceptance-gate benchmark tests (width-32 thresholds)",
     )
-
-
-def pytest_collection_modifyitems(
-    config: pytest.Config,
-    items: list[pytest.Item],
-) -> None:
-    """Skip m8_benchmark tests unless ``--m8-benchmark`` is set."""
-    if config.getoption("--m8-benchmark"):
-        return
-    skip_marker = pytest.mark.skip(reason="M8 benchmark tests are opt-in; use --m8-benchmark to run")
-    for item in items:
-        if "m8_benchmark" in item.keywords:
-            item.add_marker(skip_marker)
