@@ -44,6 +44,7 @@ final_conformance_gate:
     schema: arnold.megaplan_native_representation.conformance.v1
     validator: scripts/validate_native_representation_conformance.py
     row_status_values: [implemented, deferred]
+    deployed_proof_status_values: [pending, verified]
     implemented_semantic_carriers: [canonical_source, declared_policy, audited_pure_phase_body]
     deferred_semantic_carriers: [explicit_deferral]
     carrier_evidence_suffixes:
@@ -399,11 +400,12 @@ rows:
   - id: behavior-parity
     requirement: Behavior parity with existing Megaplan
     status: enabled
+    deployed_proof_status: pending
     owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
     milestones: [completion-m3-5, completion-m5, composition-m1, composition-m6, platform-m6]
-    proof_artifacts: [golden_suite, live_smoke, installed_wheel_conformance]
+    proof_artifacts: [golden_suite, deployed_live_canary_receipt, installed_wheel_conformance]
     false_pass_guard: Report shape looks good but regressions hide in uncommon flows.
-    negative_invariant: Scenario goldens cover all named prep, critique, gate, tiebreaker, execute, review, and override paths.
+    negative_invariant: Scenario goldens cover all named prep, critique, gate, tiebreaker, execute, review, and override paths; release additionally requires one admission-bound deployed receipt proving fresh plan, suspension/resume, at least three gate iterations, and tiebreaker execution.
   - id: source-readability
     requirement: Source readability
     status: enabled

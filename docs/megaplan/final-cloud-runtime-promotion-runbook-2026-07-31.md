@@ -594,13 +594,73 @@ Do not accept name similarity, percentage progress, `runner running`,
 `finalized`, `alive_but_failed`, an old watchdog `complete`, or a manually
 created `done` label as a substitute for these results.
 
+### 7.1 Deployed workflow canary
+
+The old credential-gated `test_live_smoke.py` placeholders were not live
+evidence: they skipped when credentials were absent and otherwise asserted
+only that a temporary directory existed. They are retired. A release now
+requires a separately admitted job against the exact deployed target,
+deployment ID, `FINAL_SHA`, and strict runtime-identity receipt.
+
+Create one private root named
+`/workspace/.megaplan/m11-canaries/m11-workflow-${RECEIPT_ID}`. Copy the strict
+runtime-identity receipt produced for the deployed process into that root.
+Before launching any scenario, run:
+
+```text
+RUNTIME_PYTHON -P -m arnold_pipelines.megaplan.cloud.m11_workflow_canary admit
+  --root WORKFLOW_CANARY_ROOT
+  --config WORKFLOW_CANARY_ROOT/admission-config.json
+```
+
+The config supplies `job_id`, `deployment_target`, `deployment_id`,
+`expected_revision` (the full `FINAL_SHA`), and `runtime_receipt_path`.
+The strict runtime receipt's target-marker component must
+contain exactly the admitted `deployment_target` and `deployment_id`; an older
+receipt without those fields is unsupported and cannot be admitted. The
+runtime identity is derived from the receipt digest, never supplied separately
+by the caller.
+
+There is not yet an approved deployed runner and accepting verifier for this
+obligation. The current command can only record the exact admission and an
+immutable `pending` verdict:
+
+```text
+RUNTIME_PYTHON -P -m arnold_pipelines.megaplan.cloud.m11_workflow_canary verify
+  --root WORKFLOW_CANARY_ROOT
+```
+
+It exits nonzero. This is intentional. Arbitrary observations, evidence-kind
+labels, pass booleans, timestamps, and recomputed self-hashes cannot turn the
+pending record into release proof. The release umbrella remains blocked until
+a follow-up implementation provides one executable deployed runner and an
+independently re-derived, immutable, backend-neutral proof joining all of:
+
+1. a genuinely fresh plan through accepted terminal completion;
+2. a durable suspension followed by a distinct resume and accepted terminal
+   completion;
+3. at least three observed gate iterations before accepted terminal
+   completion;
+4. the tiebreaker path, including its decision, before accepted terminal
+   completion.
+
+That implementation must prove exact journal/manifest/run identity; committed
+acceptance snapshot and verdict identity; backend-neutral WBC start, resume,
+and terminal gates; suspension checkpoint/cursor and distinct reentry; three
+real authored gate iterations; and the declared tiebreaker decision route.
+The stores and verdict must be frozen before independent evaluation. Until
+then `deployed_proof_status` remains `pending`, and conformance deliberately
+rejects every `verified` claim.
+
 ## 8. Final receipts
 
 After the last successful cycle, hash every public and private artifact, then
 write a redacted manifest containing the final commit, annotated tag, candidate
 image ID, old image ID, selector-file hashes, supervisor receipt hash, launch
 seed hash, projection hashes, probe timestamps, Discord outcome hashes, and the
-three cycle verdicts.
+three cycle verdicts. It must also contain the deployed workflow-canary
+admission digest, semantic-verdict digest, and an explicit true gate
+for each of the four required workflow scenarios.
 
 ```bash
 ssh "$SSH_TARGET" bash -s -- "$RECEIPT_HOST" <<'REMOTE'
@@ -617,9 +677,10 @@ chmod -R go-rwx "$receipt"
 REMOTE
 ```
 
-A release is `done` only when the redacted manifest says every gate is true and
-its `final.sha256.sha256` is durable. A label may then project that fact; it
-must not create it.
+A release is `done` only when the redacted manifest says every gate is true,
+including all four deployed workflow-canary gates, and its
+`final.sha256.sha256` is durable. A label may then project that fact; it must
+not create it.
 
 ## 9. Rollback
 
