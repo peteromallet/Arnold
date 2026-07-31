@@ -587,6 +587,14 @@ def apply_transition(
 
     deltas = _extract_state_deltas(binding_result)
     if not deltas:
+        committed_artifacts = binding_result.artifacts
+        commit_artifacts = getattr(binding, "commit_artifacts", None)
+        if callable(commit_artifacts):
+            committed_artifacts = commit_artifacts(
+                run_state.raw_state,
+                transition,
+                binding_result.artifacts,
+            )
         events = tuple(binding_result.events) + (
             _event_payload(
                 "STATE_TRANSITION",
@@ -599,7 +607,7 @@ def apply_transition(
             accepted=True,
             mutated=False,
             reason=binding_result.reason,
-            artifacts=binding_result.artifacts,
+            artifacts=committed_artifacts,
             state_deltas=binding_result.state_deltas,
             events=events,
         )
@@ -669,6 +677,14 @@ def apply_transition(
         )
 
     next_state = applied_state if applied_state is not None else persisted
+    committed_artifacts = binding_result.artifacts
+    commit_artifacts = getattr(binding, "commit_artifacts", None)
+    if callable(commit_artifacts):
+        committed_artifacts = commit_artifacts(
+            next_state,
+            transition,
+            binding_result.artifacts,
+        )
     if (
         transition.op == "override"
         and isinstance(transition.target_id, str)
@@ -731,7 +747,7 @@ def apply_transition(
         accepted=True,
         mutated=True,
         reason=binding_result.reason,
-        artifacts=binding_result.artifacts,
+        artifacts=committed_artifacts,
         state_deltas=binding_result.state_deltas,
         events=events,
     )
