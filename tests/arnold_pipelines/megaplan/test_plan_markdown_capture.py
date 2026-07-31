@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan.model_seam import _normalize_plan_capture_payload
@@ -127,6 +128,29 @@ def test_normalize_plan_capture_flattens_grouped_changed_surfaces_without_notes(
     ]
 
 
+def test_normalize_plan_capture_materializes_omitted_test_hints() -> None:
+    normalized = _normalize_plan_capture_payload(
+        {
+            "plan": "# Plan\n\n## Overview\nWork.\n\n## Step 1: Patch\nEdit.\n\n## Validation Order\n1. Validate.\n",
+            "questions": [],
+            "success_criteria": [],
+            "assumptions": [],
+        }
+    )
+
+    assert normalized["changed_surfaces"] == []
+    assert normalized["test_blast_radius"] == {
+        "strategy": "none",
+        "selectors": [],
+        "changed_surfaces": [],
+        "full_suite_fallback": True,
+        "rationale": (
+            "The model omitted optional test-selection hints; the harness must "
+            "derive the authoritative repository floor."
+        ),
+    }
+
+
 def test_parse_agent_output_prefers_plan_markdown_over_embedded_json(
     tmp_path: Path,
 ) -> None:
@@ -146,3 +170,28 @@ def test_parse_agent_output_prefers_plan_markdown_over_embedded_json(
     assert payload["test_blast_radius"]["selectors"][0]["value"] == (
         "tests/test_edit_narrative.py"
     )
+
+
+def test_parse_agent_output_accepts_omitted_optional_test_hints(
+    tmp_path: Path,
+) -> None:
+    response = {
+        "plan": "# Plan\n\n## Overview\nWork.\n\n## Step 1: Patch\nEdit.\n\n## Validation Order\n1. Validate.\n",
+        "questions": [],
+        "success_criteria": [],
+        "assumptions": [],
+    }
+
+    payload, _raw_output = parse_agent_output(
+        object(),
+        {"final_response": json.dumps(response), "messages": []},
+        output_path=tmp_path / "plan_output.json",
+        schema=SCHEMAS["plan.json"],
+        step="plan",
+        project_dir=tmp_path,
+        plan_dir=tmp_path,
+    )
+
+    assert payload["changed_surfaces"] == []
+    assert payload["test_blast_radius"]["strategy"] == "none"
+    assert payload["test_blast_radius"]["full_suite_fallback"] is True
