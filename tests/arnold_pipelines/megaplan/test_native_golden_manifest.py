@@ -10,6 +10,7 @@ surface for M5 substrate proof.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -17,7 +18,6 @@ import pytest
 
 from arnold.conformance.workflow_manifest_runtime import GoldenRegressionRule
 from tests.arnold_pipelines.megaplan.fixtures.golden_artifacts import (
-    ARTIFACT_PATH_NAMES,
     load_all_artifact_path_fixtures,
     load_artifact_path_fixture,
 )
@@ -160,17 +160,16 @@ class TestCanonicalImportsAndBuilders:
                 f"import failed: {exc}"
             )
 
-    @pytest.mark.parametrize("runner", _all_runners.__func__())  # type: ignore[attr-defined]
+    @pytest.mark.parametrize(
+        "runner",
+        [
+            runner
+            for runner in _all_runners.__func__()  # type: ignore[attr-defined]
+            if runner["builder"] != "run_native_pipeline"
+        ],
+    )
     def test_builder_produces_native_program(self, runner: dict) -> None:
-        """Each builder function returns a pipeline with a non-null native_program.
-
-        The D12 meta-runner (``run_native_pipeline``) is excluded — it is not a
-        pipeline builder but a runtime entry point declared for trace contract
-        documentation.
-        """
-        if runner["builder"] == "run_native_pipeline":
-            pytest.skip("D12 meta-runner is a runtime entry point, not a pipeline builder")
-
+        """Each builder function returns a pipeline with a non-null native_program."""
         import_statement: str = runner["canonical_import"]
         builder_name: str = runner["builder"]
 
@@ -202,6 +201,31 @@ class TestCanonicalImportsAndBuilders:
             f"{runner['_scenario_id']}/{runner['subpipeline']}: "
             f"native_program is None"
         )
+
+    def test_runtime_entrypoint_contract(self) -> None:
+        """D12 names the real native runtime entry point, not a pipeline builder."""
+        runtime_runners = [
+            runner
+            for runner in self._all_runners()
+            if runner["builder"] == "run_native_pipeline"
+        ]
+        assert len(runtime_runners) == 1
+
+        for runner in runtime_runners:
+            local_ns: dict = {}
+            exec(runner["canonical_import"], local_ns)
+
+            runtime_entrypoint = local_ns[runner["builder"]]
+            signature = inspect.signature(runtime_entrypoint)
+
+            assert callable(runtime_entrypoint)
+            assert runtime_entrypoint.__module__ == "arnold.pipeline.native.runtime"
+            assert tuple(signature.parameters)[:2] == ("program", "artifact_root")
+            assert signature.parameters["program"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            assert signature.parameters["artifact_root"].kind is inspect.Parameter.KEYWORD_ONLY
+            assert signature.parameters["resume"].default is False
+            assert signature.parameters["trace_dir"].default is None
+            assert signature.return_annotation == "NativeExecutionResult"
 
     def test_runner_identifiers_are_well_formed(self) -> None:
         """Each runner entry has a non-empty subpipeline and test_function."""
@@ -711,7 +735,6 @@ class TestArtifactObligations:
                 )
                 if target.exists():
                     continue
-                parent = target.parent
                 # Allow planned paths under arnold_pipelines/megaplan/ that
                 # will be created during M3 handler extraction.
                 assert str(target).startswith(str(repo_root / "arnold_pipelines")), (

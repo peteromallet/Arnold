@@ -6,6 +6,7 @@ import ast
 import importlib
 import sys
 from ast import literal_eval
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -245,14 +246,21 @@ class TestAuthoredWorkflow:
         )
 
     def test_facade_delegates_to_workflows_planning(self) -> None:
+        assert pipeline_facade.__all__ == [
+            "build_and_compile_pipeline",
+            "build_pipeline",
+            "operation_registry",
+        ]
         assert pipeline_facade.build_pipeline is planning.build_pipeline
 
     def test_facade_compiled_output_matches_locked_topology(self) -> None:
         fixture = yaml.safe_load(FIXTURE_PATH.read_text(encoding="utf-8"))
         manifest = pipeline_facade.build_and_compile_pipeline()
+        repeated_manifest = pipeline_facade.build_and_compile_pipeline()
         assert manifest.id == fixture["manifest_id"]
         assert manifest.manifest_hash == fixture["manifest_hash"]
         assert manifest.topology_hash == fixture["topology_hash"]
+        assert repeated_manifest.to_json() == manifest.to_json()
 
     def test_lowerer_matches_phase1_normalized_shape(self) -> None:
         """The authored workflow lowerer must be identical to the facade."""
