@@ -74,7 +74,8 @@ def _load(path: str | Path | None) -> dict[str, Any]:
 def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[str, Any]:
     source = Path(path)
     try:
-        encoded = source.open("rb").read(max_bytes + 1)
+        with source.open("rb") as handle:
+            encoded = handle.read(max_bytes + 1)
     except OSError as exc:
         raise ValueError(f"cannot read {label}: {source}") from exc
     if len(encoded) > max_bytes:
@@ -99,7 +100,8 @@ def load_bounded_investigator_receipt(path: str | Path) -> dict[str, Any]:
 
     source = Path(path)
     try:
-        encoded = source.open("rb").read(MAX_RECEIPT_BYTES + 1)
+        with source.open("rb") as handle:
+            encoded = handle.read(MAX_RECEIPT_BYTES + 1)
     except OSError as exc:
         raise ValueError(f"cannot read investigator receipt: {source}") from exc
     if len(encoded) > MAX_RECEIPT_BYTES:
