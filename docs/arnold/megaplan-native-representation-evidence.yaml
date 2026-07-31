@@ -33,13 +33,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: docs/arnold/package-authoring-contract.md
-  carrier_sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
+  carrier_sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
   proof_artifact_path: docs/arnold/package-authoring-contract.md
-  proof_artifact_sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
+  proof_artifact_sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
   source_span:
     path: docs/arnold/package-authoring-contract.md
     start_line: 1
-    end_line: 318
+    end_line: 324
   policy_object: package_authoring_contract
   carrier_name: package_authoring_contract
 - row_id: critique-bare-skip
@@ -591,7 +591,7 @@ boundary_contract_records:
   covered_effects:
   - artifact
   contract_path: docs/arnold/package-authoring-contract.md
-  contract_sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
+  contract_sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
   policy_object: megaplan:artifact-contract
   supporting_fixture_id: finalize_artifacts
   observed_boundary_id: finalize_artifacts
@@ -4843,7 +4843,7 @@ compatibility_quarantine_checks:
   row_ids:
   - source-path-reconciliation
   proof_artifact_path: tests/arnold/conformance/test_megaplan_coupling_gate.py
-  proof_artifact_sha256: sha256:116af227e3317df46521805cb0ab8d5a49fc6f60d8de496862044862f43c0d71
+  proof_artifact_sha256: sha256:d1ea84b4946768532293f6420abad2df8ac419d7a3af3a4d85b2691da5a44653
   quarantined_scan_ids:
   - components-authority
   - manifest-route-bindings
@@ -4952,7 +4952,7 @@ approved_carriers:
   - timeout-deadline-policy
 - path: docs/arnold/package-authoring-contract.md
   carrier_name: package_authoring_contract
-  sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
+  sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
   rows:
   - plan-artifact-version-metadata
 fixture_hashes:
@@ -5076,7 +5076,7 @@ fixture_hashes:
   - golden-trace-regeneration
   - timeout-deadline-policy
 - path: docs/arnold/package-authoring-contract.md
-  sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
+  sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
   referenced_by_rows:
   - plan-artifact-version-metadata
 - path: docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md
