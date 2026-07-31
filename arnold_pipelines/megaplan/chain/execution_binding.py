@@ -114,6 +114,13 @@ def binding_policy(spec_path: Path) -> dict[str, Any]:
     }
 
 
+def runtime_binding_required(spec_path: Path) -> bool:
+    """Return the canonical decision for enforcing editable-runtime identity."""
+
+    policy = binding_policy(spec_path)
+    return bool(policy["required"] and policy["require_editable_runtime_match"])
+
+
 def _resolve_asset(path_value: str, *, spec_path: Path, project_root: Path) -> Path:
     value = Path(path_value).expanduser()
     if value.is_absolute():
@@ -920,8 +927,7 @@ def runtime_binding_report(
 ) -> dict[str, Any]:
     """Compare the mutable runtime tip without changing the spec/asset binding."""
 
-    policy = binding_policy(spec_path)
-    required = bool(policy["required"] and policy["require_editable_runtime_match"])
+    required = runtime_binding_required(spec_path)
     binding = getattr(state, "metadata", {}).get("execution_binding")
     binding = binding if isinstance(binding, Mapping) else {}
     runtime_binding = binding.get("runtime_binding")
@@ -1639,10 +1645,10 @@ def expected_worker_launch_values(
 ) -> dict[str, Any]:
     """Extract expected worker launch parameters from the persisted binding.
 
-    Returns a dict with *expected_source_ref*, *expected_installed_package_path*,
-    and *expected_runtime_revision* when a bound chain execution identity exists.
-    Returns empty strings for all fields when no binding is available (e.g. plan-
-    level dispatch without a chain spec).
+    Returns expected runtime fields plus the canonical *require_full_vector*
+    enforcement decision when a bound chain execution identity exists.  Returns
+    empty strings and ``False`` when no binding is available (e.g. plan-level
+    dispatch without a chain spec).
 
     Model and configured-spec are runtime dispatch choices not stored in the
     binding, so their expected values are always returned empty.
@@ -1656,18 +1662,16 @@ def expected_worker_launch_values(
         "expected_model": None,
         "expected_spec": "",
         "expected_chain_spec": "",
+        "require_full_vector": False,
     }
     if spec_path is None or root is None:
         return empty
+    required = runtime_binding_required(spec_path)
     try:
         from arnold_pipelines.megaplan.chain.spec import load_chain_state
 
         state = load_chain_state(spec_path, verify_execution_binding=False)
-        policy = binding_policy(spec_path)
-        if not bool(
-            policy.get("required")
-            and policy.get("require_editable_runtime_match")
-        ):
+        if not required:
             return {
                 **empty,
                 "expected_chain_spec": str(spec_path.resolve(strict=False)),
@@ -1692,6 +1696,7 @@ def expected_worker_launch_values(
         "expected_model": None,
         "expected_spec": "",
         "expected_chain_spec": str(spec_path.resolve(strict=False)),
+        "require_full_vector": True,
     }
     missing = [
         field
