@@ -785,6 +785,131 @@ def _run_repair_adoption_check(
                     evaluation_row["successor_claim"] = successor
                     task_record["generation"] = successor["generation"]
                     task_record["scope_recovery_claim_id"] = successor["claim_id"]
+                    from arnold_pipelines.megaplan.execute.merge import (
+                        _test_command_evidence,
+                    )
+                    from arnold_pipelines.megaplan.orchestration import (
+                        suite_runner as _scope_suite_runner,
+                    )
+
+                    narrow = task_record.get("narrow_tests")
+                    narrow = narrow if isinstance(narrow, Mapping) else {}
+                    allowed_selectors = {
+                        str(selector).strip().lstrip("./")
+                        for selector in narrow.get("selectors", [])
+                        if isinstance(selector, str) and selector.strip()
+                    }
+                    per_command_max = narrow.get(
+                        "per_command_max_seconds",
+                        narrow.get("max_seconds", 120),
+                    )
+                    total_max = narrow.get("total_max_seconds")
+                    max_runs = narrow.get("max_runs", 2)
+                    commands = list(successor["verification_commands"])
+                    admission_errors: list[str] = []
+                    total_declared = 0
+                    if isinstance(max_runs, int) and len(commands) > max_runs:
+                        admission_errors.append("verification command count exceeds max_runs")
+                    for command in commands:
+                        parsed = _test_command_evidence(command)
+                        if parsed is None:
+                            admission_errors.append(f"not a bounded test command: {command!r}")
+                            continue
+                        timeout_seconds, selectors = parsed
+                        if timeout_seconds is None:
+                            admission_errors.append(f"missing timeout wrapper: {command!r}")
+                        else:
+                            total_declared += timeout_seconds
+                            if (
+                                isinstance(per_command_max, int)
+                                and timeout_seconds > per_command_max
+                            ):
+                                admission_errors.append(
+                                    f"command timeout {timeout_seconds}s exceeds "
+                                    f"per-command maximum {per_command_max}s"
+                                )
+                        for selector in selectors:
+                            selector_base = selector.split("::", 1)[0]
+                            if not any(
+                                selector == allowed
+                                or selector_base == allowed.split("::", 1)[0]
+                                for allowed in allowed_selectors
+                            ):
+                                admission_errors.append(
+                                    f"selector {selector!r} is outside admitted narrow tests"
+                                )
+                    if isinstance(total_max, int) and total_declared > total_max:
+                        admission_errors.append(
+                            f"declared timeout total {total_declared}s exceeds "
+                            f"total maximum {total_max}s"
+                        )
+                    verification_results = []
+                    if not admission_errors:
+                        try:
+                            _scope_state = read_json(Path(plan_dir) / "state.json")
+                        except (OSError, ValueError, TypeError):
+                            _scope_state = {}
+                        _scope_config = (
+                            _scope_state.get("config")
+                            if isinstance(_scope_state, Mapping)
+                            else {}
+                        )
+                        _scope_project_dir = Path(
+                            str(
+                                _scope_config.get("project_dir")
+                                if isinstance(_scope_config, Mapping)
+                                else Path.cwd()
+                            )
+                        )
+                        for command in commands:
+                            parsed = _test_command_evidence(command)
+                            timeout_seconds = parsed[0] if parsed is not None else None
+                            result = _scope_suite_runner.run_suite(
+                                _scope_project_dir,
+                                {
+                                    "project_dir": str(_scope_project_dir),
+                                    "plan_dir": str(plan_dir),
+                                    "test_command": command,
+                                },
+                                phase="scope_recovery_verification",
+                                deadline_seconds=float(timeout_seconds or per_command_max or 120),
+                                idle_seconds=None,
+                            )
+                            verification_results.append(
+                                {
+                                    "command": result.command,
+                                    "exit_code": result.exit_code,
+                                    "status": result.status,
+                                    "code_hash": result.code_hash,
+                                    "timeout_reason": result.timeout_reason,
+                                }
+                            )
+                    verification_passed = (
+                        not admission_errors
+                        and bool(verification_results)
+                        and all(row["exit_code"] == 0 for row in verification_results)
+                    )
+                    verification_receipt = {
+                        "schema": "megaplan.scope_recovery_verification",
+                        "schema_version": 1,
+                        "claim_id": successor["claim_id"],
+                        "admission_errors": admission_errors,
+                        "results": verification_results,
+                        "passed": verification_passed,
+                    }
+                    verification_dir = Path(plan_dir) / "scope_recovery_verification"
+                    verification_dir.mkdir(parents=True, exist_ok=True)
+                    atomic_write_json(
+                        verification_dir
+                        / f"{str(successor['claim_id']).split(':')[-1]}.json",
+                        verification_receipt,
+                    )
+                    evaluation_row["scope_recovery_verification"] = verification_receipt
+                    if not verification_passed:
+                        evaluation_row["outcome"] = "quarantine"
+                        summary["quarantined_count"] += 1
+                        summary["evaluated"].append(evaluation_row)
+                        continue
                 summary["adopted_count"] += 1
                 if enforcement:
                     summary["skip_replay"] = True
