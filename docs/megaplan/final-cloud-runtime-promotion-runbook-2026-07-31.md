@@ -49,6 +49,10 @@ export SIMPLE_FIXER_DROPIN="${SIMPLE_FIXER_DROPIN:-/etc/systemd/system/megaplan-
 export RECEIPT_ID="$(date -u +%Y%m%dT%H%M%SZ)-${FINAL_SHA:0:12}"
 export RECEIPT_HOST="${WORKSPACE_HOST}/.megaplan/release-receipts/${RECEIPT_ID}"
 export RECEIPT_CONTAINER="/workspace/.megaplan/release-receipts/${RECEIPT_ID}"
+export RELEASE_EVIDENCE_DOCUMENT="${RECEIPT_CONTAINER}/public/post-m11-release-evidence.candidate-ready.json"
+export RELEASE_EVIDENCE_SHA256="${RELEASE_EVIDENCE_DOCUMENT}.sha256"
+export RUNTIME_IDENTITY="${RECEIPT_CONTAINER}/private/candidate-runtime-identity.json"
+export RUNTIME_PROVENANCE_RECEIPT="${RECEIPT_CONTAINER}/private/candidate-runtime-provenance.json"
 
 case "$FINAL_SHA" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
@@ -191,7 +195,12 @@ python -m arnold_pipelines.megaplan cloud exec \
    VIRTUAL_ENV='${RUNTIME_VENV}' PATH='${RUNTIME_VENV}/bin':\"\$PATH\" \
      '${RUNTIME_PYTHON}' -m uv sync --all-extras --frozen --active
    '${RUNTIME_PYTHON}' -P -c 'import pathlib,arnold,arnold_pipelines; root=pathlib.Path(\"${RUNTIME_SRC}\").resolve(); assert pathlib.Path(arnold.__file__).resolve().is_relative_to(root); assert pathlib.Path(arnold_pipelines.__file__).resolve().is_relative_to(root)'
-   PYTHONSAFEPATH=1 PYTHONPATH='${RUNTIME_SRC}' '${RUNTIME_PYTHON}' -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root '${RUNTIME_SRC}' --expected-revision '${FINAL_SHA}'
+   PYTHONSAFEPATH=1 PYTHONPATH='${RUNTIME_SRC}' '${RUNTIME_PYTHON}' -P -m arnold_pipelines.megaplan.cloud.runtime_provenance \
+     --expected-root '${RUNTIME_SRC}' --expected-revision '${FINAL_SHA}' \
+     --emit-receipt --identity-out '${RUNTIME_IDENTITY}' \
+     --receipt-out '${RUNTIME_PROVENANCE_RECEIPT}'
+   test -s '${RUNTIME_IDENTITY}'
+   test -s '${RUNTIME_PROVENANCE_RECEIPT}'
    git -C '${RUNTIME_SRC}' status --porcelain | test ! -s /dev/stdin"
 ```
 
@@ -290,11 +299,113 @@ python -P -m arnold_pipelines.megaplan.cloud.runtime_attestation build
   --expected-root RUNTIME_SRC --expected-revision FINAL_SHA
   --supervisor-receipt SUPERVISOR_RECEIPT --hot-env HOT_ENV
   --marker AUTHORITATIVE_MARKER --chain-spec AUTHORITATIVE_CHAIN_SPEC
-  --seed-doc FROZEN_SEED_DOCUMENT --output RUNTIME_LAUNCH_SEED
+  --seed-doc RELEASE_EVIDENCE_DOCUMENT --output RUNTIME_LAUNCH_SEED
 ```
 
 Use the actual authoritative marker/spec paths from the terminal projection;
 never guess them or bind a stale historical marker.
+
+### 5.1 Freeze and validate the existing release-evidence authority
+
+Resolve these two paths from the current terminal projection before continuing:
+
+```bash
+export AUTHORITATIVE_MARKER="${AUTHORITATIVE_MARKER:?current marker path in container}"
+export AUTHORITATIVE_CHAIN_SPEC="${AUTHORITATIVE_CHAIN_SPEC:?current chain spec path in container}"
+```
+
+`RELEASE_EVIDENCE_DOCUMENT` is not an arbitrary seed manifest and is not the
+checked-out `in_progress` template. It is the durable receipt-directory
+snapshot of
+`docs/megaplan/post-m11-release-evidence-20260731.json`, after the final proof
+aggregation has bound the exact `FINAL_SHA`, its tree, `RUNTIME_IDENTITY`, the
+no-debt inventory, and every pre-deploy residual receipt. The checked-in
+record cannot contain the identity of a runtime built from its own eventual
+commit without a content-identity cycle, so the immutable candidate snapshot
+lives beside the release receipts and retains the same schema and authority.
+
+The snapshot must have `record_status: candidate_ready`. That status is a
+hard validator state: all pre-deploy residuals are complete and immutably
+receipted; only runtime-selector promotion, production canary, the acceptance
+tag, and Critique rebind/launch may remain pending. Cleanup approval is outside
+release completeness. `in_progress`, a hand-edited `done` label, a hash without
+a green validation, or an otherwise valid JSON document is not seed authority.
+
+Run this exact validation with the candidate code before any chain, marker, or
+selector mutation:
+
+```bash
+python -m arnold_pipelines.megaplan cloud exec \
+  --cloud-yaml "$CLOUD_CONFIG" \
+  "set -euo pipefail
+   test -s '${RELEASE_EVIDENCE_DOCUMENT}'
+   test -s '${RELEASE_EVIDENCE_SHA256}'
+   jq -e --arg sha '${FINAL_SHA}' \
+     '.schema == \"arnold.post_m11_release_evidence.v1\"
+      and .record_status == \"candidate_ready\"
+      and .authority.evidence_cut_commit == \$sha' \
+     '${RELEASE_EVIDENCE_DOCUMENT}' >/dev/null
+   test \"\$(git -C '${RUNTIME_SRC}' rev-parse HEAD^{tree})\" = \
+     \"\$(jq -r '.authority.evidence_cut_tree' '${RELEASE_EVIDENCE_DOCUMENT}')\"
+   PYTHONSAFEPATH=1 PYTHONPATH='${RUNTIME_SRC}' '${RUNTIME_PYTHON}' -P \
+     '${RUNTIME_SRC}/scripts/validate_post_m11_release_evidence.py' \
+     '${RELEASE_EVIDENCE_DOCUMENT}' --print-sha256 \
+     >'${RECEIPT_CONTAINER}/public/candidate-ready.validation.sha256'
+   test \"\$(cut -d' ' -f1 '${RELEASE_EVIDENCE_SHA256}')\" = \
+     \"\$(cat '${RECEIPT_CONTAINER}/public/candidate-ready.validation.sha256')\""
+```
+
+### 5.2 Rebind the terminal chain and marker before seed construction
+
+The launch-seed builder correctly rejects old marker or chain runtime
+identities. Rebind both durable authorities before rewriting selectors. First
+obtain `PREVIOUS_RUNTIME_SHA256` from the pre-mutation chain/marker comparison;
+the two observed values must be identical. The completed Custody chain uses
+the explicit terminal guards shown below. `runtime-rebind` additionally
+requires cursor index equal to milestone count, no active plan, canonical
+`last_state: done`, and the exact ordered set of `done` milestone records.
+
+```bash
+export PREVIOUS_RUNTIME_SHA256="${PREVIOUS_RUNTIME_SHA256:?matching old chain/marker runtime digest}"
+
+python -m arnold_pipelines.megaplan cloud exec \
+  --cloud-yaml "$CLOUD_CONFIG" \
+  "set -euo pipefail
+   candidate_runtime=\"\$(jq -r '.content_sha256' '${RUNTIME_IDENTITY}')\"
+   PYTHONSAFEPATH=1 PYTHONPATH='${RUNTIME_SRC}' '${RUNTIME_PYTHON}' -P -m \
+     arnold_pipelines.megaplan chain runtime-rebind \
+     --spec '${AUTHORITATIVE_CHAIN_SPEC}' \
+     --from-runtime-sha256 '${PREVIOUS_RUNTIME_SHA256}' \
+     --to-runtime-sha256 \"\$candidate_runtime\" \
+     --expected-current-milestone @terminal \
+     --expected-current-plan @none \
+     --direction cutover \
+     --reason 'post-M11 content-addressed production promotion' \
+     --actor release-operator
+
+   marker_sha=\"\$(sha256sum '${AUTHORITATIVE_MARKER}' | cut -d' ' -f1)\"
+   jq -er '.relaunch_command // .launch_command // empty' \
+     '${AUTHORITATIVE_MARKER}' \
+     >'${RECEIPT_CONTAINER}/private/relaunch-command.txt'
+   PYTHONSAFEPATH=1 PYTHONPATH='${RUNTIME_SRC}' '${RUNTIME_PYTHON}' -P -m \
+     arnold_pipelines.megaplan.cloud.runtime_cutover \
+     --marker '${AUTHORITATIVE_MARKER}' \
+     --expect-marker-sha256 \"\$marker_sha\" \
+     --from-runtime-sha256 '${PREVIOUS_RUNTIME_SHA256}' \
+     --runtime-identity '${RUNTIME_IDENTITY}' \
+     --relaunch-command-file '${RECEIPT_CONTAINER}/private/relaunch-command.txt' \
+     --direction cutover \
+     --reason 'post-M11 content-addressed production promotion' \
+     --actor release-operator \
+     >'${RECEIPT_CONTAINER}/public/marker-runtime-rebind.json'"
+```
+
+Both operations are compare-and-swap guarded and preserve operational cursor
+fields. If the marker rebind fails after the chain rebind, stop before selector
+mutation or process restart; the launch-seed build remains fail-closed until
+the marker is retried or the chain is rolled back through `runtime-rebind`
+using the independently receipted old runtime. Never repair the mismatch by
+editing either JSON file.
 
 Acquire one host cutover lock. Write all three replacements to temporary files,
 `fsync` and rename them, then reload systemd. If any write fails, restore all
@@ -332,9 +443,6 @@ input paths from the current canonical projection; each must exist inside the
 container and belong to the intended current chain.
 
 ```bash
-export AUTHORITATIVE_MARKER="${AUTHORITATIVE_MARKER:?current marker path in container}"
-export AUTHORITATIVE_CHAIN_SPEC="${AUTHORITATIVE_CHAIN_SPEC:?current chain spec path in container}"
-export FROZEN_SEED_DOCUMENT="${FROZEN_SEED_DOCUMENT:?frozen command/seed manifest path in container}"
 export SUPERVISOR_RECEIPT="${RUNTIME_VENV}/supervisor/last-prepare.json"
 export RUNTIME_LAUNCH_SEED="${RUNTIME_VENV}/runtime-launch-seed.json"
 
@@ -343,7 +451,7 @@ ssh "$SSH_TARGET" bash -s -- \
   "$HOT_ENV" "$RESIDENT_ENV" "$SIMPLE_FIXER_DROPIN" \
   "$RUNTIME_SRC" "$RUNTIME_VENV" "$RUNTIME_PYTHON" "$FINAL_SHA" \
   "$AUTHORITATIVE_MARKER" "$AUTHORITATIVE_CHAIN_SPEC" \
-  "$FROZEN_SEED_DOCUMENT" "$SUPERVISOR_RECEIPT" \
+  "$RELEASE_EVIDENCE_DOCUMENT" "$SUPERVISOR_RECEIPT" \
   "$RUNTIME_LAUNCH_SEED" <<'REMOTE'
 set -euo pipefail
 container="$1"; receipt_host="$2"; receipt_container="$3"
