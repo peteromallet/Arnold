@@ -8,12 +8,6 @@ import json
 
 
 def _target_text(value: str) -> str:
-    target = value.strip()
-    if not target:
-        raise argparse.ArgumentTypeError("--target must contain epic or session text")
-    if "\x00" in target:
-        raise argparse.ArgumentTypeError("--target must not contain NUL")
-    return target
     if not value.strip():
         raise argparse.ArgumentTypeError("--target must contain epic or session text")
     if "\x00" in value:

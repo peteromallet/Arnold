@@ -81,10 +81,31 @@ def test_brief_epic_scaffolds_chain_and_milestones(tmp_path: Path) -> None:
     assert (epic_dir / "briefs" / "m2-api.md").exists()
     chain = yaml.safe_load((epic_dir / "chain.yaml").read_text(encoding="utf-8"))
     assert chain["base_branch"] == "main"
+    assert chain["anchors"] == {"north_star": "NORTHSTAR.md"}
     assert chain["milestones"] == [
-        {"label": "m1-schema", "idea": ".megaplan/initiatives/artifact-store/briefs/m1-schema.md"},
-        {"label": "m2-api", "idea": ".megaplan/initiatives/artifact-store/briefs/m2-api.md"},
+        {
+            "label": "m1-schema",
+            "idea": ".megaplan/initiatives/artifact-store/briefs/m1-schema.md",
+            "branch": "megaplan/artifact-store/m1-schema",
+            "profile": "partnered-5",
+            "vendor": "codex",
+            "robustness": "full",
+            "depth": "high",
+            "with_prep": True,
+        },
+        {
+            "label": "m2-api",
+            "idea": ".megaplan/initiatives/artifact-store/briefs/m2-api.md",
+            "branch": "megaplan/artifact-store/m2-api",
+            "profile": "partnered-5",
+            "vendor": "codex",
+            "robustness": "full",
+            "depth": "high",
+            "with_prep": True,
+        },
     ]
+    assert chain["merge_policy"] == "auto"
+    assert chain["driver"]["auto_approve"] is True
 
 
 def test_brief_list_show_and_search_use_common_artifact_shape(tmp_path: Path) -> None:
@@ -160,17 +181,22 @@ def test_initiative_new_rejects_existing_and_searches_description(tmp_path: Path
     assert fuzzy_payload["initiatives"][0]["matched_terms"] == ["clod", "agnts"]
 
 
-def test_initiative_new_requires_description(tmp_path: Path) -> None:
+def test_initiative_new_defaults_description_and_rejects_blank(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     missing = _run_megaplan(["initiative", "new", "No Description"], cwd=tmp_path)
-    assert missing.returncode != 0
-    assert "--description" in missing.stderr
+    assert missing.returncode == 0, missing.stderr
+    missing_payload = json.loads(missing.stdout)
+    expected = (
+        "TODO_INITIATIVE_DESCRIPTION: Describe the outcome for No Description, "
+        "why it matters, and the boundary of the work."
+    )
+    assert missing_payload["initiative"]["description"] == expected
+    readme = tmp_path / ".megaplan" / "initiatives" / "no-description" / "README.md"
+    assert expected in readme.read_text(encoding="utf-8")
 
     blank = _run_megaplan(
         ["initiative", "new", "Blank Description", "--description", "   "],
         cwd=tmp_path,
     )
     assert blank.returncode != 0
-    payload = json.loads(blank.stdout)
-    assert payload["error"] == "invalid_args"
-    assert "description must not be empty" in payload["message"]
+    assert "description must not be empty" in blank.stderr

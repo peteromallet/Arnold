@@ -996,6 +996,8 @@ def _run_managed_command_locked(
         _write_result(manifest)
         return int(manifest["returncode"])
     finally:
+        if child is not None and child.stdout is not None:
+            child.stdout.close()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
 
