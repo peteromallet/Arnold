@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+import arnold_pipelines.megaplan.handlers.strategy as strategy_handler
 from arnold_pipelines.megaplan.cli import _resolve_project_root, build_parser
 from arnold_pipelines.megaplan.handlers.strategy import (
     handle_strategy,
@@ -33,6 +34,7 @@ from arnold_pipelines.megaplan.strategy import (
     StrategyFileState,
     load_strategy_for_write,
     make_roadmap_entry,
+    strategy_file_path,
     write_strategy,
 )
 from arnold_pipelines.megaplan.strategy.contract import (
@@ -41,6 +43,7 @@ from arnold_pipelines.megaplan.strategy.contract import (
     StrategySection,
     SourceLocation,
 )
+from arnold_pipelines.megaplan.strategy.versions import inspect_strategy_file
 from arnold_pipelines.megaplan.types import CliError, StepResponse
 
 
@@ -429,10 +432,35 @@ class TestStrategyCLIInit:
         assert result["layout_policy_version"] == "megaplan-initiatives-v1"
         assert strategy_file.is_file()
         content = strategy_file.read_text()
+        assert content.startswith("---\n")
         assert "schema_version: megaplan-strategy-v1" in content
         assert "## Now" in content
         assert "## Next" in content
         assert "## Later" in content
+        assert inspect_strategy_file(repo_root) == "current"
+
+    def test_init_rejects_invalid_packaged_template(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """strategy init never materializes a malformed authority document."""
+        repo_root = _setup_empty_repo(tmp_path)
+        malformed_template = tmp_path / "TEMPLATE.md"
+        malformed_template.write_text(
+            "historical banner before frontmatter\n"
+            "---\n"
+            "schema_version: megaplan-strategy-v1\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            strategy_handler, "_TEMPLATE_PATH", malformed_template
+        )
+
+        with pytest.raises(CliError) as exc_info:
+            handle_strategy_init(repo_root, _ns(force=False))
+
+        assert exc_info.value.code == "strategy_template_invalid"
+        assert not strategy_file_path(repo_root).exists()
 
     def test_init_detects_existing_file(self, tmp_path: Path) -> None:
         """strategy init raises strategy_exists when file already exists."""
@@ -1182,6 +1210,7 @@ class TestStrategyCLIErrorKinds:
             "strategy_validation_failed",
             "strategy_exists",
             "strategy_template_missing",
+            "strategy_template_invalid",
             "invalid_args",
         }
         # All kinds are plain strings without special characters
