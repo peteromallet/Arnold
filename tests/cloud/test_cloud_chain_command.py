@@ -1683,6 +1683,11 @@ def test_cloud_chains_command_includes_should_run_and_watchdog_repair_state() ->
     assert '"watchdog_repairing"' in script
     assert '"should_be_running"' in script
     assert "def _should_be_running(payload):" in script
+    assert 'if payload.get("should_run") is False:' in script
+    assert (
+        'isinstance(operator_pause, dict) and operator_pause.get("active") is True'
+        in script
+    )
     assert "should_be_running_count" in script
     assert "watchdog_repairing_count" in script
 
