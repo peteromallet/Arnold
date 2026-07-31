@@ -12,7 +12,7 @@ tags:
 - follow-up
 codebase_id: null
 created_at: '2026-07-31T08:12:26.706517+00:00'
-last_edited_at: '2026-07-31T08:12:36.899493+00:00'
+last_edited_at: '2026-07-31T08:34:00+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -38,3 +38,14 @@ After the narrow custody-release canary is proven on its actual supported SQLite
 - preserve the narrow release canary as a consumer fixture during migration.
 
 This is not the immediate release blocker: ticket 01KYVJ7A47TMH4BRGEV9JFTK10 owns the concrete current-backend canary. Acceptance here is backend parity, two independent consumers, cross-stitch/restore/replay negatives, and no competing lifecycle writer.
+
+Post-M11 integration observation (`d4c245d1cc4e2b3fc769473d4d57ace1563262c4`):
+clarification resume now proves a distinct deterministic
+`reentry_invocation_id` through the WBC event payload, source cursor,
+transition artifacts, and state override join, but the shared
+`AttemptIdentity` schema still has no first-class re-entry field. Treat that
+payload-level lineage as a compatibility bridge, not the target abstraction.
+This ticket is complete only when re-entry is part of the backend-neutral
+identity schema, persisted and queried identically by SQLite and PostgreSQL,
+and negative fixtures reject payload/identity disagreement, cross-attempt
+stitching, and replay under a stale checkpoint cursor.
