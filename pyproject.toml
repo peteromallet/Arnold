@@ -82,6 +82,7 @@ exclude = [
     "docs/archive/**",
     "tests/archive/**",
     "tests/arnold/pipelines/megaplan/**",
+    "node_modules/**",
     ".megaplan/**",
 ]
 
