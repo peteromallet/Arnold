@@ -19,7 +19,7 @@ admitted semantic subject. Captured M10/M11 history demonstrates both failures.
 The ticket was prepared as the five-milestone initiative in this directory,
 but that chain must never launch independently. Its requirements are now
 redistributed along the exact Native Parity and Platformization critical path
-recorded in `../SUPERSESSION_CROSSWALK.yaml`.
+recorded in `../evidence/SUPERSESSION_CROSSWALK.yaml`.
 
 The copied design proposal and M1-M5 briefs remain byte-preserved historical
 requirement sources. Completion is based on the active owners' accepted,

@@ -11,7 +11,7 @@ for edited components while preserving production isolation.
 
 ## Normative contract and inputs
 
-[`../PLATFORM_CONTRACT.md`](../PLATFORM_CONTRACT.md) is normative. Consume the
+[`../decisions/PLATFORM_CONTRACT.md`](../decisions/PLATFORM_CONTRACT.md) is normative. Consume the
 Native Parity completion and handoff evidence, S1's classification and candidate
 contracts, and the S2A/S2B/S3 content-addressed implementation/proof handoffs.
 Continue to run the inherited Native Parity golden and DX corpora; extraction

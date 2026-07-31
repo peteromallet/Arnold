@@ -5,7 +5,7 @@
 This directory is a non-launchable normative design and traceability source.
 The former M1-M5 epic has been redistributed into Native Parity,
 Platformization, and the bounded-projection Custody handoff. The exhaustive
-mapping is `SUPERSESSION_CROSSWALK.yaml`.
+mapping is `evidence/SUPERSESSION_CROSSWALK.yaml`.
 
 ## Accepted destination and sequence
 
