@@ -96,6 +96,28 @@ def test_normalize_plan_capture_payload_extracts_markdown_metadata() -> None:
     assert normalized["test_blast_radius"]["strategy"] == "scoped"
 
 
+def test_normalize_plan_capture_flattens_grouped_changed_surfaces_without_notes() -> None:
+    normalized = _normalize_plan_capture_payload(
+        {
+            "plan": PLAN_MARKDOWN,
+            "questions": [],
+            "success_criteria": [],
+            "assumptions": [],
+            "changed_surfaces": {
+                "created_source": ["arnold/critique_ledger/store.py"],
+                "created_tests": ["tests/arnold/critique_ledger/test_store.py"],
+                "modified": ["arnold/critique_ledger/store.py"],
+                "note": "This prose is not a path.",
+            },
+        }
+    )
+
+    assert normalized["changed_surfaces"] == [
+        "arnold/critique_ledger/store.py",
+        "tests/arnold/critique_ledger/test_store.py",
+    ]
+
+
 def test_parse_agent_output_prefers_plan_markdown_over_embedded_json(
     tmp_path: Path,
 ) -> None:

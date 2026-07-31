@@ -47,15 +47,19 @@ def test_plan_and_revise_codex_output_schemas_keep_test_blast_radius_declared() 
         assert "test_blast_radius" in schema["properties"]
         blast_radius = schema["properties"]["test_blast_radius"]
         assert blast_radius["type"] == "object"
-        assert set(blast_radius["properties"]) >= {
+        assert set(blast_radius["properties"]) == {
             "strategy",
-            "confidence",
             "selectors",
             "changed_surfaces",
-            "always_run",
             "full_suite_fallback",
             "rationale",
-            "import_graph",
+        }
+        assert set(blast_radius["required"]) == {
+            "strategy",
+            "selectors",
+            "changed_surfaces",
+            "full_suite_fallback",
+            "rationale",
         }
         _assert_required_keys_have_properties(schema)
 
