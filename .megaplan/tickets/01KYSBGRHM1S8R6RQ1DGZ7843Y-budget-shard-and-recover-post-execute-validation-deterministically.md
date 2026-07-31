@@ -332,3 +332,30 @@ proof. The long-term reusable owners are narrower: Platformization owns
 product-neutral retirement/tombstone admission and hermetic
 conformance-generator contracts; the release process retains ownership of this
 concrete M11 wheel and semantic deployed-canary proof.
+
+## 2026-07-31 shard 016 live-canary disposition
+
+The release selected the second honest alternative above. Commit
+`5f30fb0c0f` deletes the four credential-gated placeholders, admits the exact
+deployment target/id, full revision, and strict runtime receipt, and can emit
+only an immutable non-passing `pending` verdict. Conformance categorically
+rejects `verified` under this pending schema, including a fully shaped,
+correctly self-hashed forged verdict. Focused validation passed 53 tests with
+Ruff, evidence regeneration, conformance validation, and diff checks green.
+
+An earlier nonlanded semantic-reader attempt, `667b76115f`, is also rejected
+evidence. Independent review proved that it could count arbitrary route events
+as gate iterations, modeled resume unlike the real runner, used noncanonical
+tiebreaker kinds, allowed cross-stitching unrelated journal/WBC/acceptance
+records, accepted caller-selected runtime identity and future timestamps, and
+let a forged standalone verdict satisfy conformance. It must never be merged
+or cited as deployed proof.
+
+The deliberate deferral now has explicit owner
+`01KYVJ7A47TMH4BRGEV9JFTK10`. That ticket requires the backend-neutral runner,
+non-stitchable journal/WBC/acceptance/runtime joins, real suspension/reentry,
+real gate iterations, canonical tiebreaker routing, frozen stores, independent
+re-derivation, adversarial tests, and exact cloud commands. This release
+umbrella remains open until that ticket produces the four real deployed
+proofs; the pending verdict makes the missing work visible but does not close
+it.
