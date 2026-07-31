@@ -2,7 +2,7 @@
   "schema": "arnold.post_m11_release_evidence.v1",
   "record_id": "post-m11-consolidation-20260731",
   "record_status": "in_progress",
-  "recorded_at_utc": "2026-07-31T04:35:57Z",
+  "recorded_at_utc": "2026-07-31T09:50:00Z",
   "authority": {
     "plan_path": "docs/megaplan/post-m11-loose-work-consolidation-release-plan-2026-07-29.md",
     "plan_publication_commit": "f1c0b7384752ee96ea74eaee0f6c8d5d06c301d4",
@@ -10,7 +10,8 @@
     "origin_base_commit": "96127731661b4aeec7e049b8a7b59170a9506b06",
     "evidence_cut_commit": "20644b23a7e041caad15684ddba07e703ca1c5af",
     "evidence_cut_tree": "3518bd92e7ef7a1af6883879c41c179d1ff46d9c",
-    "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b"
+    "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b",
+    "promotion_policy_path": "docs/megaplan/post-m11-direct-promotion-policy-override-20260731.md"
   },
   "checkpoints": [
     {
@@ -550,8 +551,13 @@
     {
       "id": "packaging-code-gate",
       "status": "complete",
-      "required_evidence": "All three packaging code blockers resolved, focused and expanded regressions green, wheel and sdist rebuilt, and fresh non-editable installed-artifact smoke checks green.",
-      "completion_evidence": "81a44fd930e60070cae39b11e7416ad2eb43b717, merged by 730fbf08c0a493c928ae234f0a6716098e3c672b; 17 + 110 + 4 tests passed; artifact hashes are recorded in packaging_artifacts."
+      "required_evidence": "Historical packaging implementation defects are fixed and guarded by focused packaging regressions.",
+      "completion_evidence": "Historical code-gate evidence only: 81a44fd930e60070cae39b11e7416ad2eb43b717 and the later source-distribution exclusion 501ce344c933e88f3e29a0aa319a86ba59f5ef86. No artifact listed in packaging_artifacts is final-release acceptance."
+    },
+    {
+      "id": "final-packaging-artifacts",
+      "status": "pending",
+      "required_evidence": "Build wheel and sdist from the exact final acceptance commit in a fresh isolated environment; verify artifact and RECORD hashes, candidate-source provenance, forbidden-content absence, non-editable installation, installed entrypoints and workflow/Megaplan smokes, repository-owned wheel tests, and clean source. Historical packaging_artifacts cannot satisfy this gate."
     },
     {
       "id": "cloud-image-build",
@@ -559,19 +565,29 @@
       "required_evidence": "Build the rendered cloud image against an available Docker daemon at the final release candidate and record its content-addressed image identity."
     },
     {
-      "id": "release-pr",
+      "id": "direct-main-promotion",
       "status": "pending",
-      "required_evidence": "Reviewed release PR for the consolidation branch; no direct push to main."
+      "required_evidence": "Execute the explicitly authorized ordinary non-force fast-forward compare-and-swap push of the exact validated candidate to GitHub main with pre-push origin/main equality and ancestry checks, post-push fetch plus ls-remote equality, and exact-head CI success. No PR, rebase, force, or force-with-lease is authorized."
     },
     {
-      "id": "main-merge-and-tag",
+      "id": "source-tag",
       "status": "pending",
-      "required_evidence": "Exact final main merge SHA and annotated release tag."
+      "required_evidence": "Create and verify the source tag on the exact promoted main commit. The source tag proves source identity only and is not acceptance."
     },
     {
       "id": "content-addressed-runtime",
       "status": "pending",
-      "required_evidence": "Runtime built and deployed from exact final main SHA with provenance receipt."
+      "required_evidence": "Build and stage an immutable runtime and image from the exact final main SHA, independently verify provenance, preserve an immutable rollback image tag, and pass the isolated read-only canary without mutating production selectors."
+    },
+    {
+      "id": "cutover-preflight",
+      "status": "pending",
+      "required_evidence": "Review a release-specific cloud configuration selecting final main; derive a candidate-ready external evidence snapshot from this canonical ledger outside immutable RUNTIME_SRC; identify that snapshot as the canonical frozen seed document; require its validator green predicate; resolve the exact authoritative marker, chain spec/state, old/new runtime digests, rollback vector, and guarded terminal-chain plus marker rebind commands before selector mutation."
+    },
+    {
+      "id": "runtime-selector-promotion",
+      "status": "pending",
+      "required_evidence": "Under the cutover lock, checkpoint then guard-rebind the exact terminal chain and marker to the independently receipted runtime, build and validate the launch seed from the canonical external snapshot, atomically update every selector/drop-in, deploy through the supported provider, and prove rollback restores the full prior vector."
     },
     {
       "id": "production-canary",
@@ -589,9 +605,9 @@
       "required_evidence": "Supported cloud-chain launch and durable status progression for the exact 2026-07-28 initiative."
     },
     {
-      "id": "cleanup-deletions",
+      "id": "acceptance-tag",
       "status": "pending",
-      "required_evidence": "Per-item user approval followed by exact branch, stash, worktree, and cloud-resource deletion receipts."
+      "required_evidence": "Only after deployment, rollback, health, and deployed-workflow-canary receipts pass, create the annotated acceptance tag on the same exact main commit and bind its annotation to the durable final acceptance receipt."
     }
   ]
 }

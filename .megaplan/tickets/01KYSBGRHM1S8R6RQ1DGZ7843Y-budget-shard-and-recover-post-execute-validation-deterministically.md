@@ -21,7 +21,7 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T09:45:00+00:00'
+last_edited_at: '2026-07-31T09:50:00+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -419,3 +419,45 @@ This update does not declare the release ticket complete. A terminal label may
 be repaired when underlying acceptance is already proven, but it may not
 substitute for the remaining exact-inventory, runtime-equivalence, deployed
 canary, supervision, cleanup, and Native S1 handoff obligations.
+
+## 2026-07-31 terminal cutover and canonical seed-document residual
+
+Read-only Hetzner preflight found two immediate release-path gaps. First, the
+supported runtime-rebind rejected Custody's coherent terminal cursor even
+though all ten bound milestones were complete. Second, the promotion runbook
+named `FROZEN_SEED_DOCUMENT` without identifying its canonical producer, path,
+schema, or green predicate. Guessing a filename or editing terminal state would
+manufacture authority rather than preserve it.
+
+These are immediate acceptance obligations of this release umbrella, not a
+new epic:
+
+1. The supported chain runtime-rebind accepts the terminal sentinel only with
+   explicit `@terminal`/`@none` guards, canonical `last_state == done`, no
+   current plan, and the exact ordered completed milestone set. Every malformed
+   or incomplete terminal shape fails before mutation.
+2. The guarded chain rebind changes only runtime-binding metadata and emits a
+   content-addressed event. The separately CAS-guarded marker rebind names the
+   same independently receipted runtime.
+3. The canonical frozen seed document is a validator-green, candidate-ready
+   external snapshot derived from
+   `docs/megaplan/post-m11-release-evidence-20260731.json` into the private
+   cutover receipt directory. It is not written back into immutable
+   `RUNTIME_SRC`, avoiding a self-referential final-commit hash.
+4. The release-specific cloud configuration selects final `main`; the
+   authoritative marker, chain spec/state, old/new runtime digests, snapshot
+   digest, rollback image tag, and selector checkpoints are resolved and
+   receipted before mutation.
+5. Under one cutover lock the order is checkpoint, independent runtime
+   provenance, terminal chain rebind, marker rebind, seed validation, atomic
+   selector/drop-in update, supported deploy. Failure restores chain binding,
+   marker, selectors, drop-in, and image selector to the checkpointed vector.
+6. Focused tests prove accepted terminal cutover and rollback, rejection of
+   incomplete or forged terminal shapes, seed failure before either rebind,
+   success only when marker/chain/runtime/snapshot agree, and full rollback.
+
+The old checked-in packaging artifacts are historical code-gate evidence only.
+Final packaging must be rebuilt and independently verified from the eventual
+final acceptance commit. Direct promotion uses the separately authorized
+ordinary, non-force, fast-forward compare-and-swap push to `main`; no release
+PR or force push is part of this path.
