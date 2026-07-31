@@ -21,6 +21,7 @@ from typing import Any
 from arnold.security.policy import SecurityPolicy
 from arnold.security.redaction import redact_mapping, redact_text
 from arnold.security.types import ActionRequest, ActionResult, ActionVerdict
+from arnold.security.unix_socket import is_unix_socket_path_too_long
 
 LOGGER = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class BrokerSecretStore:
         names: tuple[str, ...] = DEFAULT_COVERED_SECRET_NAMES,
         *,
         environ: Mapping[str, str] | None = None,
-    ) -> "BrokerSecretStore":
+    ) -> BrokerSecretStore:
         source = os.environ if environ is None else environ
         configured = frozenset(name for name in names if str(source.get(name, "")).strip())
         return cls(configured)
@@ -165,7 +166,15 @@ class UnixBrokerServer(socketserver.ThreadingUnixStreamServer):
 
     def __init__(self, socket_path: str, service: BrokerService | None = None) -> None:
         self.service = service or BrokerService()
-        super().__init__(socket_path, _UnixBrokerHandler)
+        try:
+            super().__init__(socket_path, _UnixBrokerHandler)
+        except OSError as exc:
+            if is_unix_socket_path_too_long(exc):
+                raise BrokerServiceError(
+                    "broker socket path exceeds the host AF_UNIX limit; "
+                    "configure a shorter ARNOLD_BROKER_SOCKET path"
+                ) from exc
+            raise
 
 
 def _action_request_from_mapping(payload: Mapping[str, Any]) -> ActionRequest:
@@ -230,11 +239,11 @@ if __name__ == "__main__":  # pragma: no cover
 
 
 __all__ = [
+    "DEFAULT_COVERED_SECRET_NAMES",
+    "PROTOCOL_VERSION",
     "BrokerSecretStore",
     "BrokerService",
     "BrokerServiceError",
-    "DEFAULT_COVERED_SECRET_NAMES",
-    "PROTOCOL_VERSION",
     "UnixBrokerServer",
     "serve_unix",
 ]

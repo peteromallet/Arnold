@@ -134,3 +134,33 @@ Discovery custody, terminal receipts, logs, environment gates, and the frozen
 `Arnold-validation-checkpoints/e9c88f6f93-shards005-037-discovery-20260731/`.
 The ticket remains open until the exact final release revision passes the
 complete frozen no-debt inventory and the other release acceptance conditions.
+
+## 2026-07-31 shard 008 release-discovery residual
+
+The follow-on exact run stopped before issuing an acceptance receipt for shard
+008. Pytest ran 335 tests (333 passed, two failed), but four committed
+`.native_wbc` files changed during execution, so the shard runner correctly
+rejected the dirty post-run revision.
+
+This exposed three distinct release defects:
+
+- the runtime import-boundary fixture had not admitted the four canonical
+  neutral broker-approval exports;
+- the broker client and server passed arbitrary configured workspace paths
+  directly to AF_UNIX, whose path-byte limit is shorter on macOS; and
+- four security audit tests invoked the native runtime without an explicit
+  artifact root while running from the source checkout, so the valid legacy
+  default (`.`) placed WBC evidence in committed fixture paths.
+
+The resolution keeps those broker symbols public, preserves the configured
+socket pathname as the external endpoint identity, and gives server/client
+callers sanitized actionable diagnostics when the host rejects an overlong
+path. Round-trip tests use one reusable short-socket fixture outside long
+workspace roots. The audit tests now pass unique disposable artifact roots.
+The native runtime's established `artifact_root="."` contract remains intact
+and separately proves default behavior under an isolated temporary CWD,
+source-tree stability, and durable WBC emission for explicit roots.
+
+The rejected shard log, custody receipt, source-mutation patch, status snapshot,
+and checksums are preserved under
+`Arnold-validation-checkpoints/e9c88f6f93-shards005-037-discovery-20260731/shard008-defect/`.
