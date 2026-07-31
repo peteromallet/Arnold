@@ -4906,10 +4906,10 @@ def _run_step_with_worker_legacy(
         require_bound_chain_spec,
     )
 
-    _strict_runtime_binding = _launch_seed is not None
+    _launch_seed_present = _launch_seed is not None
     _bound_chain_spec = (
         require_bound_chain_spec(root, plan_name=plan_dir.name)
-        if _strict_runtime_binding
+        if _launch_seed_present
         else find_bound_chain_spec(root, plan_name=plan_dir.name)
     )
     if _bound_chain_spec is not None:
@@ -4917,6 +4917,7 @@ def _run_step_with_worker_legacy(
             spec_path=_bound_chain_spec,
             root=root,
         )
+    _strict_runtime_binding = bool(_expected.pop("require_full_vector", False))
     _runtime_vector = ""
     if _launch_seed is not None:
         _runtime_vector = _runtime_vector_sha256(_launch_seed)
