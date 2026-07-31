@@ -9,14 +9,15 @@ tags:
 - reliability
 - observability
 - pre-native-blocker
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-30T18:35:57.813554+00:00'
-last_edited_at: '2026-07-30T19:00:16.686390+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
   kind: associated
-  provenance: null
+  provenance: post-m11-ticket-reconciliation-20260731
   linked_at: 2026-07-30 19:00:16.686313+00:00
 ---
 

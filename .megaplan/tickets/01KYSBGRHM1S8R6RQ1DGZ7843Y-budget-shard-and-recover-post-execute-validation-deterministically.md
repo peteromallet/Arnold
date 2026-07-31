@@ -21,12 +21,12 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T00:20:48+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
   kind: associated
-  provenance: null
+  provenance: post-m11-ticket-reconciliation-20260731
   linked_at: 2026-07-30 19:00:18.892153+00:00
 ---
 
@@ -93,3 +93,12 @@ MUST COMPLETE AFTER M11 ACCEPTANCE AND BEFORE THE NATIVE PARITY EPIC STARTS. Thi
 - No successor may introduce a second scheduler, authority reducer, attempt ledger, or status registry.
 
 The historical native-platform-followup M5/M6 is not the owner of this future work and must not be cited as the resolver.
+
+## 2026-07-31 reconciliation
+
+This remains the one-time release umbrella and is not resolved by any successor
+epic. The consolidated source now contains the M11 lineage and substantial
+bounded/recovery fixes, but closure still requires the exact release vector,
+validation inventory, runtime-equivalence proof, production canaries, watchdog
+re-enable, cleanup evidence, and Native S1 handoff manifest. The Native link is
+association-only so chain completion cannot manufacture release completion.

@@ -13,10 +13,16 @@ tags:
 - native-platform-consumer
 - containment
 - do-not-wait-for-platform
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-29T13:35:26.878096+00:00'
-last_edited_at: '2026-07-30T13:47:33.054497+00:00'
-epics: []
+last_edited_at: '2026-07-31T03:17:11+00:00'
+epics:
+- epic_id: megaplan-native-parity-corrective
+  resolves_on_complete: false
+  kind: associated
+  provenance: post-m11-ticket-reconciliation-20260731
+  linked_at: '2026-07-31T03:17:11+00:00'
 ---
 
 ## Scope: safe current views and platform-consumer adapter
@@ -62,3 +68,13 @@ concise operator rendering over that substrate.
   backend.
 - Implementing platform M4/M6 inside Megaplan.
 - Hiding contradictory evidence to create a cleaner narrative.
+
+## 2026-07-31 reconciliation
+
+`003ae66712` supplies a bounded, rebuildable event-checkpoint substrate and
+starts migrating status/watchdog consumers. The concise canonical timeline,
+complete consumer inventory, production canary, and contradiction rendering
+remain open. Native Parity S6 is the associated Megaplan product consumer. The
+finalized Platformization epic may extract qualified projection components, but
+does not automatically resolve this product view and is deliberately not
+linked with auto-address semantics.

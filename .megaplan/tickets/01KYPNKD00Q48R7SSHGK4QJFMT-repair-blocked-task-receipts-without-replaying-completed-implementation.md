@@ -11,14 +11,15 @@ tags:
 - write-set
 - execution-transaction-integrity
 - pre-native-blocker
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-29T10:09:24.992935+00:00'
-last_edited_at: '2026-07-30T19:00:17.814211+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
   kind: associated
-  provenance: null
+  provenance: post-m11-ticket-reconciliation-20260731
   linked_at: 2026-07-30 19:00:17.814131+00:00
 ---
 
@@ -67,3 +68,7 @@ Keep this ticket open until the exact archived T30/T7/T8/T33/T43 fixtures are
 replayed. Canonical directory, symlink, rename/delete, ignored-file, and
 overlapping-write-set semantics also still need completion in the task
 contract generator and write validator.
+
+Native Parity S5A/S5B/S7 must absorb and replay the finished compatibility
+path, but cannot auto-close the archived-fixture and hostile-path residual.
+Critique Ledger does not own task-receipt or write-set recovery.
