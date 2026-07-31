@@ -47,3 +47,31 @@ Set explicit fixture-relative ceilings before implementation based on a clean ba
 ## Successor-epic handoff
 
 Native S1 must consume the exact checkpoint/query contract and 60k-event proof before dispatch. Native S5A/S5B/S7 prove no handler fallback performs an unbounded rescan. Platformization may replace the compatibility implementation with the neutral durable substrate, but must preserve the fixture, non-authority rule, incarnation invalidation, and performance receipts. Deduplicate supervisor behavior with the canonical fixer-containment and timeline-projection tickets rather than creating another watcher.
+
+## 2026-07-31 bounded compatibility implementation
+
+Commit `003ae66712` implements the immediate compatibility seam on
+`fix/post-m11-bounded-supervision-20260731`:
+
+- an atomically published, content-addressed event checkpoint bound to journal
+  inode, store incarnation, restore generation, fold version, byte cursor,
+  prefix hash-chain, and cursor anchor;
+- incremental consumption by introspect, current-target/status, watchdog signal
+  computation, repair-goal acceptance lookup, terminal completion lookup, and
+  the progress auditor (which remains read-only and uses its bounded byte-tail
+  fallback until a checkpoint exists);
+- strict rejection plus explicitly permitted streaming rebuild for corrupt,
+  stale, truncated, cross-incarnation, and fold-version-mismatched checkpoints;
+- durable timing/RSS/bytes-read/fold-count provenance in the checkpoint and
+  returned projection receipt;
+- an atomic `state.json` execute-success → review handoff receipt. A stale
+  execute PID is cleared in the same write, review can claim the receipt, and
+  only evidence beyond the recovered boundary resolves it;
+- deterministic parity, corruption, truncation/incarnation, crash-handoff, and
+  60,137-event/710 MiB sparse-history ceiling fixtures.
+
+Focused compatibility validation passed 488 tests. The ticket remains **open**:
+production promotion must prebuild/canary the checkpoint on the real M11
+journal, record its cold and warm measurements, verify every remaining chain,
+resident, and canonical-timeline consumer has no full-history fallback, and
+re-enable watchdog supervision under the deployed-runtime attestation.
