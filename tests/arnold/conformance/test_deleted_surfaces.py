@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
+import sys
 
 from scripts.generate_native_representation_evidence import generate_evidence_bundle
 from arnold.conformance.deleted_surfaces import (
@@ -63,6 +65,22 @@ def test_deleted_import_modules_are_physically_absent_from_source_tree() -> None
             present.append(module_name)
 
     assert not present, f"deleted import modules still have source files: {present}"
+
+
+def test_importing_runtime_does_not_synthesize_deleted_wal_fold_module() -> None:
+    """Deleted modules stay deleted even after their surviving parent imports."""
+    probe = (
+        "import importlib, sys\n"
+        "import arnold.runtime\n"
+        "assert 'arnold.runtime.wal_fold' not in sys.modules\n"
+        "try:\n"
+        "    importlib.import_module('arnold.runtime.wal_fold')\n"
+        "except ModuleNotFoundError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('deleted wal_fold compatibility was synthesized')\n"
+    )
+    subprocess.run([sys.executable, "-c", probe], cwd=REPO_ROOT, check=True)
 
 
 def test_product_source_does_not_import_deleted_arnold_pipelines_megaplan() -> None:

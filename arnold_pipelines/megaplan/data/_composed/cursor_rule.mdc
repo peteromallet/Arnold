@@ -3,6 +3,8 @@ description: Use megaplan for high-rigor planning on complex, high-risk, or mult
 alwaysApply: false
 ---
 
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 # Megaplan
 
 > **Before you invoke megaplan, run the `megaplan-prep` skill.** It's the front door for every run: it sizes the work (one plan vs. an epic), shapes the brief, and picks the profile (intelligence tier), robustness level, and thinking depth. Do not run `<launcher> init` without it.
