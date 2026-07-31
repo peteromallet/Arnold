@@ -2,14 +2,14 @@
   "schema": "arnold.post_m11_release_evidence.v1",
   "record_id": "post-m11-consolidation-20260731",
   "record_status": "in_progress",
-  "recorded_at_utc": "2026-07-31T04:10:03Z",
+  "recorded_at_utc": "2026-07-31T04:17:24Z",
   "authority": {
     "plan_path": "docs/megaplan/post-m11-loose-work-consolidation-release-plan-2026-07-29.md",
     "plan_publication_commit": "f1c0b7384752ee96ea74eaee0f6c8d5d06c301d4",
     "plan_blob": "8b8a157ae0e2ad89209dd1cde61791856997585b",
     "origin_base_commit": "96127731661b4aeec7e049b8a7b59170a9506b06",
-    "evidence_cut_commit": "bf5449ae0e509b7a61c012daab18a66e14defd04",
-    "evidence_cut_tree": "0084c438663eb40d2e30fb41c1daf290afbdc7ef",
+    "evidence_cut_commit": "730fbf08c0a493c928ae234f0a6716098e3c672b",
+    "evidence_cut_tree": "5e74be82804962e17d3a97b4949f5a191e6551ac",
     "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b"
   },
   "checkpoints": [
@@ -134,6 +134,12 @@
       "sha": "49e7b448f8cdb4469c3630d8ebbe5e76313a6e52",
       "classification": "LAND",
       "disposition": "Included in bf5449ae0e509b7a61c012daab18a66e14defd04; ticket 01KYV57FAPY2H0ZRQMM8MJ29EM is addressed."
+    },
+    {
+      "ref": "fix/post-m11-packaging-release-20260731",
+      "sha": "81a44fd930e60070cae39b11e7416ad2eb43b717",
+      "classification": "LAND",
+      "disposition": "Included in 730fbf08c0a493c928ae234f0a6716098e3c672b; resolves the three packaging code blockers recorded at the prior evidence cut."
     }
   ],
   "integration_lineage": [
@@ -188,6 +194,10 @@
     {
       "sha": "bf5449ae0e509b7a61c012daab18a66e14defd04",
       "subject": "Merge complete M11 validation node accounting"
+    },
+    {
+      "sha": "730fbf08c0a493c928ae234f0a6716098e3c672b",
+      "subject": "Merge packaging release contract fixes"
     }
   ],
   "validation_observations": [
@@ -329,6 +339,43 @@
       "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
       "blocker": "Docker daemon was unavailable at the configured local socket.",
       "log_sha256": "de94f6b6a0faeca076aa8d6d22d2f9d46dbc2a318bf89ad70573b45c937cbdcd"
+    },
+    {
+      "id": "packaging-blocker-regressions",
+      "scope": "Focused regressions for the three packaging code blockers",
+      "status": "historical_pass",
+      "result": {
+        "passed": 17,
+        "failed": 0
+      },
+      "acceptance_effect": "packaging_code_gate",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717"
+    },
+    {
+      "id": "packaging-expanded-regressions",
+      "scope": "Expanded packaging release-contract matrix",
+      "status": "historical_pass",
+      "result": {
+        "passed": 110,
+        "failed": 0
+      },
+      "acceptance_effect": "packaging_code_gate",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717"
+    },
+    {
+      "id": "fresh-noneditable-packaging-smoke",
+      "scope": "Fresh non-editable wheel installation and packaged command/skill smoke checks",
+      "status": "historical_pass",
+      "result": {
+        "passed": 4,
+        "failed": 0,
+        "wheel_built": true,
+        "sdist_built": true,
+        "fresh_noneditable_install": "passed"
+      },
+      "acceptance_effect": "packaging_code_gate",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717",
+      "setup_smoke_log_sha256": "f2b7ce6be90ec81acbeb05d6d988cc1854ff2f2917e25e1b1679f3e1868ce262"
     }
   ],
   "historical_superseded_attempts": [
@@ -361,14 +408,28 @@
       "filename": "arnold-0.23.0-py3-none-any.whl",
       "sha256": "d50f5704f205224e3dd2d898f99a9b9de14dc5b91a356cf28ceee3b44c3ed0a5",
       "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
-      "acceptance_effect": "candidate_artifact_only"
+      "acceptance_effect": "superseded_candidate_artifact"
     },
     {
       "kind": "sdist",
       "filename": "arnold-0.23.0.tar.gz",
       "sha256": "bb59fc0b1a2334aecfe81fb1ddd96e08699c2b5bcdcbe4b7c96ca1bf2b1742fc",
       "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
-      "acceptance_effect": "candidate_artifact_only"
+      "acceptance_effect": "superseded_candidate_artifact"
+    },
+    {
+      "kind": "wheel",
+      "filename": "arnold-0.23.0-py3-none-any.whl",
+      "sha256": "bffbd6429092869710e9707f61b2272b4c8a920a610864de2c165ef893910940",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717",
+      "acceptance_effect": "packaging_code_gate_artifact"
+    },
+    {
+      "kind": "sdist",
+      "filename": "arnold-0.23.0.tar.gz",
+      "sha256": "62a8310ef4b2b0a299da543ef5c67def6082808ed028db870c481f88476b0d40",
+      "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717",
+      "acceptance_effect": "packaging_code_gate_artifact"
     }
   ],
   "cloud_protected_resources": [
@@ -418,9 +479,15 @@
       "required_evidence": "A fresh non-seeded no-debt run bound to the final release candidate, with exact collection/execution equality and no superseded receipt treated as acceptance."
     },
     {
-      "id": "final-packaging-validation",
+      "id": "packaging-code-gate",
+      "status": "complete",
+      "required_evidence": "All three packaging code blockers resolved, focused and expanded regressions green, wheel and sdist rebuilt, and fresh non-editable installed-artifact smoke checks green.",
+      "completion_evidence": "81a44fd930e60070cae39b11e7416ad2eb43b717, merged by 730fbf08c0a493c928ae234f0a6716098e3c672b; 17 + 110 + 4 tests passed; artifact hashes are recorded in packaging_artifacts."
+    },
+    {
+      "id": "cloud-image-build",
       "status": "pending",
-      "required_evidence": "All packaging blockers resolved, wheel and sdist rebuilt from the final release candidate, installed-artifact checks green, and a successful cloud-image build against an available Docker daemon."
+      "required_evidence": "Build the rendered cloud image against an available Docker daemon at the final release candidate and record its content-addressed image identity."
     },
     {
       "id": "release-pr",

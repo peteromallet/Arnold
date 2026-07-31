@@ -169,6 +169,14 @@ def validate(path: Path) -> None:
         seen_residuals.add(residual_id)
         if item.get("status") not in ALLOWED_RESIDUAL_STATUS:
             raise ValueError(f"residuals[{index}] has invalid status")
+        if not isinstance(item.get("required_evidence"), str):
+            raise ValueError(f"residuals[{index}].required_evidence is missing")
+        if item["status"] == "complete" and not isinstance(
+            item.get("completion_evidence"), str
+        ):
+            raise ValueError(
+                f"residuals[{index}] is complete without completion_evidence"
+            )
 
     if data["record_status"] == "complete":
         pending = [item["id"] for item in residuals if item["status"] != "complete"]
