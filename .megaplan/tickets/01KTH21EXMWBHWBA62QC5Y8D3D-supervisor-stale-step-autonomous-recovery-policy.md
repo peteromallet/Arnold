@@ -15,7 +15,7 @@ tags:
 - write-intent
 codebase_id: null
 created_at: '2026-06-07T12:48:34.740779+00:00'
-last_edited_at: '2026-07-31T06:51:07+00:00'
+last_edited_at: '2026-07-31T06:53:18+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -66,13 +66,19 @@ durable handoff reconciliation. A cache refresh could therefore reinterpret
 already-committed execute/review custody, mutate or clear `active_step`, and
 make the next observer report a stall that the heartbeat writer itself caused.
 
-Commit `a242f6ea78` is the immediate post-M11 containment and implementation
-evidence, pending merge into the release vector. It classifies heartbeat/cache
-writes as non-lifecycle-authoritative and retains focused regressions showing
-that they cannot arm, advance, or recover a handoff. The release umbrella
-`01KYSBGRHM1S8R6RQ1DGZ7843Y` owns the exact shard rerun and deployed proof.
-This ticket stays open because a write-mode classifier is a containment seam,
-not the final lifecycle API.
+Commit `be164da4cb` is the reviewed immediate post-M11 containment candidate,
+pending merge into the release vector. It guards only the known
+`active-step-heartbeat` path from handoff reconciliation and retains focused
+regressions showing that a heartbeat cannot arm, advance, or recover a handoff
+while an authoritative lifecycle transition still can. Those focused tests are
+green; the release umbrella `01KYSBGRHM1S8R6RQ1DGZ7843Y` owns the exact shard
+rerun and deployed proof.
+
+The broader nonlanded classifier experiment at `a242f6ea78` was rejected:
+transport-mode names do not reliably describe semantic write authority across
+missing files, full-state compatibility writes, declared-but-absent keys,
+metadata, and opaque callbacks. This ticket stays open because the narrow
+guard is release containment, not the final lifecycle API.
 
 ## Durable product and platform follow-up
 

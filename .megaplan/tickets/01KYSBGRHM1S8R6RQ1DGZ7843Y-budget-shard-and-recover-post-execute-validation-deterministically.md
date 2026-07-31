@@ -21,7 +21,7 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T06:51:07+00:00'
+last_edited_at: '2026-07-31T06:53:18+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -237,9 +237,13 @@ implementation. An `active-step-heartbeat` cache write called lifecycle
 handoff reconciliation. Given an already-persisted `executed` state and live
 execute custody, that observation-only write could reinterpret or clear the
 active step before persisting the heartbeat, yielding a false stale/dead-worker
-view. Commit `a242f6ea78` is the pending immediate containment: heartbeat/cache
-writes cannot arm, claim, cross, or recover a lifecycle handoff, while an
-authoritative lifecycle transition still can.
+view. The reviewed immediate-containment candidate is commit `be164da4cb`: it
+narrowly prevents only `active-step-heartbeat` writes from reconciling a
+lifecycle handoff, while authoritative lifecycle writes retain their existing
+behavior. Its focused regressions are green; the exact shard rerun is pending.
+The broader nonlanded classifier experiment at `a242f6ea78` was rejected
+because transport-mode names are not a sound general proxy for lifecycle
+authority.
 
 Release acceptance requires merging that containment and rerunning the exact
 shard plus the final frozen inventory on one clean release vector. It must
