@@ -101,9 +101,15 @@ def test_initiative_new_scaffolds_cloud_ready_canonical_layout(tmp_path: Path) -
     assert result["next"]["launch"].endswith(f"cloud chain {chain_path} --cloud-yaml {cloud_path}")
 
 
+@pytest.mark.parametrize("initialize_git", [False, True], ids=["invalid-worktree", "valid-worktree"])
 def test_initiative_retire_hides_discovery_and_blocks_chain_continuation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    initialize_git: bool,
 ) -> None:
+    if initialize_git:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     handle_initiative(tmp_path, _initiative_args(slug="old-work", cloud=False))
     handle_initiative(tmp_path, _initiative_args(slug="replacement", cloud=False))
     old_root = tmp_path / ".megaplan" / "initiatives" / "old-work"
@@ -166,11 +172,51 @@ def test_initiative_retire_hides_discovery_and_blocks_chain_continuation(
     )
     assert "old-work" in {item["slug"] for item in historical_search["initiatives"]}
 
+    if initialize_git:
+        worktree_probe = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert Path(worktree_probe.stdout.strip()).resolve() == tmp_path.resolve()
+    else:
+        worktree_probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=tmp_path,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert worktree_probe.returncode != 0
+
+    def snapshot_non_git_files() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(tmp_path)): path.read_bytes()
+            for path in sorted(tmp_path.rglob("*"))
+            if path.is_file() and ".git" not in path.relative_to(tmp_path).parts
+        }
+
+    def unexpected_preflight(*_args, **_kwargs):
+        pytest.fail("retired initiative reached chain mutation/runtime preflight")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._require_git_worktree_root",
+        unexpected_preflight,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.chain_spec.load_spec",
+        unexpected_preflight,
+    )
+    before = snapshot_non_git_files()
     rc = run_chain_cli(
         tmp_path,
         argparse.Namespace(chain_action="start", spec=str(chain_path)),
     )
+    after = snapshot_non_git_files()
     assert rc != 0
+    assert after == before
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"] == "initiative_retired"
 
