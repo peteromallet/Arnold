@@ -111,7 +111,9 @@ milestones:
     notes: >-
       Promote the accepted runtime/adapters in place without a fork; implement
       product-neutral validation, lowering, lifecycle, admission, authority,
-      durable state, independent profile re-derivation and local-test semantics
+      durable state, attempted-finish interception and same-session/replacement/
+      new-generation/fixer repair dispositions, independent profile re-
+      derivation and local-test semantics
       against S1; prove real-store CAS, deterministic locks, authority/effect
       joins and logical store/mode isolation, then require the exact accepted
       readiness receipt in the typed canonical runtime-selection transition
@@ -142,9 +144,10 @@ milestones:
       transactional refactors, completion-template derivation from canonical
       identity/locks, and the frozen Native response-directory authoring
       compiler with Step-IO-only shape, five-class ownership algebra, monotone
-      proposal merges, pure derivations, normalized parse output and exact
-      resume binding. Generalize without reopening Native format decisions. Do
-      not absorb S3 DX.
+      proposal merges, orthogonal required/optional/applicability projection,
+      pure derivations, typed repair dispositions, normalized parse output and
+      exact resume binding. Generalize without reopening Native format
+      decisions or duplicating S2A session control. Do not absorb S3 DX.
 
   - label: s3-developer-experience-tooling
     idea: .megaplan/initiatives/native-workflow-platformization/briefs/s3-developer-experience-tooling.md
@@ -165,8 +168,9 @@ milestones:
       Complete the generic CLI/editor/navigation/format/lint/topology/preview,
       completion inspection/generated machine-and-Markdown projections and test
       experience over the exact S2B/S2A semantics. Add ownership-aware response-
-      directory and child-record editing, normalized parse previews and targeted
-      repair; prove actionable diagnostics, projection/package non-authority,
+      directory and child-record editing, concise generated prompt instructions,
+      normalized parse previews and same-session targeted repair; prove
+      actionable diagnostics, projection/package non-authority,
       unfamiliar-author tasks, benchmarks and no manual generated metadata
       before reusable extraction.
 

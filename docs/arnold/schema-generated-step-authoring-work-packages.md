@@ -20,6 +20,21 @@ system, `StepAuthoringSpec` may contain only ownership annotations, rendering
 and view configuration, and derivation bindings. Every field shape, type, and
 validation rule must reference Step-IO; a conformance test rejects duplication.
 
+## Desired agent experience
+
+An agent receives one generated workspace, edits only `response/`, and attempts
+to finish normally. The harness intercepts that finish before releasing the
+session, snapshots and compiles the package, safely supplies declared defaults
+and derived values, and either submits the candidate for acceptance or sends
+exact file-level repair instructions back into the same live session. Existing
+work and conversational context are preserved. A replacement repair session is
+used only when the original session is unavailable; a new generation is used
+only when the admitted evidence or compatibility binding changed.
+
+The correctness contract cannot depend on session continuity. The response
+package, submitted snapshots, admitted inputs and diagnostics remain durable, so
+losing a conversation changes repair cost but never loses authority or work.
+
 ## Problem
 
 The current model path has two outputs:
@@ -53,6 +68,21 @@ Fields have explicit ownership:
 - `protected`: immutable identity, authority, schema, evidence-window, and
   provenance fields;
 - `body`: the primary human-readable Markdown content, when applicable.
+
+Ownership and requiredness are orthogonal. The five ownership classes above do
+not grow separate `model_optional` or `conditionally_required` variants. Step-IO
+alone declares presence, nullability, defaults, cardinality and applicability:
+
+- a required model-owned field with no value produces a repair disposition;
+- an optional model-owned field records explicit absence or its Step-IO default;
+- an omitted hint receives its declared neutral value;
+- an omitted proposal receives its neutral proposal before the safety merge;
+- derived and protected fields are never requested from the agent; and
+- a conditionally applicable field becomes required only for the proposed
+  candidate outcome selected for evaluation.
+
+Defaults may fill representation or optional intent; they may never invent
+required semantic content.
 
 Pure helpers have no authoring package. Deterministic durable steps execute
 without a model response form. Human gates use the same compilation pattern but
@@ -173,6 +203,16 @@ Complete the declared files under `attempts/plan/attempt-12/response/`.
 Read-only inputs are listed in `context/manifest.json`.
 You may edit only the declared model-owned fields and Markdown body.
 Harness-derived and protected fields are not yours to author.
+
+Required now:
+- `response/body.md`
+- `response/fields.yaml: success_criteria`
+
+Optional:
+- `response/fields.yaml: questions`
+- `response/fields.yaml: test_selection`
+
+Before finishing, run `megaplan step check`.
 Your final chat response is informational; it cannot complete this step.
 The step completes only when the response directory compiles and its completion
 specification is accepted.
@@ -221,20 +261,52 @@ only harness-produced records—never `response/` directly.
 The canonical candidate and verdict are immutable. A later repair creates a new
 snapshot or generation; it does not rewrite accepted history.
 
+## Finish interception and same-session continuation
+
+An agent's attempted finish is a submission checkpoint, not session release and
+not step completion. The runner keeps the session resumable until compilation
+chooses a disposition:
+
+```text
+agent attempts finish
+  -> snapshot response directory
+  -> compile and apply only safe declared defaults/derivations/merges
+  -> valid candidate: evaluate CompletionSpec and publish if accepted
+  -> locally repairable: continue the same session with exact diagnostics
+  -> original session unavailable: open a narrow replacement repair session
+  -> evidence/binding changed: create a new generation
+  -> repeated identical failure: stop blind continuation and invoke the fixer
+```
+
+The continuation message names only remaining required repairs, exact writable
+paths, the governing requirement and relevant context paths. It explicitly
+preserves valid work and tells the agent not to repeat research. Optional
+omissions never trigger a repair message.
+
+Each continuation is a distinct durable repair attempt even when it reuses the
+same conversational session. Record the attempted-finish snapshot, diagnostics,
+follow-up message, repaired snapshot, changed fields and verdict. Apply a
+declared same-session repair budget and fingerprint diagnostics plus relevant
+snapshot state. When the identical fingerprint exceeds budget, escalation is
+deterministic; another identical reminder is forbidden.
+
 ## Repair, retry, and recovery
 
 Use graduated recovery rather than restarting the entire intellectual task:
 
 1. **Optional hint omitted:** materialize a neutral value and derive the
    authoritative floor. Record that the model supplied no hint.
-2. **Small syntax/completeness error:** run a narrow repair turn against the
-   same package with stable path-addressed diagnostics. Preserve accepted fields.
+2. **Small syntax/completeness error:** keep the original live session and send
+   a narrow continuation against the same package with stable path-addressed
+   diagnostics. Preserve valid fields and prior research.
 3. **Semantic contradiction:** freeze the failed submission and open a new
    generation with the conflict and relevant evidence.
 4. **Crash or timeout:** resume the same attempt only when its binding,
    checkpoint, lease, schema, and writable snapshot remain valid; otherwise
    create a new generation seeded from the last valid draft.
-5. **Repeated identical failure:** stop blind replay, emit a deterministic
+5. **Unavailable session:** open a narrow replacement repair session over the
+   preserved package and diagnostics; do not replay the original research.
+6. **Repeated identical failure:** stop blind replay, emit a deterministic
    failure receipt, and route the exact work package to the fixer.
 
 The evidence-window hash determines lifecycle mechanically. The same evidence-
@@ -278,8 +350,10 @@ Build deterministic schema-to-form and form-to-canonical compilation with:
 ### 3. Prompt integration
 
 Generate the authoring protocol, allowed paths, ownership summary, completion
-summary, and repair diagnostics at dispatch time. Pin the exact prompt asset,
-form schema, compiler version, context manifest, and writable-path grant.
+summary, required/optional/applicability projection, and repair diagnostics at
+dispatch time. Pin the exact prompt asset, Step-IO schema, authoring spec,
+compiler version, context manifest, and writable-path grant. Keep the domain
+prompt free of duplicated envelope instructions.
 
 ### 4. Attempt and custody integration
 
@@ -287,6 +361,11 @@ Bind packages to occurrence, attempt, generation, evidence window, custody
 epoch, runtime identity, and store incarnation. Record materialization,
 submission, compilation, repair, rejection, acceptance, crash, and supersession
 as chronological events.
+
+Intercept attempted session finish until compilation emits a typed disposition.
+Represent same-session continuation, replacement repair session, new generation
+and fixer escalation as distinct decisions without adding a second workflow
+status column. Session identity is repair provenance, never authority.
 
 ### 5. Migration adapters
 
@@ -296,6 +375,13 @@ Every divergence receives an explicit disposition; parity counts are not an
 oracle. For a `derived` field, the compiler wins by declared ownership. For a
 `model_required` field, require human adjudication and retain the case as a
 fixture. Remove legacy final-response authority after each phase cuts over.
+
+For every legacy response field, record both its five-class ownership and its
+orthogonal Step-IO presence/default/applicability rule. Replay historical
+accepted and failed responses to identify harmless omissions, unnecessary model
+self-reporting, locally repairable failures and defaults that would change
+meaning. Ambiguity is a dispositioned migration item, never an inferred default;
+accepted historical records remain immutable under their original decoder.
 
 ### 6. Tooling
 
@@ -322,6 +408,9 @@ Make S3A consume a pre-frozen Native authoring-package contract, then require:
 - a volume-gated shadow comparison against real or content-addressed replayed
   legacy traffic before GO-1A, with every divergence dispositioned;
 - targeted repair/reentry fixtures;
+- attempted-finish interception and same-live-session continuation fixtures;
+- explicit optional omission, neutral hint/proposal, conditional requirement,
+  dead-session replacement and repeated-fingerprint escalation fixtures;
 - exact-pinned crash/resume tests; and
 - removal of legacy final-chat authority for the migrated phases at GO-1A.
 
@@ -448,6 +537,12 @@ Do not call the capability complete until:
 11. A syntactically valid but semantically misparsed edit is detectable: the
     compiler echoes a normalized parsed rendering in `validation.json`, and a
     mis-indented nested-record fixture cannot silently invert meaning.
+12. An attempted finish with missing required content continues the same live
+    session with exact paths while an optional omission produces no repair.
+13. Session loss falls back to a narrow package-based repair without replaying
+    research; changed evidence creates a new generation instead.
+14. Repeated identical repair failure stops at the declared budget and invokes
+    the fixer with the complete preserved package and diagnostic history.
 
 ## Residual verification questions for an implementation oracle
 

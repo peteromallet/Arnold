@@ -279,18 +279,20 @@ Platformization follows one ordered, seven-milestone argument:
    reproducible, not stable.
 2. S2A implements and enforces the product-neutral runtime, lifecycle,
    completion admission/binding/evaluation/evidence-scope/inspection,
-   authority, state, and observation contract by promoting the accepted
-   implementation in place, never by forking it or performing another kernel
-   enablement.
+   authority, state, observation and attempted-finish/session-continuation
+   contract by promoting the accepted implementation in place, never by forking
+   it or performing another kernel enablement.
 3. S2B productizes the S4-blocking `.pype` compiler/linker, conservative
    digest, package/distribution identity, converter, transactional refactors,
    source correspondence, completion-template derivation, and Native's frozen
    Step-IO-referencing response-directory authoring compiler, ownership/merge
-   algebra, normalized parse contract and install equivalence without reopening
-   its format decisions.
+   algebra, required/optional/applicability projection, typed repair
+   dispositions, normalized parse contract and install equivalence without
+   reopening its format decisions.
 4. S3 completes CLI/editor/navigation/format/lint/topology/preview/test
    experience, ownership-aware response-directory/child-record editing,
-   normalized parse previews and targeted repair, completion inspection and
+   normalized parse previews, concise generated prompts and same-session
+   targeted repair, completion inspection and
    generated machine/Markdown views, unfamiliar-author tasks, and benchmarks
    over that exact core. Every view is a disposable projection.
 5. S4 extracts the first proven patterns and makes Megaplan consume them under

@@ -105,6 +105,22 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
   window hash creates a new repair attempt within one occurrence; a changed hash
   creates a new generation/occurrence with reentry provenance. Any tuple mismatch
   fails closed as cross-attempt stitching.
+- Intercept an agent's attempted finish before releasing its live session.
+  Snapshot and compile first. Apply only declared optional absence/defaults,
+  neutral hints/proposals, derivations and safety merges. A missing required or
+  conditionally applicable model field continues the same live session with the
+  exact writable path, requirement and relevant context path, preserving all
+  valid work and research. Each continuation is a new durable repair attempt.
+  If the session is unavailable, use a narrow replacement repair session over
+  the preserved package; if evidence/binding changed, create a new generation.
+  Fingerprint repeated identical failures, enforce the declared repair budget,
+  and invoke the fixer rather than sending another identical reminder.
+- Backfill every legacy prep/plan/critique response field with its five-class
+  ownership plus orthogonal Step-IO presence/default/applicability rule. Replay
+  historical accepted and failed responses to identify harmless omissions,
+  self-reported harness facts, locally repairable failures and meaning-changing
+  defaults. Ambiguity requires a recorded disposition; accepted history remains
+  immutable under its original decoder.
 - Bind the admitted run to logical identity
   `(arnold-pipelines, workflow)` and its content-addressed canonical import/lock
   graph. Imported workflows use the same typed contract whether child-hosted or
@@ -173,6 +189,11 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
 - Deleting final chat or rebuilding the editable response directory cannot
   change the compiled record, acceptance decision, evidence identity, or next
   action. Forged compiled/verdict records and protected-field edits reject.
+- Same-session continuation succeeds for missing required content without
+  repeating research; optional omission emits no repair; a conditional field is
+  required only for its candidate outcome; dead-session fallback repairs the
+  preserved package; changed evidence rejects the old session; and repeated
+  identical failures deterministically reach the fixer at budget.
 
 ## Custody-adoption gate
 
@@ -202,3 +223,7 @@ retry/cap/model policy, suspension, workflow mutation or child topology.
   frontmatter, proposal merges are arbitrary/non-monotone, derivations reach
   into the ledger, normalized parse output is absent, or final chat/response
   files remain an authority input.
+- An attempted finish releases a repairable session before compilation, optional
+  absence triggers a model call, required semantics are defaulted, replacement
+  repair repeats research, an old session survives changed evidence, or an
+  identical diagnostic fingerprint can loop beyond budget.

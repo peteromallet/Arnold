@@ -129,6 +129,14 @@ the milestone budget, it may split only at the shadow/cutover seam. Compilation
 admits a candidate; only the existing WBC/Custody transaction publishes it.
 Final chat and editable response files never become authority.
 
+For an agent, ordinary completion is one generated workspace and one attempted
+finish. The runner snapshots and compiles before releasing the session, fills
+only declared safe optional/default/derived values, and either submits the
+candidate or continues the same live session with exact path-level repairs.
+Session loss falls back to a narrow package-based repair; changed evidence opens
+a new generation; repeated identical failure reaches the fixer at a declared
+budget. Session continuity is never an authority requirement.
+
 ## Completion kernel and semantic proof
 
 The completion critical path is:

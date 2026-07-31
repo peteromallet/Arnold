@@ -115,6 +115,10 @@ identity registry, or migration log.
   `protected`, and `model_proposal(merge=...)`. Proposal merges are named
   deterministic meet/join operations on declared safety lattices, proven
   monotone in the safety direction. Arbitrary merge callbacks reject.
+- Ownership is orthogonal to Step-IO presence, nullability, defaults,
+  cardinality and candidate-outcome applicability. The generated prompt,
+  package and compiler share that one projection. Optional omission never opens
+  repair; required applicable model content never receives an invented default.
 - Response directories and child files are the only supported authoring package
   form, including simple records. Native's layout, nested-child convention,
   diagnostic codes and schema compatibility rules are frozen inputs; S2B may
@@ -188,6 +192,12 @@ identity registry, or migration log.
    Acceptance may not read the response directory.
    Bind resume to `(occurrence, attempt, evidence_window_hash, schema_version,
    custody_epoch, writable_snapshot_hash)` and fail closed on any mismatch.
+   Emit one typed post-compile disposition consumed by S2A's promoted runtime:
+   safe deterministic fill, candidate ready, same-live-session repair,
+   replacement repair session, changed-evidence generation, or repeated-
+   fingerprint fixer escalation. S2B chooses the disposition from declared
+   schema/diagnostics but does not own provider sessions or create workflow
+   status aliases.
 9. Verify checkout, editable install, wheel, sdist, and pinned cloud
     resolution. Descriptor, resource, logical graph, digest, source map, and
     selected pipeline must agree; disagreement fails before authority.
@@ -233,6 +243,9 @@ identity registry, or migration log.
   deterministic/model-free durable steps and pure helpers have none. Duplicate
   shape validation, reverse Megaplan imports, non-monotone proposal merges,
   ambient derivations and response-directory acceptance reads reject.
+- Required/optional/conditional behavior is reproducible from Step-IO, and the
+  typed compiler disposition composes with S2A's one continuation lifecycle.
+  No prompt/parser/editor-local requiredness table or session controller exists.
 - Preview-only `.py` workflows and legacy artifacts cannot cross a durable or
   publication boundary.
 

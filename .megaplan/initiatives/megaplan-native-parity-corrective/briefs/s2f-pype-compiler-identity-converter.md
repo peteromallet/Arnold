@@ -120,6 +120,11 @@ old path usable and cannot strand admitted work.
     `protected`, and `model_proposal(merge=...)`. Joint proposal merges are
     named deterministic meet/join operations over declared safety lattices and
     must be monotone in the safety direction; arbitrary callbacks reject.
+    Keep ownership orthogonal to Step-IO presence, nullability, default,
+    cardinality and candidate-outcome applicability. Missing required model
+    semantics produces repair; optional model content records absence/default;
+    omitted hints/proposals use declared neutral values; derived/protected
+    fields are never requested. Defaults cannot invent required semantics.
     Freeze a response-directory format from day one (`fields.yaml`, optional
     `body.md`, and child files for nested/stable records), the nested-child
     convention, stable diagnostic codes, normalized parsed rendering, schema
@@ -127,6 +132,12 @@ old path usable and cannot strand admitted work.
     admitted typed input, parsed model fields and declared receipts—never the
     ledger or ambient sibling results. Body validation is structural only;
     semantic prose quality remains a critique/completion obligation.
+    Freeze the attempted-finish disposition protocol: safe deterministic fill,
+    accept, same-live-session continuation, replacement repair session, changed-
+    evidence generation, or repeated-fingerprint fixer escalation. Same-session
+    continuation is the default for locally repairable required omissions, has
+    a declared budget, and is recorded as a new repair attempt; session identity
+    is provenance rather than authority.
 
 ## GO-FORMAT gate
 
@@ -154,6 +165,9 @@ against merge HEAD. It covers at least:
   response-directory/nested-child parse and compile equivalence; derivation
   purity; protected-field comparison; and a valid-but-wrong parse fixture whose
   normalized rendering exposes the semantic inversion; and
+- orthogonal required/optional/applicability behavior; attempted-finish
+  interception; same-session repair; dead-session replacement; changed-evidence
+  generation; and bounded identical-failure fixer escalation; and
 - checkout/editable/wheel/sdist/cloud equivalence.
 
 The transition consumes that readiness receipt; the post-transition verifier
@@ -201,4 +215,8 @@ before consuming compiler output.
   arbitrary merge code, a derivation reaches into the ledger, nested records
   depend on frontmatter, or a valid-but-wrong parse is not visibly normalized;
   or
+- attempted finish releases a locally repairable session, an optional omission
+  causes a model call, required semantic content is silently defaulted, session
+  continuity becomes authoritative, or identical repair prompts loop without a
+  deterministic budget/escalation; or
 - GO-FORMAT is narrative, self-declared, stale, or first enforced after merge.

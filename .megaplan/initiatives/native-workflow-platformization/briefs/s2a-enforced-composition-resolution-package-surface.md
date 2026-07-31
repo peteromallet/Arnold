@@ -94,6 +94,13 @@ the selected state; S2A cannot complete if that verifier fails.
 - Completion candidate outcomes and enforcement dispositions remain distinct
   versioned registries connected only by their generated total version-bound
   mapping. Unknown pairs reject before admission.
+- Promote Native's attempted-finish/session-continuation lifecycle in place.
+  Finishing a model turn is a submission checkpoint, not session release or
+  step completion. Locally repairable compiler dispositions reuse the live
+  session by default; an unavailable session opens a narrow replacement repair;
+  changed evidence/binding opens a new generation; repeated identical failure
+  reaches the fixer at a declared budget. Session identity is provenance and
+  cannot authorize acceptance, routing or evidence reuse.
 
 ## Required work
 
@@ -161,6 +168,12 @@ the selected state; S2A cannot complete if that verifier fails.
    artifacts, and every record navigates back to owning occurrence/source plus
    consuming decision/terminal when present. Provider IDs are optional
    provenance. Logs never authorize or route.
+   Promote the exact Native attempted-finish interceptor and typed repair-
+   disposition state machine. Preserve submitted packages and diagnostics
+   across session loss; record each continuation as a distinct repair attempt;
+   fingerprint identical failures; and prove cancellation/crash at finish,
+   snapshot, continuation dispatch and replacement-session creation produces no
+   lost work, duplicate publication or unbounded reminder loop.
 12. Prove equivalent lowered graphs, locks, and observable lifecycle when
     supplied equivalent canonical input from checkout, clean wheel, and cloud.
    S2B owns source/resource correspondence and package-form selection. Exercise
@@ -200,6 +213,10 @@ the selected state; S2A cannot complete if that verifier fails.
   cannot hide forbidden I/O through another helper.
 - Resume/replay/retry/rework/fork, same child/new generation, business/control
   result, and experimental/production identity are observably distinct.
+- Same-session continuation, replacement repair session, new generation and
+  fixer escalation are typed runtime dispositions rather than workflow status
+  aliases. A dead session changes repair cost only; it cannot change the
+  candidate, binding, evidence or acceptance result.
 - Reopen is a new admission that references the immutable prior subject and
   binding. It never mutates, reuses, or rebinds the prior admission.
 - The local kit and installed runtime consume the same compiler, validators,

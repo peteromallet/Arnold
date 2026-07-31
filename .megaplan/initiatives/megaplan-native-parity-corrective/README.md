@@ -128,7 +128,8 @@ The active launch contracts are `briefs/s1-*.md`, `briefs/s2f-*.md`,
    restore/projection-invariance proof, and shadow acceptance integration;
 5. generic durable control primitives, concrete aggregation instances, and
    the sole authoritative kernel-enablement GO-0 receipt;
-6. volume-gated authoring-package shadow proof, prep/plan/critique cutover,
+6. volume-gated authoring-package shadow proof, intercepted finish with safe
+   optional backfill and same-session repair, prep/plan/critique cutover,
    execution-plane binding, and GO-1A;
 7. gate/revise front-half completion and GO-1B;
 8. tiebreaker, finalize, human decisions, and durable reentry;
