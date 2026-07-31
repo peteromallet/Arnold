@@ -155,7 +155,7 @@ def test_hermes_resume_preserves_stable_handle_when_metadata_reports_internal_id
         hermes_launcher=launcher,
     )
 
-    first = asyncio.run(runner.run(_request(), ToolRegistry()))
+    asyncio.run(runner.run(_request(), ToolRegistry()))
     second = asyncio.run(runner.run(_request(), ToolRegistry()))
     third = asyncio.run(runner.run(_request(), ToolRegistry()))
 
