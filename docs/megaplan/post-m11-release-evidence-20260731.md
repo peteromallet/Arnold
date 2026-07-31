@@ -126,8 +126,9 @@ classified; this record authorizes no deletion.
 - Freeze and execute the final integrated and no-debt validation inventories.
 - Run the cloud-image build against an available Docker daemon and bind it to
   the final release candidate.
-- Open and review the release PR; do not push the consolidation directly to
-  main.
+- Promote the exact validated commit through the authorized ordinary
+  fast-forward compare-and-swap push in
+  `post-m11-direct-promotion-policy-override-20260731.md`; no PR or force push.
 - Record the exact main merge SHA and annotated tag.
 - Build and promote a content-addressed runtime from that exact main SHA.
 - Prove resident, watchdog, three-hour fixer, `/whats-cooking`, ten-minute

@@ -58,8 +58,11 @@ esac
 
 Abort before mutation unless all of these are true:
 
-- the release PR is merged and `FINAL_SHA` is the exact reviewed `main` commit;
-- the annotated `FINAL_TAG` peels to `FINAL_SHA`;
+- the direct-promotion policy override is present, the ordinary fast-forward
+  compare-and-swap push succeeded, and `FINAL_SHA` is the exact validated
+  `main` commit;
+- the source tag peels to `FINAL_SHA`; the separate acceptance tag is created
+  only after the final external receipt exists;
 - the final frozen validation manifest is green at that exact commit;
 - the local checkout and cloud source remote agree on the same commit;
 - no active chain is in an external-effect critical section;
