@@ -7,6 +7,7 @@ Every ticket is a single ``.md`` file with YAML frontmatter stored in
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Literal
@@ -77,6 +78,29 @@ def classify_filename_prefix(filename: str) -> FilenamePrefixShape:
 # ---------------------------------------------------------------------------
 
 
+def _split_exact_frontmatter(text: str) -> tuple[str, str] | None:
+    """Return ``(yaml, body)`` only for exact, document-leading fences.
+
+    Markdown horizontal rules and prose containing ``---`` are not YAML
+    frontmatter.  A frontmatter block must start at byte zero with a delimiter
+    line whose entire content is ``---`` and must have a later delimiter line
+    with the same exact content.  Both LF and CRLF line endings are accepted.
+    """
+
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.rstrip("\r\n") == "---":
+            return "".join(lines[1:index]), "".join(lines[index + 1 :])
+    return None
+
+
+def _has_exact_frontmatter_opener(text: str) -> bool:
+    lines = text.splitlines(keepends=True)
+    return bool(lines and lines[0].rstrip("\r\n") == "---")
+
+
 def read_ticket_frontmatter_with_errors(
     path: str | Path,
 ) -> tuple[dict | None, list[str]]:
@@ -100,13 +124,18 @@ def read_ticket_frontmatter_with_errors(
     except OSError as exc:
         return None, [f"cannot read file: {exc}"]
 
-    # Extract YAML between --- markers
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        errors.append("no YAML frontmatter fences found (expected opening and closing '---')")
+    parsed_block = _split_exact_frontmatter(text)
+    if parsed_block is None:
+        if _has_exact_frontmatter_opener(text):
+            errors.append("unclosed YAML frontmatter (expected an exact closing '---' line)")
+        else:
+            errors.append(
+                "no YAML frontmatter opener found "
+                "(expected an exact document-leading '---' line)"
+            )
         return None, errors
 
-    fm_text = parts[1]
+    fm_text, body = parsed_block
     if not fm_text.strip():
         errors.append("empty YAML frontmatter block")
         return None, errors
@@ -134,7 +163,7 @@ def read_ticket_frontmatter_with_errors(
                 )
 
     # Attach the markdown body.
-    parsed["__body__"] = parts[2].strip()
+    parsed["__body__"] = body.strip()
     return parsed, errors
 
 
@@ -219,15 +248,18 @@ def read_ticket_file(path: str | Path) -> dict | None:
     except OSError:
         return None
 
-    # Extract YAML between --- markers
-    parts = text.split("---", 2)
-    if len(parts) < 3:
+    parsed_block = _split_exact_frontmatter(text)
+    if parsed_block is None:
         return None
-    fm = _parse_frontmatter(parts[1])
+    fm_text, body = parsed_block
+    try:
+        fm = _parse_frontmatter(fm_text)
+    except yaml.YAMLError:
+        return None
     if not fm:
         return None
     # Attach the markdown body
-    fm["__body__"] = parts[2].strip()
+    fm["__body__"] = body.strip()
     return fm
 
 
@@ -259,9 +291,18 @@ def iterate_ticket_files(repo_root: str | Path) -> Iterator[tuple[Path, dict]]:
     for entry in sorted(td.iterdir()):
         if not entry.suffix == ".md":
             continue
-        fm = read_ticket_file(entry)
+        fm, errors = read_ticket_frontmatter_with_errors(entry)
         if fm is not None:
             yield (entry, fm)
+        elif errors:
+            # A malformed/legacy note must never take down the valid ticket
+            # inventory.  Keep stdout machine-readable and provide a stable,
+            # actionable diagnostic on stderr.
+            print(
+                f"megaplan: skipped non-ticket or malformed ticket file "
+                f"{entry.name}: {'; '.join(errors)}",
+                file=sys.stderr,
+            )
 
 
 def ticket_file_path(repo_root: str | Path, ulid: str, slug: str) -> Path:

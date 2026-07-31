@@ -193,7 +193,34 @@ class TestReadTicketFrontmatterWithErrors:
         fm, errors = read_ticket_frontmatter_with_errors(path)
         assert fm is None
         assert len(errors) >= 1
-        assert any("no YAML frontmatter fences" in e for e in errors)
+        assert any("no YAML frontmatter opener" in e for e in errors)
+
+    def test_body_horizontal_rule_and_colon_are_not_frontmatter(self, tmp_path: Path) -> None:
+        td = _make_tickets_dir(tmp_path)
+        path = _write_ticket(
+            td,
+            "legacy-note.md",
+            "# Legacy note\n\nProblem: this is prose\n\n---\n\nMore prose.\n",
+        )
+        fm, errors = read_ticket_frontmatter_with_errors(path)
+        assert fm is None
+        assert errors == [
+            "no YAML frontmatter opener found "
+            "(expected an exact document-leading '---' line)"
+        ]
+
+    def test_missing_exact_closing_delimiter_is_diagnostic(self, tmp_path: Path) -> None:
+        td = _make_tickets_dir(tmp_path)
+        path = _write_ticket(
+            td,
+            "unclosed.md",
+            "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n--- trailing text\n",
+        )
+        fm, errors = read_ticket_frontmatter_with_errors(path)
+        assert fm is None
+        assert errors == [
+            "unclosed YAML frontmatter (expected an exact closing '---' line)"
+        ]
 
     def test_empty_frontmatter_block(self, tmp_path: Path) -> None:
         td = _make_tickets_dir(tmp_path)
