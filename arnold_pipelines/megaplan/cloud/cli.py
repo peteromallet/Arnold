@@ -1596,6 +1596,68 @@ def _run_remote_megaplan_import_check(provider) -> dict[str, Any]:
     return payload
 
 
+def _provider_container_observation(provider) -> dict[str, Any] | None:
+    method = getattr(provider, "observe_container", None)
+    if method is None:
+        return None
+    try:
+        payload = method()
+    except (CliError, OSError, ValueError) as exc:
+        return {
+            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "status": "unknown",
+            "lifecycle": "unknown",
+            "collector": {"status": "unavailable", "reason": "container_state_unknown"},
+            "diagnostic": str(exc),
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "status": "unknown",
+            "lifecycle": "unknown",
+            "collector": {"status": "unavailable", "reason": "container_state_unknown"},
+            "diagnostic": "provider returned a non-object container observation",
+        }
+    return payload
+
+
+def _provider_prelaunch_capacity(provider) -> dict[str, Any]:
+    method = getattr(provider, "observe_prelaunch_capacity", None)
+    if method is None:
+        return {
+            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "status": "unknown",
+            "verdict": "NO-GO",
+            "errors": ["provider_prelaunch_capacity_observer_unavailable"],
+        }
+    try:
+        payload = method()
+    except (CliError, OSError, ValueError) as exc:
+        return {
+            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "status": "unknown",
+            "verdict": "NO-GO",
+            "errors": [str(exc)],
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "status": "unknown",
+            "verdict": "NO-GO",
+            "errors": ["provider returned a non-object capacity observation"],
+        }
+    return payload
+
+
+def _collector_unavailable_error(observation: Mapping[str, Any]) -> CliError:
+    lifecycle = str(observation.get("lifecycle") or "unknown")
+    return CliError(
+        "provider_collector_unavailable",
+        f"container lifecycle is {lifecycle}; docker-exec collector is unavailable",
+        extra={"container_observation": dict(observation)},
+    )
+
+
 def _cloud_profile_warnings(preflight_summary: Mapping[str, Any], spec: CloudSpec) -> list[str]:
     warnings: list[str] = []
     required_agents = {
@@ -3847,21 +3909,58 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
     missing_env = _missing_configured_secrets(spec, os.environ)
     remote: dict[str, Any] = {"skipped": bool(getattr(args, "skip_remote", False))}
     if not remote["skipped"]:
+        ssh_host_prelaunch = spec.provider == "ssh"
+        if ssh_host_prelaunch:
+            container_observation = _provider_container_observation(provider)
+            capacity_observation = _provider_prelaunch_capacity(provider)
+            if container_observation is None:
+                container_observation = {
+                    "schema": "arnold.cloud.ssh_container_observation.v1",
+                    "status": "unknown",
+                    "lifecycle": "unknown",
+                    "collector": {"status": "unavailable", "reason": "observer_unavailable"},
+                }
+            remote["container_observation"] = container_observation
+            remote["prelaunch_capacity"] = capacity_observation
+            lifecycle = container_observation.get("lifecycle")
+            collector_ready = lifecycle == "running"
+            capacity_ready = capacity_observation.get("verdict") == "GO"
+        else:
+            lifecycle = "not-applicable"
+            collector_ready = True
+            capacity_ready = True
+        errors = []
+        if not collector_ready:
+            errors.append(
+                f"container lifecycle is {lifecycle or 'unknown'}; remote exec collector unavailable"
+            )
+        if not capacity_ready:
+            errors.append(
+                "host workspace prelaunch capacity/durability observation is NO-GO"
+            )
         try:
             engine_ref_check = _verify_configured_megaplan_ref_advertised(spec)
         except CliError as exc:
             engine_ref_check = dict(exc.extra.get("engine_ref_check") or {})
             engine_ref_check.setdefault("status", "failed")
             remote["engine_ref_check"] = engine_ref_check
-            errors = [exc.message]
+            errors.append(exc.message)
         else:
             remote["engine_ref_check"] = engine_ref_check
-            errors = []
-        import_check = _run_remote_megaplan_import_check(provider)
-        missing_commands = _run_remote_dependency_check(
-            provider,
-            list(preflight_summary.get("runtime_commands", [])),
-        )
+        if collector_ready:
+            import_check = _run_remote_megaplan_import_check(provider)
+            missing_commands = _run_remote_dependency_check(
+                provider,
+                list(preflight_summary.get("runtime_commands", [])),
+            )
+        else:
+            import_check = {
+                "status": "unavailable",
+                "checks": {},
+                "errors": [],
+                "reason": f"container_{lifecycle or 'unknown'}",
+            }
+            missing_commands = []
         remote.update(
             {
                 "import_check": import_check,
@@ -5190,6 +5289,9 @@ def _run_supervise_tick(root: Path, args: argparse.Namespace, spec: CloudSpec, p
 
 def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status`."""
+    observation = _provider_container_observation(provider)
+    if observation is not None and observation.get("lifecycle") != "running":
+        raise _collector_unavailable_error(observation)
     return provider.status_payload(
         plan=getattr(args, "plan", None),
         workspace=spec.repo.workspace,
@@ -6033,6 +6135,21 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
         sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
         return 0
 
+    observation = _provider_container_observation(provider)
+    if observation is not None and observation.get("lifecycle") != "running":
+        payload = {
+            "success": False,
+            "source": "ssh-host-observer",
+            "container_observation": observation,
+            "collector": {
+                "status": "unavailable",
+                "reason": f"container_{observation.get('lifecycle') or 'unknown'}",
+            },
+            "sessions": [],
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 1
+
     # Laptop path: ask the box for the same snapshot its watchdog produced.
     try:
         raw = provider.read_remote_file(str(status_snapshot.DEFAULT_SNAPSHOT_PATH))
@@ -6053,6 +6170,8 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
             "falling back to legacy remote listing\n"
         )
         return _run_cloud_chains(spec, provider, args=args)
+    if observation is not None:
+        snapshot["container_observation"] = observation
     _emit_cloud_status_human(snapshot, compact=compact)
     sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
     return 0
@@ -6481,6 +6600,10 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         project_repair_custody,
     )
     from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+
+    observation = _provider_container_observation(provider)
+    if observation is not None and observation.get("lifecycle") != "running":
+        raise _collector_unavailable_error(observation)
 
     remote_spec = _resolve_remote_chain_spec(root, args, spec)
     marker = _load_marker(root, args)

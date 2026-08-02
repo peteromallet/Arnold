@@ -63,6 +63,9 @@ class DriverSpec:
 class ResourcesSpec:
     volume: str | None = None
     port: int = 8080
+    prelaunch_min_free_bytes: int = 1_073_741_824
+    prelaunch_min_free_inodes: int = 10_000
+    prelaunch_receipt_reserve_bytes: int = 1_048_576
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,14 @@ def _optional_positive_int(raw: Any, label: str) -> int | None:
     return raw
 
 
+def _nonnegative_int(raw: Any, label: str, *, default: int) -> int:
+    if raw is None:
+        return default
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 0:
+        raise _invalid(f"`{label}` must be a non-negative integer")
+    return raw
+
+
 def _agents(raw: Any) -> dict[str, str]:
     mapping = _mapping(raw, "agents")
     if not mapping:
@@ -370,6 +381,21 @@ def load_spec(path: Path) -> CloudSpec:
     resources = ResourcesSpec(
         volume=_optional_string(resources_raw.get("volume"), "resources.volume"),
         port=_port(resources_raw.get("port")),
+        prelaunch_min_free_bytes=_nonnegative_int(
+            resources_raw.get("prelaunch_min_free_bytes"),
+            "resources.prelaunch_min_free_bytes",
+            default=1_073_741_824,
+        ),
+        prelaunch_min_free_inodes=_nonnegative_int(
+            resources_raw.get("prelaunch_min_free_inodes"),
+            "resources.prelaunch_min_free_inodes",
+            default=10_000,
+        ),
+        prelaunch_receipt_reserve_bytes=_nonnegative_int(
+            resources_raw.get("prelaunch_receipt_reserve_bytes"),
+            "resources.prelaunch_receipt_reserve_bytes",
+            default=1_048_576,
+        ),
     )
 
     local_raw = _mapping(raw.get("local"), "local")

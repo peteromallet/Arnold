@@ -17,6 +17,13 @@ from arnold_pipelines.megaplan.cloud.spec import CloudSpec, SshSpec
 from arnold_pipelines.megaplan.types import CliError
 
 from .base import Provider, _logs_follow, _missing_cli_error, _write_redacted_output
+from .ssh_preflight import (
+    classify_container_inspect,
+    container_inspect_command,
+    parse_workspace_prelaunch_result,
+    validate_workspace_dir,
+    workspace_prelaunch_command,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -62,11 +69,13 @@ class SshProvider(Provider):
         capture_output: bool = True,
         input: str | None = None,
         surface: str = "shell_command",
+        raise_on_failure: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         attempt = self._begin_process_adapter_attempt(
             surface=surface,
             start_details={
-                "argv": list(argv),
+                "executable": Path(argv[0]).name if argv else "",
+                "argument_count": len(argv),
                 "capture_output": capture_output,
                 "input_supplied": input is not None,
             },
@@ -81,30 +90,52 @@ class SshProvider(Provider):
                 kwargs["input"] = input
             result = subprocess.run(argv, **kwargs)
         except FileNotFoundError as exc:
+            message = self._redact_failure_text(str(exc))
             attempt.terminal(
                 status="failed",
                 outcome="blocked",
-                details={"error_type": type(exc).__name__, "message": str(exc)},
+                details={"error_type": type(exc).__name__, "message": message},
             )
-            raise CliError("provider_failed", str(exc)) from exc
+            raise CliError("provider_failed", message) from exc
         if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
+            stderr = self._redact_failure_text((result.stderr or "").strip())
+            stdout = self._redact_failure_text((result.stdout or "").strip())
             attempt.terminal(
                 status="failed",
                 outcome="indeterminate",
                 details={
                     "returncode": result.returncode,
                     "stderr": stderr,
-                    "stdout": (result.stdout or "").strip(),
+                    "stdout": stdout,
                 },
             )
-            raise CliError("provider_failed", stderr or f"Command failed: {' '.join(argv)}")
+            if raise_on_failure:
+                details = [
+                    f"provider command failed (surface={surface}, returncode={result.returncode})"
+                ]
+                if stderr:
+                    details.append(f"stderr: {stderr}")
+                if stdout:
+                    details.append(f"stdout: {stdout}")
+                if not stderr and not stdout:
+                    details.append("stderr: <empty>; stdout: <empty>")
+                raise CliError("provider_failed", "; ".join(details))
+            return result
         attempt.terminal(
             status="completed",
             outcome="succeeded",
             details={"returncode": result.returncode},
         )
         return result
+
+    def _redact_failure_text(self, value: str) -> str:
+        from arnold_pipelines.megaplan.cloud.redact import redact
+
+        failure_env = dict(os.environ)
+        # Provider failures and their WBC evidence must never become a secret
+        # exfiltration surface, even when ordinary output redaction is disabled.
+        failure_env["ARNOLD_REDACTION_ENABLED"] = "1"
+        return redact(value, self._spec.secrets, env=failure_env)
 
     def _remote_run(
         self,
@@ -113,13 +144,82 @@ class SshProvider(Provider):
         capture_output: bool = True,
         input: str | None = None,
         surface: str = "remote_command",
+        raise_on_failure: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         return self._run(
             [*self._ssh_transport_argv(), self._target(), command],
             capture_output=capture_output,
             input=input,
             surface=surface,
+            raise_on_failure=raise_on_failure,
         )
+
+    def _host_observation(self, operation: str) -> subprocess.CompletedProcess[str]:
+        """Run one of two internally constructed host observations."""
+        if operation == "container":
+            command = container_inspect_command(self._ssh.container)
+            surface = "observe_container"
+        elif operation == "prelaunch-capacity":
+            command = workspace_prelaunch_command(
+                validate_workspace_dir(self._ssh.workspace_dir),
+                min_free_bytes=self._spec.resources.prelaunch_min_free_bytes,
+                min_free_inodes=self._spec.resources.prelaunch_min_free_inodes,
+                receipt_reserve_bytes=self._spec.resources.prelaunch_receipt_reserve_bytes,
+            )
+            surface = "observe_prelaunch_capacity"
+        else:
+            raise CliError(
+                "invalid_provider_observation",
+                "SSH host observation is not allowlisted",
+            )
+        return self._run(
+            [*self._ssh_transport_argv(), self._target(), command],
+            capture_output=True,
+            surface=surface,
+            raise_on_failure=False,
+        )
+
+    def observe_container(self) -> dict[str, Any]:
+        result = self._host_observation("container")
+        return classify_container_inspect(
+            returncode=result.returncode,
+            stdout=self._redact_failure_text(result.stdout or ""),
+            stderr=self._redact_failure_text(result.stderr or ""),
+            expected_container=self._ssh.container,
+        )
+
+    def observe_prelaunch_capacity(self) -> dict[str, Any]:
+        """Probe only the configured host bind; no arbitrary host path is accepted."""
+        workspace = validate_workspace_dir(self._ssh.workspace_dir)
+        container = self.observe_container()
+        mount = container.get("workspace_bind")
+        if not isinstance(mount, dict) or (
+            mount.get("status") != "present"
+            or mount.get("type") != "bind"
+            or mount.get("source") != workspace
+            or mount.get("rw") is not True
+        ):
+            return {
+                "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+                "status": "no-go",
+                "verdict": "NO-GO",
+                "workspace": workspace,
+                "errors": ["configured_workspace_bind_mismatch"],
+                "container": container,
+            }
+        result = self._host_observation("prelaunch-capacity")
+        payload = parse_workspace_prelaunch_result(
+            returncode=result.returncode,
+            stdout=self._redact_failure_text(result.stdout or ""),
+            stderr=self._redact_failure_text(result.stderr or ""),
+        )
+        payload["container"] = container
+        expected_mount = container.get("workspace_bind", {}).get("source")
+        if payload.get("workspace") != workspace or expected_mount != workspace:
+            payload["status"] = "no-go"
+            payload["verdict"] = "NO-GO"
+            payload.setdefault("errors", []).append("observed_workspace_mount_mismatch")
+        return payload
 
     def _remote_run_compatible(
         self,

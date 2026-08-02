@@ -116,9 +116,15 @@ megaplan:
 # resources:
 #   volume  Provider-specific persistent volume name. `destroy` deletes it.
 #   port    Health server port exposed by the container.
+#   prelaunch_min_free_bytes  Required host workspace free-byte floor.
+#   prelaunch_min_free_inodes Required host workspace free-inode floor.
+#   prelaunch_receipt_reserve_bytes Bytes physically reserved during the durability probe.
 resources:
   volume: agent-volume
   port: 8080
+  prelaunch_min_free_bytes: 1073741824
+  prelaunch_min_free_inodes: 10000
+  prelaunch_receipt_reserve_bytes: 1048576
 
 # local:
 #   compose_project  Docker Compose project name used by the local provider.

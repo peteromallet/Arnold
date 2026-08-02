@@ -54,6 +54,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     run_cloud_cli,
 )
 from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value
+from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 from arnold_pipelines.megaplan.cloud.spec import (
     ChainSubSpec,
     CloudSpec,
@@ -63,6 +64,7 @@ from arnold_pipelines.megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
+from arnold_pipelines.megaplan.types import CliError
 
 
 def test_on_box_chain_uses_direct_agentbox_transport() -> None:
@@ -88,8 +90,6 @@ def test_fresh_chain_stop_is_identity_guarded_before_reset() -> None:
     assert "tmux kill-session -t demo-chain" in command
     assert "refusing fresh reset" in command
     assert "exit 17" in command
-from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
-from arnold_pipelines.megaplan.types import CliError
 
 
 def _cloud_spec() -> CloudSpec:
@@ -104,6 +104,29 @@ def _cloud_spec() -> CloudSpec:
         secrets=[],
         ssh=SshSpec(host="testhost"),
     )
+
+
+def _running_container_observation() -> dict[str, object]:
+    return {
+        "status": "available",
+        "lifecycle": "running",
+        "collector": {"status": "available", "reason": None},
+    }
+
+
+def _go_prelaunch_capacity() -> dict[str, object]:
+    return {
+        "status": "go",
+        "verdict": "GO",
+        "checks": {
+            "byte_floor": True,
+            "inode_floor": True,
+            "reserve_fsync": True,
+            "sqlite_wal": True,
+            "receipt_atomic_fsync": True,
+            "cleanup": True,
+        },
+    }
 
 
 def _cloud_parser() -> argparse.ArgumentParser:
@@ -837,6 +860,12 @@ def test_cloud_preflight_reports_remote_imports_profile_warning_and_expected_spe
     commands: list[str] = []
 
     class PreflightProvider:
+        def observe_container(self):
+            return _running_container_observation()
+
+        def observe_prelaunch_capacity(self):
+            return _go_prelaunch_capacity()
+
         def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
             commands.append(command)
             if "MEGAPLAN_IMPORT_CHECK" in command:
@@ -894,6 +923,12 @@ def test_cloud_preflight_fails_on_stale_remote_import(
     )
 
     class StaleProvider:
+        def observe_container(self):
+            return _running_container_observation()
+
+        def observe_prelaunch_capacity(self):
+            return _go_prelaunch_capacity()
+
         def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
             if "MEGAPLAN_IMPORT_CHECK" in command:
                 payload = {
@@ -959,6 +994,12 @@ def test_cloud_preflight_reports_engine_ref_check_when_remote_checks_run(
     )
 
     class PreflightProvider:
+        def observe_container(self):
+            return _running_container_observation()
+
+        def observe_prelaunch_capacity(self):
+            return _go_prelaunch_capacity()
+
         def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
             if "MEGAPLAN_IMPORT_CHECK" in command:
                 payload = {
