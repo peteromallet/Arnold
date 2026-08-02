@@ -26,11 +26,14 @@
       "base_commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
       "commit": "26aca6ace7f0af3279ca5b311e6983d4904a4d3a",
       "tree": "5503c69c36bbd5a404742139d5c93cddad48edf3",
-      "status": "CLEAN_CANDIDATE_PENDING_INDEPENDENT_REVIEW_NOT_PREDEPLOY_AUTHORITY",
+      "status": "CLEAN_ACCEPTED_BOUNDED_SOURCE_INTEGRATION_NOT_PREDEPLOY_AUTHORITY",
       "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "patch_sha256": "41665957b8c8fdba4df5344d1bb66d1eb3fc41278283a1c765e673908a9c9934",
       "implementation_evidence": ".megaplan/subagents/critique-ledger-recovery/PROVIDER/cloud-observation-preflight-implementation-result-sol.md",
       "implementation_evidence_sha256": "6454319248b199f084f837d152e2ebba8652c0de4f13c5e84d4a5b19e8544ded",
-      "acceptance_path": "independent exact-commit hostile review of typed inspect/capacity schemas, SSH transport/target validation and dual host-predeploy versus collector-launch verdict before any cloud mutation"
+      "independent_review": ".megaplan/subagents/critique-ledger-recovery/PROVIDER/cloud-observation-preflight-independent-review-pass2-luna.md",
+      "independent_review_sha256": "92e17377883c3affbcadb9716e69bb5403deff6ca6f7d2833e55e61fbb3c3028",
+      "acceptance_path": "integrate exact commit only; immediately before mutation obtain a fresh expiring privileged predeploy receipt and rebind its observed target identity to the exact deploy target"
     },
     {
       "id": "t1.2-partial-contract-bundles",
