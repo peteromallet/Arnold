@@ -110,8 +110,12 @@ T0.3 is intentionally split rather than silently waived:
   fence every background path, reclaim only typed dangling builder cache, prove
   the receipt reserve/free-space floor, and create one fresh mode-0700 canary
   bind source. Mount only that child at `/workspace`; never expose the preserved
-  parent or sibling workspaces to the unsandboxed model. Bind the exact host
-  source and container destination into deploy/run/stop receipts.
+  parent or sibling workspaces to the model. The trusted runner remains root,
+  but every model/tool subprocess runs as a dedicated unprivileged UID with
+  no-new-privileges, no effective capabilities, fresh phase-local Codex state,
+  root-owned non-writable source/engine/state, and only one precreated output
+  inode writable. Bind the exact host source, access identity, privilege vector,
+  and container destination into deploy/run/stop receipts.
 - **F1 follow-up:** durable reserved-capacity ownership, quotas/watermarks,
   ENOSPC/corruption/crash behavior, lifecycle retention, broad Docker/storage
   reclamation, and physical minimal-image enforcement.

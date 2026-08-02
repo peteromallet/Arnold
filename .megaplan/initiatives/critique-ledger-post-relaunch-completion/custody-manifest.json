@@ -61,7 +61,9 @@
       "st_ino",
       "uid",
       "gid",
-      "mode",
+      "initial_mode",
+      "runtime_mode",
+      "access_transition_receipt_sha256",
       "created_empty",
       "never_reused",
       "parent_realpath"
@@ -77,6 +79,15 @@
         "docker_socket",
         "shared_cache"
       ]
+    },
+    "required_model_privilege_identity": {
+      "uid": "dedicated_non_root",
+      "gid": "dedicated_non_root",
+      "no_new_privileges": true,
+      "effective_capabilities": [],
+      "writable_paths": ["exact_precreated_phase_output_inode", "fresh_phase_local_codex_state"],
+      "forbidden_writes": ["source", ".git", "plan_state", "gate", "runner", "installed_engine", "root_auth", "later_phase_state"],
+      "surviving_processes_after_phase": 0
     },
     "required_evidence": [
       "complete_mount_inventory_sha256",

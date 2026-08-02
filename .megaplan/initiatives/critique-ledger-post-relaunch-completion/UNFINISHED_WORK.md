@@ -29,9 +29,18 @@ machine-readable authority; the paths and counts below are operator guidance.
   watchdogs, provider processes, or direct fallbacks are started. Dormant
   shared-package source in the finite image is not claimed absent and its
   physical removal remains F1 work. Denial is proved before mutation.
-- [ ] The unsandboxed model sees only a fresh, mode-0700, never-reused canary
-  child bind at `/workspace`. It cannot address the preserved parent or any
-  sibling workspace. Deploy/run/stop receipts bind and verify that exact mount.
+- [ ] The model sees only a fresh, never-reused canary child bind at
+  `/workspace`. It cannot address the preserved parent or any sibling
+  workspace. The creation receipt records the initially empty root-only child;
+  any later group/traverse access required by the unprivileged model is an
+  explicit identity transition, not a silent weakening. Deploy/run/stop
+  receipts bind and verify the exact inode, owner/group/mode and mount.
+- [ ] Every model/tool subprocess runs under a dedicated unprivileged UID with
+  no-new-privileges and no effective capabilities. Source, `.git`, plan
+  state/gate, runner, installed engine and root auth remain non-writable. Each
+  phase receives fresh isolated Codex state and one precreated, same-inode
+  output file; no model process or writable runtime state survives into the
+  next phase.
 - [ ] Any canary runner failure fences and stops without invoking T1.5/T1.10.
 - [ ] The canary is stopped at its declared finite boundary; no background
   wrapper, timer, resident, or watchdog can continue mutating or messaging.
@@ -48,6 +57,10 @@ machine-readable authority; the paths and counts below are operator guidance.
 - [ ] Produce a physically minimal production/canary image that omits dormant
   recovery/notification implementation and GLEKs, rather than relying only on
   execution-surface unreachability.
+- [ ] Generalize the finite-canary model privilege boundary into a reusable
+  cross-pipeline worker isolation profile, including per-provider UID/session
+  lifecycle and policy receipts. The finite Codex boundary itself is prelaunch;
+  multi-provider/platform adoption is follow-up work.
 
 - [ ] Repair the rejected T1.5 candidate without discarding its valid HMAC
   receipt work. Coordinated deletion or rollback of `attempts`, `claims`, and
