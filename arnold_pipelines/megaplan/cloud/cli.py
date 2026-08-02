@@ -42,6 +42,16 @@ from arnold_pipelines.megaplan.types import CliError
 
 load_spec = load_cloud_spec
 CLOUD_STATUS_CLI_MAX_AGE_S = 5 * 60
+_ZERO_RECOVERY_CLOUD_ACTIONS = {
+    "build",
+    "deploy",
+    "capacity-inventory",
+    "reclaim-dangling-build-cache",
+    "logs",
+    "run-zero-recovery-canary",
+    "zero-recovery-canary-status",
+    "zero-recovery-preflight",
+}
 
 # Cloud deployments always drive phases via subprocess (remote SSH exec);
 # the substrate is pinned here so the cloud CLI explicitly declares its
@@ -55,7 +65,7 @@ _RAW_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 def _validate_zero_recovery_canary_spec(
-    root: Path, raw_path: str, spec: CloudSpec
+    root: Path, raw_path: str, raw_cloud_path: str | None, spec: CloudSpec
 ) -> dict[str, Any]:
     path = (root / raw_path).resolve() if not Path(raw_path).is_absolute() else Path(raw_path).resolve()
     expected = (
@@ -65,6 +75,19 @@ def _validate_zero_recovery_canary_spec(
     if path != expected or not path.is_file():
         raise CliError(
             "zero_recovery_canary_invalid", "the exact tracked canary.yaml is required"
+        )
+    initiative = expected.parent
+    expected_cloud = (initiative / "cloud.yaml").resolve()
+    cloud_path = (
+        (root / raw_cloud_path).resolve()
+        if raw_cloud_path and not Path(raw_cloud_path).is_absolute()
+        else Path(raw_cloud_path).resolve()
+        if raw_cloud_path
+        else (root / "cloud.yaml").resolve()
+    )
+    if cloud_path != expected_cloud or not cloud_path.is_file():
+        raise CliError(
+            "zero_recovery_canary_invalid", "the exact tracked canary cloud.yaml is required"
         )
     try:
         node = yaml.compose(path.read_text(encoding="utf-8"))
@@ -173,13 +196,18 @@ def _validate_zero_recovery_canary_spec(
         or not re.fullmatch(r"[0-9a-f]{40}", tree.stdout.strip())
         or parent.stdout.strip() != payload["engine_commit"]
         or engine_tree.stdout.strip() != payload["engine_tree"]
-        or not set(manifest_diff.stdout.splitlines()).issubset(allowed_manifest_delta)
+        or set(manifest_diff.stdout.splitlines()) != allowed_manifest_delta
     ):
         raise CliError(
             "zero_recovery_canary_invalid",
             "launching checkout must be clean with exact Git commit/tree identity",
         )
-    for relative in (payload["brief"], payload["north_star"], raw_path):
+    tracked_inputs = {
+        payload["brief"],
+        payload["north_star"],
+        *allowed_manifest_delta,
+    }
+    for relative in tracked_inputs:
         tracked = subprocess.run(
             ["git", "ls-files", "--error-unmatch", "--", relative],
             cwd=root, capture_output=True, text=True, check=False,
@@ -191,8 +219,69 @@ def _validate_zero_recovery_canary_spec(
             raise CliError(
                 "zero_recovery_canary_invalid", f"canary input is untracked or dirty: {relative}"
             )
+    def strict_json(path_to_read: Path) -> dict[str, Any]:
+        def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON field: {key}")
+                result[key] = value
+            return result
+
+        value = json.loads(
+            path_to_read.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicates,
+        )
+        if not isinstance(value, dict):
+            raise ValueError("manifest is not an object")
+        return value
+
+    try:
+        proof = strict_json(initiative / "proof-map.json")
+        trace = strict_json(initiative / "traceability.json")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CliError(
+            "zero_recovery_canary_invalid", f"strict proof/trace manifest required: {exc}"
+        ) from exc
+    proof_implementation = proof.get("implementation")
+    proof_launch = proof.get("launch_manifest")
+    if (
+        set(proof) != {"schema", "implementation", "launch_manifest", "claims", "excluded_claims"}
+        or proof.get("schema") != "arnold.megaplan.finite_canary_proof_map.v1"
+        or proof_implementation != {
+            "commit": payload["engine_commit"], "tree": payload["engine_tree"]
+        }
+        or not isinstance(proof_launch, dict)
+        or proof_launch.get("required_parent") != payload["engine_commit"]
+        or proof_launch.get("allowed_delta")
+        != ["canary.yaml", "cloud.yaml", "proof-map.json", "traceability.json"]
+    ):
+        raise CliError("zero_recovery_canary_invalid", "proof-map binding mismatch")
+    expected_trace_fields = {
+        "schema", "implementation_commit", "implementation_tree",
+        "launch_manifest_commit", "launch_manifest_tree", "launch_manifest_parent",
+        "canary_spec", "brief_source", "copied_brief", "fresh_workspace",
+        "predecessor_container", "canary_container",
+    }
+    if (
+        set(trace) != expected_trace_fields
+        or trace.get("schema") != "arnold.megaplan.finite_canary_traceability.v1"
+        or trace.get("implementation_commit") != payload["engine_commit"]
+        or trace.get("implementation_tree") != payload["engine_tree"]
+        or trace.get("launch_manifest_parent") != payload["engine_commit"]
+        or trace.get("canary_spec") != str(path.relative_to(root))
+        or trace.get("copied_brief") != payload["brief"]
+        or trace.get("fresh_workspace") != spec.repo.workspace
+        or trace.get("predecessor_container") != spec.zero_recovery_predecessor_container
+        or trace.get("canary_container") != (spec.ssh.container if spec.ssh else None)
+    ):
+        raise CliError("zero_recovery_canary_invalid", "traceability binding mismatch")
     payload["_admission_source_commit"] = head.stdout.strip()
     payload["_admission_source_tree"] = tree.stdout.strip()
+    payload["_admission_manifest_sha256"] = {
+        relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
+        for relative in sorted(allowed_manifest_delta)
+    }
     return payload
 
 
@@ -733,6 +822,22 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         action = getattr(args, "cloud_action")
         if action == "init":
             return _run_init(root, args)
+        early_spec: CloudSpec | None = None
+        selected_cloud = (
+            Path(args.cloud_yaml).expanduser()
+            if getattr(args, "cloud_yaml", None)
+            else root / "cloud.yaml"
+        )
+        if selected_cloud.is_file():
+            early_spec = _load_cloud_spec(root, args)
+            if (
+                early_spec.zero_recovery_canary
+                and action not in _ZERO_RECOVERY_CLOUD_ACTIONS
+            ):
+                raise CliError(
+                    "zero_recovery_action_denied",
+                    f"cloud {action} is not available in the zero-recovery profile",
+                )
         if action == "quickstart":
             return _run_quickstart(root, args)
 
@@ -741,17 +846,8 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "retire-stale-status" and bool(getattr(args, "on_box", False)):
             return _run_status_retirement(args)
 
-        spec = _load_cloud_spec(root, args)
-        if spec.zero_recovery_canary and action not in {
-            "build",
-            "deploy",
-            "capacity-inventory",
-            "reclaim-dangling-build-cache",
-            "logs",
-            "run-zero-recovery-canary",
-            "zero-recovery-canary-status",
-            "zero-recovery-preflight",
-        }:
+        spec = early_spec or _load_cloud_spec(root, args)
+        if spec.zero_recovery_canary and action not in _ZERO_RECOVERY_CLOUD_ACTIONS:
             raise CliError(
                 "zero_recovery_action_denied",
                 f"cloud {action} is not available in the zero-recovery profile",
@@ -763,7 +859,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             "zero-recovery-preflight",
         }:
             canary_admission = _validate_zero_recovery_canary_spec(
-                root, args.canary_spec, spec
+                root, args.canary_spec, getattr(args, "cloud_yaml", None), spec
             )
         provider = _provider_for_action(spec, args)
 
@@ -888,7 +984,20 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                     "zero_recovery_canary_unavailable",
                     "provider lacks the fixed finite-canary status route",
                 )
-            sys.stdout.write(json.dumps(read_status(), indent=2) + "\n")
+            if canary_admission is None:
+                raise CliError(
+                    "zero_recovery_canary_unavailable", "canary admission is required"
+                )
+            sys.stdout.write(
+                json.dumps(
+                    read_status(
+                        source_commit=canary_admission["_admission_source_commit"],
+                        source_tree=canary_admission["_admission_source_tree"],
+                    ),
+                    indent=2,
+                )
+                + "\n"
+            )
             return 0
 
         if action == "zero-recovery-preflight":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import inspect
 import json
 import logging
@@ -32,6 +33,7 @@ from .ssh_preflight import (
     parse_workspace_prelaunch_result,
     validate_workspace_dir,
     workspace_prelaunch_command,
+    validate_container_name,
 )
 from .zero_recovery import (
     bootstrap_reclaim_command,
@@ -47,6 +49,108 @@ from .zero_recovery import (
 LOGGER = logging.getLogger(__name__)
 
 INSTALL_LINK = "Install: https://www.openssh.com/"
+
+_ZERO_RECOVERY_CANARY_RUNTIME_FORMAT = (
+    "{{json .State}}\n{{json .Config.Env}}\n{{json .Config.Cmd}}\n"
+    "{{json .HostConfig.RestartPolicy}}"
+)
+
+_ZERO_RECOVERY_OAUTH_INSTALL_SCRIPT = r"""
+import json, os, stat, sys
+
+def reject_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate auth field")
+        result[key] = value
+    return result
+
+def safe_child_dir(base, name):
+    base_stat = os.lstat(base)
+    if not stat.S_ISDIR(base_stat.st_mode) or stat.S_ISLNK(base_stat.st_mode):
+        raise RuntimeError("unsafe credential base directory")
+    try:
+        os.mkdir(os.path.join(base, name), 0o700)
+    except FileExistsError:
+        pass
+    child = os.path.join(base, name)
+    child_stat = os.lstat(child)
+    if not stat.S_ISDIR(child_stat.st_mode) or stat.S_ISLNK(child_stat.st_mode):
+        raise RuntimeError("unsafe credential directory")
+    os.chmod(child, 0o700, follow_symlinks=False)
+    return child
+
+def atomic_install(parent, name, data):
+    directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = "." + name + ".zero-recovery-new"
+    try:
+        try:
+            existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            raise RuntimeError("credential destination is not a regular file")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        temporary_fd = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+        try:
+            view = memoryview(data)
+            while view:
+                written = os.write(temporary_fd, view)
+                view = view[written:]
+            os.fchmod(temporary_fd, 0o600)
+            os.fsync(temporary_fd)
+        finally:
+            os.close(temporary_fd)
+        os.replace(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        installed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISREG(installed.st_mode) or stat.S_IMODE(installed.st_mode) != 0o600:
+            raise RuntimeError("credential installation verification failed")
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
+
+raw = sys.stdin.buffer.read()
+auth = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicates)
+if not isinstance(auth, dict) or auth.get("auth_mode") != "chatgpt":
+    raise RuntimeError("ChatGPT OAuth object required")
+workspace_credentials = safe_child_dir("/workspace", ".creds")
+root_codex = safe_child_dir("/root", ".codex")
+atomic_install(workspace_credentials, "codex-auth.json", raw)
+atomic_install(root_codex, "auth.json", raw)
+config = b'preferred_auth_method = "chatgpt"\nforced_login_method = "chatgpt"\nmodel = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n'
+atomic_install(root_codex, "config.toml", config)
+""".strip()
+
+
+def _zero_recovery_canary_runtime_command(container: str) -> str:
+    """Build the exact fixed inspect argv; ``container`` is never positional."""
+    return shlex.join(
+        [
+            "docker",
+            "inspect",
+            "--type=container",
+            "--format",
+            _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT,
+            validate_container_name(container),
+        ]
+    )
+
+
+def _require_advertised_branch_commit(
+    *, stdout: str, branch: str, source_commit: str
+) -> None:
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    expected = f"{source_commit}\trefs/heads/{branch}"
+    if lines != [expected]:
+        raise CliError(
+            "zero_recovery_canary_branch_moved",
+            "advertised branch tip does not equal the admitted launch commit",
+        )
 
 
 class SshProvider(Provider):
@@ -411,18 +515,20 @@ class SshProvider(Provider):
         """Seed only Codex OAuth through one fixed container command."""
         if not self._spec.zero_recovery_canary or self._spec.megaplan.codex_auth != "chatgpt":
             raise CliError("zero_recovery_auth_invalid", "Codex ChatGPT OAuth required")
+        def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate auth field")
+                result[key] = value
+            return result
+
         try:
-            payload = json.loads(auth_json)
-        except json.JSONDecodeError as exc:
+            payload = json.loads(auth_json, object_pairs_hook=reject_duplicates)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise CliError("zero_recovery_auth_invalid", "Codex auth was invalid JSON") from exc
-        if not isinstance(payload, dict):
-            raise CliError("zero_recovery_auth_invalid", "Codex auth must be an object")
-        script = (
-            "import os,pathlib,sys; data=sys.stdin.read(); "
-            "targets=[pathlib.Path('/workspace/.creds/codex-auth.json'),pathlib.Path('/root/.codex/auth.json')]; "
-            "[(p.parent.mkdir(parents=True,exist_ok=True),p.write_text(data,encoding='utf-8'),os.chmod(p,0o600)) for p in targets]; "
-            "c=pathlib.Path('/root/.codex/config.toml'); c.write_text('preferred_auth_method = \\\"chatgpt\\\"\\nforced_login_method = \\\"chatgpt\\\"\\nmodel = \\\"gpt-5.6-sol\\\"\\nmodel_reasoning_effort = \\\"high\\\"\\napproval_policy = \\\"never\\\"\\nsandbox_mode = \\\"danger-full-access\\\"\\n',encoding='utf-8'); os.chmod(c,0o600)"
-        )
+        if not isinstance(payload, dict) or payload.get("auth_mode") != "chatgpt":
+            raise CliError("zero_recovery_auth_invalid", "Codex ChatGPT OAuth object required")
         self._remote_run_compatible(
             shlex.join(
                 [
@@ -432,7 +538,7 @@ class SshProvider(Provider):
                     self._ssh.container,
                     "python3",
                     "-c",
-                    script,
+                    _ZERO_RECOVERY_OAUTH_INSTALL_SCRIPT,
                 ]
             ),
             input=auth_json,
@@ -442,17 +548,7 @@ class SshProvider(Provider):
     def _observe_zero_recovery_canary_runtime(
         self, *, expected_running: bool = True
     ) -> dict[str, Any]:
-        command = shlex.join(
-            [
-                "docker",
-                "inspect",
-                "--type",
-                "container",
-                "--format",
-                "{{json .State}}\n{{json .Config.Env}}\n{{json .Config.Cmd}}\n{{json .HostConfig.RestartPolicy}}",
-                self._ssh.container,
-            ]
-        )
+        command = _zero_recovery_canary_runtime_command(self._ssh.container)
         result = self._remote_run_compatible(
             command, surface="observe_zero_recovery_canary_runtime"
         )
@@ -499,59 +595,64 @@ class SshProvider(Provider):
         if not workspace.is_absolute() or workspace == PurePosixPath("/"):
             raise CliError("zero_recovery_canary_invalid", "invalid canary workspace")
         runner = workspace / ".megaplan/initiatives/critique-ledger-safe-v3-canary/run_canary.py"
+        advertised = self._remote_run_compatible(
+            shlex.join(
+                [
+                    "docker",
+                    "exec",
+                    self._ssh.container,
+                    "git",
+                    "ls-remote",
+                    "--exit-code",
+                    "--heads",
+                    "--",
+                    self._spec.repo.url,
+                    self._spec.repo.branch,
+                ]
+            ),
+            surface="zero_recovery_canary_branch_admission",
+        )
+        _require_advertised_branch_commit(
+            stdout=advertised.stdout or "",
+            branch=self._spec.repo.branch,
+            source_commit=source_commit,
+        )
+        remote_branch_ref = f"refs/remotes/origin/{self._spec.repo.branch}"
         inner = " && ".join(
             [
+                "trap 'kill -TERM 1' EXIT",
                 f"test ! -e {shlex.quote(str(workspace))}",
                 f"git clone --single-branch --branch {shlex.quote(self._spec.repo.branch)} --no-checkout -- {shlex.quote(self._spec.repo.url)} {shlex.quote(str(workspace))}",
+                f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse {shlex.quote(remote_branch_ref)})\" = {source_commit}",
                 f"git -C {shlex.quote(str(workspace))} checkout --detach {source_commit}",
                 f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse HEAD)\" = {source_commit}",
                 f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse HEAD^{{tree}})\" = {source_tree}",
                 f"cd {shlex.quote(str(workspace))}",
-                f"MEGAPLAN_ZERO_RECOVERY_CANARY=1 PYTHONPATH={shlex.quote(str(workspace))} python3 -P {shlex.quote(str(runner))}",
+                f"MEGAPLAN_ZERO_RECOVERY_CANARY=1 ZERO_RECOVERY_SOURCE_COMMIT={source_commit} ZERO_RECOVERY_SOURCE_TREE={source_tree} PYTHONPATH={shlex.quote(str(workspace))} python3 -P {shlex.quote(str(runner))}",
             ]
         )
-        run_error: Exception | None = None
-        try:
-            self._remote_run_compatible(
-                shlex.join(
-                    [
-                        "docker",
-                        "exec",
-                        self._ssh.container,
-                        "bash",
-                        "-lc",
-                        inner,
-                    ]
-                ),
-                capture_output=False,
-                surface="zero_recovery_finite_canary_run",
-            )
-        except Exception as exc:
-            run_error = exc
         self._remote_run_compatible(
-            shlex.join(["docker", "stop", self._ssh.container]),
-            surface="zero_recovery_finite_canary_stop",
+            shlex.join(
+                [
+                    "docker",
+                    "exec",
+                    self._ssh.container,
+                    "bash",
+                    "-lc",
+                    inner,
+                ]
+            ),
+            capture_output=False,
+            surface="zero_recovery_finite_canary_run",
         )
-        stopped = self.observe_container()
-        if (
-            stopped.get("status") != "available"
-            or stopped.get("lifecycle") != "stopped"
-            or stopped.get("container") != self._ssh.container
-        ):
-            raise CliError(
-                "zero_recovery_canary_stop_unknown",
-                "finite canary did not prove an exact stopped terminal container",
-            )
-        self._observe_zero_recovery_canary_runtime(expected_running=False)
-        if run_error is not None:
-            raise run_error
         return 0
 
     def execute_zero_recovery_canary(
         self, auth_json: str, *, source_commit: str, source_tree: str
     ) -> int:
         """Terminal-safe orchestration from first credential mutation onward."""
-        terminal_error: Exception | None = None
+        terminal_error: BaseException | None = None
+        cleanup_errors: list[str] = []
         result = 1
         try:
             self._observe_zero_recovery_canary_runtime()
@@ -559,26 +660,65 @@ class SshProvider(Provider):
             result = self.run_zero_recovery_canary(
                 source_commit=source_commit, source_tree=source_tree
             )
-        except Exception as exc:
+        except BaseException as exc:
             terminal_error = exc
-        observation = self.observe_container()
-        if observation.get("lifecycle") == "running":
-            self._remote_run_compatible(
-                shlex.join(["docker", "stop", self._ssh.container]),
-                surface="zero_recovery_finite_canary_terminal_stop",
-            )
-            observation = self.observe_container()
-        if observation.get("lifecycle") != "stopped":
+        finally:
+            # Do not observe first: observation itself may fail.  The exact admitted
+            # canary is stopped once on every path after credential mutation.
+            try:
+                self._remote_run_compatible(
+                    shlex.join(["docker", "stop", self._ssh.container]),
+                    surface="zero_recovery_finite_canary_terminal_stop",
+                )
+            except BaseException as exc:
+                cleanup_errors.append(f"stop: {type(exc).__name__}")
+            try:
+                observation = self.observe_container()
+                if (
+                    observation.get("status") != "available"
+                    or observation.get("container") != self._ssh.container
+                    or observation.get("lifecycle") != "stopped"
+                ):
+                    cleanup_errors.append("observation did not prove exact stopped target")
+                else:
+                    self._observe_zero_recovery_canary_runtime(expected_running=False)
+            except BaseException as exc:
+                cleanup_errors.append(f"observation: {type(exc).__name__}")
+        if cleanup_errors:
+            primary = f"; primary={type(terminal_error).__name__}" if terminal_error else ""
             raise CliError(
                 "zero_recovery_canary_stop_unknown",
-                "terminal reconciliation did not prove a stopped canary",
-            )
-        self._observe_zero_recovery_canary_runtime(expected_running=False)
+                "terminal reconciliation failed" + primary + "; cleanup=" + ", ".join(cleanup_errors),
+            ) from terminal_error
         if terminal_error is not None:
             raise terminal_error
         return result
 
-    def zero_recovery_canary_status(self) -> dict[str, Any]:
+    def _reconcile_zero_recovery_canary_stop(self) -> tuple[dict[str, Any], bool]:
+        observation = self.observe_container()
+        reconciled_stop = False
+        if observation.get("lifecycle") == "running":
+            self._remote_run_compatible(
+                shlex.join(["docker", "stop", self._ssh.container]),
+                surface="zero_recovery_finite_canary_reconcile_stop",
+            )
+            observation = self.observe_container()
+            reconciled_stop = True
+        if (
+            observation.get("status") != "available"
+            or observation.get("container") != self._ssh.container
+            or observation.get("lifecycle") != "stopped"
+        ):
+            raise CliError(
+                "zero_recovery_canary_stop_unknown",
+                "status reconciliation did not prove the exact stopped canary",
+            )
+        self._observe_zero_recovery_canary_runtime(expected_running=False)
+        return observation, reconciled_stop
+
+    def zero_recovery_canary_status(
+        self, *, source_commit: str, source_tree: str
+    ) -> dict[str, Any]:
         """Read one fixed host-side receipt directory; never container-exec."""
         repo_workspace = PurePosixPath(self._spec.repo.workspace)
         workspace_root = PurePosixPath("/workspace")
@@ -595,46 +735,99 @@ class SshProvider(Provider):
             / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts"
         )
         script = (
-            "import hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); "
+            "import base64,hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); "
             "files=sorted(root.glob('*.run-receipt.json')) if root.is_dir() else []; "
-            "payload={'schema':'arnold.cloud.zero_recovery_canary_status.v1','status':'available' if len(files)==1 else 'unknown','receipt':json.loads(files[0].read_text(encoding='utf-8')) if len(files)==1 else None,'receipt_sha256':hashlib.sha256(files[0].read_bytes()).hexdigest() if len(files)==1 else None,'receipt_count':len(files)}; "
+            "raw=files[0].read_bytes() if len(files)==1 else None; "
+            "payload={'schema':'arnold.cloud.zero_recovery_canary_status.v1','receipt_b64':base64.b64encode(raw).decode('ascii') if raw is not None else None,'receipt_sha256':hashlib.sha256(raw).hexdigest() if raw is not None else None,'receipt_count':len(files)}; "
             "print(json.dumps(payload,sort_keys=True))"
         )
-        result = self._remote_run_compatible(
-            shlex.join(["python3", "-c", script, str(host_receipts)]),
-            surface="zero_recovery_canary_status",
-        )
+        payload: dict[str, Any] = {
+            "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+            "status": "unknown",
+            "receipt": None,
+            "receipt_sha256": None,
+            "receipt_count": 0,
+        }
         try:
-            payload = json.loads(result.stdout or "")
-        except json.JSONDecodeError as exc:
-            raise CliError(
-                "zero_recovery_canary_unknown", "canary status was invalid JSON"
-            ) from exc
-        if (
-            not isinstance(payload, dict)
-            or set(payload)
-            != {"schema", "status", "receipt", "receipt_sha256", "receipt_count"}
-            or payload.get("schema") != "arnold.cloud.zero_recovery_canary_status.v1"
-            or payload.get("status") not in {"available", "unknown"}
-            or type(payload.get("receipt_count")) is not int
-        ):
-            raise CliError(
-                "zero_recovery_canary_unknown", "canary status schema mismatch"
+            result = self._remote_run_compatible(
+                shlex.join(["python3", "-c", script, str(host_receipts)]),
+                surface="zero_recovery_canary_status",
             )
-        observation = self.observe_container()
-        reconciled_stop = False
-        if payload.get("status") == "available" and observation.get("lifecycle") == "running":
-            self._remote_run_compatible(
-                shlex.join(["docker", "stop", self._ssh.container]),
-                surface="zero_recovery_finite_canary_reconcile_stop",
+            def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                decoded: dict[str, Any] = {}
+                for key, value in pairs:
+                    if key in decoded:
+                        raise ValueError("duplicate JSON field")
+                    decoded[key] = value
+                return decoded
+
+            envelope = json.loads(
+                result.stdout or "", object_pairs_hook=reject_duplicates
             )
-            observation = self.observe_container()
-            reconciled_stop = True
-        if payload.get("status") == "available" and observation.get("lifecycle") != "stopped":
-            raise CliError(
-                "zero_recovery_canary_stop_unknown",
-                "terminal receipt exists without an exact stopped canary",
-            )
+            if (
+                not isinstance(envelope, dict)
+                or set(envelope)
+                != {"schema", "receipt_b64", "receipt_sha256", "receipt_count"}
+                or envelope.get("schema")
+                != "arnold.cloud.zero_recovery_canary_status.v1"
+                or type(envelope.get("receipt_count")) is not int
+            ):
+                raise ValueError("status envelope schema mismatch")
+            payload["receipt_count"] = envelope["receipt_count"]
+            if envelope["receipt_count"] == 1:
+                raw = base64.b64decode(envelope["receipt_b64"], validate=True)
+                digest = hashlib.sha256(raw).hexdigest()
+                if digest != envelope["receipt_sha256"]:
+                    raise ValueError("receipt transport digest mismatch")
+                receipt = json.loads(
+                    raw.decode("utf-8"), object_pairs_hook=reject_duplicates
+                )
+                unsigned = dict(receipt) if isinstance(receipt, dict) else {}
+                receipt_digest = unsigned.pop("receipt_digest", None)
+                required_receipt_fields = {
+                    "schema", "status", "canary_id", "plan_name", "phases",
+                    "phase_results", "terminal_state", "failure", "started_at",
+                    "completed_at", "source_commit", "source_tree",
+                    "canary_spec_sha256", "state_sha256",
+                    "dispatch_ledger_sha256", "dispatches", "import_root",
+                    "phase_commands", "phase_receipt_sha256", "receipt_digest",
+                }
+                if (
+                    not isinstance(receipt, dict)
+                    or set(receipt) != required_receipt_fields
+                    or receipt.get("schema")
+                    != "arnold.megaplan.finite_canary_run_receipt.v2"
+                    or receipt.get("status") not in {"passed", "failed"}
+                    or receipt.get("canary_id") != "critique-ledger-safe-v3-canary"
+                    or receipt.get("plan_name")
+                    != "critique-ledger-cl2-planning-canary"
+                    or receipt.get("source_commit") != source_commit
+                    or receipt.get("source_tree") != source_tree
+                    or receipt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
+                    or receipt.get("terminal_state")
+                    != ("finalized" if receipt.get("status") == "passed" else "failed")
+                    or not isinstance(receipt.get("phase_results"), list)
+                    or len(receipt.get("phase_results")) > 5
+                    or [item.get("phase") for item in receipt.get("phase_results") if isinstance(item, dict)]
+                    != ["init", "plan", "critique", "gate", "finalize"][
+                        : len(receipt.get("phase_results"))
+                    ]
+                    or not isinstance(receipt_digest, str)
+                    or hashlib.sha256(
+                        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+                    ).hexdigest()
+                    != receipt_digest
+                ):
+                    raise ValueError("receipt schema, source, phases, or digest mismatch")
+                payload.update(
+                    status="available",
+                    receipt=receipt,
+                    receipt_sha256=digest,
+                )
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload["validation_error"] = type(exc).__name__
+        finally:
+            observation, reconciled_stop = self._reconcile_zero_recovery_canary_stop()
         payload["container_observation"] = observation
         payload["reconciled_stop"] = reconciled_stop
         return payload
