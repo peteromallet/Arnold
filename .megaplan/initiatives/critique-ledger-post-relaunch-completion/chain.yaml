@@ -7,45 +7,13 @@ review_policy:
 anchors:
   north_star: NORTHSTAR.md
 launch_preconditions:
-  - name: safe v3 canary handoff is independently accepted
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
-    check:
-      kind: contains_text
-      text: arnold.critique_ledger.safe_v3_canary_completion.v1
-  - name: safe v3 canary handoff is committed input
+  - name: safe v3 canary chain completed with content-addressed proof
+    kind: chain_completed
+    chain: .megaplan/initiatives/critique-ledger-safe-v3-canary/chain.yaml
+    require_manifest: true
+  - name: complete follow-up epic input is committed and clean
     kind: git_tracked
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
-  - name: independent T6.2 decision is accepted
-    path: evidence/critique-ledger-recovery/T6.2/safe-v3-canary-acceptance.json
-    check:
-      kind: contains_text
-      text: '"decision":"accepted"'
-  - name: independent T6.2 decision is committed evidence
-    kind: git_tracked
-    path: evidence/critique-ledger-recovery/T6.2/safe-v3-canary-acceptance.json
-  - name: canary automatic repair effects were fail closed
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
-    check:
-      kind: contains_text
-      text: '"automatic_repair_effects":"DISABLED_FAIL_CLOSED"'
-  - name: canary notification effects were fail closed
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
-    check:
-      kind: contains_text
-      text: '"notification_effects":"DISABLED_FAIL_CLOSED"'
-  - name: canary recovery capabilities were absent
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
-    check:
-      kind: contains_text
-      text: '"recovery_capability_profile":"ZERO_RECOVERY"'
-  - name: poisoned v2 generation was terminally fenced
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
-    check:
-      kind: contains_text
-      text: '"v2_authority":"TERMINALLY_FENCED"'
-  - name: unfinished work custody ledger is committed input
-    kind: git_tracked
-    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/UNFINISHED_WORK.md
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion
 milestones:
   - label: f1-owner-storage-recovery-hardening
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f1-owner-storage-recovery-hardening.md

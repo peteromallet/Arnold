@@ -5,6 +5,11 @@ the post-relaunch completion epic. An item leaves this ledger only through an
 independently accepted completion or an explicit supersession record that binds
 the replacement evidence. A passing canary does not complete any item below.
 
+Exact worktree/commit/tree/status/diff identities are in
+`custody-manifest.json`. Stale or conflicting route documents and rejected
+candidates are governed by `supersession-index.json`. These JSON files are the
+machine-readable authority; the paths and counts below are operator guidance.
+
 ## Stable canary boundary
 
 - [ ] The v3 handoff records exact deployed commit/tree/image/source identities.
@@ -60,11 +65,14 @@ the replacement evidence. A passing canary does not complete any item below.
 ## F2 — admission, model, effect and release closure
 
 - [ ] Resume and complete T1.1 universal admission from
-  `/private/tmp/arnold-critique-recovery-t1-1-admission-20260802` (16 dirty
-  files; paused at 6 pass / 1 fail). Do not infer acceptance from preservation.
+  `/private/tmp/arnold-critique-recovery-t1-1-admission-20260802` (18 current
+  modified/untracked paths at the frozen custody snapshot; paused at 6 pass /
+  1 fail). Do not infer acceptance from preservation.
 - [ ] Resume and complete T1.2 typed attempt/model handling from its preserved
-  partial lane; bind exact route/model, semantic success, bounded response-loss
-  retry, sticky UNKNOWN and installed parity.
+  partial lane at
+  `/private/tmp/arnold-critique-recovery-contract-bundles-20260802`; bind exact
+  route/model, semantic success, bounded response-loss retry, sticky UNKNOWN
+  and installed parity.
 - [ ] Integrate and generalize accepted T1.3 transport authority commit
   `2f1500aea1d03fbf13df5c796b17bd03d17bb79c` only through a clean descendant
   with conflict and package qualification.
@@ -74,7 +82,9 @@ the replacement evidence. A passing canary does not complete any item below.
 ## Preserved but non-authoritative artifacts
 
 - Rejected oversized T1.5/B7 attempt:
-  `/private/tmp/arnold-critique-recovery-simple-fixer-20260802` (32 files,
+  `/private/tmp/arnold-critique-recovery-simple-fixer-20260802`, commit
+  `939c763ae492a72efdd74941d431045b0f0ea61d`, tree
+  `c78890fd9998241f8767210b36036e63c17eda5a` (32-file implementation history,
   roughly 28k inserted test lines). Mine it for evidence only; never merge it
   wholesale or report it as completed work.
 - Rejected bounded T1.5 pass-3 commit:
@@ -85,6 +95,25 @@ the replacement evidence. A passing canary does not complete any item below.
   `06d41e6b7148db4e5b464131762d63fd697db056`, tree
   `a8a67b2e01b9129673afdc7931cb3ffdce03a2de`. Its accepted scope is local
   Stage-A interface behavior; it is not cloud deploy authority.
+- Locally integration-eligible run-authority containment candidate:
+  `48e13e1bcbc6769aff753270331d52ac1c148125`, tree
+  `550421e34c1e789e31d173fdf35fdd7fd55ce287`, at
+  `/private/tmp/arnold-critique-recovery-ra-contain-20260802`. It is not T0.0
+  completion or installed production authority until clean integration and an
+  owner-issued production decision/revision/fence/receipt pass.
+- Rejected T1.10 notification candidate:
+  `0c3d662024bc0497ed3979991a20b3b48ecf19cd`, tree
+  `d4c10e167be87e1655704d1beeaf92d6c4e46526`, at
+  `/private/tmp/arnold-critique-recovery-notification-ux-20260802`. Evidence
+  only; never wholesale integrate.
+- T5.1 evidence-schema candidate:
+  `7c254f7f0d15ba4e835a6fe7cae40b47d29ef7cd`, tree
+  `27e7b22ef0d7f3faeaa6b7cbcd63aabb2872d7e9`, at
+  `/private/tmp/arnold-critique-recovery-t5-1-20260802`. Four owner decisions
+  remain; it has no T6.2 acceptance authority.
+- Prepared T1.4/T1.10 lane
+  `/private/tmp/arnold-critique-recovery-incident-stall-notify-20260802` is a
+  clean no-edit base only, not implemented work.
 
 ## Epic completion rule
 

@@ -51,6 +51,11 @@ The complete inventory of preserved and unfinished work is
 or deferred interface may be silently consumed by the canary or dropped by this
 epic.
 
+Machine-readable custody is frozen in [`custody-manifest.json`](custody-manifest.json).
+Conflicting or stale launch instructions are retired by
+[`supersession-index.json`](supersession-index.json). Human prose never
+overrides those typed dispositions.
+
 F1 explicitly inherits:
 
 - the T1.5 pass-3 deletion/rollback failure: coordinated erasure of all mutable

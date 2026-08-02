@@ -1,0 +1,128 @@
+{
+  "schema": "arnold.critique_ledger.unfinished_work_custody.v1",
+  "captured_at": "2026-08-02T23:15:00+02:00",
+  "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "items": [
+    {
+      "id": "cloud-observation-preflight",
+      "path": "/private/tmp/arnold-critique-recovery-cloud-observation-preflight-20260802",
+      "commit": "96d368de54876aaaec205290e2640d9daf78f3ea",
+      "tree": "e2f3633739acaa75ccb9324365a1b8b966fc4f4f",
+      "status": "CLEAN_CANDIDATE_PENDING_INDEPENDENT_REVIEW",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/PROVIDER/cloud-observation-preflight-implementation-result-sol.md",
+      "acceptance_path": "independent lifecycle, redaction, injection, capacity, durability, stopped-container and installed-package review before cloud mutation"
+    },
+    {
+      "id": "t1.2-partial-contract-bundles",
+      "path": "/private/tmp/arnold-critique-recovery-contract-bundles-20260802",
+      "commit": "2f1500aea1d03fbf13df5c796b17bd03d17bb79c",
+      "tree": "0e060b37eb8bcea19d7cefa03f00842ed92b5558",
+      "status": "DIRTY_PRESERVED_4_PATHS",
+      "status_sha256": "298b49e1c487fb35110aeb3e9f971528756c5039e5741d2b36bf8b7a1a4a5a7b",
+      "worktree_diff_sha256": "909574ddadf2557be2cf1ab125d8faf40cf8c5aa6216e63ae76626af0551dc42",
+      "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "independent semantic review, clean descendant integration, installed route proof"
+    },
+    {
+      "id": "run-authority-containment",
+      "path": "/private/tmp/arnold-critique-recovery-ra-contain-20260802",
+      "commit": "48e13e1bcbc6769aff753270331d52ac1c148125",
+      "tree": "550421e34c1e789e31d173fdf35fdd7fd55ce287",
+      "status": "CLEAN_LOCAL_INTEGRATION_ELIGIBLE_NOT_T0_COMPLETE",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "clean integration, exact install, owner-issued production decision/revision/fence/receipt"
+    },
+    {
+      "id": "t1.1-admission",
+      "path": "/private/tmp/arnold-critique-recovery-t1-1-admission-20260802",
+      "commit": "3ed353f8aa3d0df450c563c3cb8d76c87349e32d",
+      "tree": "f6c83fca884e9631c7518810ee521d75389815b3",
+      "status": "DIRTY_PRESERVED_18_PATHS_6_PASS_1_FAIL",
+      "status_sha256": "c560b7085db39c1a8ba6bf8862f2644d3b1f364dac03ac8a0352cad2ac8ce0d4",
+      "worktree_diff_sha256": "af398c34c607594f757b341eaadfb3f136a0279bbea53a3cb2eb66e3fec4d384",
+      "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "repair failing final-milestone validation, independent review, clean integration, installed owner/backend conformance"
+    },
+    {
+      "id": "t1.7-storage",
+      "path": "/private/tmp/arnold-critique-recovery-t1-7-storage-20260802",
+      "commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "tree": "83a22fc5f5930cbcbe5a439129706bb90bb28a92",
+      "status": "DIRTY_PRESERVED_16_PATHS_STAGED_AND_UNSTAGED_79_PASS_1_FAIL",
+      "status_sha256": "e92a389f3ddf9ecba4dc527301fc055cd69f0a6b84b942d5d562bffcc837b430",
+      "worktree_diff_sha256": "2f10dc3bfcec5d4510c33894ab1c2b0b8394cbb94a65699ff3c9b9e3c7c960e0",
+      "index_diff_sha256": "930731f38780d5e17c307ebf614c8094037d4d239c2525651baa96ef18fc1cb1",
+      "acceptance_path": "repair exact failing node, semantic crash/ENOSPC review, clean commit and installed-wheel proof"
+    },
+    {
+      "id": "t1.10-notification-rejected",
+      "path": "/private/tmp/arnold-critique-recovery-notification-ux-20260802",
+      "commit": "0c3d662024bc0497ed3979991a20b3b48ecf19cd",
+      "tree": "d4c10e167be87e1655704d1beeaf92d6c4e46526",
+      "status": "CLEAN_REJECTED_EVIDENCE_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.10/notification-ux-independent-review-pass4-luna-result.md",
+      "acceptance_path": "independently rebuilt owner-backed notification outbox after stable canary; never wholesale integrate"
+    },
+    {
+      "id": "t1.5-oversized-rejected",
+      "path": "/private/tmp/arnold-critique-recovery-simple-fixer-20260802",
+      "commit": "939c763ae492a72efdd74941d431045b0f0ea61d",
+      "tree": "c78890fd9998241f8767210b36036e63c17eda5a",
+      "status": "CLEAN_REJECTED_EVIDENCE_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "mine evidence only; narrow independent reimplementation after canary"
+    },
+    {
+      "id": "t1.5-pass3-rejected",
+      "path": "/private/tmp/arnold-critique-recovery-t1-5-operational-pass3-20260802",
+      "commit": "9642193a063d91a6be364f2d11a04b221eae30cf",
+      "tree": "27a3d61dff39a4c1a26a8a736dc85ce727c57b7c",
+      "status": "CLEAN_HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.5/t1-5-operational-pass3-independent-review-luna.md",
+      "acceptance_path": "external monotonic consumed-grant authority plus deletion/rollback no-redispatch proof"
+    },
+    {
+      "id": "t1.8-bounded-release-component",
+      "path": "/private/tmp/arnold-critique-recovery-gen-deploy-bootstrap-20260802",
+      "commit": "06d41e6b7148db4e5b464131762d63fd697db056",
+      "tree": "a8a67b2e01b9129673afdc7931cb3ffdce03a2de",
+      "status": "CLEAN_ACCEPTED_BOUNDED_LOCAL_STAGE_A_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "clean integration, production adapter, deploy and live installed-vector proof"
+    },
+    {
+      "id": "t1.3-bounded-transport-component",
+      "commit": "2f1500aea1d03fbf13df5c796b17bd03d17bb79c",
+      "tree": "0e060b37eb8bcea19d7cefa03f00842ed92b5558",
+      "status": "ACCEPTED_STAGE_A_COMPONENT_ONLY",
+      "acceptance_path": "clean descendant integration and installed route proof"
+    },
+    {
+      "id": "t5.1-evidence-schema",
+      "path": "/private/tmp/arnold-critique-recovery-t5-1-20260802",
+      "commit": "7c254f7f0d15ba4e835a6fe7cae40b47d29ef7cd",
+      "tree": "27e7b22ef0d7f3faeaa6b7cbcd63aabb2872d7e9",
+      "status": "CLEAN_CANDIDATE_FOUR_OWNER_DECISIONS_OUTSTANDING",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "resolve four owner decisions, independent replacement acceptance, recompute T5.2 and bind T5.3-T5.6"
+    },
+    {
+      "id": "t1.4-prepared-empty-lane",
+      "path": "/private/tmp/arnold-critique-recovery-incident-stall-notify-20260802",
+      "commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "tree": "83a22fc5f5930cbcbe5a439129706bb90bb28a92",
+      "status": "CLEAN_NO_EDITS_PREPARED_ONLY",
+      "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptance_path": "explicitly superseded by zero-recovery canary; future rebuild from accepted production owner interfaces"
+    },
+    {
+      "id": "t1.9-zero-recovery-launcher",
+      "status": "SPECIFICATION_PENDING_IMPLEMENTATION",
+      "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.9/t1-9-stage-a-implementation-delta-v2-sol.md",
+      "acceptance_path": "bounded implementation, deny-before-mutation hostile tests, installed parity, independent review"
+    }
+  ]
+}

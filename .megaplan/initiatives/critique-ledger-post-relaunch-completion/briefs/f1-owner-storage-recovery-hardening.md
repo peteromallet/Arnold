@@ -16,8 +16,9 @@ generalization; and preparation of T4.6 without rewriting evidence.
 
 ## Locked decisions
 
-- The accepted Stage-A route is preserved and regression-tested; this milestone
-  generalizes rather than replaces it.
+- The eventual independently accepted and installed Stage-A route is preserved
+  and regression-tested; bounded local components alone do not establish that
+  route. This milestone generalizes rather than replaces accepted behavior.
 - Every canonical owner fails closed on corrupt/missing state, has a current
   revision/fence/incarnation and preserves sticky indeterminacy.
 - Every still-shipped ordinary recovery mutation path is either owner-routed or

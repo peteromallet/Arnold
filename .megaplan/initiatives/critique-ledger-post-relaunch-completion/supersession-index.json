@@ -1,0 +1,47 @@
+{
+  "schema": "arnold.critique_ledger.supersession_index.v1",
+  "current_operational_route": {
+    "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/post-t1-5-fail-shortest-launch-route-luna.md",
+    "sha256": "abe9d64aeb0a35f81ec5fa72b804471a2b2307e34210b993163575a7090e2f47",
+    "profile": "ZERO_RECOVERY"
+  },
+  "superseded": [
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/minimal-operational-relaunch-map-sol.md",
+      "sha256": "fd1a33ba58566aa126e170643f59a39bca13972e5919d0a338403b50c169312e",
+      "status": "SUPERSEDED_FOR_OPERATIONAL_CANARY_EVIDENCE_ONLY",
+      "reason": "depends on rejected T1.5 and stale four-change route"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/stage-a-integration-map-sol.md",
+      "sha256": "87809fc379846c1de21b6b9d7a79575ac209936a7935445931c3b876bbcbc910",
+      "status": "SUPERSEDED_FOR_OPERATIONAL_CANARY_EVIDENCE_ONLY",
+      "reason": "contains positive T1.5/T1.10 capabilities forbidden by zero-recovery profile"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/T1.4/incident-stall-notify-exact-implementation-map-luna.md",
+      "sha256": "fd83c969cd8c2ffa45819aa5d23d098974bbd2aab2b37259f48f919beada1213",
+      "status": "COUNTERFACTUAL_FOLLOW_UP_EVIDENCE_ONLY",
+      "reason": "assumes later-rejected T1.5 candidate; useful interface analysis only"
+    },
+    {
+      "commit": "9642193a063d91a6be364f2d11a04b221eae30cf",
+      "tree": "27a3d61dff39a4c1a26a8a736dc85ce727c57b7c",
+      "status": "HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+      "rejection_report": ".megaplan/subagents/critique-ledger-recovery/T1.5/t1-5-operational-pass3-independent-review-luna.md",
+      "rejection_report_sha256": "290fcd8b2132b5834c6e6fe961a2640329bfb133eb1acd618f82fed2b3d8d13a"
+    },
+    {
+      "commit": "0c3d662024bc0497ed3979991a20b3b48ecf19cd",
+      "tree": "d4c10e167be87e1655704d1beeaf92d6c4e46526",
+      "status": "HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+      "rejection_report": ".megaplan/subagents/critique-ledger-recovery/T1.10/notification-ux-independent-review-pass4-luna-result.md",
+      "rejection_report_sha256": "2fba7fd07882c98b2080ae9867dc8a739b77625b311dadad820547636ab9584b"
+    },
+    {
+      "commit": "3513e4937096ad57ef01beed56d4fba17aaf2b17",
+      "status": "SUPERSEDED_BY_LINT_CLEAN_AMEND",
+      "superseded_by": "96d368de54876aaaec205290e2640d9daf78f3ea"
+    }
+  ]
+}
