@@ -18,12 +18,16 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.cloud.human_blockers import compute_escalation_id
+from arnold_pipelines.megaplan.cloud.incident_notification import (
+    IncidentNotificationStore,
+    initial_incident_card,
+)
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.run_state.decision_contract import (
     typed_human_gate_for_state,
@@ -371,7 +375,10 @@ def _result_from_state(state: Mapping[str, Any], state_path: Path) -> HumanRevie
         error=str(state.get("error") or "") or None,
         idempotent_replay=True,
         fallback_delivery_required=(
-            not stable_human_gate and not launched and not fallback_delivered
+            not stable_human_gate
+            and not launched
+            and not fallback_delivered
+            and state.get("status") not in {"provenance_failed", "persistence_failed"}
         ),
         retry_pending=state.get("status") == "launch_failed"
         and isinstance(fallback, Mapping)
@@ -393,182 +400,252 @@ def launch_human_review_diagnostic(
     if not session:
         raise ValueError("human-review payload has no session")
     marker_path = Path(marker_dir) / f"{session}.json"
-    marker = _read_object(marker_path)
-    provenance = _resolve_provenance(marker)
+    # Marker loading is observation; provenance validation is deliberately
+    # below durable admission.
+    try:
+        marker = _read_optional_object(marker_path) or {}
+    except (OSError, ValueError, TypeError):
+        # A missing/unreadable/malformed marker is still a durable incident;
+        # provenance validation below records the terminal evidence.
+        marker = {}
     repair_root = Path(repair_data_dir).resolve()
     escalation_id = _escalation_id(payload, session, repair_root)
     state_dir = repair_root / "human-review-diagnostics" / escalation_id
-    state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / "state.json"
     task_path = state_dir / "task.md"
     evidence_path = state_dir / "evidence.json"
     lock_path = state_dir / ".lock"
-    custody_id = str(provenance.get("custody_id") or "")
     stable_human_gate = payload.get("notification_kind") == "stable_human_gate"
+    plan = payload.get("plan") if isinstance(payload.get("plan"), Mapping) else {}
+    observed_state = str(plan.get("current_state") or payload.get("state") or "manual_review")
 
-    with lock_path.open("a+b") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        existing = _read_optional_object(state_path)
-        if existing is not None:
-            if (
-                existing.get("schema_version") != SCHEMA
-                or existing.get("escalation_id") != escalation_id
-                or existing.get("custody_id") != custody_id
-            ):
-                raise ValueError("existing diagnostic state conflicts with escalation custody")
-            if existing.get("status") == "launched":
-                manifest_path = Path(str(existing.get("manifest_path") or ""))
-                _validate_manifest(
-                    manifest_path,
-                    run_id=str(existing.get("run_id") or ""),
-                    provenance=provenance,
-                )
-                return _result_from_state(existing, state_path)
-            fallback = existing.get("fallback_delivery")
-            fallback_status = (
-                str(fallback.get("status") or "")
-                if isinstance(fallback, Mapping)
-                else ""
-            )
-            if (
-                existing.get("status") != "launch_failed"
-                or fallback_status not in {"delivered", "retry_pending"}
-            ):
-                return _result_from_state(existing, state_path)
-            prior_attempts = int(existing.get("launch_attempt_count") or 1)
-            if stable_human_gate and prior_attempts >= _MAX_STABLE_GATE_LAUNCH_ATTEMPTS:
-                exhausted = {
-                    **existing,
-                    "status": "launch_dead_letter",
-                    "updated_at": _utc_now(),
-                    "retry_exhausted": True,
-                }
-                _atomic_json(state_path, exhausted)
-                return _result_from_state(exhausted, state_path)
-            task_path = Path(str(existing.get("task_path") or ""))
-            task = task_path.read_text(encoding="utf-8")
-            if hashlib.sha256(task.encode("utf-8")).hexdigest() != existing.get(
-                "task_sha256"
-            ):
-                raise ValueError("existing diagnostic task no longer matches custody state")
-            initial_state = {
-                **existing,
-                "status": "launching",
-                "launch_attempt_count": int(existing.get("launch_attempt_count") or 1)
-                + 1,
-                "updated_at": _utc_now(),
-            }
-            initial_state.pop("error", None)
-            _atomic_json(state_path, initial_state)
-        else:
-            evidence = _evidence_snapshot(
-                payload=payload,
-                marker=marker,
-                repair_data_dir=repair_root,
-                session=session,
-            )
-            _atomic_json(evidence_path, evidence)
-            task = _task_text(
-                session=session,
-                workspace=Path(project_dir).resolve(),
-                remote_spec=str(payload.get("remote_spec") or ""),
-                evidence_path=evidence_path,
-                evidence=evidence,
-            )
-            _atomic_text(task_path, task)
-            created_at = _utc_now()
-            initial_state = {
-                "schema_version": SCHEMA,
-                "status": "launching",
-                "escalation_id": escalation_id,
-                "session": session,
-                "custody_id": custody_id,
-                "source_record_id": provenance.get("source_record_id"),
-                "task_path": str(task_path),
-                "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
-                "evidence_path": str(evidence_path),
-                "launch_attempt_count": 1,
-                "notification_kind": payload.get("notification_kind")
-                or "repair_exhaustion_diagnostic",
-                "created_at": created_at,
-                "updated_at": created_at,
-            }
-            _atomic_json(state_path, initial_state)
-        _atomic_json(state_path, initial_state)
-
-        try:
-            with _delegation_environment(provenance):
-                launch = asyncio.run(
-                    launch_subagent_task(
-                        ResidentConfig(),
-                        task=task,
-                        description=(
-                            f"Notify user of Megaplan human gate for {session}"
-                            if stable_human_gate
-                            else f"Diagnose Megaplan human review for {session}"
-                        ),
-                        project_dir=str(Path(project_dir).resolve()),
-                        task_kind="routine" if stable_human_gate else "root_cause",
-                        work_intent="review" if stable_human_gate else "execution",
-                        mutation_claim="none" if stable_human_gate else "auto",
-                        difficulty=4 if stable_human_gate else 9,
-                        request_id=escalation_id,
-                    )
-                )
-            if not launch.ok or not launch.run_id or not launch.manifest_path:
-                detail = launch.error or launch.stderr or launch.status or "unknown launch failure"
-                raise RuntimeError(detail)
-            _validate_manifest(
-                Path(launch.manifest_path),
-                run_id=launch.run_id,
-                provenance=provenance,
-            )
-        except Exception as exc:
-            error = redact_text(f"{exc.__class__.__name__}: {exc}")[:_MAX_ERROR_CHARS]
-            failed = {
-                **initial_state,
-                "status": "launch_failed",
-                "error": error,
-                "updated_at": _utc_now(),
-                "fallback_delivery": (
-                    {"status": "retry_pending"}
-                    if stable_human_gate
-                    else initial_state.get("fallback_delivery") or {"status": "pending"}
-                ),
-            }
-            _atomic_json(state_path, failed)
-            fallback = failed.get("fallback_delivery")
-            fallback_delivered = (
-                isinstance(fallback, Mapping) and fallback.get("status") == "delivered"
-            )
-            return HumanReviewDiagnosticResult(
-                ok=False,
-                status="launch_failed",
-                escalation_id=escalation_id,
-                state_path=str(state_path),
-                error=error,
-                fallback_delivery_required=not stable_human_gate and not fallback_delivered,
-                retry_pending=stable_human_gate,
-                launch_attempt_count=int(initial_state.get("launch_attempt_count") or 1),
-            )
-
-        launched_state = {
-            **initial_state,
-            "status": "launched",
-            "run_id": launch.run_id,
-            "manifest_path": launch.manifest_path,
-            "updated_at": _utc_now(),
-        }
-        _atomic_json(state_path, launched_state)
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        custody = IncidentNotificationStore(repair_root)
+    except Exception as exc:
         return HumanReviewDiagnosticResult(
-            ok=True,
-            status="launched",
+            ok=False,
+            status="persistence_failed",
             escalation_id=escalation_id,
             state_path=str(state_path),
-            run_id=launch.run_id,
-            manifest_path=launch.manifest_path,
-            launch_attempt_count=int(initial_state.get("launch_attempt_count") or 1),
+            error=redact_text(f"{exc.__class__.__name__}: {exc}")[:_MAX_ERROR_CHARS],
+            fallback_delivery_required=False,
         )
+
+    with custody:
+        try:
+            admission = custody.admit(
+                occurrence_id=escalation_id,
+                session=session,
+                state=observed_state,
+                owner="watchdog",
+                payload=payload,
+                marker=marker,
+            )
+        except Exception as exc:
+            return HumanReviewDiagnosticResult(
+                ok=False,
+                status="persistence_failed",
+                escalation_id=escalation_id,
+                state_path=str(state_path),
+                error=redact_text(f"{exc.__class__.__name__}: {exc}")[:_MAX_ERROR_CHARS],
+                fallback_delivery_required=False,
+            )
+
+        with lock_path.open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            existing = _read_optional_object(state_path)
+            if existing is not None:
+                if (
+                    existing.get("schema_version") != SCHEMA
+                    or existing.get("escalation_id") != escalation_id
+                    or existing.get("diagnostic_attempt_id") != admission.diagnostic_attempt_id
+                    or existing.get("notification_intent_id") != admission.notification_intent_id
+                ):
+                    raise ValueError("existing diagnostic state conflicts with escalation custody")
+                if existing.get("status") in {"provenance_failed", "persistence_failed"}:
+                    return _result_from_state(existing, state_path)
+                if existing.get("status") == "launched":
+                    provenance = _resolve_provenance(marker)
+                    manifest_path = Path(str(existing.get("manifest_path") or ""))
+                    _validate_manifest(
+                        manifest_path,
+                        run_id=str(existing.get("run_id") or ""),
+                        provenance=provenance,
+                    )
+                    return _result_from_state(existing, state_path)
+                fallback = existing.get("fallback_delivery")
+                fallback_status = str(fallback.get("status") or "") if isinstance(fallback, Mapping) else ""
+                if existing.get("status") != "launch_failed" or fallback_status not in {"delivered", "retry_pending"}:
+                    return _result_from_state(existing, state_path)
+                prior_attempts = int(existing.get("launch_attempt_count") or 1)
+                if stable_human_gate and prior_attempts >= _MAX_STABLE_GATE_LAUNCH_ATTEMPTS:
+                    exhausted = {**existing, "status": "launch_dead_letter", "updated_at": _utc_now(), "retry_exhausted": True}
+                    _atomic_json(state_path, exhausted)
+                    return _result_from_state(exhausted, state_path)
+                task_path = Path(str(existing.get("task_path") or ""))
+                task = task_path.read_text(encoding="utf-8")
+                if hashlib.sha256(task.encode("utf-8")).hexdigest() != existing.get("task_sha256"):
+                    raise ValueError("existing diagnostic task no longer matches custody state")
+                initial_state = {
+                    **existing,
+                    "status": "launching",
+                    "launch_attempt_count": int(existing.get("launch_attempt_count") or 1) + 1,
+                    "updated_at": _utc_now(),
+                }
+                initial_state.pop("error", None)
+                _atomic_json(state_path, initial_state)
+            else:
+                evidence = _evidence_snapshot(payload=payload, marker=marker, repair_data_dir=repair_root, session=session)
+                _atomic_json(evidence_path, evidence)
+                task = _task_text(
+                    session=session,
+                    workspace=Path(project_dir).resolve(),
+                    remote_spec=str(payload.get("remote_spec") or ""),
+                    evidence_path=evidence_path,
+                    evidence=evidence,
+                )
+                _atomic_text(task_path, task)
+                created_at = _utc_now()
+                initial_state = {
+                    "schema_version": SCHEMA,
+                    "status": "launching",
+                    "escalation_id": escalation_id,
+                    "occurrence_id": admission.occurrence_id,
+                    "diagnostic_attempt_id": admission.diagnostic_attempt_id,
+                    "notification_intent_id": admission.notification_intent_id,
+                    "outbox_id": admission.outbox_id,
+                    "state_version": admission.state_version,
+                    "recipient": admission.recipient,
+                    "payload_digest": admission.payload_digest,
+                    "session": session,
+                    "task_path": str(task_path),
+                    "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+                    "evidence_path": str(evidence_path),
+                    "launch_attempt_count": 1,
+                    "notification_kind": payload.get("notification_kind") or "repair_exhaustion_diagnostic",
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                }
+                _atomic_json(state_path, initial_state)
+            _atomic_json(state_path, initial_state)
+
+            try:
+                provenance = _resolve_provenance(marker)
+            except (DelegationProvenanceError, ValueError) as exc:
+                error = redact_text(f"{exc.__class__.__name__}: {exc}")[:_MAX_ERROR_CHARS]
+                terminal = {
+                    **initial_state,
+                    "status": "provenance_failed",
+                    "provenance_status": "missing_or_invalid",
+                    "diagnostic_result": {"status": "provenance_failed", "error": error},
+                    "error": error,
+                    "updated_at": _utc_now(),
+                    "fallback_delivery": {"status": "not_permitted"},
+                }
+                # The canonical terminal event is the authority.  Persist it
+                # before the local state projection so a crash cannot leave a
+                # terminal-looking JSON file without durable ledger evidence.
+                custody.record_diagnostic_terminal(admission, status="provenance_failed", error=error)
+                _atomic_json(state_path, terminal)
+                try:
+                    custody.write_card(
+                        admission.occurrence_id,
+                        {
+                            **initial_incident_card(
+                                admission,
+                                state=observed_state,
+                                owner="watchdog",
+                                runtime_generation=os.environ.get("ARNOLD_RUNTIME_GENERATION", "unknown"),
+                            ),
+                            "diagnostic_fixer_result": {"status": "provenance_failed", "error": error},
+                            "next_action": "repair resident provenance; do not redispatch this intent",
+                        },
+                    )
+                except OSError:
+                    pass
+                return _result_from_state(terminal, state_path)
+
+            try:
+                with _delegation_environment(provenance):
+                    launch = asyncio.run(
+                        launch_subagent_task(
+                            ResidentConfig(),
+                            task=task,
+                            description=(f"Notify user of Megaplan human gate for {session}" if stable_human_gate else f"Diagnose Megaplan human review for {session}"),
+                            project_dir=str(Path(project_dir).resolve()),
+                            task_kind="routine" if stable_human_gate else "root_cause",
+                            work_intent="review" if stable_human_gate else "execution",
+                            mutation_claim="none" if stable_human_gate else "auto",
+                            difficulty=4 if stable_human_gate else 9,
+                            request_id=escalation_id,
+                        )
+                    )
+                if not launch.ok or not launch.run_id or not launch.manifest_path:
+                    raise RuntimeError(launch.error or launch.stderr or launch.status or "unknown launch failure")
+                _validate_manifest(Path(launch.manifest_path), run_id=launch.run_id, provenance=provenance)
+            except Exception as exc:
+                error = redact_text(f"{exc.__class__.__name__}: {exc}")[:_MAX_ERROR_CHARS]
+                failed = {
+                    **initial_state,
+                    "status": "launch_failed",
+                    "error": error,
+                    "updated_at": _utc_now(),
+                    # This is a compatibility marker for the legacy result
+                    # API.  The watchdog never consumes it as a provider
+                    # route; only a canonical delivery worker may reconcile
+                    # the outbox intent.
+                    "fallback_delivery": {
+                        "status": "retry_pending" if stable_human_gate else "pending"
+                    }
+                    if not isinstance(initial_state.get("fallback_delivery"), Mapping)
+                    else initial_state["fallback_delivery"],
+                }
+                _atomic_json(state_path, failed)
+                try:
+                    custody.write_card(
+                        admission.occurrence_id,
+                        {
+                            **initial_incident_card(
+                                admission,
+                                state=observed_state,
+                                owner="watchdog",
+                                runtime_generation=os.environ.get("ARNOLD_RUNTIME_GENERATION", "unknown"),
+                            ),
+                            "diagnostic_fixer_result": {"status": "launch_failed", "error": error},
+                            "next_action": "diagnostic worker may retry the durable notification intent",
+                        },
+                    )
+                except OSError:
+                    pass
+                return replace(_result_from_state(failed, state_path), idempotent_replay=False)
+
+            launched_state = {
+                **initial_state,
+                "status": "launched",
+                "run_id": launch.run_id,
+                "manifest_path": launch.manifest_path,
+                "provenance_status": "validated",
+                "updated_at": _utc_now(),
+            }
+            _atomic_json(state_path, launched_state)
+            try:
+                custody.write_card(
+                    admission.occurrence_id,
+                    {
+                        **initial_incident_card(
+                            admission,
+                            state=observed_state,
+                            owner="watchdog",
+                            runtime_generation=os.environ.get("ARNOLD_RUNTIME_GENERATION", "unknown"),
+                        ),
+                        "diagnostic_fixer_result": {"status": "launched", "run_id": launch.run_id},
+                        "next_action": "resident diagnostic completion worker owns provider delivery",
+                    },
+                )
+            except OSError:
+                pass
+            return _result_from_state(launched_state, state_path)
 
 
 def record_fallback_delivery(
@@ -600,6 +677,25 @@ def record_fallback_delivery(
         state["fallback_delivery"] = delivery
         state["updated_at"] = delivery["recorded_at"]
         _atomic_json(path, state)
+        intent_id = str(state.get("notification_intent_id") or "")
+        if intent_id:
+            try:
+                with IncidentNotificationStore(path.parents[2]) as custody:
+                    custody.record_provider_attempt(
+                        intent_id=intent_id,
+                        attempt_number=1,
+                        request_digest=str(state.get("payload_digest") or "sha256:legacy"),
+                    )
+                    custody.record_provider_receipt(
+                        intent_id=intent_id,
+                        attempt_number=1,
+                        status="SUCCEEDED" if accepted else "FAILED",
+                        receipt=result,
+                    )
+            except Exception:
+                # Compatibility recording must not rewrite the already durable
+                # diagnostic state or turn a known receipt into a false success.
+                pass
         return delivery
 
 
@@ -637,13 +733,30 @@ def main(argv: list[str] | None = None) -> int:
             project_dir=args.project_dir,
         )
     except Exception as exc:
+        raw = Path(args.payload_file).read_bytes() if Path(args.payload_file).exists() else b"invalid-payload"
+        fallback_identity = "esc-" + hashlib.sha256(raw).hexdigest()[:16]
+        try:
+            probe = _read_optional_object(Path(args.payload_file)) or {}
+            probe_session = str(probe.get("session") or "").strip()
+            fallback_identity = _escalation_id(
+                probe,
+                probe_session or "invalid-session",
+                Path(args.repair_data_dir).resolve(),
+            )
+        except Exception:
+            pass
         result = HumanReviewDiagnosticResult(
             ok=False,
-            status="launch_failed",
-            escalation_id="",
-            state_path="",
+            status="persistence_failed" if isinstance(exc, OSError) else "launch_failed",
+            escalation_id=fallback_identity,
+            state_path=str(
+                Path(args.repair_data_dir).resolve()
+                / "human-review-diagnostics"
+                / fallback_identity
+                / "state.json"
+            ),
             error=redact_text(f"{exc.__class__.__name__}: {exc}")[:_MAX_ERROR_CHARS],
-            fallback_delivery_required=True,
+            fallback_delivery_required=False,
         )
     print(json.dumps(asdict(result), sort_keys=True))
     return 0 if result.ok else 1

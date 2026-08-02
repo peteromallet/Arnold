@@ -488,7 +488,17 @@ VALUES (?, ?, ?, ?, ?, ?)
                 destination = payload_spec["destination"]
                 payload = payload_spec["payload"]
                 payload_json = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-                outbox_id = str(uuid.uuid4())
+                # Callers that own a stable logical effect identity may pin
+                # the record id.  The default remains UUID-backed for legacy
+                # callers, while canonical notification intents can now be
+                # replayed across processes without changing their custody
+                # identity.
+                requested_outbox_id = payload_spec.get("outbox_id")
+                outbox_id = (
+                    str(requested_outbox_id).strip()
+                    if isinstance(requested_outbox_id, str) and requested_outbox_id.strip()
+                    else str(uuid.uuid4())
+                )
                 cur.execute(
                     """\
 INSERT INTO outbox_records

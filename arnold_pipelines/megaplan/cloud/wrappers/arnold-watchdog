@@ -987,7 +987,7 @@ notify_needs_human() {
   local health="${6:-stopped}"
   local summary="$7"
   local notification_kind="${8:-repair_exhaustion_diagnostic}"
-  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir suppression_reason
+  local payload_tmp dm_result_tmp escalation_context_tmp repair_data_dir suppression_reason
   local diagnostic_bin diagnostic_result_tmp diagnostic_status diagnostic_run_id diagnostic_state_path diagnostic_fallback_required diagnostic_error
   suppression_reason="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$session" "$remote_spec" "$MARKER_DIR" <<'PY'
 import json
@@ -1023,7 +1023,6 @@ PY
   escalation_context_tmp="$(mktemp)"
   diagnostic_result_tmp="$(mktemp)"
   repair_data_dir="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-  discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
   diagnostic_bin="${HUMAN_REVIEW_DIAGNOSTIC_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-human-review-diagnostic}"
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
@@ -1133,65 +1132,8 @@ with open(path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$escalation_context_tmp" "$session" "$MARKER_DIR" "$repair_data_dir" "${PLAN_STATUS_PLAN_NAME:-}" "${DISCORD_DM_USER_ID:-}" <<'PY' 2>>"$LOG" || authority_gap_continue "T29-BYPASS-121" "authority-risk bypass converted to typed evidence gap"
-import json
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.cloud.human_blockers import (
-    EscalationLedgerWriter,
-    classify_needs_human_blocker,
-    compute_escalation_id,
-)
-
-payload_path, context_path, session, marker_dir, repair_data_dir, current_plan, dm_user_id = sys.argv[1:]
-needs_human_path = str(pathlib.Path(repair_data_dir) / f"{session}.needs-human.json")
-classification = classify_needs_human_blocker(
-    session,
-    current_plan=current_plan,
-    marker_dir=marker_dir,
-    repair_data_dir=repair_data_dir,
-    needs_human_path=needs_human_path,
-)
-marker = classification.needs_human_payload or {}
-target_id = str(marker.get("target_id") or "")
-escalation_id = compute_escalation_id(
-    session,
-    target_id=target_id,
-    current_plan=current_plan,
-    current_plan_name=str(marker.get("current_plan_name") or current_plan),
-    needs_human_path=needs_human_path,
-)
-writer = EscalationLedgerWriter()
-writer.enable(repair_data_dir)
-writer.write_opened(
-    session,
-    escalation_id=escalation_id,
-    current_plan=current_plan,
-    target_id=target_id,
-    extra={
-        "needs_human_path": needs_human_path,
-        "dm_user_id": dm_user_id,
-        "blocker_verdict": classification.verdict.name,
-        "source": "watchdog",
-    },
-)
-payload = json.loads(pathlib.Path(payload_path).read_text(encoding="utf-8"))
-payload["escalation_id"] = escalation_id
-pathlib.Path(payload_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-pathlib.Path(context_path).write_text(
-    json.dumps(
-        {
-            "session": session,
-            "escalation_id": escalation_id,
-            "repair_data_dir": repair_data_dir,
-            "dm_user_id": dm_user_id,
-        },
-        sort_keys=True,
-    ),
-    encoding="utf-8",
-)
-PY
+  # The diagnostic launcher performs the canonical durable admission,
+  # including the idempotent opened transition and WBC/outbox intent.
 
   if [[ -x "$diagnostic_bin" ]]; then
     PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$diagnostic_bin" launch \
@@ -1201,7 +1143,12 @@ PY
       --project-dir "$workspace" \
       > "$diagnostic_result_tmp" 2>>"$LOG" || authority_gap_continue "T29-BYPASS-122" "authority-risk bypass converted to typed evidence gap"
   else
-    printf '%s\n' '{"ok":false,"status":"launch_failed","error":"dedicated resident diagnostic launcher unavailable","fallback_delivery_required":true,"state_path":""}' > "$diagnostic_result_tmp"
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.human_review_diagnostic launch \
+      --payload-file "$payload_tmp" \
+      --marker-dir "$MARKER_DIR" \
+      --repair-data-dir "$repair_data_dir" \
+      --project-dir "$workspace" \
+      > "$diagnostic_result_tmp" 2>>"$LOG" || authority_gap_continue "T29-BYPASS-122" "authority-risk bypass converted to typed evidence gap"
   fi
   eval "$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$diagnostic_result_tmp" <<'PY'
 import json
@@ -1230,6 +1177,10 @@ for shell_name, field, default in (
 PY
 )"
 
+  if [[ -z "$diagnostic_state_path" ]]; then
+    diagnostic_state_path="$repair_data_dir/human-review-diagnostics/invalid/state.json"
+  fi
+
   if [[ "$diagnostic_status" == "launched" && -n "$diagnostic_run_id" ]]; then
     log "needs-human resident diagnostic launched session=$session plan=${PLAN_STATUS_PLAN_NAME:-} run_id=$diagnostic_run_id"
     report_item "$report_items" "$session" "notify" "diagnostic_agent_launched" "resident diagnostic launched; terminal result will use durable Discord delivery" "$workspace" "$remote_spec"
@@ -1238,10 +1189,7 @@ PY
   fi
 
   if [[ "$diagnostic_fallback_required" != "1" ]]; then
-    log "needs-human resident diagnostic launch previously failed; fallback already delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-    report_item "$report_items" "$session" "notify" "diagnostic_launch_failed_fallback_delivered" "resident diagnostic launch failed; actionable fallback was already delivered" "$workspace" "$remote_spec"
-    rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
-    return 0
+    log "needs-human resident diagnostic has no provider fallback; durable intent remains the source of truth session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
   fi
 
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$diagnostic_error" <<'PY'
@@ -1266,156 +1214,10 @@ payload["next_action"] = (
 path.write_text(json.dumps(redact_payload(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
-  delivered=0
-  webhook_delivered=0
-  if [[ -x "$discord_dm_bin" ]]; then
-    if "$discord_dm_bin" < "$payload_tmp" > "$dm_result_tmp" 2>>"$LOG"; then
-      read -r dm_status dm_reason < <(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$dm_result_tmp" "$escalation_context_tmp" <<'PY'
-import json
-import pathlib
-import sys
-
-try:
-    from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter
-except Exception:
-    EscalationLedgerWriter = None
-
-try:
-    payload = json.load(open(sys.argv[1], encoding="utf-8"))
-except Exception:
-    payload = {}
-try:
-    context = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
-except Exception:
-    context = {}
-
-writer = EscalationLedgerWriter() if EscalationLedgerWriter is not None else None
-repair_data_dir = context.get("repair_data_dir")
-if repair_data_dir and writer is not None:
-    writer.enable(repair_data_dir)
-
-message_ids = [str(item).strip() for item in payload.get("message_ids", []) if str(item).strip()]
-channel_id = str(payload.get("channel_id") or "").strip()
-message_count = payload.get("message_count")
-if payload.get("ok") and ((message_ids and channel_id) or (isinstance(message_count, int) and message_count > 0)):
-    if message_ids and channel_id and writer is not None:
-        writer.write_delivered(
-            str(context.get("session") or ""),
-            escalation_id=str(context.get("escalation_id") or ""),
-            channel_id=channel_id,
-            message_ids=message_ids,
-            message_count=message_count if isinstance(message_count, int) else None,
-            extra={"dm_user_id": str(context.get("dm_user_id") or "")},
-        )
-    print("ok delivered")
-    raise SystemExit(0)
-
-reason = str(payload.get("reason") or ("missing_delivery_evidence" if payload.get("ok") else "unknown"))
-if writer is not None:
-    writer.write_unavailable(
-        str(context.get("session") or ""),
-        escalation_id=str(context.get("escalation_id") or ""),
-        reason=reason,
-        extra={"dm_user_id": str(context.get("dm_user_id") or ""), "channel_id": channel_id},
-    )
-print("failed", reason)
-PY
-)
-      if [[ "$dm_status" != "ok" ]]; then
-        if grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$dm_result_tmp" \
-          && grep -Eq '"message_count"[[:space:]]*:[[:space:]]*[1-9]' "$dm_result_tmp"; then
-          dm_status="ok"
-          dm_reason="delivered"
-        elif grep -Eq '"reason"[[:space:]]*:[[:space:]]*"missing_config"' "$dm_result_tmp"; then
-          dm_status="failed"
-          dm_reason="missing_config"
-        fi
-      fi
-      if [[ "$dm_status" == "ok" ]]; then
-        delivered=1
-        log "needs-human discord dm delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-      elif [[ "$dm_reason" == "missing_config" ]]; then
-        log "needs-human discord dm skipped; DISCORD_BOT_TOKEN or DISCORD_DM_USER_ID unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-      else
-        log "needs-human discord dm delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-      fi
-    else
-      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$escalation_context_tmp" <<'PY' 2>>"$LOG" || authority_gap_continue "T29-BYPASS-123" "authority-risk bypass converted to typed evidence gap"
-import json
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter
-
-try:
-    context = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-except Exception:
-    raise SystemExit(0)
-writer = EscalationLedgerWriter()
-writer.enable(context["repair_data_dir"])
-writer.write_unavailable(
-    context["session"],
-    escalation_id=context["escalation_id"],
-    reason="helper_failed",
-    extra={"dm_user_id": context.get("dm_user_id", "")},
-)
-PY
-      log "needs-human discord dm helper failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-    fi
-  else
-    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$escalation_context_tmp" <<'PY' 2>>"$LOG" || authority_gap_continue "T29-BYPASS-124" "authority-risk bypass converted to typed evidence gap"
-import json
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter
-
-try:
-    context = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-except Exception:
-    raise SystemExit(0)
-writer = EscalationLedgerWriter()
-writer.enable(context["repair_data_dir"])
-writer.write_unavailable(
-    context["session"],
-    escalation_id=context["escalation_id"],
-    reason="helper_unavailable",
-    extra={"dm_user_id": context.get("dm_user_id", "")},
-)
-PY
-    log "needs-human discord dm helper unavailable session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-  fi
-
-  if [[ "$delivered" != "1" && -n "$REPORT_WEBHOOK" && "${dm_reason:-}" != "missing_config" ]]; then
-    if command -v curl >/dev/null 2>&1; then
-      if curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$payload_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1; then
-        webhook_delivered=1
-        log "needs-human webhook delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-      else
-        log "needs-human webhook delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-      fi
-    else
-      log "needs-human webhook skipped; curl unavailable session=$session"
-    fi
-  else
-    if [[ "$delivered" != "1" ]]; then
-      log "needs-human webhook unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
-    fi
-  fi
-
+  # The watchdog stops at durable admission.  A separate delivery worker owns
+  # provider calls and receipts; there is no observer fallback route.
   report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
-  if [[ "$delivered" == "1" ]]; then
-    report_item "$report_items" "$session" "notify" "discord_dm_sent" "needs-human Discord DM delivered" "$workspace" "$remote_spec"
-  fi
-  if [[ "$webhook_delivered" == "1" ]]; then
-    report_item "$report_items" "$session" "notify" "webhook_sent" "needs-human webhook delivered" "$workspace" "$remote_spec"
-  fi
-  if [[ -n "$diagnostic_state_path" && -x "$diagnostic_bin" ]]; then
-    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$diagnostic_bin" record-fallback \
-      --state-path "$diagnostic_state_path" \
-      --result-file "$dm_result_tmp" \
-      >>"$LOG" 2>&1 || true
-  fi
+  report_item "$report_items" "$session" "notify" "notification_intent_pending" "notification intent admitted to canonical WBC/outbox custody; provider delivery is deferred" "$workspace" "$remote_spec"
   rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
 }
 
@@ -1945,17 +1747,13 @@ PY
     rm -f "$report_tmp"
     return 0
   fi
+  # Reports remain local evidence; provider delivery is owned by a
+  # durable outbox worker, never by the watchdog observer.
   local summary
   summary="$(cat "$report_tmp")"
   log "report $summary"
   if [[ -n "$REPORT_WEBHOOK" ]]; then
-    if command -v curl >/dev/null 2>&1; then
-      curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$report_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1 \
-        && log "report webhook delivered" \
-        || log "report webhook delivery failed"
-    else
-      log "report webhook skipped; curl unavailable"
-    fi
+    log "report webhook delivery deferred to canonical outbox worker"
   fi
   rm -f "$report_tmp"
 }
