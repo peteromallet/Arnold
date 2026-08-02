@@ -7,6 +7,12 @@
   },
   "superseded": [
     {
+      "path": ".megaplan/subagents/critique-ledger-recovery/SEQUENCING/relaunch-cutline-luna-audit.md",
+      "sha256": "9f80dac9152bdc10a330bef3244de0b33ea9c5d1be142827be1015e5ac9e76a4",
+      "status": "SUPERSEDED_FOR_FINITE_CANARY_CUT_TASK_RATIONALE_ONLY",
+      "reason": "its all-T1-through-T5 prelaunch conclusion predates the independently reviewed bounded zero-recovery route; every task remains in custody but deferred hardening does not block the finite canary"
+    },
+    {
       "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/minimal-operational-relaunch-map-sol.md",
       "sha256": "fd1a33ba58566aa126e170643f59a39bca13972e5919d0a338403b50c169312e",
       "status": "SUPERSEDED_FOR_OPERATIONAL_CANARY_EVIDENCE_ONLY",

@@ -12,9 +12,15 @@ finalize canary.
 
 Canonical source:
 `docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md`.
+The tracked copy is the complete 55-task source checklist, preserved as evidence
+and work custody. Its original all-predecessors launch cut is not current launch
+authority; the bounded zero-recovery cut and this epic's typed handoff are.
 
 Sequencing audit:
 `.megaplan/subagents/critique-ledger-recovery/SEQUENCING/relaunch-cutline-luna-audit.md`.
+That audit is retained for task-by-task rationale but its conclusion that the
+entire T1/T2/T3/T4/T5 portfolio blocks the finite canary is superseded. See
+`supersession-index.json`.
 
 Do not launch this chain until its content-addressed T6.2 handoff exists and all
 launch preconditions pass through the installed authority boundary.
@@ -37,10 +43,14 @@ Corrected launch-route authority:
 
 The supervised canary must run with automatic fixer effects and notification
 provider effects disabled fail-closed unless a later independently accepted
-candidate proves them. The installed canary profile must also omit recovery and
-notification capabilities, GLEKs, credentials, workers, timers, and direct
-fallbacks, and must prove denial before mutation. Runner failure fences and
-stops; it never invokes T1.5 or T1.10. Direct observation by the recovery
+candidate proves them. The installed canary execution surface must make those
+paths unreachable: no recovery/notification capability or credential is passed
+to the finite runner, and no recovery worker, timer, resident, watchdog, direct
+fallback, or notification provider is started. The finite image may still
+contain dormant shared-package source; physical package minimization is F1
+follow-up work and is not claimed by the canary. Deny-before-mutation and
+process/credential absence proofs remain prelaunch requirements. Runner failure
+fences and stops; it never invokes T1.5 or T1.10. Direct observation by the recovery
 operator is allowed;
 absence of automatic repair is not evidence that recovery is complete. The
 canary handoff must record the exact disabled-effect posture and must not claim
@@ -91,3 +101,21 @@ The operational candidate must record these as typed
 `NOT_CONSUMED_OPERATIONAL_CANARY` exclusions with no capability or completion
 claim. The T6.2 handoff must bind their exact deferred status and preserved
 worktree/evidence locations so the epic cannot silently drop them.
+
+## Capacity and isolation cut
+
+T0.3 is intentionally split rather than silently waived:
+
+- **Prelaunch bootstrap:** re-observe the stopped predecessor and exact runtime,
+  fence every background path, reclaim only typed dangling builder cache, prove
+  the receipt reserve/free-space floor, and create one fresh mode-0700 canary
+  bind source. Mount only that child at `/workspace`; never expose the preserved
+  parent or sibling workspaces to the unsandboxed model. Bind the exact host
+  source and container destination into deploy/run/stop receipts.
+- **F1 follow-up:** durable reserved-capacity ownership, quotas/watermarks,
+  ENOSPC/corruption/crash behavior, lifecycle retention, broad Docker/storage
+  reclamation, and physical minimal-image enforcement.
+
+The bootstrap may not delete the stopped predecessor, historical workspace,
+images, named volumes, or arbitrary cache. A capacity failure remains a hard
+NO-GO and the predecessor remains stopped and recoverable.

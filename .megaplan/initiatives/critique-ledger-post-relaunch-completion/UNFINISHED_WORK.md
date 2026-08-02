@@ -24,9 +24,14 @@ machine-readable authority; the paths and counts below are operator guidance.
   accepted production owner proves exact-once semantics.
 - [ ] Notification provider effects are `DISABLED_FAIL_CLOSED` unless an
   independently accepted occurrence/version-keyed owner proves dedupe.
-- [ ] Recovery/notification capabilities, GLEKs, credentials, workers, timers
-  and direct fallbacks are absent from the installed canary profile, with an
-  accepted deny-before-mutation proof.
+- [ ] Recovery/notification capabilities and credentials are unreachable from
+  the finite runner; no recovery/notification workers, timers, residents,
+  watchdogs, provider processes, or direct fallbacks are started. Dormant
+  shared-package source in the finite image is not claimed absent and its
+  physical removal remains F1 work. Denial is proved before mutation.
+- [ ] The unsandboxed model sees only a fresh, mode-0700, never-reused canary
+  child bind at `/workspace`. It cannot address the preserved parent or any
+  sibling workspace. Deploy/run/stop receipts bind and verify that exact mount.
 - [ ] Any canary runner failure fences and stops without invoking T1.5/T1.10.
 - [ ] The canary is stopped at its declared finite boundary; no background
   wrapper, timer, resident, or watchdog can continue mutating or messaging.
@@ -34,6 +39,15 @@ machine-readable authority; the paths and counts below are operator guidance.
   T6.2 handoff with its evidence and preserved-work location.
 
 ## F1 — owner, storage and recovery root fixes
+
+- [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
+  reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
+  corruption and crash behavior; define safe lifecycle retention and broad
+  Docker/storage reclaim. The prelaunch dangling-builder-cache reclaim and
+  free-space floor are only a scoped bootstrap, not T0.3 completion.
+- [ ] Produce a physically minimal production/canary image that omits dormant
+  recovery/notification implementation and GLEKs, rather than relying only on
+  execution-surface unreachability.
 
 - [ ] Repair the rejected T1.5 candidate without discarding its valid HMAC
   receipt work. Coordinated deletion or rollback of `attempts`, `claims`, and
@@ -122,6 +136,11 @@ machine-readable authority; the paths and counts below are operator guidance.
 - Prepared T1.4/T1.10 lane
   `/private/tmp/arnold-critique-recovery-incident-stall-notify-20260802` is a
   clean no-edit base only, not implemented work.
+- The original all-task launch-cut audit at
+  `.megaplan/subagents/critique-ledger-recovery/SEQUENCING/relaunch-cutline-luna-audit.md`
+  is retained as historical classification evidence. Its all-T1-through-T5
+  prelaunch conclusion is superseded by the independently reviewed bounded
+  zero-recovery route; it does not regain launch authority by being tracked.
 
 ## Epic completion rule
 

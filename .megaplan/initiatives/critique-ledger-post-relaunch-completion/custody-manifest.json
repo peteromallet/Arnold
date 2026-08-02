@@ -2,6 +2,33 @@
   "schema": "arnold.critique_ledger.unfinished_work_custody.v1",
   "captured_at": "2026-08-02T23:15:00+02:00",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "canonical_checklist": {
+    "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
+    "sha256": "edddb198701c7567325aac5827100321addbe9e7c5dd458c1329628e82472e0c",
+    "task_count": 55,
+    "status": "PRESERVED_SOURCE_CHECKLIST_NOT_CURRENT_FINITE_CANARY_CUT_AUTHORITY"
+  },
+  "live_cloud_evidence": [
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/live-containment-capacity-observation-20260802T214853Z.json",
+      "sha256": "b1c42795d81d5c8f259ccbc21626fbf6e05c093e18c6c52dcf176d6fb133082b",
+      "status": "TYPED_STOPPED_PREDECESSOR_AND_ENOSPC_OBSERVATION"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/capacity-bootstrap-reclaim-adversarial-review-luna-20260802.md",
+      "sha256": "3ef7f27fd337d64c9ba3639075e264ee6e7ed641fafd70b348d666a702eda1ef",
+      "status": "BOUNDED_BOOTSTRAP_RECLAIM_REVIEW"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/zero-recovery-cl2-canary-launch-design-review.md",
+      "sha256": "7a962e6241bece0e81cff350a225b188fd9568ca01d1d1d2908a9f99fef20d77",
+      "status": "LAUNCH_DESIGN_REVIEW_PENDING_EXACT_CANDIDATE_AND_LIVE_RECEIPTS"
+    }
+  ],
+  "capacity_cut": {
+    "prelaunch": "fence runtime; reclaim dangling builder cache only; prove receipt reserve/free-space floor; create and verify a fresh isolated mode-0700 child bind",
+    "follow_up": "reserved-capacity owner, quotas/watermarks, ENOSPC/corruption/crash guarantees, lifecycle retention, broad storage reclaim and physically minimal image"
+  },
   "dirty_capture_recipe": {
     "status_sha256": "sha256(raw stdout bytes from: git status --porcelain=v1 --untracked-files=all)",
     "worktree_diff_sha256": "sha256(raw stdout bytes from: git diff --binary --no-ext-diff --)",
