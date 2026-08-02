@@ -1,62 +1,51 @@
 {
-  "safe-v3-canary-admission": [
-    ".megaplan/initiatives/critique-ledger-safe-v3-canary/completion-manifest.json",
-    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json",
-    "evidence/critique-ledger-recovery/T6.2/safe-v3-canary-acceptance.json",
-    "evidence/critique-ledger-recovery/T6.2/zero-recovery-deny-receipts.json",
-    "evidence/critique-ledger-recovery/T6.2/host-prelaunch-observation.json",
-    "evidence/critique-ledger-recovery/T6.2/v2-terminal-fence-receipt.json",
-    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/custody-manifest.json",
-    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/supersession-index.json"
-  ],
   "f1-owner-storage-recovery-hardening": [
-    "evidence/critique-ledger-recovery/T0.3/",
-    "evidence/critique-ledger-recovery/T1.5/",
-    "evidence/critique-ledger-recovery/T1.7/",
-    "evidence/critique-ledger-recovery/T1.8/",
-    "evidence/critique-ledger-recovery/T1.9/",
-    "evidence/critique-ledger-recovery/T1.10/"
+    "evidence/critique-ledger-recovery/T0.3/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.5/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.7/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.8/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.9/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.10/completion-manifest.json"
   ],
   "f2-admission-model-effect-release-closure": [
-    "evidence/critique-ledger-recovery/T1.1/",
-    "evidence/critique-ledger-recovery/T1.2/",
-    "evidence/critique-ledger-recovery/T1.3/",
-    "evidence/critique-ledger-recovery/T1.4/",
-    "evidence/critique-ledger-recovery/T1.6/",
-    "evidence/critique-ledger-recovery/T2.2/",
-    "evidence/critique-ledger-recovery/T2.4/",
-    "evidence/critique-ledger-recovery/T2.5/",
-    "evidence/critique-ledger-recovery/T2.6/",
-    "evidence/critique-ledger-recovery/T3.5/",
-    "evidence/critique-ledger-recovery/T3.6/release-authority/",
-    "evidence/critique-ledger-recovery/T8.3/"
+    "evidence/critique-ledger-recovery/T1.1/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.2/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.3/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.4/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T1.6/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T2.2/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T2.4/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T2.5/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T2.6/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T3.5/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T3.6/release-authority/completion-manifest.json"
   ],
   "f3-cl2-real-work-and-publication": [
-    "evidence/critique-ledger-recovery/T6.3/",
-    "evidence/critique-ledger-recovery/T6.4/",
-    "evidence/critique-ledger-recovery/T6.5/"
+    "evidence/critique-ledger-recovery/T6.3/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T6.4/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T6.5/completion-manifest.json"
   ],
   "f4-cl3-cl5-epic-completion": [
-    "evidence/critique-ledger-recovery/T6.6/"
+    "evidence/critique-ledger-recovery/T6.6/completion-manifest.json"
   ],
   "f5-product-release-and-deploy": [
-    "evidence/critique-ledger-recovery/T7.1/",
-    "evidence/critique-ledger-recovery/T7.2/",
-    "evidence/critique-ledger-recovery/T7.3/"
+    "evidence/critique-ledger-recovery/T7.1/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T7.2/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T7.3/completion-manifest.json"
   ],
   "f6-production-acceptance": [
-    "evidence/critique-ledger-recovery/T7.4/",
-    "evidence/critique-ledger-recovery/T7.5/"
+    "evidence/critique-ledger-recovery/T7.4/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T7.5/completion-manifest.json"
   ],
   "f7-evidence-and-incident-closeout": [
-    "evidence/critique-ledger-recovery/T3.6/administrative-closeout/",
-    "evidence/critique-ledger-recovery/T4.6/",
-    "evidence/critique-ledger-recovery/T8.1/",
-    "evidence/critique-ledger-recovery/T8.2/",
-    "evidence/critique-ledger-recovery/T8.3/",
-    "evidence/critique-ledger-recovery/T8.4/"
+    "evidence/critique-ledger-recovery/T3.6/administrative-closeout/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T4.6/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T8.1/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T8.2/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T8.3/completion-manifest.json",
+    "evidence/critique-ledger-recovery/T8.4/completion-manifest.json"
   ],
   "f8-seven-day-durability": [
-    "evidence/critique-ledger-recovery/T8.5/"
+    "evidence/critique-ledger-recovery/T8.5/completion-manifest.json"
   ]
 }

@@ -12,10 +12,11 @@ Completes the ticket-closing subeffect of T3.6, T4.6, and T8.1–T8.4.
 
 ## Locked decisions
 
-- The launch-critical T3.6 release receipt is a future prerequisite bound by the
-  independently accepted T6.2 handoff; it does not exist at epic-authoring time.
-  Close its two tickets only after re-deriving their production obligations
-  from frozen owner evidence.
+- The T6.2 finite-canary handoff records T3.6 as pending; it cannot bind a
+  receipt that does not yet exist. F2 alone produces the launch-critical T3.6
+  release-authority receipt after F1/F2 hardening. F7 consumes that exact F2
+  receipt and closes the two administrative tickets only after re-deriving
+  their production obligations from frozen owner evidence.
 - Preserve v2 as immutable evidence; never mark it completed.
 - The final successor manifest hashes explicit proof-map artifacts.
 - The incident replay remains a permanent release gate.

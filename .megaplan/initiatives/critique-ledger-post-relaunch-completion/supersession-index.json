@@ -42,6 +42,13 @@
       "commit": "3513e4937096ad57ef01beed56d4fba17aaf2b17",
       "status": "SUPERSEDED_BY_LINT_CLEAN_AMEND",
       "superseded_by": "96d368de54876aaaec205290e2640d9daf78f3ea"
+    },
+    {
+      "commit": "96d368de54876aaaec205290e2640d9daf78f3ea",
+      "tree": "e2f3633739acaa75ccb9324365a1b8b966fc4f4f",
+      "status": "REJECTED_AND_SUPERSEDED_BY_BOUNDED_REPAIR",
+      "superseded_by": "26aca6ace7f0af3279ca5b311e6983d4904a4d3a",
+      "reason": "independent review found fail-open inspect/capacity/SSH classification defects; retain the rejected identity as evidence"
     }
   ]
 }

@@ -10,8 +10,10 @@ ordinary execution/publication authority expands.
 
 Complete platform generalization of T1.1-T1.4; migrate all production effects
 under T1.6; finish T2.2, full T2.4, all configured T2.5 routes and T2.6; run broad
-T3.5 canaries; close the two administrative T3.6 release tickets; and keep the
-exact incident replay as a permanent candidate gate.
+T3.5 canaries; produce the launch-critical T3.6 release-authority receipt but
+leave its two administrative ticket closures to F7. Consume the frozen T6.2
+incident replay as input evidence only; F7 alone owns T8.3's permanent replay
+gate and publication.
 
 ## Locked decisions
 
@@ -40,15 +42,17 @@ No broad production authority until F1 and F2 completion manifests both exist.
 - All admission/attempt/graph routes and effect families pass dynamic inventory,
   hostile replay/response-loss, installed parity and direct-module tests.
 - Full installed fault/crash matrix and all configured live route canaries pass.
-- T2.6 zero-debt decision and exact T3 release/ticket evidence are accepted.
-- Permanent incident replay fails any candidate that recreates false success,
-  duplicate fixer/notification, blind resend or broken fence.
+- T2.6 zero-debt decision and the exact T3.6 release-authority receipt are
+  accepted; the two administrative ticket closures remain explicitly pending
+  for F7.
+- The frozen T6.2 replay is consumed as immutable input without modifying or
+  claiming T8.3 completion.
 
 ## Touchpoints
 
 Run Authority admission, contract bundles, critic attempt ledger, graph repair,
 WBC, route registry, release evidence, installed generation and evidence for
-T1.1-T1.4/T1.6/T2.2/T2.4-T2.6/T3.5-T3.6/T8.3.
+T1.1-T1.4/T1.6/T2.2/T2.4-T2.6/T3.5 and the release-authority subeffect of T3.6.
 
 ## Anti-scope
 

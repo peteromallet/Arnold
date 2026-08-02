@@ -7,10 +7,14 @@ review_policy:
 anchors:
   north_star: NORTHSTAR.md
 launch_preconditions:
-  - name: safe v3 canary chain completed with content-addressed proof
-    kind: chain_completed
-    chain: .megaplan/initiatives/critique-ledger-safe-v3-canary/chain.yaml
-    require_manifest: true
+  - name: safe v3 finite canary completed with content-addressed proof
+    kind: artifact
+    path: .megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json
+    check:
+      kind: finite_canary_receipt
+  - name: complete finite-canary input and evidence is committed and clean
+    kind: git_tracked
+    path: .megaplan/initiatives/critique-ledger-safe-v3-canary
   - name: complete follow-up epic input is committed and clean
     kind: git_tracked
     path: .megaplan/initiatives/critique-ledger-post-relaunch-completion

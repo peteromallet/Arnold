@@ -79,8 +79,11 @@ F2 explicitly inherits:
 
 - the paused T1.1 universal admission repair and its remaining validation;
 - the paused T1.2 typed critic-attempt implementation;
-- integration/generalization of the independently accepted T1.3 transport
-  authority commit `2f1500aea1d03fbf13df5c796b17bd03d17bb79c`;
+- integration/generalization of the independently accepted bounded Stage-A
+  T1.3 authenticated raw target-bound transport component at
+  `2f1500aea1d03fbf13df5c796b17bd03d17bb79c`; this is not T1.2 attempt/model
+  completion, installed production authority, release authority, or cloud
+  launch authority;
 - generalized T1.4 graph repair and retry policy; and
 - universal T1.6 effect-family migration plus the full release evidence matrix.
 

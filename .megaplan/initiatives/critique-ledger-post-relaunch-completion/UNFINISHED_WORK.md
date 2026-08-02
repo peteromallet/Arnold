@@ -13,6 +13,12 @@ machine-readable authority; the paths and counts below are operator guidance.
 ## Stable canary boundary
 
 - [ ] The v3 handoff records exact deployed commit/tree/image/source identities.
+- [ ] A real `.megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml`,
+  content-addressed conformance validator/traceability/proof map, successful
+  independent conformance receipt, and typed `completion-receipt.json` exist
+  and bind the exact handoff artifacts required by the follow-up
+  `finite_canary_receipt` gate. No normal-chain `done` state may be fabricated:
+  the accepted finite boundary is `finalized` before execute/review.
 - [ ] The poisoned v2 generation is fenced and cannot resume or notify.
 - [ ] Automatic fixer effects are `DISABLED_FAIL_CLOSED` unless an independently
   accepted production owner proves exact-once semantics.
@@ -65,7 +71,7 @@ machine-readable authority; the paths and counts below are operator guidance.
 ## F2 — admission, model, effect and release closure
 
 - [ ] Resume and complete T1.1 universal admission from
-  `/private/tmp/arnold-critique-recovery-t1-1-admission-20260802` (18 current
+  `/private/tmp/arnold-critique-recovery-t1-1-admission-20260802` (19 current
   modified/untracked paths at the frozen custody snapshot; paused at 6 pass /
   1 fail). Do not infer acceptance from preservation.
 - [ ] Resume and complete T1.2 typed attempt/model handling from its preserved
@@ -73,9 +79,11 @@ machine-readable authority; the paths and counts below are operator guidance.
   `/private/tmp/arnold-critique-recovery-contract-bundles-20260802`; bind exact
   route/model, semantic success, bounded response-loss retry, sticky UNKNOWN
   and installed parity.
-- [ ] Integrate and generalize accepted T1.3 transport authority commit
+- [ ] Integrate and generalize the bounded Stage-A T1.3 transport component
   `2f1500aea1d03fbf13df5c796b17bd03d17bb79c` only through a clean descendant
-  with conflict and package qualification.
+  with conflict and package qualification. Its acceptance covers authenticated,
+  raw target-bound transport only—not T1.2 attempt/model completion, installed
+  production authority, release authority, or cloud launch authority.
 - [ ] Complete generalized T1.4 graph repair/retry and T1.6 effect-family
   migration plus the full release evidence matrix.
 
