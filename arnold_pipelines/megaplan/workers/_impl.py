@@ -99,6 +99,110 @@ from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _bu
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_WORKER_CHANNEL = "codex_cli"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
+_ZERO_RECOVERY_MODEL_PHASES = frozenset({"plan", "critique", "gate", "finalize"})
+
+
+def _record_zero_recovery_dispatch(
+    plan_dir: Path,
+    *,
+    step: str,
+    agent: str,
+    model: str | None,
+    effort: str | None,
+) -> dict[str, Any] | None:
+    """Append the sole permitted model dispatch before crossing its boundary."""
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    if step not in _ZERO_RECOVERY_MODEL_PHASES:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            f"model dispatch is not permitted for zero-recovery step {step!r}",
+        )
+    if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") == "1":
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "adaptive agent dispatcher is forbidden for the finite canary",
+        )
+    if agent != "codex" or model != "gpt-5.6-sol" or effort != "high":
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary dispatch did not match the admitted Codex model pin",
+        )
+    lock_path = plan_dir / f".zero-recovery-{step}-dispatch.lock"
+    try:
+        lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise CliError(
+            "zero_recovery_redispatch_denied",
+            f"a second {step} dispatch was rejected before provider invocation",
+        ) from exc
+    with os.fdopen(lock_fd, "w", encoding="utf-8") as lock:
+        lock.write("single-dispatch\n")
+        lock.flush()
+        os.fsync(lock.fileno())
+    record: dict[str, Any] = {
+        "schema": "arnold.megaplan.zero_recovery_dispatch.v1",
+        "event": "start",
+        "dispatch_id": uuid.uuid4().hex,
+        "phase": step,
+        "selected_agent": agent,
+        "selected_model": model,
+        "selected_effort": effort,
+        "attempt": 1,
+        "retry": False,
+        "fallback": False,
+        "json_repair": False,
+        "adaptive_routing": False,
+        "recorded_at": now_utc(),
+    }
+    ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
+    ledger_fd = os.open(ledger_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(ledger_fd, "a", encoding="utf-8") as ledger:
+        ledger.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        ledger.flush()
+        os.fsync(ledger.fileno())
+    return record
+
+
+def _record_zero_recovery_dispatch_terminal(
+    plan_dir: Path,
+    *,
+    start: dict[str, Any] | None,
+    worker: WorkerResult,
+) -> None:
+    if start is None:
+        return
+    actual_model = getattr(worker, "model_actual", None)
+    if actual_model != start["selected_model"]:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "provider-reported actual model differs from the admitted model",
+        )
+    record = {
+        "schema": "arnold.megaplan.zero_recovery_dispatch.v1",
+        "event": "terminal",
+        "dispatch_id": start["dispatch_id"],
+        "phase": start["phase"],
+        "actual_agent": start["selected_agent"],
+        "actual_model": actual_model,
+        "actual_effort": start["selected_effort"],
+        "attempt": 1,
+        "retry": False,
+        "fallback": False,
+        "json_repair": False,
+        "adaptive_routing": False,
+        "result": "returned",
+        "recorded_at": now_utc(),
+    }
+    ledger_fd = os.open(
+        plan_dir / "zero_recovery_dispatch_ledger.ndjson",
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+        0o600,
+    )
+    with os.fdopen(ledger_fd, "a", encoding="utf-8") as ledger:
+        ledger.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        ledger.flush()
+        os.fsync(ledger.fileno())
 
 # Shared mapping from step name to schema filename, used by both
 # run_claude_step and run_codex_step.
@@ -4968,6 +5072,13 @@ def _run_step_with_worker_legacy(
         require_full_vector=_strict_runtime_binding,
         **_expected,
     )
+    _zero_recovery_dispatch_start = _record_zero_recovery_dispatch(
+        plan_dir,
+        step=step,
+        agent=agent,
+        model=resolved_model,
+        effort=effort,
+    )
     while True:
         attempted_agents.add(agent)
         try:
@@ -5177,6 +5288,11 @@ def _run_step_with_worker_legacy(
                     },
                 )
                 worker = WorkerResult.from_agent_result(_dispatcher.dispatch(_request))
+            _record_zero_recovery_dispatch_terminal(
+                plan_dir,
+                start=_zero_recovery_dispatch_start,
+                worker=worker,
+            )
             fallback_attempt = _advance_configured_spec_fallback(
                 fallback_metadata,
                 _configured_spec_worker_failure_class(worker),
@@ -5185,6 +5301,11 @@ def _run_step_with_worker_legacy(
                 read_only=read_only,
             )
             if fallback_attempt is not None:
+                if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
+                    raise CliError(
+                        "zero_recovery_fallback_denied",
+                        "configured model fallback is forbidden after canary dispatch",
+                    )
                 next_mode, fallback_metadata = fallback_attempt
                 agent = next_mode.agent
                 mode = next_mode.mode
@@ -5235,6 +5356,11 @@ def _run_step_with_worker_legacy(
                 read_only=read_only,
             )
             if fallback_attempt is not None:
+                if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
+                    raise CliError(
+                        "zero_recovery_fallback_denied",
+                        "configured model fallback is forbidden after canary dispatch failure",
+                    ) from error
                 next_mode, fallback_metadata = fallback_attempt
                 agent = next_mode.agent
                 mode = next_mode.mode
@@ -5256,6 +5382,8 @@ def _run_step_with_worker_legacy(
                 (worker_options or {}).get("_suppress_ambient_agent_fallback")
             )
             if (
+                os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+                or
                 explicit_agent
                 or suppress_ambient_fallback
                 or error.code not in {"auth_error", "connection_error"}
