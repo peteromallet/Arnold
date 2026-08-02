@@ -13,7 +13,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan.cloud.spec import CloudSpec, SshSpec
+from arnold_pipelines.megaplan.cloud.spec import (
+    CloudSpec,
+    SshSpec,
+    validate_ssh_host,
+    validate_ssh_identity_file,
+    validate_ssh_port,
+    validate_ssh_user,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 from .base import Provider, _logs_follow, _missing_cli_error, _write_redacted_output
@@ -39,6 +46,12 @@ class SshProvider(Provider):
     ) -> None:
         self._spec = spec
         self._ssh = spec.ssh or SshSpec(host="localhost")
+        self._validated_host = validate_ssh_host(self._ssh.host)
+        self._validated_user = validate_ssh_user(self._ssh.user)
+        self._validated_port = validate_ssh_port(self._ssh.port)
+        self._validated_identity_file = validate_ssh_identity_file(
+            self._ssh.identity_file
+        )
         self._ssh_binary = shutil.which("ssh")
         self._scp_binary = shutil.which("scp")
         self._rsync_binary = shutil.which("rsync")
@@ -49,15 +62,18 @@ class SshProvider(Provider):
             _missing_cli_error("scp/rsync", INSTALL_LINK.removeprefix("Install: "))
 
     def _target(self) -> str:
-        if self._ssh.user:
-            return f"{self._ssh.user}@{self._ssh.host}"
-        return self._ssh.host
+        if self._validated_user:
+            return f"{self._validated_user}@{self._validated_host}"
+        return self._validated_host
 
     def _ssh_transport_argv(self) -> list[str]:
-        argv = [self._ssh_binary or "ssh", "-p", str(self._ssh.port)]
-        if self._ssh.identity_file:
-            argv.extend(["-i", self._ssh.identity_file])
+        argv = [self._ssh_binary or "ssh", "-p", str(self._validated_port)]
+        if self._validated_identity_file:
+            argv.extend(["-i", self._validated_identity_file])
         return argv
+
+    def _ssh_destination_argv(self) -> list[str]:
+        return [*self._ssh_transport_argv(), "--", self._target()]
 
     def _process_adapter_evidence_root(self) -> Path:
         return Path(tempfile.gettempdir()) / "arnold-process-adapter-wbc" / "ssh"
@@ -147,7 +163,7 @@ class SshProvider(Provider):
         raise_on_failure: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         return self._run(
-            [*self._ssh_transport_argv(), self._target(), command],
+            [*self._ssh_destination_argv(), command],
             capture_output=capture_output,
             input=input,
             surface=surface,
@@ -173,7 +189,7 @@ class SshProvider(Provider):
                 "SSH host observation is not allowlisted",
             )
         return self._run(
-            [*self._ssh_transport_argv(), self._target(), command],
+            [*self._ssh_destination_argv(), command],
             capture_output=True,
             surface=surface,
             raise_on_failure=False,
@@ -212,6 +228,10 @@ class SshProvider(Provider):
             returncode=result.returncode,
             stdout=self._redact_failure_text(result.stdout or ""),
             stderr=self._redact_failure_text(result.stderr or ""),
+            expected_workspace=workspace,
+            min_free_bytes=self._spec.resources.prelaunch_min_free_bytes,
+            min_free_inodes=self._spec.resources.prelaunch_min_free_inodes,
+            receipt_reserve_bytes=self._spec.resources.prelaunch_receipt_reserve_bytes,
         )
         payload["container"] = container
         expected_mount = container.get("workspace_bind", {}).get("source")
@@ -253,7 +273,7 @@ class SshProvider(Provider):
                     self._rsync_binary,
                     "-az",
                     "-e",
-                    shlex.join(self._ssh_transport_argv()),
+                    shlex.join([*self._ssh_transport_argv(), "--"]),
                     f"{deploy_dir}/",
                     f"{self._target()}:{remote_dir}/",
                 ],
@@ -270,8 +290,13 @@ class SshProvider(Provider):
                 self._scp_binary or "scp",
                 "-r",
                 "-P",
-                str(self._ssh.port),
-                *(["-i", self._ssh.identity_file] if self._ssh.identity_file else []),
+                str(self._validated_port),
+                *(
+                    ["-i", self._validated_identity_file]
+                    if self._validated_identity_file
+                    else []
+                ),
+                "--",
                 f"{deploy_dir}/.",
                 f"{self._target()}:{remote_dir}",
             ],
@@ -438,7 +463,7 @@ class SshProvider(Provider):
         argv = f"docker logs {'-f ' if follow else '--tail 200 '}{shlex.quote(self._ssh.container)}"
         if follow:
             return _logs_follow(
-                [*self._ssh_transport_argv(), self._target(), argv.strip()],
+                [*self._ssh_destination_argv(), argv.strip()],
                 secret_names=self._spec.secrets,
                 env=os.environ,
             )

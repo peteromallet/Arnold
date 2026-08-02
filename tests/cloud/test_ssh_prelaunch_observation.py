@@ -35,6 +35,10 @@ def _spec(
     workspace_dir: str = "/opt/megaplan-cloud/workspace",
     container: str = "megaplan-cloud-agent",
     resources: ResourcesSpec | None = None,
+    host: str = "example.invalid",
+    user: str | None = None,
+    port: int = 22,
+    identity_file: str | None = None,
 ) -> CloudSpec:
     return CloudSpec(
         provider="ssh",
@@ -46,7 +50,10 @@ def _spec(
         resources=resources or ResourcesSpec(),
         secrets=["OPENAI_API_KEY"],
         ssh=SshSpec(
-            host="example.invalid",
+            host=host,
+            user=user,
+            port=port,
+            identity_file=identity_file,
             workspace_dir=workspace_dir,
             container=container,
         ),
@@ -60,7 +67,7 @@ def _inspect_output(
 ) -> str:
     state = {
         "Status": lifecycle,
-        "Running": lifecycle == "running",
+        "Running": lifecycle in {"running", "paused", "restarting"},
         "Paused": lifecycle == "paused",
         "Restarting": lifecycle == "restarting",
         "OOMKilled": False,
@@ -88,6 +95,66 @@ def _inspect_output(
         )
         + "\n"
     )
+
+
+def _parse_capacity(
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str = "",
+    workspace: str,
+    min_free_bytes: int,
+    min_free_inodes: int,
+    receipt_reserve_bytes: int,
+) -> dict[str, object]:
+    return parse_workspace_prelaunch_result(
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        expected_workspace=workspace,
+        min_free_bytes=min_free_bytes,
+        min_free_inodes=min_free_inodes,
+        receipt_reserve_bytes=receipt_reserve_bytes,
+    )
+
+
+def _capacity_payload(
+    *,
+    workspace: str = "/opt/megaplan-cloud/workspace",
+    min_free_bytes: int = 0,
+    min_free_inodes: int = 0,
+    receipt_reserve_bytes: int = 0,
+) -> dict[str, object]:
+    return {
+        "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+        "workspace": workspace,
+        "thresholds": {
+            "min_free_bytes": min_free_bytes,
+            "min_free_inodes": min_free_inodes,
+            "receipt_reserve_bytes": receipt_reserve_bytes,
+        },
+        "status": "go",
+        "verdict": "GO",
+        "checks": {
+            "byte_floor": True,
+            "inode_floor": True,
+            "reserve_fsync": True,
+            "sqlite_wal": True,
+            "receipt_atomic_fsync": True,
+            "cleanup": True,
+        },
+        "errors": [],
+        "mount": {
+            "st_dev": 1,
+            "device_major": 0,
+            "device_minor": 1,
+            "inode": 2,
+        },
+        "capacity": {
+            "free_bytes": min_free_bytes + receipt_reserve_bytes + 1,
+            "free_inodes": min_free_inodes + 1,
+        },
+    }
 
 
 def test_run_preserves_redacted_stderr_stdout_and_returncode_without_command(
@@ -198,6 +265,41 @@ def test_container_missing_is_typed_without_guessing_other_transport_errors() ->
     assert transport["lifecycle"] == "unknown"
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr"),
+    [
+        (
+            255,
+            "Error: No such container: megaplan-cloud-agent",
+            "ssh transport failed",
+        ),
+        (
+            255,
+            "",
+            "banner: No such container: megaplan-cloud-agent",
+        ),
+        (
+            1,
+            "Error: No such container: megaplan-cloud-agent",
+            "host banner",
+        ),
+        (1, "Error: No such container: a-different-container", ""),
+    ],
+)
+def test_transport_or_mixed_diagnostics_never_become_container_missing(
+    returncode: int, stdout: str, stderr: str
+) -> None:
+    payload = classify_container_inspect(
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        expected_container="megaplan-cloud-agent",
+    )
+
+    assert payload["status"] == "unknown"
+    assert payload["lifecycle"] == "unknown"
+
+
 def test_malformed_successful_container_state_is_unknown_not_stopped() -> None:
     stdout = (
         "\n".join(
@@ -216,6 +318,97 @@ def test_malformed_successful_container_state_is_unknown_not_stopped() -> None:
 
     assert payload["lifecycle"] == "unknown"
     assert payload["collector"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("state", "Status", 1),
+        ("state", "Running", "false"),
+        ("state", "Paused", 0),
+        ("state", "Restarting", "false"),
+        ("state", "OOMKilled", "false"),
+        ("state", "ExitCode", True),
+        ("state", "ExitCode", "zero"),
+        ("state", "Error", []),
+        ("mount", "RW", "false"),
+        ("mount", "Type", 1),
+        ("mount", "Source", None),
+        ("mount", "Destination", []),
+    ],
+)
+def test_inspect_fields_require_exact_json_types(
+    section: str, field: str, value: object
+) -> None:
+    parts = [json.loads(line) for line in _inspect_output().splitlines()]
+    target = parts[0] if section == "state" else parts[4][0]
+    target[field] = value
+    payload = classify_container_inspect(
+        returncode=0,
+        stdout="\n".join(json.dumps(item) for item in parts) + "\n",
+        stderr="",
+        expected_container="megaplan-cloud-agent",
+    )
+
+    assert payload["status"] == "unknown"
+    assert payload["lifecycle"] == "unknown"
+    assert payload["collector"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("index", "value"), [(1, None), (2, 42), (3, ""), (1, "   ")]
+)
+def test_inspect_identity_fields_require_nonempty_strings(
+    index: int, value: object
+) -> None:
+    parts = [json.loads(line) for line in _inspect_output().splitlines()]
+    parts[index] = value
+    payload = classify_container_inspect(
+        returncode=0,
+        stdout="\n".join(json.dumps(item) for item in parts) + "\n",
+        stderr="",
+        expected_container="megaplan-cloud-agent",
+    )
+
+    assert payload["lifecycle"] == "unknown"
+
+
+def test_inspect_duplicate_state_fields_are_unknown() -> None:
+    lines = _inspect_output().splitlines()
+    lines[0] = lines[0].replace('"Running": true', '"Running": false, "Running": true')
+
+    payload = classify_container_inspect(
+        returncode=0,
+        stdout="\n".join(lines) + "\n",
+        stderr="",
+        expected_container="megaplan-cloud-agent",
+    )
+
+    assert payload["lifecycle"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("state_updates"),
+    [
+        {"Status": "running", "Running": False},
+        {"Status": "exited", "Running": True},
+        {"Status": "running", "Paused": True},
+        {"Status": "restarting", "Paused": True, "Restarting": True},
+    ],
+)
+def test_contradictory_container_state_is_unknown(
+    state_updates: dict[str, object],
+) -> None:
+    parts = [json.loads(line) for line in _inspect_output().splitlines()]
+    parts[0].update(state_updates)
+    payload = classify_container_inspect(
+        returncode=0,
+        stdout="\n".join(json.dumps(item) for item in parts) + "\n",
+        stderr="",
+        expected_container="megaplan-cloud-agent",
+    )
+
+    assert payload["lifecycle"] == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -258,8 +451,14 @@ def test_actual_workspace_probe_fsyncs_wal_receipt_and_cleans_up(
     result = subprocess.run(
         shlex.split(command), text=True, capture_output=True, check=False
     )
-    payload = parse_workspace_prelaunch_result(
-        returncode=result.returncode, stdout=result.stdout, stderr=result.stderr
+    payload = _parse_capacity(
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        workspace=str(tmp_path),
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=4096,
     )
 
     assert payload["verdict"] == "GO", payload
@@ -287,8 +486,14 @@ def test_actual_workspace_probe_capacity_shortfall_is_no_go_and_cleans_up(
     result = subprocess.run(
         shlex.split(command), text=True, capture_output=True, check=False
     )
-    payload = parse_workspace_prelaunch_result(
-        returncode=result.returncode, stdout=result.stdout, stderr=result.stderr
+    payload = _parse_capacity(
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        workspace=str(tmp_path),
+        min_free_bytes=2**63,
+        min_free_inodes=0,
+        receipt_reserve_bytes=4096,
     )
 
     assert result.returncode == 3
@@ -309,14 +514,34 @@ def test_capacity_and_durability_failures_remain_typed_no_go(error: str) -> None
     raw = json.dumps(
         {
             "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "workspace": "/opt/megaplan-cloud/workspace",
+            "thresholds": {
+                "min_free_bytes": 0,
+                "min_free_inodes": 0,
+                "receipt_reserve_bytes": 0,
+            },
             "status": "no-go",
             "verdict": "NO-GO",
             "checks": {"cleanup": error != "probe_cleanup_failed"},
             "errors": [error],
+            "mount": {
+                "st_dev": 1,
+                "device_major": 0,
+                "device_minor": 1,
+                "inode": 2,
+            },
+            "capacity": {"free_bytes": 3, "free_inodes": 4},
         }
     )
 
-    payload = parse_workspace_prelaunch_result(returncode=3, stdout=raw, stderr="")
+    payload = _parse_capacity(
+        returncode=3,
+        stdout=raw,
+        workspace="/opt/megaplan-cloud/workspace",
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+    )
 
     assert payload["status"] == "no-go"
     assert payload["verdict"] == "NO-GO"
@@ -324,15 +549,116 @@ def test_capacity_and_durability_failures_remain_typed_no_go(error: str) -> None
 
 
 def test_unparseable_capacity_observation_is_unknown_no_go() -> None:
-    payload = parse_workspace_prelaunch_result(
+    payload = _parse_capacity(
         returncode=255,
         stdout="not-json",
         stderr="transport failed",
+        workspace="/opt/megaplan-cloud/workspace",
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
     )
 
     assert payload["status"] == "unknown"
     assert payload["verdict"] == "NO-GO"
     assert payload["returncode"] == 255
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "wrong_schema",
+        "missing_schema",
+        "unknown_field",
+        "wrong_workspace",
+        "wrong_threshold",
+        "string_capacity",
+        "boolean_capacity",
+        "malformed_mount",
+        "false_check",
+        "missing_check",
+        "nonempty_errors",
+        "insufficient_reported_capacity",
+    ],
+)
+def test_malformed_or_contradictory_capacity_go_is_unknown_no_go(case: str) -> None:
+    payload = _capacity_payload()
+    expected_min_free_bytes = 0
+    if case == "wrong_schema":
+        payload["schema"] = "wrong"
+    elif case == "missing_schema":
+        del payload["schema"]
+    elif case == "unknown_field":
+        payload["extra"] = "not-allowlisted"
+    elif case == "wrong_workspace":
+        payload["workspace"] = "/wrong/workspace"
+    elif case == "wrong_threshold":
+        payload["thresholds"]["min_free_bytes"] = 1
+    elif case == "string_capacity":
+        payload["capacity"]["free_bytes"] = "1"
+    elif case == "boolean_capacity":
+        payload["capacity"]["free_inodes"] = True
+    elif case == "malformed_mount":
+        payload["mount"]["st_dev"] = "1"
+    elif case == "false_check":
+        payload["checks"]["cleanup"] = False
+    elif case == "missing_check":
+        del payload["checks"]["sqlite_wal"]
+    elif case == "nonempty_errors":
+        payload["errors"] = ["failed"]
+    elif case == "insufficient_reported_capacity":
+        expected_min_free_bytes = 1
+        payload["thresholds"]["min_free_bytes"] = 1
+        payload["capacity"]["free_bytes"] = 0
+
+    result = _parse_capacity(
+        returncode=0,
+        stdout=json.dumps(payload),
+        workspace="/opt/megaplan-cloud/workspace",
+        min_free_bytes=expected_min_free_bytes,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+    )
+
+    assert result["status"] == "unknown"
+    assert result["verdict"] == "NO-GO"
+
+
+def test_capacity_duplicate_json_fields_are_unknown_no_go() -> None:
+    raw = json.dumps(_capacity_payload())
+    raw = raw.replace('"schema":', '"schema":"decoy","schema":', 1)
+
+    payload = _parse_capacity(
+        returncode=0,
+        stdout=raw,
+        workspace="/opt/megaplan-cloud/workspace",
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+    )
+
+    assert payload["status"] == "unknown"
+    assert payload["verdict"] == "NO-GO"
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stderr"), [(3, ""), (255, "transport failed"), (0, "warning")]
+)
+def test_capacity_go_cannot_contradict_process_evidence(
+    returncode: int, stderr: str
+) -> None:
+    payload = _parse_capacity(
+        returncode=returncode,
+        stdout=json.dumps(_capacity_payload()),
+        stderr=stderr,
+        workspace="/opt/megaplan-cloud/workspace",
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+    )
+
+    assert payload["status"] == "unknown"
+    assert payload["verdict"] == "NO-GO"
 
 
 def test_provider_rejects_wrong_workspace_bind_without_capacity_command(
@@ -380,6 +706,11 @@ def test_provider_capacity_observation_uses_only_fixed_inspect_and_probe(
     capacity = {
         "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
         "workspace": "/opt/megaplan-cloud/workspace",
+        "thresholds": {
+            "min_free_bytes": 1_073_741_824,
+            "min_free_inodes": 10_000,
+            "receipt_reserve_bytes": 1_048_576,
+        },
         "status": "go",
         "verdict": "GO",
         "checks": {
@@ -391,6 +722,16 @@ def test_provider_capacity_observation_uses_only_fixed_inspect_and_probe(
             "cleanup": True,
         },
         "errors": [],
+        "mount": {
+            "st_dev": 1,
+            "device_major": 0,
+            "device_minor": 1,
+            "inode": 2,
+        },
+        "capacity": {
+            "free_bytes": 2_147_483_648,
+            "free_inodes": 20_000,
+        },
     }
 
     def fake_run(argv, **kwargs):
@@ -414,6 +755,40 @@ def test_provider_capacity_observation_uses_only_fixed_inspect_and_probe(
     assert calls[1].startswith("python3 -c ")
 
 
+def test_stopped_exact_container_can_have_host_capacity_go_without_collector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.ssh.shutil.which", lambda name: name
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.ssh.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+    capacity = _capacity_payload(
+        min_free_bytes=1_073_741_824,
+        min_free_inodes=10_000,
+        receipt_reserve_bytes=1_048_576,
+    )
+
+    def fake_run(argv, **kwargs):
+        if argv[-1].startswith("docker inspect"):
+            return subprocess.CompletedProcess(
+                argv, 0, _inspect_output(lifecycle="exited"), ""
+            )
+        return subprocess.CompletedProcess(argv, 0, json.dumps(capacity), "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.ssh.subprocess.run", fake_run
+    )
+
+    payload = SshProvider(_spec()).observe_prelaunch_capacity()
+
+    assert payload["verdict"] == "GO"
+    assert payload["container"]["lifecycle"] == "stopped"
+    assert payload["container"]["collector"]["status"] == "unavailable"
+
+
 def test_provider_host_observation_rejects_non_allowlisted_operation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -423,6 +798,76 @@ def test_provider_host_observation_rejects_non_allowlisted_operation(
 
     with pytest.raises(CliError, match="not allowlisted"):
         SshProvider(_spec())._host_observation("arbitrary-command")
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "-oProxyCommand=touch-decoy",
+        " root@example.invalid",
+        "root@example.invalid",
+        "example.invalid\n-oProxyCommand=decoy",
+        "example.invalid;decoy",
+    ],
+)
+def test_provider_rejects_option_shaped_or_injected_ssh_hosts(
+    host: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.ssh.shutil.which", lambda name: name
+    )
+
+    with pytest.raises(CliError, match="ssh.host"):
+        SshProvider(_spec(host=host))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("user", "-oProxyCommand"),
+        ("user", "root user"),
+        ("user", "root\n-oProxyCommand"),
+        ("port", True),
+        ("port", 65536),
+        ("identity_file", "-oProxyCommand=decoy"),
+        ("identity_file", "/tmp/key\n-oProxyCommand=decoy"),
+    ],
+)
+def test_provider_rejects_unsafe_ssh_transport_values(
+    field: str, value: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.ssh.shutil.which", lambda name: name
+    )
+
+    with pytest.raises(CliError):
+        SshProvider(_spec(**{field: value}))
+
+
+def test_ssh_argv_terminates_options_before_validated_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.ssh.shutil.which", lambda name: name
+    )
+    provider = SshProvider(
+        _spec(
+            host="[2001:db8::1]",
+            user="deploy-user",
+            port=2222,
+            identity_file="/keys/deploy key",
+        )
+    )
+
+    assert provider._ssh_destination_argv() == [
+        "ssh",
+        "-p",
+        "2222",
+        "-i",
+        "/keys/deploy key",
+        "--",
+        "deploy-user@[2001:db8::1]",
+    ]
 
 
 def test_spec_loads_configured_prelaunch_reserves_and_rejects_negative(
@@ -585,6 +1030,8 @@ def test_preflight_nonrunning_exposes_no_go_and_never_uses_ssh_exec(
 
     assert rc == 1
     assert payload["remote"]["container_observation"]["lifecycle"] == "stopped"
+    assert payload["remote"]["host_predeploy_verdict"] == "GO"
+    assert payload["remote"]["collector_launch_verdict"] == "NO-GO"
     assert payload["remote"]["import_check"]["status"] == "unavailable"
     assert any(
         "remote exec collector unavailable" in item for item in payload["errors"]
