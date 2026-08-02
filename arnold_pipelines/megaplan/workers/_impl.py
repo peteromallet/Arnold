@@ -3428,7 +3428,7 @@ def _run_codex_step_uncapped(
         # Recover from a lost session: container restarted since the session was
         # created, codex's rollout store is gone, but megaplan still has the id.
         # Clear the stale session and retry once with fresh=True.
-        if not fresh and persistent and session.get("id") and _is_rollout_missing(
+        if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1" and not fresh and persistent and session.get("id") and _is_rollout_missing(
             str(error.extra.get("raw_output", ""))
         ):
             print(
@@ -3458,6 +3458,8 @@ def _run_codex_step_uncapped(
         # stale) and we were resuming a session (fresh sessions can't carry
         # the poisoned history). See _is_poisoned_environmental_failure.
         if (
+            os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+            and
             not fresh
             and persistent
             and session.get("id")
@@ -3490,6 +3492,8 @@ def _run_codex_step_uncapped(
         # OpenAI 429s the compaction call, codex gives up and exits. Same
         # session id will keep failing — start fresh.
         if (
+            os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+            and
             not fresh
             and persistent
             and session.get("id")
@@ -3597,6 +3601,8 @@ def _run_codex_step_uncapped(
     # Same rollout-missing recovery for the non-exception path (non-zero exit
     # without CliError being raised). See _is_rollout_missing for context.
     if (
+        os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and
         not fresh
         and persistent
         and session.get("id")
@@ -3627,6 +3633,8 @@ def _run_codex_step_uncapped(
     # non-zero but produced output that still echoes an obsolete sandbox
     # failure belief. Same guard conditions as the CliError branch above.
     if (
+        os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and
         not fresh
         and persistent
         and session.get("id")
@@ -3656,6 +3664,8 @@ def _run_codex_step_uncapped(
     # Oversized-session recovery on non-exception path. See the matching
     # branch in the CliError handler above for context.
     if (
+        os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and
         not fresh
         and persistent
         and session.get("id")
@@ -3754,7 +3764,11 @@ def _run_codex_step_uncapped(
         if parse_error is None:
             parse_error = _json_decode_error_for_raw(output_raw)
         repair_raw = output_raw or raw
-        if parse_error is not None and not repair_attempted:
+        if (
+            parse_error is not None
+            and not repair_attempted
+            and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        ):
             repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
             # _pre_dispatch_budget_check sentinel: budget guard for dispatch
             try:
@@ -5018,6 +5032,7 @@ def _run_step_with_worker_legacy(
                         except CliError as error:
                             if (
                                 attempted_retry
+                                or os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
                                 or step in _EXECUTE_STEPS
                                 or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
                             ):
@@ -5066,6 +5081,7 @@ def _run_step_with_worker_legacy(
                             session_id = error.extra.get("session_id")
                             if (
                                 attempted_retry
+                                or os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
                                 or step in _EXECUTE_STEPS
                                 or error.code
                                 not in {

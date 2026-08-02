@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -1035,6 +1036,13 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         result = route_signal["result"]
         summary = route_signal["summary"]
         blocking_unresolved_ids = list(route_signal["blocking_unresolved_ids"])
+        if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1" and (
+            result == "tiebreaker_recommended" or blocking_unresolved_ids
+        ):
+            raise CliError(
+                "zero_recovery_gate_not_proceed",
+                "finite canary gate may not reprompt or dispatch a tiebreaker",
+            )
         if result == "tiebreaker_recommended":
             result, next_step, summary = _validate_tiebreaker(
                 state, gate_summary, plan_dir, worker, args, agent,

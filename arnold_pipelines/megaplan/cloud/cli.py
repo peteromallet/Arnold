@@ -54,6 +54,148 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
 _RAW_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
+def _validate_zero_recovery_canary_spec(
+    root: Path, raw_path: str, spec: CloudSpec
+) -> dict[str, Any]:
+    path = (root / raw_path).resolve() if not Path(raw_path).is_absolute() else Path(raw_path).resolve()
+    expected = (
+        root
+        / ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml"
+    ).resolve()
+    if path != expected or not path.is_file():
+        raise CliError(
+            "zero_recovery_canary_invalid", "the exact tracked canary.yaml is required"
+        )
+    try:
+        node = yaml.compose(path.read_text(encoding="utf-8"))
+
+        def reject_duplicate_yaml(value: yaml.Node) -> None:
+            if isinstance(value, yaml.MappingNode):
+                keys: set[str] = set()
+                for key_node, item_node in value.value:
+                    key = key_node.value
+                    if key in keys:
+                        raise ValueError(f"duplicate YAML field: {key}")
+                    keys.add(key)
+                    reject_duplicate_yaml(item_node)
+            elif isinstance(value, yaml.SequenceNode):
+                for item_node in value.value:
+                    reject_duplicate_yaml(item_node)
+
+        if node is None:
+            raise ValueError("empty YAML")
+        reject_duplicate_yaml(node)
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as exc:
+        raise CliError(
+            "zero_recovery_canary_invalid", f"canary spec is not strict YAML: {exc}"
+        ) from exc
+    required = {
+        "schema", "canary_id", "engine_commit", "engine_tree", "brief",
+        "north_star", "plan_name", "phases", "terminal_state", "model_spec",
+        "robustness", "adaptive_critique", "receipts",
+    }
+    receipts = payload.get("receipts") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != required
+        or payload.get("schema") != "arnold.megaplan.finite_canary.v1"
+        or payload.get("canary_id") != "critique-ledger-safe-v3-canary"
+        or payload.get("engine_commit") != spec.megaplan.ref
+        or not isinstance(payload.get("engine_tree"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", payload.get("engine_tree"))
+        or payload.get("brief")
+        != ".megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md"
+        or payload.get("north_star")
+        != ".megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md"
+        or payload.get("plan_name") != "critique-ledger-cl2-planning-canary"
+        or payload.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
+        or payload.get("terminal_state") != "finalized"
+        or payload.get("model_spec") != "codex:gpt-5.6-sol:high"
+        or payload.get("robustness") != "full"
+        or payload.get("adaptive_critique") is not False
+        or receipts
+        != {
+            "directory": ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
+            "content_addressed": True,
+        }
+        or spec.provider != "ssh"
+        or spec.mode != "idle"
+        or not spec.zero_recovery_canary
+        or spec.secrets != []
+        or spec.extra_repos != ()
+        or spec.megaplan.codex_auth != "chatgpt"
+        or spec.codex.model != "gpt-5.6-sol"
+        or spec.codex.reasoning != "high"
+        or spec.agents != {"default": "codex"}
+        or spec.toolchains not in (None, [])
+        or not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", spec.repo.url)
+    ):
+        raise CliError(
+            "zero_recovery_canary_invalid", "canary spec or cloud binding mismatch"
+        )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=False
+    )
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=root, capture_output=True, text=True, check=False
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    parent = subprocess.run(
+        ["git", "rev-parse", "HEAD^"], cwd=root, capture_output=True, text=True, check=False
+    )
+    engine_tree = subprocess.run(
+        ["git", "rev-parse", f"{payload['engine_commit']}^{{tree}}"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    manifest_diff = subprocess.run(
+        ["git", "diff", "--name-only", f"{payload['engine_commit']}..HEAD"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    allowed_manifest_delta = {
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/proof-map.json",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/traceability.json",
+    }
+    if (
+        head.returncode != 0
+        or tree.returncode != 0
+        or status.returncode != 0
+        or parent.returncode != 0
+        or engine_tree.returncode != 0
+        or manifest_diff.returncode != 0
+        or status.stdout
+        or not re.fullmatch(r"[0-9a-f]{40}", head.stdout.strip())
+        or not re.fullmatch(r"[0-9a-f]{40}", tree.stdout.strip())
+        or parent.stdout.strip() != payload["engine_commit"]
+        or engine_tree.stdout.strip() != payload["engine_tree"]
+        or not set(manifest_diff.stdout.splitlines()).issubset(allowed_manifest_delta)
+    ):
+        raise CliError(
+            "zero_recovery_canary_invalid",
+            "launching checkout must be clean with exact Git commit/tree identity",
+        )
+    for relative in (payload["brief"], payload["north_star"], raw_path):
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        dirty = subprocess.run(
+            ["git", "diff", "--quiet", "--", relative], cwd=root, check=False
+        )
+        if tracked.returncode != 0 or dirty.returncode != 0:
+            raise CliError(
+                "zero_recovery_canary_invalid", f"canary input is untracked or dirty: {relative}"
+            )
+    payload["_admission_source_commit"] = head.stdout.strip()
+    payload["_admission_source_tree"] = tree.stdout.strip()
+    return payload
+
+
 def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     cloud_sub = cloud_parser.add_subparsers(dest="cloud_action", required=True)
 
@@ -77,6 +219,39 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
 
     cloud_sub.add_parser("build", parents=[shared], help="Build the cloud image")
     cloud_sub.add_parser("deploy", parents=[shared], help="Deploy the cloud runner")
+    cloud_sub.add_parser(
+        "capacity-inventory",
+        parents=[shared],
+        help="Read fixed host/filesystem/Docker capacity evidence without reclaiming data",
+    )
+    reclaim_parser = cloud_sub.add_parser(
+        "reclaim-dangling-build-cache",
+        parents=[shared],
+        help="Dry-run or explicitly apply the fixed zero-recovery bootstrap reclaim",
+    )
+    reclaim_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Explicitly apply the freshly prepared fixed proposal",
+    )
+    run_zero_parser = cloud_sub.add_parser(
+        "run-zero-recovery-canary",
+        parents=[shared],
+        help="Run the one tracked finite canary with fixed auth and command routing",
+    )
+    run_zero_parser.add_argument("canary_spec")
+    zero_status_parser = cloud_sub.add_parser(
+        "zero-recovery-canary-status",
+        parents=[shared],
+        help="Read the fixed finite-canary receipt state without container exec",
+    )
+    zero_status_parser.add_argument("canary_spec")
+    zero_preflight_parser = cloud_sub.add_parser(
+        "zero-recovery-preflight",
+        parents=[shared],
+        help="Issue a fresh read-only zero-recovery predeploy transaction",
+    )
+    zero_preflight_parser.add_argument("canary_spec")
 
     quickstart_parser = cloud_sub.add_parser(
         "quickstart",
@@ -567,6 +742,29 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             return _run_status_retirement(args)
 
         spec = _load_cloud_spec(root, args)
+        if spec.zero_recovery_canary and action not in {
+            "build",
+            "deploy",
+            "capacity-inventory",
+            "reclaim-dangling-build-cache",
+            "logs",
+            "run-zero-recovery-canary",
+            "zero-recovery-canary-status",
+            "zero-recovery-preflight",
+        }:
+            raise CliError(
+                "zero_recovery_action_denied",
+                f"cloud {action} is not available in the zero-recovery profile",
+            )
+        canary_admission: dict[str, Any] | None = None
+        if action in {
+            "run-zero-recovery-canary",
+            "zero-recovery-canary-status",
+            "zero-recovery-preflight",
+        }:
+            canary_admission = _validate_zero_recovery_canary_spec(
+                root, args.canary_spec, spec
+            )
         provider = _provider_for_action(spec, args)
 
         if action == "chain":
@@ -595,16 +793,142 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             with _materialized_deploy_dir(spec) as deploy_dir:
                 return provider.build(deploy_dir)
 
+        if action == "capacity-inventory":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "capacity_inventory_unavailable",
+                    "host capacity inventory is only available for the SSH provider",
+                )
+            observe = getattr(provider, "observe_capacity_inventory", None)
+            if observe is None:
+                raise CliError(
+                    "capacity_inventory_unavailable",
+                    "SSH provider does not expose the fixed capacity inventory",
+                )
+            payload = observe()
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0 if payload.get("status") == "available" else 1
+
+        if action == "reclaim-dangling-build-cache":
+            if spec.provider != "ssh" or not spec.zero_recovery_canary:
+                raise CliError(
+                    "zero_recovery_bootstrap_invalid",
+                    "bootstrap reclaim requires SSH zero_recovery_canary=true",
+                )
+            prepare = getattr(provider, "prepare_zero_recovery_bootstrap_reclaim", None)
+            if prepare is None:
+                raise CliError(
+                    "zero_recovery_bootstrap_invalid",
+                    "SSH provider does not expose bootstrap reclaim",
+                )
+            proposal = prepare()
+            if getattr(args, "apply", False):
+                apply_reclaim = getattr(
+                    provider, "apply_zero_recovery_bootstrap_reclaim", None
+                )
+                if apply_reclaim is None:
+                    raise CliError(
+                        "zero_recovery_bootstrap_invalid",
+                        "SSH provider does not expose bootstrap reclaim",
+                    )
+                payload = apply_reclaim(proposal)
+            else:
+                payload = proposal
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0
+
+        if action == "run-zero-recovery-canary":
+            auth_path = Path.home() / ".codex" / "auth.json"
+            try:
+                auth_payload = auth_path.read_text(encoding="utf-8")
+
+                def reject_auth_duplicates(
+                    pairs: list[tuple[str, Any]],
+                ) -> dict[str, Any]:
+                    result: dict[str, Any] = {}
+                    for key, value in pairs:
+                        if key in result:
+                            raise ValueError(f"duplicate auth field: {key}")
+                        result[key] = value
+                    return result
+
+                parsed_auth = json.loads(
+                    auth_payload, object_pairs_hook=reject_auth_duplicates
+                )
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                raise CliError(
+                    "zero_recovery_auth_unavailable",
+                    "a readable strict ~/.codex/auth.json is required",
+                ) from exc
+            if (
+                spec.megaplan.codex_auth != "chatgpt"
+                or not isinstance(parsed_auth, dict)
+                or parsed_auth.get("auth_mode") != "chatgpt"
+            ):
+                raise CliError(
+                    "zero_recovery_auth_invalid",
+                    "finite canary permits only Codex ChatGPT OAuth",
+                )
+            execute_canary = getattr(provider, "execute_zero_recovery_canary", None)
+            if execute_canary is None or canary_admission is None:
+                raise CliError(
+                    "zero_recovery_canary_unavailable",
+                    "provider lacks the fixed finite-canary route",
+                )
+            return execute_canary(
+                auth_payload,
+                source_commit=canary_admission["_admission_source_commit"],
+                source_tree=canary_admission["_admission_source_tree"],
+            )
+
+        if action == "zero-recovery-canary-status":
+            read_status = getattr(provider, "zero_recovery_canary_status", None)
+            if read_status is None:
+                raise CliError(
+                    "zero_recovery_canary_unavailable",
+                    "provider lacks the fixed finite-canary status route",
+                )
+            sys.stdout.write(json.dumps(read_status(), indent=2) + "\n")
+            return 0
+
+        if action == "zero-recovery-preflight":
+            prepare = getattr(
+                provider, "prepare_zero_recovery_predeploy_transaction", None
+            )
+            if prepare is None:
+                raise CliError(
+                    "zero_recovery_predeploy_invalid",
+                    "provider lacks zero-recovery preflight",
+                )
+            sys.stdout.write(json.dumps(prepare(), indent=2) + "\n")
+            return 0
+
         if action == "deploy":
             secrets = {name: os.environ.get(name, "") for name in spec.secrets}
             with _materialized_deploy_dir(spec) as deploy_dir:
-                result = provider.deploy(deploy_dir, secrets=secrets)
+                if spec.zero_recovery_canary:
+                    prepare = getattr(
+                        provider, "prepare_zero_recovery_predeploy_transaction", None
+                    )
+                    if prepare is None:
+                        raise CliError(
+                            "zero_recovery_predeploy_unavailable",
+                            "provider cannot produce a zero-recovery predeploy transaction",
+                        )
+                    transaction = prepare()
+                    result = provider.deploy(
+                        deploy_dir,
+                        secrets=secrets,
+                        predeploy_transaction=transaction,
+                    )
+                else:
+                    result = provider.deploy(deploy_dir, secrets=secrets)
                 report = _coerce_deploy_report(result, spec=spec, deploy_dir=deploy_dir)
                 report.steps = [
                     *_deploy_context_steps(deploy_dir),
                     *report.steps,
                 ]
-            if report.exit_code == 0:
+            if report.exit_code == 0 and not spec.zero_recovery_canary:
                 seed_messages: list[str] = []
                 seed_result = seed_codex_oauth(spec, provider, writer=seed_messages.append)
                 report.steps.append(
@@ -1649,12 +1973,35 @@ def _provider_prelaunch_capacity(provider) -> dict[str, Any]:
     return payload
 
 
-def _collector_unavailable_error(observation: Mapping[str, Any]) -> CliError:
+def _container_collector_ready(observation: Mapping[str, Any] | None) -> bool:
+    if not isinstance(observation, Mapping):
+        return False
+    collector = observation.get("collector")
+    return (
+        observation.get("status") == "available"
+        and observation.get("lifecycle") == "running"
+        and isinstance(collector, Mapping)
+        and collector.get("status") == "available"
+    )
+
+
+def _collector_unavailable_error(
+    observation: Mapping[str, Any],
+    *,
+    capacity: Mapping[str, Any] | None = None,
+) -> CliError:
     lifecycle = str(observation.get("lifecycle") or "unknown")
     return CliError(
         "provider_collector_unavailable",
         f"container lifecycle is {lifecycle}; docker-exec collector is unavailable",
-        extra={"container_observation": dict(observation)},
+        extra={
+            "container_observation": dict(observation),
+            **(
+                {"prelaunch_capacity": dict(capacity)}
+                if isinstance(capacity, Mapping)
+                else {}
+            ),
+        },
     )
 
 
@@ -3923,13 +4270,7 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             remote["container_observation"] = container_observation
             remote["prelaunch_capacity"] = capacity_observation
             lifecycle = container_observation.get("lifecycle")
-            collector = container_observation.get("collector")
-            collector_ready = (
-                lifecycle == "running"
-                and container_observation.get("status") == "available"
-                and isinstance(collector, Mapping)
-                and collector.get("status") == "available"
-            )
+            collector_ready = _container_collector_ready(container_observation)
             capacity_ready = capacity_observation.get("verdict") == "GO"
             host_predeploy_ready = (
                 lifecycle in {"running", "stopped"}
@@ -3942,10 +4283,12 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             remote["collector_launch_verdict"] = (
                 "GO" if collector_ready else "NO-GO"
             )
+            remote_checks_ready = collector_ready and capacity_ready
         else:
             lifecycle = "not-applicable"
             collector_ready = True
             capacity_ready = True
+            remote_checks_ready = True
         errors = []
         if not collector_ready:
             errors.append(
@@ -3955,16 +4298,22 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             errors.append(
                 "host workspace prelaunch capacity/durability observation is NO-GO"
             )
-        try:
-            engine_ref_check = _verify_configured_megaplan_ref_advertised(spec)
-        except CliError as exc:
-            engine_ref_check = dict(exc.extra.get("engine_ref_check") or {})
-            engine_ref_check.setdefault("status", "failed")
-            remote["engine_ref_check"] = engine_ref_check
-            errors.append(exc.message)
+        if remote_checks_ready:
+            try:
+                engine_ref_check = _verify_configured_megaplan_ref_advertised(spec)
+            except CliError as exc:
+                engine_ref_check = dict(exc.extra.get("engine_ref_check") or {})
+                engine_ref_check.setdefault("status", "failed")
+                remote["engine_ref_check"] = engine_ref_check
+                errors.append(exc.message)
+            else:
+                remote["engine_ref_check"] = engine_ref_check
         else:
-            remote["engine_ref_check"] = engine_ref_check
-        if collector_ready:
+            remote["engine_ref_check"] = {
+                "status": "unavailable",
+                "reason": "host_or_collector_preflight_no_go",
+            }
+        if remote_checks_ready:
             import_check = _run_remote_megaplan_import_check(provider)
             missing_commands = _run_remote_dependency_check(
                 provider,
@@ -3975,7 +4324,7 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
                 "status": "unavailable",
                 "checks": {},
                 "errors": [],
-                "reason": f"container_{lifecycle or 'unknown'}",
+                "reason": "host_or_collector_preflight_no_go",
             }
             missing_commands = []
         remote.update(
@@ -5307,8 +5656,21 @@ def _run_supervise_tick(root: Path, args: argparse.Namespace, spec: CloudSpec, p
 def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status`."""
     observation = _provider_container_observation(provider)
-    if observation is not None and observation.get("lifecycle") != "running":
-        raise _collector_unavailable_error(observation)
+    capacity = (
+        _provider_prelaunch_capacity(provider) if spec.provider == "ssh" else None
+    )
+    if not _container_collector_ready(observation) or (
+        isinstance(capacity, Mapping) and capacity.get("verdict") != "GO"
+    ):
+        raise _collector_unavailable_error(
+            observation
+            or {
+                "status": "unknown",
+                "lifecycle": "unknown",
+                "collector": {"status": "unavailable", "reason": "observer_unavailable"},
+            },
+            capacity=capacity,
+        )
     return provider.status_payload(
         plan=getattr(args, "plan", None),
         workspace=spec.repo.workspace,
@@ -6153,14 +6515,25 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
         return 0
 
     observation = _provider_container_observation(provider)
-    if observation is not None and observation.get("lifecycle") != "running":
+    strict_ssh_observation = spec is not None and spec.provider == "ssh"
+    capacity = _provider_prelaunch_capacity(provider) if strict_ssh_observation else None
+    collector_ready = _container_collector_ready(observation)
+    capacity_ready = not isinstance(capacity, Mapping) or capacity.get("verdict") == "GO"
+    if strict_ssh_observation and (not collector_ready or not capacity_ready):
+        lifecycle = observation.get("lifecycle") if observation is not None else "unknown"
+        reason = (
+            f"container_{lifecycle or 'unknown'}"
+            if not collector_ready
+            else "host_prelaunch_capacity_no_go"
+        )
         payload = {
             "success": False,
             "source": "ssh-host-observer",
             "container_observation": observation,
+            "prelaunch_capacity": capacity,
             "collector": {
                 "status": "unavailable",
-                "reason": f"container_{observation.get('lifecycle') or 'unknown'}",
+                "reason": reason,
             },
             "sessions": [],
         }
@@ -6172,11 +6545,22 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
         raw = provider.read_remote_file(str(status_snapshot.DEFAULT_SNAPSHOT_PATH))
         snapshot = json.loads(raw)
     except (CliError, OSError, ValueError) as exc:
-        sys.stderr.write(
-            f"cloud status: snapshot unavailable on box ({exc.__class__.__name__}); "
-            "falling back to legacy remote listing\n"
-        )
-        return _run_cloud_chains(spec, provider, args=args)
+        if spec is None:
+            return _run_cloud_chains(spec, provider, args=args)
+        payload = {
+            "success": False,
+            "source": "ssh-host-observer",
+            "container_observation": observation,
+            "prelaunch_capacity": capacity,
+            "collector": {
+                "status": "unavailable",
+                "reason": "snapshot_collector_unavailable",
+                "diagnostic": str(exc),
+            },
+            "sessions": [],
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 1
     if not isinstance(snapshot, dict):
         sys.stderr.write("cloud status: box snapshot malformed; falling back to legacy remote listing\n")
         return _run_cloud_chains(spec, provider, args=args)
@@ -6189,6 +6573,8 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
         return _run_cloud_chains(spec, provider, args=args)
     if observation is not None:
         snapshot["container_observation"] = observation
+    if capacity is not None:
+        snapshot["prelaunch_capacity"] = capacity
     _emit_cloud_status_human(snapshot, compact=compact)
     sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
     return 0

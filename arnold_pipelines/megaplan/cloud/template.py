@@ -75,6 +75,17 @@ fi"""
 
 _IDLE_RUNNER = Template("""tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -l" """)
 
+_ZERO_RECOVERY_ENTRYPOINT = """#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${MEGAPLAN_ZERO_RECOVERY_CANARY:-}" != "1" ]]; then
+  echo "zero-recovery canary requires MEGAPLAN_ZERO_RECOVERY_CANARY=1" >&2
+  exit 64
+fi
+export MEGAPLAN_ZERO_RECOVERY_CANARY=1
+exec python3 /usr/local/bin/healthserver.py
+"""
+
 
 def _entrypoint_template() -> Template:
     text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("entrypoint.sh.tmpl").read_text(encoding="utf-8")
@@ -296,6 +307,8 @@ def _codex_auth_config_block(spec: CloudSpec) -> str:
 
 
 def render_entrypoint(spec: CloudSpec) -> str:
+    if spec.zero_recovery_canary:
+        return _ZERO_RECOVERY_ENTRYPOINT
     values = {
         "REPO_URL": spec.repo.url,
         "REPO_BRANCH": spec.repo.branch,

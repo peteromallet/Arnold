@@ -197,6 +197,11 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--adaptive-critique", action="store_true", default=None)
+    init_parser.add_argument(
+        "--no-adaptive-critique",
+        dest="adaptive_critique",
+        action="store_false",
+    )
     init_parser.add_argument("--strict-adaptive-critique", action="store_true", default=None)
     init_parser.add_argument("--profile", default=None)
     init_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED, default=None)

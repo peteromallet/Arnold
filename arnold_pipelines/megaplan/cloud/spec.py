@@ -124,6 +124,8 @@ class CloudSpec:
     extra_repos: tuple[RepoSpec, ...] = ()
     chain_session: str = "megaplan-chain"
     chain_session_explicit: bool = False
+    zero_recovery_canary: bool = False
+    zero_recovery_predecessor_container: str | None = None
 
 
 def apply_repo_overrides(
@@ -174,6 +176,14 @@ def _mapping(raw: Any, label: str) -> dict[str, Any]:
         return {}
     if not isinstance(raw, dict):
         raise _invalid(f"`{label}` must be a mapping")
+    return raw
+
+
+def _boolean(raw: Any, label: str, *, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    if type(raw) is not bool:
+        raise _invalid(f"`{label}` must be a boolean")
     return raw
 
 
@@ -403,6 +413,27 @@ def load_spec(path: Path) -> CloudSpec:
     mode = _string(raw.get("mode"), "mode", default="idle")
     if mode not in VALID_MODES:
         raise _invalid(f"mode must be one of {', '.join(VALID_MODES)}; got {mode!r}")
+    zero_recovery_canary = _boolean(
+        raw.get("zero_recovery_canary"), "zero_recovery_canary"
+    )
+    if zero_recovery_canary and (provider != "ssh" or mode != "idle"):
+        raise _invalid(
+            "`zero_recovery_canary: true` requires `provider: ssh` and `mode: idle`"
+        )
+    predecessor_raw = raw.get("zero_recovery_predecessor_container")
+    zero_recovery_predecessor_container = (
+        _string(predecessor_raw, "zero_recovery_predecessor_container")
+        if predecessor_raw is not None
+        else None
+    )
+    if zero_recovery_canary and not zero_recovery_predecessor_container:
+        raise _invalid(
+            "`zero_recovery_canary: true` requires `zero_recovery_predecessor_container`"
+        )
+    if not zero_recovery_canary and zero_recovery_predecessor_container is not None:
+        raise _invalid(
+            "`zero_recovery_predecessor_container` is only valid for a zero-recovery canary"
+        )
 
     agents = _agents(raw.get("agents"))
 
@@ -481,6 +512,14 @@ def load_spec(path: Path) -> CloudSpec:
             default="megaplan-cloud-agent",
         ),
     ) if provider == "ssh" or ssh_raw else None
+    if zero_recovery_canary and ssh is not None:
+        if (
+            not _SSH_ALIAS_RE.fullmatch(zero_recovery_predecessor_container or "")
+            or zero_recovery_predecessor_container == ssh.container
+        ):
+            raise _invalid(
+                "zero-recovery predecessor must be a safe container name distinct from ssh.container"
+            )
 
     auto_spec: AutoSpec | None = None
     if mode == "auto":
@@ -543,4 +582,6 @@ def load_spec(path: Path) -> CloudSpec:
         extra_repos=extra_repos,
         chain_session=chain_session,
         chain_session_explicit=chain_session_explicit,
+        zero_recovery_canary=zero_recovery_canary,
+        zero_recovery_predecessor_container=zero_recovery_predecessor_container,
     )
