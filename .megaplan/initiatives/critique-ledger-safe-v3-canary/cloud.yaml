@@ -12,7 +12,7 @@ codex:
   reasoning: high
 mode: idle
 megaplan:
-  ref: f22bd35bf4c107f921d90bdc018b4abdc3153124
+  ref: 56aaf706f4979fab2cde1ee2f92a73cadb228155
   codex_auth: chatgpt
 resources:
   volume: agent-volume
