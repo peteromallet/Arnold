@@ -3023,6 +3023,12 @@ _FINITE_CANARY_ROLES = {
     "host_zero_recovery_fence_receipt",
     "host_predeploy_receipt",
     "v2_terminal_fence_receipt",
+    "detached_reviewer_source",
+    "dispatch_ledger",
+    "phase_receipts_manifest",
+    "plan_state",
+    "gate_result",
+    "cloud_spec",
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_OBJECT_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -3071,24 +3077,37 @@ def _finite_canary_fence_is_valid(fence: Any) -> bool:
         isinstance(fence, dict)
         and set(fence) == {
             "schema", "status", "stage", "transaction_id", "transaction_digest",
-            "marker", "units", "forbidden_sessions", "forbidden_processes", "observed_at",
+            "marker", "units", "forbidden_sessions", "forbidden_processes", "systemd_jobs", "observed_at",
         }
         and fence.get("schema") == "arnold.cloud.zero_recovery_host_fence.v1"
         and fence.get("status") == "passed"
-        and fence.get("stage") in {"apply", "verify"}
+        and fence.get("stage") == "verify"
         and isinstance(fence.get("transaction_id"), str)
         and fence.get("transaction_id")
         and isinstance(fence.get("transaction_digest"), str)
         and _SHA256_RE.fullmatch(fence.get("transaction_digest"))
         and fence.get("forbidden_sessions") == []
         and fence.get("forbidden_processes") == []
+        and fence.get("systemd_jobs") == []
         and isinstance(units, list)
         and [item.get("unit") for item in units if isinstance(item, dict)]
         == _FINITE_CANARY_FENCE_UNITS
         and all(
             isinstance(item, dict)
             and set(item) == {"unit", "load_state", "active_state", "unit_file_state", "state"}
-            and item.get("state") in {"masked", "absent"}
+            and (
+                (
+                    item.get("state") == "masked"
+                    and item.get("active_state") == "inactive"
+                    and item.get("unit_file_state") == "masked"
+                )
+                or (
+                    item.get("state") == "absent"
+                    and item.get("load_state") == "not-found"
+                    and item.get("active_state") == "inactive"
+                    and item.get("unit_file_state") in {"", "disabled"}
+                )
+            )
             for item in units
         )
         and _parse_iso_datetime(fence.get("observed_at")) is not None
@@ -3104,22 +3123,48 @@ def _finite_canary_conformance_has_trust_evidence(conformance: Any) -> bool:
     return bool(
         set(conformance) == {
             "schema", "status", "subject", "run_receipt_sha256", "checks",
-            "reviewer", "reviewed_at", "trust_anchor", "attestation_digest",
+            "reviewer", "reviewed_at", "trust_anchor", "review_input_sha256",
+            "review_execution", "attestation_digest",
         }
         and isinstance(reviewer, dict)
         and set(reviewer) == {"kind", "identity", "source_sha256"}
         and reviewer.get("kind") == "detached_host_process"
         and isinstance(reviewer.get("identity"), str)
-        and reviewer.get("identity")
+        and reviewer.get("identity") == "arnold.chain.finite_canary_validator"
         and isinstance(reviewer.get("source_sha256"), str)
         and _SHA256_RE.fullmatch(reviewer.get("source_sha256"))
         and conformance.get("trust_anchor") == "arnold.detached_host_reviewer.v1"
+        and isinstance(conformance.get("review_input_sha256"), dict)
+        and conformance.get("review_execution")
+        == {"mode": "detached_subprocess", "exit_code": 0, "result": "passed"}
         and _parse_iso_datetime(conformance.get("reviewed_at")) is not None
         and isinstance(attestation_digest, str)
         and hashlib.sha256(
             json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         == attestation_digest
+    )
+
+
+def _finite_canary_review_inputs_match(
+    conformance: Any,
+    artifacts_by_role: dict[str, tuple[Path, str]],
+    root: Path,
+) -> bool:
+    if not isinstance(conformance, dict):
+        return False
+    reviewer_source = artifacts_by_role.get("detached_reviewer_source")
+    if reviewer_source is None:
+        return False
+    return bool(
+        reviewer_source[0] == (root / "arnold_pipelines/megaplan/chain/spec.py").resolve()
+        and conformance.get("reviewer", {}).get("source_sha256") == reviewer_source[1]
+        and conformance.get("review_input_sha256")
+        == {
+            role: digest
+            for role, (_path, digest) in artifacts_by_role.items()
+            if role != "independent_conformance_receipt"
+        }
     )
 
 
@@ -3316,6 +3361,8 @@ def _validate_finite_canary_receipt(
         or trace.get("schema") != "arnold.megaplan.finite_canary_traceability.v1"
         or trace.get("implementation_commit") != subject.get("engine_commit")
         or trace.get("implementation_tree") != subject.get("engine_tree")
+        or trace.get("launch_manifest_binding")
+        != {"method": "derived_clean_head_at_admission"}
         or trace.get("fresh_workspace") != subject["cloud"].get("workspace")
         or trace.get("predecessor_container") != subject["cloud"].get("predecessor_container")
         or trace.get("canary_container") != subject["cloud"].get("canary_container")
@@ -3329,9 +3376,9 @@ def _validate_finite_canary_receipt(
     run_fields = {
         "schema", "status", "canary_id", "plan_name", "phases", "phase_results",
         "terminal_state", "failure", "started_at", "completed_at", "source_commit",
-        "source_tree", "canary_spec_sha256", "state_sha256", "receipt_digest",
-        "dispatch_ledger_sha256", "dispatches", "import_root", "phase_commands",
-        "phase_receipt_sha256",
+        "source_tree", "canary_spec_sha256", "launch_manifest_sha256", "state_sha256", "gate_sha256", "receipt_digest",
+        "dispatch_ledger_sha256", "dispatches", "dispatch_integrity", "import_root", "phase_commands",
+        "phase_receipt_sha256", "phase_receipts_manifest_sha256",
     }
     run_unsigned = dict(run_payload) if isinstance(run_payload, dict) else {}
     run_digest = run_unsigned.pop("receipt_digest", None)
@@ -3357,6 +3404,14 @@ def _validate_finite_canary_receipt(
         or run_payload.get("source_commit") != subject.get("source_commit")
         or run_payload.get("source_tree") != subject.get("source_tree")
         or run_payload.get("canary_spec_sha256") != canary_spec_hash
+        or run_payload.get("launch_manifest_sha256")
+        != {
+            artifacts_by_role["canary_spec"][0].relative_to(root).as_posix(): artifacts_by_role["canary_spec"][1],
+            artifacts_by_role["cloud_spec"][0].relative_to(root).as_posix(): artifacts_by_role["cloud_spec"][1],
+            artifacts_by_role["proof_map"][0].relative_to(root).as_posix(): artifacts_by_role["proof_map"][1],
+            artifacts_by_role["traceability"][0].relative_to(root).as_posix(): artifacts_by_role["traceability"][1],
+        }
+        or run_payload.get("dispatch_integrity") != "complete"
         or not isinstance(run_payload.get("dispatch_ledger_sha256"), str)
         or not _SHA256_RE.fullmatch(run_payload.get("dispatch_ledger_sha256"))
         or not isinstance(run_payload.get("dispatches"), list)
@@ -3377,8 +3432,12 @@ def _validate_finite_canary_receipt(
             or run_payload["dispatches"][index].get("selected_agent") != "codex"
             or run_payload["dispatches"][index].get("selected_model") != "gpt-5.6-sol"
             or run_payload["dispatches"][index].get("selected_effort") != "high"
+            or run_payload["dispatches"][index].get("model_cli_argv")
+            != ["-c", "model='gpt-5.6-sol'"]
             or run_payload["dispatches"][index + 1].get("actual_agent") != "codex"
             or run_payload["dispatches"][index + 1].get("actual_model") != "gpt-5.6-sol"
+            or run_payload["dispatches"][index + 1].get("model_evidence")
+            != "rollout_turn_context"
             or run_payload["dispatches"][index + 1].get("actual_effort") != "high"
             or run_payload["dispatches"][index + 1].get("result") != "returned"
             for index in range(0, 8, 2)
@@ -3413,6 +3472,12 @@ def _validate_finite_canary_receipt(
         or not isinstance(run_payload.get("phase_receipt_sha256"), list)
         or len(run_payload.get("phase_receipt_sha256")) != 5
         or any(not isinstance(value, str) or not _SHA256_RE.fullmatch(value) for value in run_payload.get("phase_receipt_sha256"))
+        or run_payload.get("state_sha256") != artifacts_by_role["plan_state"][1]
+        or run_payload.get("gate_sha256") != artifacts_by_role["gate_result"][1]
+        or run_payload.get("dispatch_ledger_sha256")
+        != artifacts_by_role["dispatch_ledger"][1]
+        or run_payload.get("phase_receipts_manifest_sha256")
+        != artifacts_by_role["phase_receipts_manifest"][1]
         or not isinstance(run_digest, str)
         or hashlib.sha256(json.dumps(run_unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() != run_digest
     ):
@@ -3420,13 +3485,102 @@ def _validate_finite_canary_receipt(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: run receipt is not a bound passed finite run",
         )
+    phase_manifest = _strict_json_document(
+        artifacts_by_role["phase_receipts_manifest"][0],
+        label=label,
+        spec_path=spec_path,
+    )
+    phase_entries = phase_manifest.get("entries") if isinstance(phase_manifest, dict) else None
+    expected_phase_paths = [
+        f".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts/{index:02d}-{phase}.phase-receipt.json"
+        for index, phase in enumerate(_FINITE_CANARY_PHASES)
+    ]
+    if (
+        not isinstance(phase_manifest, dict)
+        or set(phase_manifest) != {"schema", "canary_id", "plan_name", "entries"}
+        or phase_manifest.get("schema")
+        != "arnold.megaplan.finite_canary_phase_receipts_manifest.v1"
+        or phase_manifest.get("canary_id") != subject.get("canary_id")
+        or phase_manifest.get("plan_name") != subject.get("plan_name")
+        or not isinstance(phase_entries, list)
+        or len(phase_entries) != 5
+        or [entry.get("path") for entry in phase_entries if isinstance(entry, dict)]
+        != expected_phase_paths
+        or [entry.get("sha256") for entry in phase_entries if isinstance(entry, dict)]
+        != run_payload.get("phase_receipt_sha256")
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: phase receipt manifest is invalid",
+        )
+    for phase_index, (phase, expected_path, entry) in enumerate(
+        zip(_FINITE_CANARY_PHASES, expected_phase_paths, phase_entries, strict=True)
+    ):
+        if not isinstance(entry, dict) or set(entry) != {"phase", "path", "sha256"} or entry.get("phase") != phase:
+            raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase entry mismatch")
+        phase_path = (root / expected_path).resolve()
+        _require_inside_root(phase_path, root, label)
+        if not phase_path.is_file() or _sha256_file(phase_path) != entry.get("sha256"):
+            raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase receipt hash mismatch")
+        phase_payload = _strict_json_document(phase_path, label=label, spec_path=spec_path)
+        if (
+            not isinstance(phase_payload, dict)
+            or phase_payload.get("schema") != "arnold.megaplan.finite_canary_phase_receipt.v2"
+            or phase_payload.get("phase") != phase
+            or phase_payload.get("status") != "passed"
+            or phase_payload.get("returncode") != 0
+            or phase_payload.get("state")
+            != ["initialized", "planned", "critiqued", "gated", "finalized"][phase_index]
+        ):
+            raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase receipt semantics invalid")
+    state_payload = _strict_json_document(
+        artifacts_by_role["plan_state"][0], label=label, spec_path=spec_path
+    )
+    gate_payload = _strict_json_document(
+        artifacts_by_role["gate_result"][0], label=label, spec_path=spec_path
+    )
+    ledger_path = artifacts_by_role["dispatch_ledger"][0]
+    try:
+        def reject_ledger_duplicates(
+            pairs: list[tuple[str, Any]],
+        ) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate dispatch field: {key}")
+                result[key] = value
+            return result
+
+        ledger_payload = [
+            json.loads(line, object_pairs_hook=reject_ledger_duplicates)
+            for line in ledger_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: dispatch ledger is invalid: {exc}",
+        ) from exc
+    if (
+        not isinstance(state_payload, dict)
+        or state_payload.get("current_state") != "finalized"
+        or state_payload.get("active_step") not in (None, "")
+        or not isinstance(gate_payload, dict)
+        or gate_payload.get("recommendation") != "PROCEED"
+        or ledger_payload != run_payload.get("dispatches")
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: state, gate, or dispatch artifact mismatch",
+        )
     conformance_path, _ = artifacts_by_role["independent_conformance_receipt"]
     conformance = _strict_json_document(conformance_path, label=label, spec_path=spec_path)
     if (
         not isinstance(conformance, dict)
         or set(conformance) != {
             "schema", "status", "subject", "run_receipt_sha256", "checks",
-            "reviewer", "reviewed_at", "trust_anchor", "attestation_digest",
+            "reviewer", "reviewed_at", "trust_anchor", "review_input_sha256",
+            "review_execution", "attestation_digest",
         }
         or conformance.get("schema") != "arnold.megaplan.finite_canary_conformance_receipt.v1"
         or conformance.get("status") != "passed"
@@ -3435,6 +3589,9 @@ def _validate_finite_canary_receipt(
         or conformance.get("checks")
         != ["exact_phase_order", "single_dispatch_pairs", "terminal_finalized", "artifact_hashes", "zero_recovery_fence"]
         or not _finite_canary_conformance_has_trust_evidence(conformance)
+        or not _finite_canary_review_inputs_match(
+            conformance, artifacts_by_role, root
+        )
     ):
         raise CliError(
             "launch_precondition_failed",

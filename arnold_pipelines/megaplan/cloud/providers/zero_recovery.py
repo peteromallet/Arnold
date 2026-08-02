@@ -706,6 +706,16 @@ for line in ps.stdout.splitlines():
 if forbidden_sessions or forbidden_processes:
     raise RuntimeError("forbidden_recovery_runtime_present")
 
+jobs_result = subprocess.run(
+    ["systemctl", "list-jobs", "--no-legend", "--no-pager"],
+    text=True, capture_output=True, check=False,
+)
+if jobs_result.returncode != 0:
+    raise RuntimeError("systemd_jobs_observation_unknown")
+systemd_jobs = [line.strip() for line in jobs_result.stdout.splitlines() if line.strip()]
+if systemd_jobs:
+    raise RuntimeError("systemd_jobs_present")
+
 final_inventory = observe_inventory()
 if final_inventory.get("status") != "available":
     raise RuntimeError("post_reclaim_inventory_unknown")
@@ -739,6 +749,7 @@ receipt = {
     "container": container_after,
     "forbidden_sessions": forbidden_sessions,
     "forbidden_processes": forbidden_processes,
+    "systemd_jobs": systemd_jobs,
     "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
 }
 root = pathlib.Path(workspace) / ".megaplan" / "zero-recovery"
@@ -1121,6 +1132,7 @@ def parse_fence_receipt(
         "units",
         "forbidden_sessions",
         "forbidden_processes",
+        "systemd_jobs",
         "observed_at",
     }
     if not isinstance(payload, dict) or set(payload) != required:
@@ -1141,11 +1153,26 @@ def parse_fence_receipt(
             or item.get("state") not in {"absent", "masked"}
             or any(not isinstance(item.get(key), str) or not item.get(key) for key in ("unit", "load_state", "active_state"))
             or not isinstance(item.get("unit_file_state"), str)
-            or (item.get("state") == "masked" and not item.get("unit_file_state"))
+            or (
+                item.get("state") == "masked"
+                and (
+                    item.get("active_state") != "inactive"
+                    or item.get("unit_file_state") != "masked"
+                )
+            )
+            or (
+                item.get("state") == "absent"
+                and (
+                    item.get("load_state") != "not-found"
+                    or item.get("active_state") != "inactive"
+                    or item.get("unit_file_state") not in {"", "disabled"}
+                )
+            )
             for item in (units or [])
         )
         or payload.get("forbidden_sessions") != []
         or payload.get("forbidden_processes") != []
+        or payload.get("systemd_jobs") != []
         or _parse_time(payload.get("observed_at")) is None
     ):
         raise CliError("zero_recovery_fence_unknown", "fence receipt failed strict verification")

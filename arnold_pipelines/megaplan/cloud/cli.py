@@ -259,7 +259,7 @@ def _validate_zero_recovery_canary_spec(
         raise CliError("zero_recovery_canary_invalid", "proof-map binding mismatch")
     expected_trace_fields = {
         "schema", "implementation_commit", "implementation_tree",
-        "launch_manifest_commit", "launch_manifest_tree", "launch_manifest_parent",
+        "launch_manifest_binding", "launch_manifest_parent",
         "canary_spec", "brief_source", "copied_brief", "fresh_workspace",
         "predecessor_container", "canary_container",
     }
@@ -268,6 +268,8 @@ def _validate_zero_recovery_canary_spec(
         or trace.get("schema") != "arnold.megaplan.finite_canary_traceability.v1"
         or trace.get("implementation_commit") != payload["engine_commit"]
         or trace.get("implementation_tree") != payload["engine_tree"]
+        or trace.get("launch_manifest_binding")
+        != {"method": "derived_clean_head_at_admission"}
         or trace.get("launch_manifest_parent") != payload["engine_commit"]
         or trace.get("canary_spec") != str(path.relative_to(root))
         or trace.get("copied_brief") != payload["brief"]
@@ -853,13 +855,12 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 f"cloud {action} is not available in the zero-recovery profile",
             )
         canary_admission: dict[str, Any] | None = None
-        if action in {
-            "run-zero-recovery-canary",
-            "zero-recovery-canary-status",
-            "zero-recovery-preflight",
-        }:
+        if spec.zero_recovery_canary:
+            raw_canary_spec = getattr(args, "canary_spec", None) or (
+                ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml"
+            )
             canary_admission = _validate_zero_recovery_canary_spec(
-                root, args.canary_spec, getattr(args, "cloud_yaml", None), spec
+                root, raw_canary_spec, getattr(args, "cloud_yaml", None), spec
             )
         provider = _provider_for_action(spec, args)
 
@@ -975,6 +976,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 auth_payload,
                 source_commit=canary_admission["_admission_source_commit"],
                 source_tree=canary_admission["_admission_source_tree"],
+                manifest_sha256=canary_admission["_admission_manifest_sha256"],
             )
 
         if action == "zero-recovery-canary-status":
@@ -988,17 +990,12 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 raise CliError(
                     "zero_recovery_canary_unavailable", "canary admission is required"
                 )
-            sys.stdout.write(
-                json.dumps(
-                    read_status(
-                        source_commit=canary_admission["_admission_source_commit"],
-                        source_tree=canary_admission["_admission_source_tree"],
-                    ),
-                    indent=2,
-                )
-                + "\n"
+            status_payload = read_status(
+                source_commit=canary_admission["_admission_source_commit"],
+                source_tree=canary_admission["_admission_source_tree"],
             )
-            return 0
+            sys.stdout.write(json.dumps(status_payload, indent=2) + "\n")
+            return 0 if status_payload.get("status") == "available" else 1
 
         if action == "zero-recovery-preflight":
             prepare = getattr(
