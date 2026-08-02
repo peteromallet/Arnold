@@ -26,9 +26,90 @@
     }
   ],
   "capacity_cut": {
-    "prelaunch": "fence runtime; reclaim dangling builder cache only; prove receipt reserve/free-space floor; create and verify a fresh isolated mode-0700 child bind",
-    "follow_up": "reserved-capacity owner, quotas/watermarks, ENOSPC/corruption/crash guarantees, lifecycle retention, broad storage reclaim and physically minimal image"
+    "prelaunch": {
+      "task_id": "T0.3/scoped-prelaunch-capacity-reclaim",
+      "status": "NO_GO_UNTIL_ACCEPTED_FRESH_RECEIPT",
+      "owner": "finite-canary release operator through the typed SSH zero-recovery provider",
+      "live_no_go_receipt": {
+        "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/live-containment-capacity-observation-20260802T214853Z.json",
+        "sha256": "b1c42795d81d5c8f259ccbc21626fbf6e05c093e18c6c52dcf176d6fb133082b"
+      },
+      "reclaim_review": {
+        "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/capacity-bootstrap-reclaim-adversarial-review-luna-20260802.md",
+        "sha256": "3ef7f27fd337d64c9ba3639075e264ee6e7ed641fafd70b348d666a702eda1ef",
+        "status": "NO_GO_CURRENT_IMPLEMENTATION_CONDITIONAL_STRATEGY_ONLY"
+      },
+      "exact_fixed_reclaim_operation": ["docker", "builder", "prune", "-f"],
+      "fresh_capacity_receipt": {
+        "path": null,
+        "sha256": null,
+        "status": "PENDING"
+      }
+    },
+    "follow_up": {
+      "task_id": "T0.3/platform-capacity-and-storage-hardening",
+      "owner": "F1",
+      "proof_path": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
+      "scope": "reserved-capacity owner, quotas/watermarks, ENOSPC/corruption/crash guarantees, lifecycle retention, broad storage reclaim and physically minimal image"
+    }
   },
+  "isolation_receipt_contract": {
+    "status": "PENDING_EXACT_CANDIDATE_AND_LIVE_RECEIPT",
+    "required_host_child_identity": [
+      "realpath",
+      "st_dev",
+      "st_ino",
+      "uid",
+      "gid",
+      "mode",
+      "created_empty",
+      "never_reused",
+      "parent_realpath"
+    ],
+    "required_mount_identity": {
+      "container_destination": "/workspace",
+      "mount_type": "bind",
+      "rw": true,
+      "propagation": "rprivate",
+      "forbidden_mounts": [
+        "preserved_parent",
+        "sibling_workspaces",
+        "docker_socket",
+        "shared_cache"
+      ]
+    },
+    "required_evidence": [
+      "complete_mount_inventory_sha256",
+      "container_id",
+      "image_id",
+      "predeploy_observation_sha256",
+      "run_observation_sha256",
+      "stop_observation_sha256"
+    ]
+  },
+  "dirty_snapshot_commits": [
+    {
+      "lane": "t1.1-admission",
+      "snapshot_commit": "b122d6fc936a119c81883ed3698b8be4d746fa4e",
+      "snapshot_tree": "a8e19bce43139d319825a5d72113ae86255c2319",
+      "base_commit": "3ed353f8aa3d0df450c563c3cb8d76c87349e32d",
+      "disposition": "ARCHIVE_ONLY_PARTIAL_TREE_DO_NOT_MERGE_PENDING_CUSTODY_TAG"
+    },
+    {
+      "lane": "t1.2-partial-contract-bundles",
+      "snapshot_commit": "e552a159d9d531ae5ec913c6cefff40fecbf07c6",
+      "snapshot_tree": "6dd39f4b970218e711838b54b283161cd621e5de",
+      "base_commit": "2f1500aea1d03fbf13df5c796b17bd03d17bb79c",
+      "disposition": "ARCHIVE_ONLY_PARTIAL_TREE_DO_NOT_MERGE_PENDING_CUSTODY_TAG"
+    },
+    {
+      "lane": "t1.7-storage",
+      "snapshot_commit": "7bb70ac85e96413eaa53c08c5a0976b72493dc20",
+      "snapshot_tree": "d394c9a3c2118e99e5d2835e396266a7a018a8e3",
+      "base_commit": "6787d6363e8fc0603092913ae877db14f3b9fff8",
+      "disposition": "ARCHIVE_ONLY_PARTIAL_TREE_DO_NOT_MERGE_PENDING_CUSTODY_TAG"
+    }
+  ],
   "dirty_capture_recipe": {
     "status_sha256": "sha256(raw stdout bytes from: git status --porcelain=v1 --untracked-files=all)",
     "worktree_diff_sha256": "sha256(raw stdout bytes from: git diff --binary --no-ext-diff --)",

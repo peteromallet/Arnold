@@ -8,7 +8,8 @@ publication authority.
 
 ## Scope
 
-Complete deferred T0.3 residue; platform adoption of T1.7 owner-local
+Complete `T0.3/platform-capacity-and-storage-hardening` after—not instead of—the
+separately receipted `T0.3/scoped-prelaunch-capacity-reclaim`; platform adoption of T1.7 owner-local
 transactional storage; the non-exercised but shipped T1.5 legacy recovery
 retirement and honest disposition of all formerly hidden assertions; full T1.10
 key rotation, reminder buckets and child GLEKs; remaining T1.8/T1.9 owner/store
@@ -64,13 +65,16 @@ or replacement of accepted owner evidence with projections.
   as deployment evidence.
 - Restart and 200 unchanged polls emit at most one occurrence/version-keyed
   notification effect; missing provenance emits zero.
-- Independent completion manifest binds exact commits, migrations and receipts.
+- Independent completion manifest at
+  `evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json`
+  binds exact commits, migrations and receipts. It cannot supersede or imply
+  the prelaunch reclaim/GO receipt.
 
 ## Touchpoints
 
 `arnold.storage`, recovery/simple-fixer topology, notification custody, release
 and launch owners, capacity controls, installed wrappers and evidence for
-T0.3/T1.5/T1.7-T1.10/T4.6.
+T0.3's platform-hardening subtask, T1.5/T1.7-T1.10/T4.6.
 
 ## Anti-scope
 
