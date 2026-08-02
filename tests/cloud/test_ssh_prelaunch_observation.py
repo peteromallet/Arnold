@@ -73,6 +73,8 @@ def _inspect_output(
         "OOMKilled": False,
         "ExitCode": 0 if lifecycle == "running" else 137,
         "Error": "",
+        "StartedAt": "2026-08-02T00:00:00Z",
+        "FinishedAt": "2026-08-02T00:01:00Z",
     }
     mounts = [
         {
@@ -87,6 +89,7 @@ def _inspect_output(
             json.dumps(item)
             for item in (
                 state,
+                0,
                 "container-id",
                 "sha256:image",
                 "megaplan-cloud-agent",
@@ -304,7 +307,7 @@ def test_malformed_successful_container_state_is_unknown_not_stopped() -> None:
     stdout = (
         "\n".join(
             json.dumps(item)
-            for item in ({}, "container-id", "sha256:image", "image", [])
+            for item in ({}, 0, "container-id", "sha256:image", "image", [])
         )
         + "\n"
     )
@@ -341,7 +344,7 @@ def test_inspect_fields_require_exact_json_types(
     section: str, field: str, value: object
 ) -> None:
     parts = [json.loads(line) for line in _inspect_output().splitlines()]
-    target = parts[0] if section == "state" else parts[4][0]
+    target = parts[0] if section == "state" else parts[5][0]
     target[field] = value
     payload = classify_container_inspect(
         returncode=0,

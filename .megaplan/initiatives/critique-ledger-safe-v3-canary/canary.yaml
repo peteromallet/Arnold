@@ -1,0 +1,20 @@
+schema: arnold.megaplan.finite_canary.v1
+canary_id: critique-ledger-safe-v3-canary
+source_commit: 26aca6ace7f0af3279ca5b311e6983d4904a4d3a
+source_tree: 5503c69c36bbd5a404742139d5c93cddad48edf3
+brief: .megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md
+input: .megaplan/initiatives/critique-ledger-safe-v3-canary/inputs/cl2-input.md
+phases: [init, plan, critique, gate, finalize]
+terminal_state: finalized
+profile: partnered-5
+model_route:
+  vendor: codex
+  model: gpt-5.6-sol
+  auth: chatgpt
+zero_recovery:
+  required: true
+  resident: false
+  watchdog: false
+  repair: false
+  notifications: false
+  retries: 0

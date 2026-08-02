@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.types import CliError
 _CONTAINER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _CONTAINER_OBSERVATION_SCHEMA = "arnold.cloud.ssh_container_observation.v1"
 _WORKSPACE_PRELAUNCH_SCHEMA = "arnold.cloud.ssh_workspace_prelaunch.v1"
+_CAPACITY_INVENTORY_SCHEMA = "arnold.cloud.ssh_capacity_inventory.v1"
 _REQUIRED_CAPACITY_CHECKS = {
     "byte_floor",
     "inode_floor",
@@ -98,7 +99,7 @@ def container_inspect_command(container: str) -> str:
             "--type",
             "container",
             "--format",
-            "{{json .State}}\n{{json .Id}}\n{{json .Image}}\n{{json .Config.Image}}\n{{json .Mounts}}",
+            "{{json .State}}\n{{json .RestartCount}}\n{{json .Id}}\n{{json .Image}}\n{{json .Config.Image}}\n{{json .Mounts}}",
             name,
         ]
     )
@@ -147,13 +148,14 @@ def classify_container_inspect(
 
     try:
         lines = stdout.splitlines()
-        if len(lines) != 5:
-            raise ValueError("expected five docker inspect fields")
-        state, container_id, image_id, image_ref, mounts = (
+        if len(lines) != 6:
+            raise ValueError("expected six docker inspect fields")
+        state, restart_count, container_id, image_id, image_ref, mounts = (
             _strict_json_value(line) for line in lines
         )
         payload = {
             "State": state,
+            "RestartCount": restart_count,
             "Id": container_id,
             "Image": image_id,
             "Config": {"Image": image_ref},
@@ -197,6 +199,12 @@ def classify_container_inspect(
         and type(state.get("ExitCode")) is int
         and state.get("ExitCode") >= 0
         and isinstance(state.get("Error"), str)
+        and isinstance(state.get("StartedAt"), str)
+        and bool(state.get("StartedAt"))
+        and isinstance(state.get("FinishedAt"), str)
+        and bool(state.get("FinishedAt"))
+        and type(payload.get("RestartCount")) is int
+        and payload.get("RestartCount") >= 0
     )
     identity_types = (
         isinstance(container_id, str)
@@ -274,12 +282,16 @@ def classify_container_inspect(
         "schema": _CONTAINER_OBSERVATION_SCHEMA,
         "status": "available" if lifecycle != "unknown" else "unknown",
         "lifecycle": lifecycle,
+        "container_state": raw_status,
         "container": name,
         "container_id": container_id,
         "returncode": returncode,
         "exit_code": state.get("ExitCode"),
         "oom_killed": state.get("OOMKilled"),
         "error": state.get("Error"),
+        "started_at": state.get("StartedAt"),
+        "finished_at": state.get("FinishedAt"),
+        "restart_count": payload.get("RestartCount"),
         "image_id": image_id,
         "image_ref": image_ref,
         "workspace_bind": workspace_bind,
@@ -478,6 +490,198 @@ def workspace_prelaunch_command(
     )
 
 
+_CAPACITY_INVENTORY_SCRIPT = r"""
+import json
+import os
+import stat
+import subprocess
+import sys
+
+workspace = sys.argv[1]
+scopes = sys.argv[1:4]
+result = {
+    "schema": "arnold.cloud.ssh_capacity_inventory.v1",
+    "workspace": workspace,
+    "filesystem": {},
+    "mount": {},
+    "scopes": [],
+    "docker_disk_usage": [],
+    "errors": [],
+}
+try:
+    values = os.statvfs(workspace)
+    workspace_stat = os.stat(workspace, follow_symlinks=False)
+    result["filesystem"] = {
+        "free_bytes": values.f_bavail * values.f_frsize,
+        "free_inodes": values.f_favail,
+        "block_size": values.f_frsize,
+    }
+    result["mount"] = {
+        "st_dev": workspace_stat.st_dev,
+        "device_major": os.major(workspace_stat.st_dev),
+        "device_minor": os.minor(workspace_stat.st_dev),
+        "inode": workspace_stat.st_ino,
+    }
+    best = None
+    with open("/proc/self/mountinfo", "r", encoding="utf-8") as handle:
+        for line in handle:
+            fields = line.rstrip("\n").split()
+            if "-" not in fields or len(fields) < 10:
+                continue
+            dash = fields.index("-")
+            mount_point = fields[4].replace("\\040", " ")
+            if workspace == mount_point or workspace.startswith(mount_point.rstrip("/") + "/"):
+                if best is None or len(mount_point) > len(best[0]):
+                    best = (mount_point, fields[dash + 1], fields[dash + 2])
+    if best is None:
+        raise RuntimeError("workspace_mount_identity_unknown")
+    result["mount"].update({"mount_point": best[0], "filesystem": best[1], "mount_source": best[2]})
+except OSError as exc:
+    result["errors"].append("workspace_statvfs_failed:" + str(exc))
+
+for path in scopes:
+    item = {"path": path}
+    try:
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode):
+            raise RuntimeError("scope_is_symlink")
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("scope_is_not_directory")
+        usage = subprocess.run(
+            ["du", "-sb", "--one-file-system", "--", path],
+            text=True, capture_output=True, check=False,
+        )
+        fields = usage.stdout.split()
+        if (
+            usage.returncode != 0
+            or len(fields) != 2
+            or not fields[0].isdigit()
+            or fields[1] != path
+        ):
+            raise RuntimeError("scope_du_unknown")
+        item.update({"status": "available", "size_bytes": int(fields[0])})
+    except FileNotFoundError:
+        item.update({"status": "absent", "size_bytes": 0})
+    except Exception as exc:
+        item.update({"status": "unknown", "size_bytes": None})
+        result["errors"].append(path + ":" + str(exc))
+    result["scopes"].append(item)
+
+docker = subprocess.run(
+    ["docker", "system", "df", "--format", "{{json .}}"],
+    text=True, capture_output=True, check=False,
+)
+if docker.returncode != 0:
+    result["errors"].append("docker_disk_usage_unknown:" + docker.stderr.strip())
+else:
+    try:
+        for line in docker.stdout.splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if (
+                    not isinstance(row, dict)
+                    or set(row) != {"Type", "TotalCount", "Active", "Size", "Reclaimable"}
+                    or row.get("Type") not in {"Images", "Containers", "Local Volumes", "Build Cache"}
+                    or any(not isinstance(value, str) or not value for value in row.values())
+                ):
+                    raise RuntimeError("docker_disk_usage_row_malformed")
+                result["docker_disk_usage"].append(row)
+    except Exception as exc:
+        result["errors"].append("docker_disk_usage_malformed:" + str(exc))
+
+observed_types = [row.get("Type") for row in result["docker_disk_usage"]]
+if observed_types != ["Images", "Containers", "Local Volumes", "Build Cache"]:
+    result["errors"].append("docker_disk_usage_rows_inexact")
+result["status"] = "available" if not result["errors"] else "unknown"
+print(json.dumps(result, sort_keys=True))
+raise SystemExit(0 if result["status"] == "available" else 3)
+""".strip()
+
+
+def capacity_inventory_command(
+    *, workspace_dir: str, remote_dir: str, cache_dir: str
+) -> str:
+    paths = [
+        validate_workspace_dir(workspace_dir),
+        validate_workspace_dir(remote_dir),
+        validate_workspace_dir(cache_dir),
+    ]
+    base = PurePosixPath("/opt/megaplan-cloud")
+    if any(base not in (PurePosixPath(path), *PurePosixPath(path).parents) for path in paths):
+        raise CliError(
+            "invalid_provider_observation_target",
+            "capacity inventory is restricted to exact /opt/megaplan-cloud scopes",
+        )
+    return shlex.join(["python3", "-c", _CAPACITY_INVENTORY_SCRIPT, *paths])
+
+
+def parse_capacity_inventory_result(
+    *, returncode: int, stdout: str, stderr: str, expected_paths: list[str]
+) -> dict[str, Any]:
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    try:
+        payload = _strict_json_object(lines[0]) if len(lines) == 1 else None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = None
+    required = {
+        "schema",
+        "workspace",
+        "filesystem",
+        "mount",
+        "scopes",
+        "docker_disk_usage",
+        "errors",
+        "status",
+    }
+    scopes = payload.get("scopes") if isinstance(payload, dict) else None
+    filesystem = payload.get("filesystem") if isinstance(payload, dict) else None
+    valid = (
+        isinstance(payload, dict)
+        and set(payload) == required
+        and payload.get("schema") == _CAPACITY_INVENTORY_SCHEMA
+        and payload.get("workspace") == expected_paths[0]
+        and payload.get("status") == "available"
+        and payload.get("errors") == []
+        and returncode == 0
+        and not stderr.strip()
+        and isinstance(filesystem, dict)
+        and set(filesystem) == {"free_bytes", "free_inodes", "block_size"}
+        and all(_nonnegative_integer(value) for value in filesystem.values())
+        and _valid_mount_identity(payload.get("mount"))
+        and isinstance(scopes, list)
+        and [item.get("path") for item in scopes if isinstance(item, dict)]
+        == expected_paths
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"path", "status", "size_bytes"}
+            and item.get("status") in {"available", "absent"}
+            and _nonnegative_integer(item.get("size_bytes"))
+            for item in scopes
+        )
+        and isinstance(payload.get("docker_disk_usage"), list)
+        and [item.get("Type") for item in payload.get("docker_disk_usage")]
+        == ["Images", "Containers", "Local Volumes", "Build Cache"]
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"Type", "TotalCount", "Active", "Size", "Reclaimable"}
+            and all(isinstance(value, str) and bool(value) for value in item.values())
+            for item in payload.get("docker_disk_usage")
+        )
+    )
+    if valid:
+        payload["returncode"] = returncode
+        return payload
+    return {
+        "schema": _CAPACITY_INVENTORY_SCHEMA,
+        "status": "unknown",
+        "returncode": returncode,
+        "errors": ["capacity inventory evidence was incomplete or malformed"],
+        "diagnostic": "\n".join(
+            part for part in (stderr.strip(), stdout.strip()) if part
+        ),
+    }
+
+
 def _unknown_workspace_prelaunch(
     *, returncode: int, stdout: str, stderr: str, reason: str
 ) -> dict[str, Any]:
@@ -651,9 +855,11 @@ def parse_workspace_prelaunch_result(
 
 
 __all__ = [
+    "capacity_inventory_command",
     "classify_container_inspect",
     "container_inspect_command",
     "parse_workspace_prelaunch_result",
+    "parse_capacity_inventory_result",
     "validate_container_name",
     "validate_workspace_dir",
     "workspace_prelaunch_command",

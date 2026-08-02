@@ -67,6 +67,14 @@ codex:
 #   container drops to idle instead of crashing so you can upload files manually.
 mode: idle
 
+# zero_recovery_canary:
+#   SSH+idle-only finite-canary containment. The entrypoint runs only the
+#   health server; deploy requires a fresh host predeploy transaction and
+#   fences the fixed recovery/systemd allowlist. It is not deploy authority.
+zero_recovery_canary: false
+# Required with zero_recovery_canary=true; preserved stopped predecessor.
+# zero_recovery_predecessor_container: megaplan-cloud-agent-v2
+
 # auto:
 #   Required only when mode=auto.
 auto:

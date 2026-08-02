@@ -7,7 +7,8 @@ import re
 import subprocess
 import warnings
 from dataclasses import dataclass, field
-from pathlib import Path
+from datetime import datetime
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 try:
@@ -35,14 +36,12 @@ from arnold_pipelines.megaplan._core.io import (
     latest_projection_cursor,
     load_projection_history,
     now_utc,
-    projection_history_path,
     projection_snapshot_path,
     rebuild_projection_atomically,
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
-    VALID_DEEPSEEK_PROVIDER_CHOICES,
     VALID_DEPTH_CHOICES,
     normalize_robustness,
 )
@@ -411,10 +410,15 @@ class LaunchPreconditionSpec:
         if not isinstance(kind, str) or not kind.strip():
             raise CliError("invalid_spec", f"launch_preconditions[{index}].kind must be a string")
         kind = kind.strip()
-        if kind not in {"artifact", "chain_completed", "git_tracked"}:
+        if kind not in {
+            "artifact",
+            "chain_completed",
+            "finite_canary_receipt",
+            "git_tracked",
+        }:
             raise CliError(
                 "invalid_spec",
-                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, or `git_tracked`; got {kind!r}",
+                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, `finite_canary_receipt`, or `git_tracked`; got {kind!r}",
             )
         chain = value.get("chain")
         path = value.get("path")
@@ -444,6 +448,35 @@ class LaunchPreconditionSpec:
                 chain=chain.strip(),
                 check="chain_completed",
                 require_manifest=require_manifest,
+            )
+
+        if kind == "finite_canary_receipt":
+            if chain is not None or value.get("text") is not None:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] finite_canary_receipt does not support `chain` or `text`",
+                )
+            if not isinstance(path, str) or not path.strip():
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}].path is required",
+                )
+            check = value.get("check")
+            if check not in (None, "finite_canary_receipt"):
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] finite_canary_receipt does not support check {check!r}",
+                )
+            if "require_manifest" in value:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] finite_canary_receipt does not support `require_manifest`",
+                )
+            return cls(
+                name=name.strip(),
+                kind=kind,
+                path=path.strip(),
+                check="finite_canary_receipt",
             )
 
         if kind == "git_tracked":
@@ -1317,7 +1350,6 @@ class ChainState:
             extra_repo_sync = []
 
         from arnold_pipelines.megaplan.orchestration.completion_contract import (
-            CONTRACT_MODE_ATOMIC,
             CONTRACT_MODE_ENFORCE,
             FAIL_CLOSED_CONTRACT_MODES,
             normalize_contract_mode,
@@ -1593,9 +1625,13 @@ class ChainState:
             return False
         if receipt_index != record_index:
             return False
-        for field in ("transaction_id", "snapshot_hash"):
-            value = record.get(field)
-            if isinstance(value, str) and value and receipt.get(field) != value:
+        for receipt_field in ("transaction_id", "snapshot_hash"):
+            value = record.get(receipt_field)
+            if (
+                isinstance(value, str)
+                and value
+                and receipt.get(receipt_field) != value
+            ):
                 return False
         return True
 
@@ -2976,12 +3012,332 @@ def _validate_chain_completed_precondition(
         )
 
 
+_FINITE_CANARY_SCHEMA = "arnold.megaplan.finite_canary_receipt.v1"
+_FINITE_CANARY_PHASES = ["init", "plan", "critique", "gate", "finalize"]
+_FINITE_CANARY_ROLES = {
+    "canary_spec",
+    "proof_map",
+    "traceability",
+    "run_receipt",
+    "independent_conformance_receipt",
+    "host_zero_recovery_fence_receipt",
+    "host_predeploy_receipt",
+    "v2_terminal_fence_receipt",
+}
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_GIT_OBJECT_RE = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return None
+    try:
+        return datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+
+
+def _strict_json_document(path: Path, *, label: str, spec_path: Path) -> Any:
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON field {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicates
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary receipt is not strict JSON: {exc}",
+        ) from exc
+
+
+def _validate_finite_canary_receipt(
+    precondition: LaunchPreconditionSpec,
+    root: Path,
+    spec_path: Path,
+    *,
+    index: int,
+) -> None:
+    label = f"launch_preconditions[{index}] {precondition.name!r}"
+    if precondition.path is None:
+        raise CliError("invalid_spec", f"{label} missing receipt path")
+    receipt_path = _resolve_launch_precondition_path(precondition.path, root)
+    _require_inside_root(receipt_path, root, label)
+    if not receipt_path.is_file():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary receipt missing at {receipt_path}",
+        )
+    payload = _strict_json_document(receipt_path, label=label, spec_path=spec_path)
+    required_fields = {
+        "schema", "status", "phases", "terminal_state", "artifacts",
+        "subject", "issued_at", "completed_at", "receipt_digest",
+    }
+    if not isinstance(payload, dict) or set(payload) != required_fields:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary receipt has ambiguous top-level fields",
+        )
+    if (
+        payload.get("schema") != _FINITE_CANARY_SCHEMA
+        or payload.get("status") != "passed"
+        or payload.get("phases") != _FINITE_CANARY_PHASES
+        or payload.get("terminal_state") != "finalized"
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary status, phases, or terminal state is invalid",
+        )
+    subject = payload.get("subject")
+    subject_fields = {
+        "canary_id", "plan_name", "source_commit", "source_tree",
+        "engine_commit", "engine_tree", "cloud", "canary_spec_sha256",
+    }
+    cloud_fields = {
+        "provider", "host", "port", "predecessor_container",
+        "predecessor_container_id", "canary_container", "image_id", "workspace",
+    }
+    issued = _parse_iso_datetime(payload.get("issued_at"))
+    completed = _parse_iso_datetime(payload.get("completed_at"))
+    unsigned = dict(payload)
+    receipt_digest = unsigned.pop("receipt_digest", None)
+    if (
+        not isinstance(subject, dict)
+        or set(subject) != subject_fields
+        or not isinstance(subject.get("cloud"), dict)
+        or set(subject["cloud"]) != cloud_fields
+        or subject["cloud"].get("provider") != "ssh"
+        or type(subject["cloud"].get("port")) is not int
+        or any(
+            not isinstance(subject.get(key), str) or not subject.get(key)
+            for key in ("canary_id", "plan_name", "cloud") if key != "cloud"
+        )
+        or any(not isinstance(subject.get(key), str) or not _GIT_OBJECT_RE.fullmatch(subject.get(key)) for key in ("source_commit", "source_tree", "engine_commit", "engine_tree"))
+        or not isinstance(subject.get("canary_spec_sha256"), str)
+        or not _SHA256_RE.fullmatch(subject.get("canary_spec_sha256"))
+        or any(
+            not isinstance(subject["cloud"].get(key), str) or not subject["cloud"].get(key)
+            for key in cloud_fields - {"port"}
+        )
+        or issued is None
+        or completed is None
+        or completed < issued
+        or not isinstance(receipt_digest, str)
+        or not _SHA256_RE.fullmatch(receipt_digest)
+        or hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        != receipt_digest
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary subject, chronology, or digest is invalid",
+        )
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary artifacts must be non-empty",
+        )
+    roles: list[str] = []
+    paths: list[str] = []
+    artifacts_by_role: dict[str, tuple[Path, str]] = {}
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "role",
+            "path",
+            "sha256",
+        }:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: finite canary artifact fields are ambiguous",
+            )
+        role = artifact.get("role")
+        raw_path = artifact.get("path")
+        expected_hash = artifact.get("sha256")
+        if (
+            not isinstance(role, str)
+            or role not in _FINITE_CANARY_ROLES
+            or not isinstance(raw_path, str)
+            or not raw_path
+            or not isinstance(expected_hash, str)
+            or not _SHA256_RE.fullmatch(expected_hash)
+        ):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: finite canary artifact identity is invalid",
+            )
+        relative = PurePosixPath(raw_path)
+        if (
+            relative.is_absolute()
+            or raw_path != relative.as_posix()
+            or raw_path in {".", ".."}
+            or ".." in relative.parts
+        ):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: finite canary artifact path is not a normalized repository-relative path",
+            )
+        target = (root / Path(*relative.parts)).resolve()
+        _require_inside_root(target, root, label)
+        if not target.is_file() or _sha256_file(target) != expected_hash:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: finite canary artifact hash mismatch for {raw_path}",
+            )
+        roles.append(role)
+        paths.append(raw_path)
+        artifacts_by_role[role] = (target, expected_hash)
+    if set(roles) != _FINITE_CANARY_ROLES or len(roles) != len(set(roles)):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary artifact roles are missing or duplicated",
+        )
+    if len(paths) != len(set(paths)):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary artifact paths are duplicated",
+        )
+    canary_spec_hash = artifacts_by_role["canary_spec"][1]
+    if subject.get("canary_spec_sha256") != canary_spec_hash:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: subject does not bind the canary spec artifact",
+        )
+    run_path, run_hash = artifacts_by_role["run_receipt"]
+    run_payload = _strict_json_document(run_path, label=label, spec_path=spec_path)
+    run_fields = {
+        "schema", "status", "canary_id", "plan_name", "phases", "phase_results",
+        "terminal_state", "failure", "started_at", "completed_at", "source_commit",
+        "source_tree", "canary_spec_sha256", "state_sha256", "receipt_digest",
+    }
+    run_unsigned = dict(run_payload) if isinstance(run_payload, dict) else {}
+    run_digest = run_unsigned.pop("receipt_digest", None)
+    if (
+        not isinstance(run_payload, dict)
+        or set(run_payload) != run_fields
+        or run_payload.get("schema") != "arnold.megaplan.finite_canary_run_receipt.v1"
+        or run_payload.get("status") != "passed"
+        or run_payload.get("canary_id") != subject.get("canary_id")
+        or run_payload.get("plan_name") != subject.get("plan_name")
+        or run_payload.get("phases") != _FINITE_CANARY_PHASES
+        or run_payload.get("terminal_state") != "finalized"
+        or run_payload.get("phase_results")
+        != [
+            {"phase": phase, "returncode": 0, "state": state}
+            for phase, state in zip(
+                _FINITE_CANARY_PHASES,
+                ["initialized", "planned", "critiqued", "gated", "finalized"],
+                strict=True,
+            )
+        ]
+        or run_payload.get("failure") is not None
+        or run_payload.get("source_commit") != subject.get("source_commit")
+        or run_payload.get("source_tree") != subject.get("source_tree")
+        or run_payload.get("canary_spec_sha256") != canary_spec_hash
+        or not isinstance(run_digest, str)
+        or hashlib.sha256(json.dumps(run_unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() != run_digest
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: run receipt is not a bound passed finite run",
+        )
+    conformance_path, _ = artifacts_by_role["independent_conformance_receipt"]
+    conformance = _strict_json_document(conformance_path, label=label, spec_path=spec_path)
+    if (
+        not isinstance(conformance, dict)
+        or set(conformance) != {"schema", "status", "subject", "run_receipt_sha256", "checks"}
+        or conformance.get("schema") != "arnold.megaplan.finite_canary_conformance_receipt.v1"
+        or conformance.get("status") != "passed"
+        or conformance.get("subject") != subject
+        or conformance.get("run_receipt_sha256") != run_hash
+        or conformance.get("checks")
+        != ["exact_phase_order", "terminal_finalized", "artifact_hashes", "zero_recovery_fence"]
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: independent conformance did not bind the exact run",
+        )
+    terminal_path, _ = artifacts_by_role["v2_terminal_fence_receipt"]
+    terminal = _strict_json_document(terminal_path, label=label, spec_path=spec_path)
+    if (
+        not isinstance(terminal, dict)
+        or set(terminal)
+        != {
+            "schema", "status", "subject", "canary_lifecycle", "restart_policy",
+            "host_units_masked", "forbidden_sessions", "forbidden_processes",
+            "predecessor_container_id", "completed_at",
+        }
+        or terminal.get("schema") != "arnold.cloud.zero_recovery_terminal_fence.v1"
+        or terminal.get("status") != "passed"
+        or terminal.get("subject") != subject
+        or terminal.get("canary_lifecycle") != "stopped"
+        or terminal.get("restart_policy") != "no"
+        or terminal.get("host_units_masked") is not True
+        or terminal.get("forbidden_sessions") != []
+        or terminal.get("forbidden_processes") != []
+        or terminal.get("predecessor_container_id")
+        != subject["cloud"].get("predecessor_container_id")
+        or not isinstance(terminal.get("predecessor_container_id"), str)
+        or not terminal.get("predecessor_container_id")
+        or _parse_iso_datetime(terminal.get("completed_at")) is None
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: terminal stop/no-background fence is invalid",
+        )
+    fence_path, _ = artifacts_by_role["host_zero_recovery_fence_receipt"]
+    fence = _strict_json_document(fence_path, label=label, spec_path=spec_path)
+    if (
+        not isinstance(fence, dict)
+        or fence.get("schema") != "arnold.cloud.zero_recovery_host_fence.v1"
+        or fence.get("status") != "passed"
+        or fence.get("forbidden_sessions") != []
+        or fence.get("forbidden_processes") != []
+        or not isinstance(fence.get("units"), list)
+        or any(item.get("state") not in {"masked", "absent"} for item in fence["units"] if isinstance(item, dict))
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: host zero-recovery fence is invalid",
+        )
+    predeploy_path, _ = artifacts_by_role["host_predeploy_receipt"]
+    predeploy = _strict_json_document(predeploy_path, label=label, spec_path=spec_path)
+    if (
+        not isinstance(predeploy, dict)
+        or predeploy.get("schema") != "arnold.cloud.zero_recovery_predeploy.v1"
+        or predeploy.get("target", {}).get("host") != subject["cloud"].get("host")
+        or predeploy.get("target", {}).get("workspace") != subject["cloud"].get("workspace")
+        or predeploy.get("target", {}).get("container") != subject["cloud"].get("predecessor_container")
+        or predeploy.get("target", {}).get("canary_container") != subject["cloud"].get("canary_container")
+        or predeploy.get("capacity_observation", {}).get("verdict") != "GO"
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: host predeploy did not bind the subject",
+        )
+
+
 def validate_launch_preconditions(spec: ChainSpec, root: Path, spec_path: Path) -> None:
     root = Path(root).expanduser().resolve()
     for index, precondition in enumerate(spec.launch_preconditions):
         label = f"launch_preconditions[{index}] {precondition.name!r}"
         if precondition.kind == "chain_completed":
             _validate_chain_completed_precondition(
+                precondition,
+                root,
+                spec_path,
+                index=index,
+            )
+            continue
+        if precondition.kind == "finite_canary_receipt":
+            _validate_finite_canary_receipt(
                 precondition,
                 root,
                 spec_path,
