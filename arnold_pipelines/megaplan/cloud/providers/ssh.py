@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -118,9 +119,7 @@ raw = sys.stdin.buffer.read()
 auth = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicates)
 if not isinstance(auth, dict) or auth.get("auth_mode") != "chatgpt":
     raise RuntimeError("ChatGPT OAuth object required")
-workspace_credentials = safe_child_dir("/workspace", ".creds")
 root_codex = safe_child_dir("/root", ".codex")
-atomic_install(workspace_credentials, "codex-auth.json", raw)
 atomic_install(root_codex, "auth.json", raw)
 config = b'preferred_auth_method = "chatgpt"\nforced_login_method = "chatgpt"\nmodel = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n'
 atomic_install(root_codex, "config.toml", config)
@@ -575,7 +574,11 @@ class SshProvider(Provider):
         return {"state": state, "env": env, "cmd": cmd, "restart_policy": restart}
 
     def run_zero_recovery_canary(
-        self, *, source_commit: str, source_tree: str
+        self,
+        *,
+        source_commit: str,
+        source_tree: str,
+        manifest_sha256: Mapping[str, str],
     ) -> int:
         """Invoke only the tracked finite runner in one exact fresh checkout."""
         if not self._spec.zero_recovery_canary:
@@ -590,6 +593,19 @@ class SshProvider(Provider):
             raise CliError(
                 "zero_recovery_canary_invalid",
                 "zero canary repo.branch must be an exact lowercase source commit",
+            )
+        expected_manifest_paths = {
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml",
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml",
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/proof-map.json",
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/traceability.json",
+        }
+        if (
+            set(manifest_sha256) != expected_manifest_paths
+            or any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in manifest_sha256.values())
+        ):
+            raise CliError(
+                "zero_recovery_canary_invalid", "manifest hash admission is incomplete"
             )
         workspace = PurePosixPath(self._spec.repo.workspace)
         if not workspace.is_absolute() or workspace == PurePosixPath("/"):
@@ -618,6 +634,11 @@ class SshProvider(Provider):
             source_commit=source_commit,
         )
         remote_branch_ref = f"refs/remotes/origin/{self._spec.repo.branch}"
+        manifest_hashes_b64 = base64.b64encode(
+            json.dumps(
+                dict(manifest_sha256), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).decode("ascii")
         inner = " && ".join(
             [
                 "trap 'kill -TERM 1' EXIT",
@@ -628,7 +649,7 @@ class SshProvider(Provider):
                 f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse HEAD)\" = {source_commit}",
                 f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse HEAD^{{tree}})\" = {source_tree}",
                 f"cd {shlex.quote(str(workspace))}",
-                f"MEGAPLAN_ZERO_RECOVERY_CANARY=1 ZERO_RECOVERY_SOURCE_COMMIT={source_commit} ZERO_RECOVERY_SOURCE_TREE={source_tree} PYTHONPATH={shlex.quote(str(workspace))} python3 -P {shlex.quote(str(runner))}",
+                f"MEGAPLAN_ZERO_RECOVERY_CANARY=1 ZERO_RECOVERY_SOURCE_COMMIT={source_commit} ZERO_RECOVERY_SOURCE_TREE={source_tree} ZERO_RECOVERY_MANIFEST_SHA256_B64={manifest_hashes_b64} PYTHONPATH={shlex.quote(str(workspace))} python3 -P {shlex.quote(str(runner))}",
             ]
         )
         self._remote_run_compatible(
@@ -648,7 +669,12 @@ class SshProvider(Provider):
         return 0
 
     def execute_zero_recovery_canary(
-        self, auth_json: str, *, source_commit: str, source_tree: str
+        self,
+        auth_json: str,
+        *,
+        source_commit: str,
+        source_tree: str,
+        manifest_sha256: Mapping[str, str],
     ) -> int:
         """Terminal-safe orchestration from first credential mutation onward."""
         terminal_error: BaseException | None = None
@@ -658,7 +684,9 @@ class SshProvider(Provider):
             self._observe_zero_recovery_canary_runtime()
             self.seed_zero_recovery_codex_oauth(auth_json)
             result = self.run_zero_recovery_canary(
-                source_commit=source_commit, source_tree=source_tree
+                source_commit=source_commit,
+                source_tree=source_tree,
+                manifest_sha256=manifest_sha256,
             )
         except BaseException as exc:
             terminal_error = exc
@@ -695,15 +723,22 @@ class SshProvider(Provider):
         return result
 
     def _reconcile_zero_recovery_canary_stop(self) -> tuple[dict[str, Any], bool]:
-        observation = self.observe_container()
-        reconciled_stop = False
-        if observation.get("lifecycle") == "running":
+        stop_error: BaseException | None = None
+        try:
             self._remote_run_compatible(
                 shlex.join(["docker", "stop", self._ssh.container]),
                 surface="zero_recovery_finite_canary_reconcile_stop",
             )
+        except BaseException as exc:
+            stop_error = exc
+        try:
             observation = self.observe_container()
-            reconciled_stop = True
+        except BaseException as exc:
+            stop_detail = f"; stop={type(stop_error).__name__}" if stop_error else ""
+            raise CliError(
+                "zero_recovery_canary_stop_unknown",
+                f"blind stop was followed by an observation failure{stop_detail}",
+            ) from exc
         if (
             observation.get("status") != "available"
             or observation.get("container") != self._ssh.container
@@ -714,7 +749,9 @@ class SshProvider(Provider):
                 "status reconciliation did not prove the exact stopped canary",
             )
         self._observe_zero_recovery_canary_runtime(expected_running=False)
-        return observation, reconciled_stop
+        # An already-stopped target may make docker stop nonzero; the exact final
+        # stopped observation is authoritative and safe to accept.
+        return observation, True
 
     def zero_recovery_canary_status(
         self, *, source_commit: str, source_tree: str
@@ -788,9 +825,10 @@ class SshProvider(Provider):
                     "schema", "status", "canary_id", "plan_name", "phases",
                     "phase_results", "terminal_state", "failure", "started_at",
                     "completed_at", "source_commit", "source_tree",
-                    "canary_spec_sha256", "state_sha256",
+                    "canary_spec_sha256", "launch_manifest_sha256", "state_sha256", "gate_sha256",
                     "dispatch_ledger_sha256", "dispatches", "import_root",
-                    "phase_commands", "phase_receipt_sha256", "receipt_digest",
+                    "dispatch_integrity", "phase_commands", "phase_receipt_sha256",
+                    "phase_receipts_manifest_sha256", "receipt_digest",
                 }
                 if (
                     not isinstance(receipt, dict)
@@ -806,6 +844,12 @@ class SshProvider(Provider):
                     or receipt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
                     or receipt.get("terminal_state")
                     != ("finalized" if receipt.get("status") == "passed" else "failed")
+                    or receipt.get("dispatch_integrity")
+                    not in {"not_started", "partial", "complete", "unreadable"}
+                    or (
+                        receipt.get("status") == "passed"
+                        and receipt.get("dispatch_integrity") != "complete"
+                    )
                     or not isinstance(receipt.get("phase_results"), list)
                     or len(receipt.get("phase_results")) > 5
                     or [item.get("phase") for item in receipt.get("phase_results") if isinstance(item, dict)]

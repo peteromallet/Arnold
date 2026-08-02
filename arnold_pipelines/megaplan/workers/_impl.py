@@ -148,6 +148,7 @@ def _record_zero_recovery_dispatch(
         "selected_agent": agent,
         "selected_model": model,
         "selected_effort": effort,
+        "model_cli_argv": ["-c", "model='gpt-5.6-sol'"],
         "attempt": 1,
         "retry": False,
         "fallback": False,
@@ -173,10 +174,14 @@ def _record_zero_recovery_dispatch_terminal(
     if start is None:
         return
     actual_model = getattr(worker, "model_actual", None)
-    if actual_model != start["selected_model"]:
+    model_evidence = getattr(worker, "model_evidence", None)
+    if (
+        actual_model != start["selected_model"]
+        or model_evidence != "rollout_turn_context"
+    ):
         raise CliError(
             "zero_recovery_dispatch_denied",
-            "provider-reported actual model differs from the admitted model",
+            "provider rollout did not prove the exact admitted model",
         )
     record = {
         "schema": "arnold.megaplan.zero_recovery_dispatch.v1",
@@ -185,6 +190,7 @@ def _record_zero_recovery_dispatch_terminal(
         "phase": start["phase"],
         "actual_agent": start["selected_agent"],
         "actual_model": actual_model,
+        "model_evidence": model_evidence,
         "actual_effort": start["selected_effort"],
         "attempt": 1,
         "retry": False,
@@ -789,6 +795,7 @@ class WorkerResult:
     trace_output: str | None = None
     rendered_prompt: str | None = None
     model_actual: str | None = None
+    model_evidence: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -827,6 +834,7 @@ class WorkerResult:
             trace_output=agent_result.trace_output,
             rendered_prompt=agent_result.rendered_prompt,
             model_actual=agent_result.model_actual,
+            model_evidence=metadata.get("model_evidence"),
             prompt_tokens=agent_result.prompt_tokens,
             completion_tokens=agent_result.completion_tokens,
             total_tokens=agent_result.total_tokens,
@@ -855,6 +863,7 @@ class WorkerResult:
                 "auth_channel": self.auth_channel,
                 "auth_metadata": self.auth_metadata,
                 "cost_pricing": self.cost_pricing,
+                "model_evidence": self.model_evidence,
                 "configured_specs": list(self.configured_specs),
                 "attempt_index": self.attempt_index,
                 "attempted_specs": list(self.attempted_specs),
@@ -2195,6 +2204,36 @@ def _read_codex_total_token_usage(jsonl_path: Path) -> dict[str, Any] | None:
     return last_usage
 
 
+def _read_codex_observed_model(jsonl_path: Path) -> str | None:
+    """Return the latest model genuinely recorded by the Codex rollout."""
+    try:
+        lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    observed: str | None = None
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload")
+        candidate: Any = None
+        if item.get("type") == "turn_context" and isinstance(payload, dict):
+            candidate = payload.get("model")
+        elif (
+            item.get("type") == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "thread_settings_applied"
+            and isinstance(payload.get("thread_settings"), dict)
+        ):
+            candidate = payload["thread_settings"].get("model")
+        if isinstance(candidate, str) and candidate.strip():
+            observed = candidate.strip()
+    return observed
+
+
 def _read_codex_default_model() -> str | None:
     """Best-effort read of the codex CLI default model from ``config.toml``.
 
@@ -2247,10 +2286,11 @@ def _codex_step_cost(
         return 0.0, 0, 0, requested_model, None
     path = _codex_session_jsonl_path(session_id)
     if path is None:
-        return 0.0, 0, 0, requested_model, None
+        return 0.0, 0, 0, None, None
+    observed_model = _read_codex_observed_model(path)
     current = _read_codex_total_token_usage(path)
     if current is None:
-        return 0.0, 0, 0, requested_model, None
+        return 0.0, 0, 0, observed_model, None
     prev = session_entry.get("last_total_tokens") if isinstance(session_entry, dict) else None
     if not isinstance(prev, dict):
         prev = {}
@@ -2269,14 +2309,14 @@ def _codex_step_cost(
         "output_tokens": _delta("output_tokens"),
         "reasoning_output_tokens": _delta("reasoning_output_tokens"),
     }
-    model = requested_model or _read_codex_default_model()
-    priced_cost = cost_from_codex_usage_dict(delta_usage, model)
+    pricing_model = observed_model or requested_model or _read_codex_default_model()
+    priced_cost = cost_from_codex_usage_dict(delta_usage, pricing_model)
     cost = priced_cost if priced_cost is not None else 0.0
     prompt_tokens = delta_usage["input_tokens"]  # already includes cached
     completion_tokens = (
         delta_usage["output_tokens"] + delta_usage["reasoning_output_tokens"]
     )
-    return cost, prompt_tokens, completion_tokens, model, current
+    return cost, prompt_tokens, completion_tokens, observed_model, current
 
 
 def _emit_codex_execute_llm_start(
@@ -3933,6 +3973,11 @@ def _run_codex_step_uncapped(
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
         cost_session_id, session_entry, model
     )
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1" and model_actual is None:
+        raise CliError(
+            "zero_recovery_model_evidence_missing",
+            "Codex rollout did not provide a provider-observed model",
+        )
     observed_model = model_actual or model
     from arnold_pipelines.megaplan.pricing.codex import is_model_priced
 
@@ -4002,6 +4047,7 @@ def _run_codex_step_uncapped(
         trace_output=trace_output,
         rendered_prompt=prompt,
         model_actual=observed_model,
+        model_evidence=("rollout_turn_context" if model_actual is not None else "requested_cli_arg"),
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,

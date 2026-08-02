@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import shlex
 import subprocess
@@ -25,6 +26,8 @@ from arnold_pipelines.megaplan.cloud.providers.ssh import (
     _require_advertised_branch_commit,
 )
 from arnold_pipelines.megaplan.workers._impl import (
+    _read_codex_observed_model,
+    _codex_step_cost,
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
 )
@@ -42,6 +45,7 @@ from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.chain.spec import (
     _finite_canary_conformance_has_trust_evidence,
     _finite_canary_fence_is_valid,
+    _finite_canary_review_inputs_match,
 )
 
 
@@ -273,6 +277,35 @@ def test_zero_cli_denies_generic_action_before_provider_creation(
     assert called is False
 
 
+@pytest.mark.parametrize("action", ["build", "deploy", "reclaim-dangling-build-cache"])
+def test_zero_mutations_require_manifest_admission_before_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, action: str
+) -> None:
+    (tmp_path / "cloud.yaml").write_text("zero-profile", encoding="utf-8")
+    monkeypatch.setattr(cloud_cli, "_load_cloud_spec", lambda root, args: _spec())
+    admitted = False
+    provider_called = False
+
+    def admission(*args, **kwargs):
+        nonlocal admitted
+        admitted = True
+        raise CliError("zero_recovery_canary_invalid", "blocked before mutation")
+
+    def provider(*args, **kwargs):
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider must not be created")
+
+    monkeypatch.setattr(cloud_cli, "_validate_zero_recovery_canary_spec", admission)
+    monkeypatch.setattr(cloud_cli, "_provider_for_action", provider)
+    args = argparse.Namespace(
+        cloud_action=action, cloud_yaml=None, apply=True,
+    )
+    assert cloud_cli.run_cloud_cli(tmp_path, args) == 1
+    assert admitted is True
+    assert provider_called is False
+
+
 def test_zero_deploy_source_has_no_reachable_container_removal() -> None:
     module_text = Path("arnold_pipelines/megaplan/cloud/providers/ssh.py").read_text(encoding="utf-8")
     source = module_text[module_text.index("    def _deploy_direct("):module_text.index("    def ssh_exec(")]
@@ -302,6 +335,7 @@ def test_oauth_installer_is_strict_atomic_no_follow_and_stdin_only() -> None:
     ):
         assert required in source
     assert "write_text" not in source
+    assert "/workspace/.creds" not in source
 
     provider = object.__new__(SshProvider)
     provider._spec = _spec()
@@ -329,7 +363,11 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
         tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high"
     )
     _record_zero_recovery_dispatch_terminal(
-        tmp_path, start=start, worker=SimpleNamespace(model_actual="gpt-5.6-sol")
+        tmp_path,
+        start=start,
+        worker=SimpleNamespace(
+            model_actual="gpt-5.6-sol", model_evidence="rollout_turn_context"
+        ),
     )
     rows = [json.loads(line) for line in (tmp_path / "zero_recovery_dispatch_ledger.ndjson").read_text().splitlines()]
     assert [row["event"] for row in rows] == ["start", "terminal"]
@@ -338,9 +376,19 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
         _record_zero_recovery_dispatch(
             tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high"
         )
-    with pytest.raises(CliError, match="actual model"):
+    with pytest.raises(CliError, match="exact admitted model"):
         _record_zero_recovery_dispatch_terminal(
-            tmp_path, start=start, worker=SimpleNamespace(model_actual="other")
+            tmp_path,
+            start=start,
+            worker=SimpleNamespace(
+                model_actual="other", model_evidence="rollout_turn_context"
+            ),
+        )
+    with pytest.raises(CliError, match="exact admitted model"):
+        _record_zero_recovery_dispatch_terminal(
+            tmp_path,
+            start=start,
+            worker=SimpleNamespace(model_actual="gpt-5.6-sol", model_evidence=None),
         )
 
 
@@ -355,8 +403,18 @@ def test_synthetic_passed_receipts_without_real_fence_or_reviewer_are_rejected()
         "units": [],
         "forbidden_sessions": [],
         "forbidden_processes": [],
+        "systemd_jobs": [],
         "observed_at": "2026-08-03T00:00:00Z",
     }
+    assert _finite_canary_fence_is_valid(forged_fence) is False
+    forged_fence["stage"] = "verify"
+    forged_fence["units"] = [
+        {
+            "unit": unit, "load_state": "loaded", "active_state": "active",
+            "unit_file_state": "enabled", "state": "masked",
+        }
+        for unit in zero_recovery.ZERO_RECOVERY_UNITS
+    ]
     assert _finite_canary_fence_is_valid(forged_fence) is False
 
     self_attested = {
@@ -367,6 +425,59 @@ def test_synthetic_passed_receipts_without_real_fence_or_reviewer_are_rejected()
         "checks": ["exact_phase_order"],
     }
     assert _finite_canary_conformance_has_trust_evidence(self_attested) is False
+
+
+def test_complete_recomputed_but_fake_reviewer_evidence_is_rejected(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "arnold_pipelines/megaplan/chain/spec.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("trusted validator", encoding="utf-8")
+    actual_source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    forged = {
+        "schema": "arnold.megaplan.finite_canary_conformance_receipt.v1",
+        "status": "passed", "subject": {"canary_id": "forged"},
+        "run_receipt_sha256": "b" * 64,
+        "checks": ["exact_phase_order", "single_dispatch_pairs", "terminal_finalized", "artifact_hashes", "zero_recovery_fence"],
+        "reviewer": {
+            "kind": "detached_host_process",
+            "identity": "arnold.chain.finite_canary_validator",
+            "source_sha256": "a" * 64,
+        },
+        "reviewed_at": "2026-08-03T00:00:00Z",
+        "trust_anchor": "arnold.detached_host_reviewer.v1",
+        "review_input_sha256": {"detached_reviewer_source": "a" * 64},
+        "review_execution": {"mode": "detached_subprocess", "exit_code": 0, "result": "passed"},
+    }
+    forged["attestation_digest"] = hashlib.sha256(
+        json.dumps(forged, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert _finite_canary_conformance_has_trust_evidence(forged) is True
+    assert not _finite_canary_review_inputs_match(
+        forged,
+        {"detached_reviewer_source": (source.resolve(), actual_source_hash)},
+        tmp_path,
+    )
+
+
+def test_codex_actual_model_comes_from_rollout_not_requested_value(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps({"type": "turn_context", "payload": {"model": "gpt-provider-actual"}})
+        + "\n",
+        encoding="utf-8",
+    )
+    assert _read_codex_observed_model(rollout) == "gpt-provider-actual"
+    from arnold_pipelines.megaplan.workers import _impl as worker_impl
+
+    original = worker_impl._codex_session_jsonl_path
+    worker_impl._codex_session_jsonl_path = lambda _session: rollout
+    try:
+        assert _codex_step_cost("session", {}, "gpt-requested")[3] == "gpt-provider-actual"
+    finally:
+        worker_impl._codex_session_jsonl_path = original
+    rollout.write_text('{"type":"turn_context","payload":{}}\n', encoding="utf-8")
+    assert _read_codex_observed_model(rollout) is None
 
 
 def test_malformed_status_still_reconciles_running_exact_canary() -> None:
@@ -385,7 +496,6 @@ def test_malformed_status_still_reconciles_running_exact_canary() -> None:
 
     observations = iter(
         [
-            {"status": "available", "container": provider._ssh.container, "lifecycle": "running"},
             {"status": "available", "container": provider._ssh.container, "lifecycle": "stopped"},
         ]
     )
@@ -416,8 +526,46 @@ def test_execute_attempts_exact_stop_even_when_first_observation_raises() -> Non
     }
     with pytest.raises(CliError, match="terminal reconciliation failed"):
         provider.execute_zero_recovery_canary(
-            '{"auth_mode":"chatgpt"}', source_commit="a" * 40, source_tree="b" * 40
+            '{"auth_mode":"chatgpt"}', source_commit="a" * 40,
+            source_tree="b" * 40, manifest_sha256={},
         )
     assert [shlex.split(command) for command in commands] == [
         ["docker", "stop", provider._ssh.container]
+    ]
+
+
+@pytest.mark.parametrize("read_failure", [SystemExit("read aborted"), None])
+def test_status_blind_stops_when_read_or_observation_raises(read_failure) -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    commands: list[str] = []
+
+    def remote(command: str, **kwargs):
+        commands.append(command)
+        if command.startswith("python3 "):
+            if read_failure is not None:
+                raise read_failure
+            return subprocess.CompletedProcess([], 0, "not-json", "")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    provider._remote_run_compatible = remote
+    if read_failure is None:
+        provider.observe_container = lambda: (_ for _ in ()).throw(
+            RuntimeError("observation failed")
+        )
+        expected = CliError
+    else:
+        provider.observe_container = lambda: {
+            "status": "available", "container": provider._ssh.container,
+            "lifecycle": "stopped",
+        }
+        provider._observe_zero_recovery_canary_runtime = lambda **kwargs: {}
+        expected = SystemExit
+    with pytest.raises(expected):
+        provider.zero_recovery_canary_status(
+            source_commit="a" * 40, source_tree="b" * 40
+        )
+    assert ["docker", "stop", provider._ssh.container] in [
+        shlex.split(command) for command in commands
     ]
