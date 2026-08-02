@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
@@ -25,6 +27,8 @@ FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 VALID_CODEX_REASONING = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_CODEX_AUTH = ("chatgpt", "apikey")
+_SSH_ALIAS_RE = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?\Z")
+_SSH_USER_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
 
 @dataclass(frozen=True)
@@ -191,6 +195,47 @@ def _optional_string(raw: Any, label: str) -> str | None:
     return raw
 
 
+def validate_ssh_host(raw: Any) -> str:
+    value = _string(raw, "ssh.host")
+    if (
+        value != value.strip()
+        or value.startswith("-")
+        or "@" in value
+        or any(character.isspace() or ord(character) < 32 for character in value)
+    ):
+        raise _invalid("`ssh.host` is not a safe SSH destination host")
+    address = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        if not _SSH_ALIAS_RE.fullmatch(value):
+            raise _invalid("`ssh.host` must be a hostname, SSH alias, IPv4, or IPv6 address")
+    return value
+
+
+def validate_ssh_user(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    value = _optional_string(raw, "ssh.user")
+    if value is None or not _SSH_USER_RE.fullmatch(value) or value.startswith("-"):
+        raise _invalid("`ssh.user` is not a safe SSH login name")
+    return value
+
+
+def validate_ssh_identity_file(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    value = _optional_string(raw, "ssh.identity_file")
+    if (
+        value is None
+        or value != value.strip()
+        or value.startswith("-")
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise _invalid("`ssh.identity_file` is not a safe SSH identity path")
+    return value
+
+
 def _chain_session(raw: Any, *, default: str) -> str:
     value = _string(raw, "chain_session", default=default)
     if value in RESERVED_SERVICE_SESSION_NAMES:
@@ -220,9 +265,13 @@ def _port(raw: Any) -> int:
 def _positive_port(raw: Any, label: str, *, default: int) -> int:
     if raw is None:
         return default
-    if not isinstance(raw, int) or raw <= 0:
-        raise _invalid(f"`{label}` must be a positive integer")
+    if type(raw) is not int or not 1 <= raw <= 65535:
+        raise _invalid(f"`{label}` must be an integer from 1 through 65535")
     return raw
+
+
+def validate_ssh_port(raw: Any) -> int:
+    return _positive_port(raw, "ssh.port", default=22)
 
 
 def _optional_positive_int(raw: Any, label: str) -> int | None:
@@ -410,10 +459,10 @@ def load_spec(path: Path) -> CloudSpec:
 
     ssh_raw = _mapping(raw.get("ssh"), "ssh")
     ssh = SshSpec(
-        host=_string(ssh_raw.get("host"), "ssh.host"),
-        user=_optional_string(ssh_raw.get("user"), "ssh.user"),
-        port=_positive_port(ssh_raw.get("port"), "ssh.port", default=22),
-        identity_file=_optional_string(ssh_raw.get("identity_file"), "ssh.identity_file"),
+        host=validate_ssh_host(ssh_raw.get("host")),
+        user=validate_ssh_user(ssh_raw.get("user")),
+        port=validate_ssh_port(ssh_raw.get("port")),
+        identity_file=validate_ssh_identity_file(ssh_raw.get("identity_file")),
         remote_dir=_absolute_posix(
             ssh_raw.get("remote_dir", "/opt/megaplan-cloud/deploy"),
             "ssh.remote_dir",

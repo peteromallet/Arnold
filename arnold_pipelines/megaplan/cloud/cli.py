@@ -3923,8 +3923,25 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             remote["container_observation"] = container_observation
             remote["prelaunch_capacity"] = capacity_observation
             lifecycle = container_observation.get("lifecycle")
-            collector_ready = lifecycle == "running"
+            collector = container_observation.get("collector")
+            collector_ready = (
+                lifecycle == "running"
+                and container_observation.get("status") == "available"
+                and isinstance(collector, Mapping)
+                and collector.get("status") == "available"
+            )
             capacity_ready = capacity_observation.get("verdict") == "GO"
+            host_predeploy_ready = (
+                lifecycle in {"running", "stopped"}
+                and container_observation.get("status") == "available"
+                and capacity_ready
+            )
+            remote["host_predeploy_verdict"] = (
+                "GO" if host_predeploy_ready else "NO-GO"
+            )
+            remote["collector_launch_verdict"] = (
+                "GO" if collector_ready else "NO-GO"
+            )
         else:
             lifecycle = "not-applicable"
             collector_ready = True

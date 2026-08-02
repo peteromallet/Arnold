@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from arnold_pipelines.megaplan.cloud.spec import SshSpec, load_spec
@@ -81,4 +83,37 @@ def test_reserved_resident_tmux_name_is_rejected_for_cloud_chain(tmp_path) -> No
     )
 
     with pytest.raises(CliError, match="reserved for a supervised service"):
+        load_spec(cloud_yaml)
+
+
+@pytest.mark.parametrize(
+    "ssh_values",
+    [
+        {"host": "-oProxyCommand=decoy"},
+        {"host": "example.invalid\n-oProxyCommand=decoy"},
+        {"host": "root@example.invalid"},
+        {"host": "example.invalid", "user": "-oProxyCommand"},
+        {"host": "example.invalid", "user": "root user"},
+        {"host": "example.invalid", "port": True},
+        {"host": "example.invalid", "port": 65536},
+        {"host": "example.invalid", "identity_file": "-oProxyCommand=decoy"},
+        {"host": "example.invalid", "identity_file": "/key\n-oProxyCommand"},
+    ],
+)
+def test_ssh_transport_fields_reject_option_and_control_injection(
+    tmp_path, ssh_values: dict[str, object]
+) -> None:
+    cloud_yaml = tmp_path / "cloud.yaml"
+    cloud_yaml.write_text(
+        json.dumps(
+            {
+                "provider": "ssh",
+                "repo": {"url": "https://github.com/example/repo.git"},
+                "ssh": ssh_values,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError, match=r"ssh\."):
         load_spec(cloud_yaml)

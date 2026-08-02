@@ -17,11 +17,40 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 _CONTAINER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
-_MISSING_CONTAINER_MARKERS = (
-    "no such container",
-    "no such object",
-    "container not found",
-)
+_CONTAINER_OBSERVATION_SCHEMA = "arnold.cloud.ssh_container_observation.v1"
+_WORKSPACE_PRELAUNCH_SCHEMA = "arnold.cloud.ssh_workspace_prelaunch.v1"
+_REQUIRED_CAPACITY_CHECKS = {
+    "byte_floor",
+    "inode_floor",
+    "reserve_fsync",
+    "sqlite_wal",
+    "receipt_atomic_fsync",
+    "cleanup",
+}
+_CAPACITY_TOP_LEVEL_FIELDS = {
+    "schema",
+    "workspace",
+    "thresholds",
+    "checks",
+    "errors",
+    "mount",
+    "capacity",
+    "status",
+    "verdict",
+}
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = item
+    return result
+
+
+def _strict_json_value(value: str) -> Any:
+    return json.loads(value, object_pairs_hook=_reject_duplicate_keys)
 
 
 def validate_container_name(value: str) -> str:
@@ -84,16 +113,25 @@ def classify_container_inspect(
 ) -> dict[str, Any]:
     """Classify fixed ``docker inspect`` output without guessing transport errors."""
     name = validate_container_name(expected_container)
-    diagnostic = "\n".join(part for part in (stderr.strip(), stdout.strip()) if part)
-    lowered = diagnostic.lower()
+    diagnostic_parts = [part for part in (stderr.strip(), stdout.strip()) if part]
+    diagnostic = "\n".join(diagnostic_parts)
     if returncode != 0:
-        lifecycle = (
-            "missing"
-            if any(marker in lowered for marker in _MISSING_CONTAINER_MARKERS)
-            else "unknown"
+        # OpenSSH reserves 255 for transport/setup failures.  Never promote text
+        # from that channel (including a hostile banner) into remote Docker truth.
+        missing_pattern = re.compile(
+            rf"(?:Error response from daemon: )?(?:Error: )?"
+            rf"No such (?:container|object): {re.escape(name)}\.?",
+            re.IGNORECASE,
         )
+        lifecycle = "unknown"
+        if (
+            returncode == 1
+            and len(diagnostic_parts) == 1
+            and missing_pattern.fullmatch(diagnostic_parts[0])
+        ):
+            lifecycle = "missing"
         return {
-            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "schema": _CONTAINER_OBSERVATION_SCHEMA,
             "status": "available" if lifecycle == "missing" else "unknown",
             "lifecycle": lifecycle,
             "container": name,
@@ -112,7 +150,7 @@ def classify_container_inspect(
         if len(lines) != 5:
             raise ValueError("expected five docker inspect fields")
         state, container_id, image_id, image_ref, mounts = (
-            json.loads(line) for line in lines
+            _strict_json_value(line) for line in lines
         )
         payload = {
             "State": state,
@@ -123,7 +161,7 @@ def classify_container_inspect(
         }
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         return {
-            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "schema": _CONTAINER_OBSERVATION_SCHEMA,
             "status": "unknown",
             "lifecycle": "unknown",
             "container": name,
@@ -133,7 +171,7 @@ def classify_container_inspect(
         }
     if not isinstance(payload, Mapping):
         return {
-            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "schema": _CONTAINER_OBSERVATION_SCHEMA,
             "status": "unknown",
             "lifecycle": "unknown",
             "container": name,
@@ -142,23 +180,75 @@ def classify_container_inspect(
             "collector": {"status": "unavailable", "reason": "container_state_unknown"},
         }
 
-    state = payload.get("State") if isinstance(payload.get("State"), Mapping) else {}
-    raw_status = str(state.get("Status") or "").lower()
-    if bool(state.get("Paused")):
+    state = payload.get("State")
+    container_id = payload.get("Id")
+    image_id = payload.get("Image")
+    config = payload.get("Config")
+    image_ref = config.get("Image") if isinstance(config, Mapping) else None
+    mounts = payload.get("Mounts")
+    required_state_types = (
+        isinstance(state, Mapping)
+        and isinstance(state.get("Status"), str)
+        and bool(state.get("Status"))
+        and type(state.get("Running")) is bool
+        and type(state.get("Paused")) is bool
+        and type(state.get("Restarting")) is bool
+        and type(state.get("OOMKilled")) is bool
+        and type(state.get("ExitCode")) is int
+        and state.get("ExitCode") >= 0
+        and isinstance(state.get("Error"), str)
+    )
+    identity_types = (
+        isinstance(container_id, str)
+        and bool(container_id.strip())
+        and isinstance(image_id, str)
+        and bool(image_id.strip())
+        and isinstance(image_ref, str)
+        and bool(image_ref.strip())
+        and isinstance(mounts, list)
+    )
+    mounts_typed = identity_types and all(
+        isinstance(item, Mapping)
+        and isinstance(item.get("Type"), str)
+        and bool(item.get("Type").strip())
+        and isinstance(item.get("Source"), str)
+        and bool(item.get("Source").strip())
+        and isinstance(item.get("Destination"), str)
+        and bool(item.get("Destination").strip())
+        and type(item.get("RW")) is bool
+        for item in mounts
+    )
+    if not required_state_types or not identity_types or not mounts_typed:
+        return {
+            "schema": _CONTAINER_OBSERVATION_SCHEMA,
+            "status": "unknown",
+            "lifecycle": "unknown",
+            "container": name,
+            "returncode": returncode,
+            "diagnostic": "docker inspect output failed strict schema validation",
+            "collector": {"status": "unavailable", "reason": "container_state_unknown"},
+        }
+
+    raw_status = state["Status"]
+    running = state["Running"]
+    paused = state["Paused"]
+    restarting = state["Restarting"]
+    if raw_status == "paused" and running and paused and not restarting:
         lifecycle = "paused"
-    elif bool(state.get("Restarting")) or raw_status == "restarting":
+    elif raw_status == "restarting" and running and restarting and not paused:
         lifecycle = "restarting"
-    elif bool(state.get("Running")) and raw_status in {"", "running"}:
+    elif raw_status == "running" and running and not paused and not restarting:
         lifecycle = "running"
     elif (
         raw_status in {"created", "exited", "dead", "removing"}
-        and state.get("Running") is False
+        and not running
+        and not paused
+        and not restarting
     ):
         lifecycle = "stopped"
     else:
         lifecycle = "unknown"
 
-    mounts = payload.get("Mounts") if isinstance(payload.get("Mounts"), list) else []
     workspace_mounts = [
         item
         for item in mounts
@@ -171,7 +261,7 @@ def classify_container_inspect(
             "type": mount.get("Type"),
             "source": mount.get("Source"),
             "destination": "/workspace",
-            "rw": bool(mount.get("RW")),
+            "rw": mount.get("RW"),
         }
     else:
         workspace_bind = {
@@ -180,19 +270,18 @@ def classify_container_inspect(
             "destination": "/workspace",
         }
 
-    config = payload.get("Config") if isinstance(payload.get("Config"), Mapping) else {}
     observation = {
-        "schema": "arnold.cloud.ssh_container_observation.v1",
+        "schema": _CONTAINER_OBSERVATION_SCHEMA,
         "status": "available" if lifecycle != "unknown" else "unknown",
         "lifecycle": lifecycle,
         "container": name,
-        "container_id": payload.get("Id"),
+        "container_id": container_id,
         "returncode": returncode,
         "exit_code": state.get("ExitCode"),
-        "oom_killed": bool(state.get("OOMKilled")),
-        "error": str(state.get("Error") or ""),
-        "image_id": payload.get("Image"),
-        "image_ref": config.get("Image"),
+        "oom_killed": state.get("OOMKilled"),
+        "error": state.get("Error"),
+        "image_id": image_id,
+        "image_ref": image_ref,
         "workspace_bind": workspace_bind,
         "collector": {
             "status": "available" if lifecycle == "running" else "unavailable",
@@ -389,37 +478,175 @@ def workspace_prelaunch_command(
     )
 
 
-def parse_workspace_prelaunch_result(
-    *, returncode: int, stdout: str, stderr: str
+def _unknown_workspace_prelaunch(
+    *, returncode: int, stdout: str, stderr: str, reason: str
 ) -> dict[str, Any]:
-    lines = [line for line in stdout.splitlines() if line.strip()]
-    try:
-        payload = json.loads(lines[-1]) if lines else None
-    except json.JSONDecodeError:
-        payload = None
+    diagnostic = "\n".join(part for part in (stderr.strip(), stdout.strip()) if part)
+    return {
+        "schema": _WORKSPACE_PRELAUNCH_SCHEMA,
+        "status": "unknown",
+        "verdict": "NO-GO",
+        "returncode": returncode,
+        "errors": [reason],
+        "diagnostic": diagnostic,
+    }
+
+
+def _strict_json_object(value: str) -> dict[str, Any]:
+    payload = _strict_json_value(value)
     if not isinstance(payload, dict):
-        diagnostic = "\n".join(
-            part for part in (stderr.strip(), stdout.strip()) if part
+        raise ValueError("workspace prelaunch output was not an object")
+    return payload
+
+
+def _nonnegative_integer(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _valid_mount_identity(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    required = {"st_dev", "device_major", "device_minor", "inode"}
+    optional = {"mount_point", "filesystem", "mount_source"}
+    if not required.issubset(value) or not set(value).issubset(required | optional):
+        return False
+    if not all(_nonnegative_integer(value[key]) for key in required):
+        return False
+    return all(
+        isinstance(value[key], str) and bool(value[key])
+        for key in optional & set(value)
+    )
+
+
+def _valid_capacity(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"free_bytes", "free_inodes"}
+        and _nonnegative_integer(value.get("free_bytes"))
+        and _nonnegative_integer(value.get("free_inodes"))
+    )
+
+
+def _valid_thresholds(
+    value: Any,
+    *,
+    min_free_bytes: int,
+    min_free_inodes: int,
+    receipt_reserve_bytes: int,
+) -> bool:
+    expected = {
+        "min_free_bytes": min_free_bytes,
+        "min_free_inodes": min_free_inodes,
+        "receipt_reserve_bytes": receipt_reserve_bytes,
+    }
+    return (
+        isinstance(value, dict)
+        and set(value) == set(expected)
+        and all(_nonnegative_integer(item) for item in value.values())
+        and value == expected
+    )
+
+
+def _valid_checks(value: Any, *, complete: bool) -> bool:
+    if not isinstance(value, dict) or not set(value).issubset(_REQUIRED_CAPACITY_CHECKS):
+        return False
+    if not all(type(item) is bool for item in value.values()):
+        return False
+    return not complete or (
+        set(value) == _REQUIRED_CAPACITY_CHECKS and all(value.values())
+    )
+
+
+def parse_workspace_prelaunch_result(
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    expected_workspace: str,
+    min_free_bytes: int,
+    min_free_inodes: int,
+    receipt_reserve_bytes: int,
+) -> dict[str, Any]:
+    """Parse the fixed capacity probe, promoting only an exact GO schema."""
+    workspace = validate_workspace_dir(expected_workspace)
+    expected_thresholds = (min_free_bytes, min_free_inodes, receipt_reserve_bytes)
+    if any(not _nonnegative_integer(value) for value in expected_thresholds):
+        raise CliError(
+            "invalid_provider_observation_target",
+            "prelaunch capacity thresholds must be non-negative integers",
         )
-        return {
-            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
-            "status": "unknown",
-            "verdict": "NO-GO",
-            "returncode": returncode,
-            "errors": ["workspace prelaunch output was not valid JSON"],
-            "diagnostic": diagnostic,
-        }
-    payload["returncode"] = returncode
-    if (
-        returncode == 0
-        and payload.get("status") == "go"
-        and payload.get("verdict") == "GO"
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return _unknown_workspace_prelaunch(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            reason="workspace prelaunch output did not contain exactly one JSON object",
+        )
+    try:
+        payload = _strict_json_object(lines[0])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return _unknown_workspace_prelaunch(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            reason=f"workspace prelaunch output failed strict JSON parsing: {exc}",
+        )
+
+    def invalid(reason: str) -> dict[str, Any]:
+        return _unknown_workspace_prelaunch(
+            returncode=returncode, stdout=stdout, stderr=stderr, reason=reason
+        )
+
+    if not set(payload).issubset(_CAPACITY_TOP_LEVEL_FIELDS):
+        return invalid("workspace prelaunch output contained unknown fields")
+    if payload.get("schema") != _WORKSPACE_PRELAUNCH_SCHEMA:
+        return invalid("workspace prelaunch schema was missing or incorrect")
+    if payload.get("workspace") != workspace:
+        return invalid("workspace prelaunch target did not match configuration")
+    if not _valid_thresholds(
+        payload.get("thresholds"),
+        min_free_bytes=min_free_bytes,
+        min_free_inodes=min_free_inodes,
+        receipt_reserve_bytes=receipt_reserve_bytes,
     ):
+        return invalid("workspace prelaunch thresholds were malformed or mismatched")
+    errors = payload.get("errors")
+    if not isinstance(errors, list) or not all(
+        isinstance(item, str) and bool(item) for item in errors
+    ):
+        return invalid("workspace prelaunch errors were malformed")
+    if not _valid_checks(payload.get("checks"), complete=False):
+        return invalid("workspace prelaunch checks were malformed")
+    if not _valid_mount_identity(payload.get("mount")):
+        return invalid("workspace prelaunch mount identity was malformed")
+    if not _valid_capacity(payload.get("capacity")):
+        return invalid("workspace prelaunch capacity was malformed")
+
+    is_go = payload.get("status") == "go" and payload.get("verdict") == "GO"
+    if is_go:
+        if set(payload) != _CAPACITY_TOP_LEVEL_FIELDS:
+            return invalid("workspace prelaunch GO output did not match the exact schema")
+        if returncode != 0 or stderr.strip() or errors:
+            return invalid("workspace prelaunch GO contradicted process or error evidence")
+        if not _valid_checks(payload.get("checks"), complete=True):
+            return invalid("workspace prelaunch GO did not prove every required check")
+        capacity = payload["capacity"]
+        if (
+            capacity["free_bytes"] < min_free_bytes + receipt_reserve_bytes
+            or capacity["free_inodes"] < min_free_inodes
+        ):
+            return invalid("workspace prelaunch GO contradicted reported capacity")
+        payload["returncode"] = returncode
         return payload
-    payload["status"] = "no-go" if payload.get("status") == "no-go" else "unknown"
-    payload["verdict"] = "NO-GO"
+
+    if payload.get("status") != "no-go" or payload.get("verdict") != "NO-GO":
+        return invalid("workspace prelaunch status and verdict were contradictory")
+    if returncode == 0 or not errors:
+        return invalid("workspace prelaunch NO-GO contradicted process or error evidence")
+    payload["returncode"] = returncode
     if stderr.strip():
-        payload.setdefault("diagnostic", stderr.strip())
+        payload["diagnostic"] = stderr.strip()
     return payload
 
 
