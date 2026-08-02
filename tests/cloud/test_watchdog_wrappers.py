@@ -9273,7 +9273,7 @@ def test_repair_loop_collect_failure_context_includes_resolver_output(tmp_path: 
     assert payload["resolver_output"]["authoritative_source"] in {"marker", "plan_state", "chain_state"}
 
 
-def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path) -> None:
+def test_watchdog_needs_human_webhook_is_deferred_to_durable_worker(tmp_path: Path) -> None:
     dm_helper = tmp_path / "arnold-discord-dm"
     dm_helper.write_text(
         "#!/usr/bin/env bash\n"
@@ -9328,14 +9328,10 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456'
     )
     result = _run_watchdog_shell(script, path_prefix=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / "curl-calls.txt").read_text(encoding="utf-8").strip().splitlines() == ["called"]
-    payload = json.loads((tmp_path / "webhook-payload.json").read_text(encoding="utf-8"))
-    assert payload["session"] == "demo-session"
-    assert payload["plan"]["name"] == "demo-plan"
-    assert payload["plan"]["tiers_tried"] == ["codex:gpt-5.4", "codex:gpt-5.5"]
-    assert payload["plan"]["pushed_commit_shas"] == ["abc123def456"]
+    assert not (tmp_path / "curl-calls.txt").exists()
+    assert not (tmp_path / "webhook-payload.json").exists()
     report = report_path.read_text(encoding="utf-8")
-    assert "\tnotify\twebhook_sent\tneeds-human webhook delivered\t" in report
+    assert "\tnotify\tnotification_intent_pending\t" in report
 
 
 def test_watchdog_log_redacts_stdout_and_log_file(tmp_path: Path) -> None:
@@ -9492,7 +9488,7 @@ PLAN_STATUS_PUSHED_COMMITS=''
     assert "\tnotify\tdiagnostic_agent_launched\t" in report_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_needs_human_launch_failure_sends_truthful_actionable_fallback(
+def test_watchdog_needs_human_launch_failure_only_records_durable_pending_intent(
     tmp_path: Path,
 ) -> None:
     diagnostic_helper = tmp_path / "arnold-human-review-diagnostic"
@@ -9533,14 +9529,8 @@ def test_watchdog_needs_human_launch_failure_sends_truthful_actionable_fallback(
 
     result = _run_watchdog_shell(script, path_prefix=tmp_path)
     assert result.returncode == 0, result.stderr
-    payload = json.loads((tmp_path / "dm-payload.json").read_text(encoding="utf-8"))
-    assert payload["diagnostic_launch"] == {
-        "status": "failed",
-        "error": "resident supervisor unavailable",
-    }
-    assert "diagnostic launch failed" in payload["title"].lower()
-    assert "do not assume an agent exists" in payload["next_action"]
-    assert "discord_dm_sent" in report_path.read_text(encoding="utf-8")
+    assert not (tmp_path / "dm-payload.json").exists()
+    assert "notification_intent_pending" in report_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery(tmp_path: Path) -> None:
@@ -9631,7 +9621,7 @@ def test_repair_escalation_fixture_workspace_cannot_reach_discord(tmp_path: Path
     assert "pytest_workspace" in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_needs_human_missing_discord_config_skips_webhook_fallback(tmp_path: Path) -> None:
+def test_watchdog_needs_human_missing_discord_config_records_durable_intent(tmp_path: Path) -> None:
     dm_helper = tmp_path / "arnold-discord-dm"
     dm_helper.write_text(
         "#!/usr/bin/env bash\n"
@@ -9673,7 +9663,7 @@ PLAN_STATUS_PLAN_NAME='demo-plan'
     assert not (tmp_path / "curl-calls.txt").exists()
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tneeds_human\tmanual_review halt\t" in report
-    assert "discord dm skipped; DISCORD_BOT_TOKEN or DISCORD_DM_USER_ID unset" in log_path.read_text(encoding="utf-8")
+    assert "\tnotify\tnotification_intent_pending\t" in report
 
 
 def test_arnold_discord_dm_wrapper_redacts_payload_before_rendering(tmp_path: Path) -> None:
