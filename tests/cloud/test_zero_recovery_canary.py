@@ -2416,6 +2416,14 @@ def test_offline_structural_smoke_harness_seeds_dummy_root_auth_and_has_no_netwo
     dockerfile = (fixture / "Dockerfile").read_text(encoding="utf-8")
     assert "verify-zero-recovery-offline-smoke" in dockerfile
 
+    runner = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/run_canary.py"
+    ).read_text(encoding="utf-8")
+    assert '"stdout_sha256"' in runner
+    assert '"stderr_sha256"' in runner
+    assert '"stdout_tail": stdout[-4096:]' in runner
+    assert '"stderr_tail": stderr[-4096:]' in runner
+
 
 def test_offline_structural_smoke_failure_preserves_typed_evidence(
     tmp_path: Path,
