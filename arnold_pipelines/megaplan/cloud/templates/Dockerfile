@@ -87,10 +87,22 @@ RUN . "$NVM_DIR/nvm.sh" \
     && claude --version \
     && railway --version
 
-# Megaplan from PyPI (override via build-arg MEGAPLAN_INSTALL_SPEC for git/custom sources)
-ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"
-RUN pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC" \
-    && arnold --help > /dev/null
+# The finite recovery runner imports its admitted checkout directly with
+# PYTHONPATH and deliberately has no network during structural smoke. Bake its
+# small source-runtime dependency floor into the image instead of installing
+# the unrelated project currently published as `arnold` on PyPI. A caller may
+# still supply an exact package or git spec for a self-contained image.
+ARG MEGAPLAN_INSTALL_SPEC=""
+RUN if [ -n "$MEGAPLAN_INSTALL_SPEC" ]; then \
+      pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC"; \
+    else \
+      pip install --no-cache-dir \
+        "PyYAML>=6.0" \
+        "pydantic>=2.0" \
+        "python-ulid>=3.0" \
+        "psutil>=5.9"; \
+    fi \
+    && python3 -c 'import psutil, pydantic, ulid, yaml'
 RUN /usr/sbin/groupadd --gid 65532 finite-model \
     && /usr/sbin/useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin finite-model \
     && mkdir -p /run/megaplan-zero-recovery \

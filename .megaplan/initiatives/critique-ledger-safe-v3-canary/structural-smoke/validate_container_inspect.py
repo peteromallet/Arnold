@@ -32,6 +32,21 @@ def _empty(value: object) -> bool:
     return value is None or value == {} or value == []
 
 
+def _normalized_cap_add(value: object) -> object:
+    """Normalize Docker's daemon-dependent CAP_ display prefix."""
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        return value
+    return [item.removeprefix("CAP_") for item in value]
+
+
+def _unpublished_ports(config: dict[str, Any], network: dict[str, Any]) -> bool:
+    """Accept the image's 8080 metadata, but never a published runtime port."""
+    if config.get("ExposedPorts") not in ({"8080/tcp": {}}, {"8080/tcp": None}):
+        return False
+    runtime = network.get("Ports")
+    return runtime in (None, {}, {"8080/tcp": None})
+
+
 def validated_summary(
     payload: object,
     *,
@@ -66,15 +81,14 @@ def validated_summary(
         "network none": host.get("NetworkMode") == "none",
         "restart no": restart == {"Name": "no", "MaximumRetryCount": 0},
         "cap drop": host.get("CapDrop") == ["ALL"],
-        "cap add": host.get("CapAdd") == EXPECTED_CAP_ADD,
+        "cap add": _normalized_cap_add(host.get("CapAdd")) == EXPECTED_CAP_ADD,
         "no new privileges": host.get("SecurityOpt") == ["no-new-privileges:true"],
         "ipc none": host.get("IpcMode") == "none",
         "pid limit": host.get("PidsLimit") == 256,
         "memory": host.get("Memory") == 4_294_967_296,
         "memory swap": host.get("MemorySwap") == 4_294_967_296,
         "no host-config ports": _empty(host.get("PortBindings")),
-        "no config ports": _empty(config.get("ExposedPorts")),
-        "no runtime ports": _empty(network.get("Ports")),
+        "no published ports": _unpublished_ports(config, network),
         "no volumes": _empty(config.get("Volumes")),
         "no alternate mounts": _empty(host.get("Mounts")),
         "exact tmpfs destination": isinstance(tmpfs, dict)

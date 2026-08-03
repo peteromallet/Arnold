@@ -244,6 +244,24 @@ def test_cloud_image_installs_account_management_before_finite_uid_creation() ->
     assert "&& useradd " not in dockerfile
 
 
+def test_cloud_image_bakes_source_runtime_floor_without_pypi_name_collision() -> None:
+    dockerfile = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/templates/Dockerfile"
+    ).read_text()
+
+    assert 'ARG MEGAPLAN_INSTALL_SPEC=""' in dockerfile
+    for requirement in (
+        '"PyYAML>=6.0"',
+        '"pydantic>=2.0"',
+        '"python-ulid>=3.0"',
+        '"psutil>=5.9"',
+    ):
+        assert requirement in dockerfile
+    assert "import psutil, pydantic, ulid, yaml" in dockerfile
+    assert 'ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"' not in dockerfile
+
+
 def test_entrypoint_persists_railway_auth_without_rendered_secret() -> None:
     import subprocess
 
