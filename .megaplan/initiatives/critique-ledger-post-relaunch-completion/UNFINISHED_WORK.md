@@ -71,6 +71,11 @@ waits for all checked items and one exact integration commit.
 - [ ] Inject one durable `DeliveryEffects` owner from the real production
   resident bootstrap into every autonomous completion/subagent sweep; prove
   interactive replies are the only intentional direct Discord path.
+- [ ] Bind every `partnered-5-glm` Execute complexity tier to GLM-family models;
+  retain DeepSeek only for critique/gate and GPT-5.6 Sol high only for Finalize.
+- [ ] Prove and use a one-shot direct WBC-backed Finalize invocation for
+  immutable attempt 9 while paused; resume the chain only from `finalized` so
+  the general three-attempt deterministic auto loop cannot create attempt 10.
 - [x] After repair identity lands, persist the simple-fixer mutation budget and
   effect outcomes by canonical repair occurrence across restart/claim release.
 - [x] Route cloud status/supervisor actions through canonical current-target
