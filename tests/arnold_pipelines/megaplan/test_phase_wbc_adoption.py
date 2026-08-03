@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan.custody.controlled_writer_registry import _clear_
 from arnold_pipelines.megaplan.custody.phase_wbc import (
     PHASE_WBC_LEDGER_FILENAME,
     activate_phase_wbc,
+    cancel_active_phase_wbc_attempt,
     complete_phase_wbc,
     cancel_phase_wbc,
 )
@@ -443,6 +444,64 @@ def test_cancel_phase_wbc_replays_after_ledger_append_before_state_persist(
         AttemptEventType.STARTED,
         AttemptEventType.CANCELLED,
     ]
+
+
+def test_cancel_active_phase_attempt_persists_ordinal_before_owner_clear(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    project_dir.mkdir()
+    plan_dir.mkdir()
+    state = _state(project_dir, current_state="gated")
+    state["history"] = [
+        {"step": "finalize", "result": "error", "timestamp": f"t-{index}"}
+        for index in range(7)
+    ]
+    run_id = set_active_step(
+        state,
+        step="finalize",
+        agent="finalizer",
+        mode="test",
+    )
+    assert state["active_step"]["attempt"] == 8
+    metadata = activate_phase_wbc(
+        state=state,
+        plan_dir=plan_dir,
+        step="finalize",
+        agent="finalizer",
+    )
+    assert metadata is not None
+    from arnold_pipelines.megaplan._core import save_state
+
+    save_state(plan_dir, state)
+    result = cancel_active_phase_wbc_attempt(
+        plan_dir=plan_dir,
+        step="finalize",
+        expected_attempt_id=str(metadata["attempt_id"]),
+        expected_invocation_id=str(metadata["invocation_id"]),
+        expected_run_id=run_id,
+        expected_attempt_ordinal=8,
+        agent="operator",
+        reason="superseded by immutable attempt 9",
+    )
+
+    persisted = json.loads((plan_dir / "state.json").read_text())
+    assert "active_step" not in persisted
+    cancellation = persisted["history"][-1]
+    assert cancellation["result"] == "cancelled"
+    assert cancellation["attempt"] == 8
+    assert cancellation["phase_wbc_attempt_id"] == metadata["attempt_id"]
+    assert result["history_recorded"] is True
+
+    next_run_id = set_active_step(
+        persisted,
+        step="finalize",
+        agent="finalizer",
+        mode="test",
+    )
+    assert next_run_id != run_id
+    assert persisted["active_step"]["attempt"] == 9
 
 
 def test_finalize_revise_fallback_records_phase_wbc_and_receipt(tmp_path: Path) -> None:

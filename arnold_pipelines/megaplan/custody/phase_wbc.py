@@ -742,6 +742,113 @@ def cancel_phase_wbc(
     }
 
 
+def cancel_active_phase_wbc_attempt(
+    *,
+    plan_dir: Path,
+    step: str,
+    expected_attempt_id: str,
+    expected_invocation_id: str,
+    expected_run_id: str,
+    expected_attempt_ordinal: int,
+    agent: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Atomically retire one active phase owner after durable WBC cancel.
+
+    The WBC terminal append happens inside the plan-state mutation lock.  If
+    the process crashes after that append but before ``state.json`` publishes,
+    :func:`cancel_phase_wbc` replays the exact terminal and this transaction
+    can safely finish.  A cancellation history row is persisted before the
+    active owner is cleared so the next invocation receives the next ordinal
+    (attempt 9 after cancelling attempt 8), rather than reusing an immutable
+    attempt number.
+    """
+
+    from arnold_pipelines.megaplan._core.state import (
+        append_history,
+        clear_active_step,
+        make_history_entry,
+        write_plan_state,
+    )
+
+    result: dict[str, Any] = {}
+
+    def _cancel(current: dict[str, Any]) -> bool:
+        active = current.get("active_step")
+        if not isinstance(active, dict):
+            raise RuntimeError("active phase owner is required for cancellation")
+        observed = (
+            str(active.get("phase") or ""),
+            str(active.get("run_id") or ""),
+            int(active.get("attempt") or 0),
+        )
+        expected = (step, expected_run_id, int(expected_attempt_ordinal))
+        if observed != expected:
+            raise RuntimeError(
+                "active phase cancellation identity mismatch: "
+                f"expected {expected!r}, found {observed!r}"
+            )
+        cancel_result = cancel_phase_wbc(
+            state=current,
+            plan_dir=plan_dir,
+            step=step,
+            expected_attempt_id=expected_attempt_id,
+            expected_invocation_id=expected_invocation_id,
+            agent=agent,
+            reason=reason,
+        )
+        cancellation_key = (
+            expected_attempt_id,
+            expected_invocation_id,
+            expected_run_id,
+        )
+        duplicate = any(
+            isinstance(entry, dict)
+            and entry.get("result") == "cancelled"
+            and (
+                entry.get("phase_wbc_attempt_id"),
+                entry.get("invocation_id"),
+                entry.get("run_id"),
+            )
+            == cancellation_key
+            for entry in current.get("history", [])
+        )
+        if not duplicate:
+            entry = make_history_entry(
+                step,
+                duration_ms=0,
+                cost_usd=0.0,
+                result="cancelled",
+                message=str(reason).strip() or "operator_cancelled",
+            )
+            entry.update(
+                {
+                    "phase_wbc_attempt_id": expected_attempt_id,
+                    "invocation_id": expected_invocation_id,
+                    "run_id": expected_run_id,
+                    "attempt": int(expected_attempt_ordinal),
+                    "authority": "phase_wbc_cancelled",
+                }
+            )
+            append_history(current, entry)
+        clear_active_step(current, run_id=expected_run_id)
+        if "active_step" in current:
+            raise RuntimeError("matching active phase owner was not cleared")
+        result.update(cancel_result)
+        result["run_id"] = expected_run_id
+        result["attempt_ordinal"] = int(expected_attempt_ordinal)
+        result["history_recorded"] = not duplicate
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={},
+        mutation=_cancel,
+    )
+    return result
+
+
 def _terminal_phase_wbc(
     *,
     state: PlanState,
@@ -900,6 +1007,7 @@ __all__ = [
     "PHASE_WBC_SUSPENSION_CURSOR_KEY",
     "PHASE_WBC_STATE_KEY",
     "activate_phase_wbc",
+    "cancel_active_phase_wbc_attempt",
     "clear_phase_wbc_suspension",
     "complete_phase_wbc",
     "fail_phase_wbc",
