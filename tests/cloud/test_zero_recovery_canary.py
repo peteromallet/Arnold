@@ -51,6 +51,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     _record_zero_recovery_dispatch_terminal,
     _prepare_zero_recovery_schema_input,
     _reclaim_zero_recovery_tree,
+    _restore_zero_recovery_schema_input,
     run_command,
     _zero_recovery_global_scratch_observation,
     _zero_recovery_plan_snapshot,
@@ -2035,6 +2036,15 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     reclaim = source[reclaim_start:reclaim_end]
     assert reclaim.index("os.chown(path, 0, 0") < reclaim.index("with os.scandir(path)")
 
+    verify_start = source.index("def _verify_zero_recovery_worker_boundaries(")
+    verify_end = source.index("\ndef _record_zero_recovery_dispatch", verify_start)
+    verify = source[verify_start:verify_end]
+    finish = verify.index("_finish_zero_recovery_model_runtime(")
+    source_check = verify.index("_assert_zero_recovery_source_unchanged(")
+    revoke = verify.index("_restore_zero_recovery_schema_input(")
+    assert finish < source_check < revoke
+    assert verify.index("if runtime_finished:") < revoke
+
 
 def test_zero_recovery_schema_grant_is_exact_root_owned_read_only(
     monkeypatch: pytest.MonkeyPatch,
@@ -2043,6 +2053,8 @@ def test_zero_recovery_schema_grant_is_exact_root_owned_read_only(
     schema = tmp_path / "plan.json"
     schema.write_text("{}\n", encoding="utf-8")
     real_lstat = os.lstat
+    real_fstat = os.fstat
+    real_fchmod = os.fchmod
     identity = real_lstat(schema)
     mode = 0o600
 
@@ -2058,24 +2070,33 @@ def test_zero_recovery_schema_grant_is_exact_root_owned_read_only(
             st_ino=identity.st_ino,
         )
 
-    def fake_chmod(
-        path: os.PathLike[str] | str,
-        granted_mode: int,
-        *,
-        follow_symlinks: bool,
-    ) -> None:
+    def fake_fstat(fd: int) -> SimpleNamespace:
+        observed = real_fstat(fd)
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | mode,
+            st_nlink=1,
+            st_uid=0,
+            st_gid=0,
+            st_dev=observed.st_dev,
+            st_ino=observed.st_ino,
+        )
+
+    def fake_fchmod(fd: int, granted_mode: int) -> None:
         nonlocal mode
-        assert Path(path) == schema
-        assert follow_symlinks is False
+        real_fchmod(fd, granted_mode)
         mode = granted_mode
 
     monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(os, "lstat", fake_lstat)
-    monkeypatch.setattr(os, "chmod", fake_chmod)
+    monkeypatch.setattr(os, "fstat", fake_fstat)
+    monkeypatch.setattr(os, "fchmod", fake_fchmod)
 
-    _prepare_zero_recovery_schema_input(schema)
+    grant = _prepare_zero_recovery_schema_input(schema)
+    assert grant is not None
     assert mode == 0o644
+    _restore_zero_recovery_schema_input(grant)
+    assert mode == 0o600
 
 
 def test_zero_recovery_schema_grant_rejects_writable_input(

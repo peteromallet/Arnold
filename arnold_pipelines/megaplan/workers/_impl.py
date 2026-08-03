@@ -184,9 +184,11 @@ def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
         os.close(fd)
 
 
-def _prepare_zero_recovery_schema_input(schema_file: Path) -> None:
+def _prepare_zero_recovery_schema_input(
+    schema_file: Path,
+) -> dict[str, Any] | None:
     if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
-        return
+        return None
     if os.geteuid() != 0:
         raise CliError(
             "zero_recovery_privilege_boundary_invalid",
@@ -204,20 +206,99 @@ def _prepare_zero_recovery_schema_input(schema_file: Path) -> None:
             "zero_recovery_privilege_boundary_invalid",
             "finite canary schema is not root-owned immutable data",
         )
-    os.chmod(schema_file, 0o644, follow_symlinks=False)
-    granted = os.lstat(schema_file)
-    if (
-        (granted.st_dev, granted.st_ino) != (schema_stat.st_dev, schema_stat.st_ino)
-        or not stat.S_ISREG(granted.st_mode)
-        or granted.st_nlink != 1
-        or granted.st_uid != 0
-        or granted.st_gid != 0
-        or stat.S_IMODE(granted.st_mode) != 0o644
-    ):
-        raise CliError(
-            "zero_recovery_privilege_boundary_invalid",
-            "finite canary schema read-only grant did not seal exact identity",
-        )
+    fd = os.open(schema_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if (
+            (opened.st_dev, opened.st_ino)
+            != (schema_stat.st_dev, schema_stat.st_ino)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema identity raced before read-only grant",
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+        os.fchmod(fd, 0o644)
+        granted = os.fstat(fd)
+        if (
+            (granted.st_dev, granted.st_ino)
+            != (schema_stat.st_dev, schema_stat.st_ino)
+            or not stat.S_ISREG(granted.st_mode)
+            or granted.st_nlink != 1
+            or granted.st_uid != 0
+            or granted.st_gid != 0
+            or stat.S_IMODE(granted.st_mode) != 0o644
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema read-only grant did not seal exact identity",
+            )
+    finally:
+        os.close(fd)
+    return {
+        "path": schema_file,
+        "st_dev": schema_stat.st_dev,
+        "st_ino": schema_stat.st_ino,
+        "mode": stat.S_IMODE(schema_stat.st_mode),
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _restore_zero_recovery_schema_input(
+    grant: dict[str, Any] | None,
+) -> None:
+    if grant is None:
+        return
+    schema_file = grant["path"]
+    observed = os.lstat(schema_file)
+    fd = os.open(schema_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if (
+            (observed.st_dev, observed.st_ino)
+            != (grant["st_dev"], grant["st_ino"])
+            or (opened.st_dev, opened.st_ino)
+            != (grant["st_dev"], grant["st_ino"])
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or stat.S_IMODE(opened.st_mode) != 0o644
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema changed before read-only grant revocation",
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+        if digest.hexdigest() != grant["sha256"]:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema content changed before grant revocation",
+            )
+        os.fchmod(fd, grant["mode"])
+        restored = os.fstat(fd)
+        if (
+            (restored.st_dev, restored.st_ino)
+            != (grant["st_dev"], grant["st_ino"])
+            or stat.S_IMODE(restored.st_mode) != grant["mode"]
+            or restored.st_uid != 0
+            or restored.st_gid != 0
+            or restored.st_nlink != 1
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema grant revocation did not reseal identity",
+            )
+    finally:
+        os.close(fd)
 
 
 def _prepare_zero_recovery_model_runtime(
@@ -1310,21 +1391,30 @@ def _verify_zero_recovery_worker_boundaries(
     plan_dir: Path,
     output_path: Path,
     runtime: dict[str, Any] | None,
+    schema_grant: dict[str, Any] | None,
     source_before: dict[str, Any] | None,
     plan_before: dict[str, str] | None,
 ) -> None:
     errors: list[str] = []
+    runtime_finished = False
+    try:
+        _finish_zero_recovery_model_runtime(runtime, output_path=output_path)
+        runtime_finished = True
+    except BaseException as exc:
+        errors.append(f"{type(exc).__name__}:{str(exc)}")
     for check in (
-        lambda: _finish_zero_recovery_model_runtime(runtime, output_path=output_path),
-        lambda: _assert_zero_recovery_source_unchanged(
-            root, plan_dir, source_before
-        ),
+        lambda: _assert_zero_recovery_source_unchanged(root, plan_dir, source_before),
         lambda: _assert_zero_recovery_plan_unchanged(
             root, plan_dir, output_path=output_path, before=plan_before
         ),
     ):
         try:
             check()
+        except BaseException as exc:
+            errors.append(f"{type(exc).__name__}:{str(exc)}")
+    if runtime_finished:
+        try:
+            _restore_zero_recovery_schema_input(schema_grant)
         except BaseException as exc:
             errors.append(f"{type(exc).__name__}:{str(exc)}")
     if errors:
@@ -4803,7 +4893,7 @@ def _run_codex_step_uncapped(
             output_path=output_path,
             include_cpu_signal=not strict_structured_liveness,
         )
-        _prepare_zero_recovery_schema_input(schema_file)
+        schema_grant = _prepare_zero_recovery_schema_input(schema_file)
         worker_plan_before = _zero_recovery_plan_snapshot(
             root, plan_dir, output_path=output_path
         )
@@ -4847,6 +4937,7 @@ def _run_codex_step_uncapped(
                 plan_dir=plan_dir,
                 output_path=output_path,
                 runtime=model_runtime,
+                schema_grant=schema_grant,
                 source_before=worker_source_before,
                 plan_before=worker_plan_before,
             )
