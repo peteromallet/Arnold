@@ -59,6 +59,12 @@ copy_partial_receipts() {
     while IFS= read -r -d '' path; do
       install -m 0600 "$path" "$evidence_dir/run-receipts/$(basename "$path")"
     done < <(find "$run_root" -maxdepth 1 -type f -name '*.run-receipt.json' -print0)
+    mkdir -m 0700 "$evidence_dir/phase-receipts"
+    while IFS= read -r -d '' path; do
+      install -m 0600 "$path" "$evidence_dir/phase-receipts/$(basename "$path")"
+    done < <(find "$run_root" -maxdepth 1 -type f \
+      \( -name '*.phase-receipt.json' -o -name '*.started.json' \
+         -o -name 'phase-receipts-manifest.json' \) -print0)
   fi
   if [[ -d "$plan_root" ]]; then
     mkdir -m 0700 "$evidence_dir/privilege-receipts"
@@ -137,6 +143,7 @@ payload = {
         )
     ),
     "run_receipts": inventory("run-receipts"),
+    "phase_receipts": inventory("phase-receipts"),
     "privilege_receipts": inventory("privilege-receipts"),
     "verifier_receipt": terminal,
 }

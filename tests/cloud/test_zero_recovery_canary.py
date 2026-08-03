@@ -2410,6 +2410,9 @@ def test_offline_structural_smoke_harness_seeds_dummy_root_auth_and_has_no_netwo
     assert "/root/.codex/config.toml" in source
     assert "offline_structural_smoke" in source
     assert "chmod 0600 /root/.codex/auth.json /root/.codex/config.toml" in source
+    assert 'mkdir -m 0700 "$evidence_dir/phase-receipts"' in source
+    assert "'*.phase-receipt.json'" in source
+    assert '"phase_receipts": inventory("phase-receipts")' in source
     dockerfile = (fixture / "Dockerfile").read_text(encoding="utf-8")
     assert "verify-zero-recovery-offline-smoke" in dockerfile
 
