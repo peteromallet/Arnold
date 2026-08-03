@@ -245,6 +245,16 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--plan", required=False)
     status_parser.add_argument("--project-dir", dest="project_dir")
     status_parser.add_argument("--pending-human", action="store_true", default=False)
+    status_parser.add_argument(
+        "--cloud-session",
+        dest="cloud_session",
+        help=argparse.SUPPRESS,
+    )
+    status_parser.add_argument(
+        "--cloud-marker-dir",
+        dest="cloud_marker_dir",
+        help=argparse.SUPPRESS,
+    )
 
     authority_inventory_parser = subparsers.add_parser(
         "authority-inventory",

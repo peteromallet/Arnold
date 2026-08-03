@@ -50,6 +50,111 @@ from .zero_recovery import (
 LOGGER = logging.getLogger(__name__)
 
 INSTALL_LINK = "Install: https://www.openssh.com/"
+_CLOUD_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
+_FULL_GIT_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def _status_runtime_binding_from_marker(
+    marker: Mapping[str, Any],
+) -> tuple[str, str, str] | None:
+    """Return the exact runtime root/revision selected by a session marker.
+
+    Runtime cutovers publish ``runtime_binding.current_identity``.  Older
+    markers carry the same root/revision split across the editable-install
+    fields.  A partially present binding is corruption, not permission to
+    silently select some other installed Arnold/Megaplan copy.
+    """
+
+    runtime_binding = marker.get("runtime_binding")
+    if isinstance(runtime_binding, Mapping):
+        identity = runtime_binding.get("current_identity")
+        if not isinstance(identity, Mapping):
+            raise CliError(
+                "status_runtime_binding_invalid",
+                "session runtime_binding has no current_identity",
+            )
+        root = str(identity.get("import_root") or "").strip()
+        revision = str(identity.get("source_revision") or "").strip().lower()
+        source = "runtime_binding"
+    else:
+        sync = marker.get("editable_install_sync")
+        sync = sync if isinstance(sync, Mapping) else {}
+        root = str(sync.get("source") or "").strip()
+        revision = str(marker.get("editable_source_head") or "").strip().lower()
+        source = "editable_install_sync"
+
+    if not root and not revision:
+        return None
+    if not PurePosixPath(root).is_absolute() or not _FULL_GIT_SHA_RE.fullmatch(revision):
+        raise CliError(
+            "status_runtime_binding_invalid",
+            "session runtime binding must contain an absolute import root and full source revision",
+        )
+    return root, revision, source
+
+
+def _megaplan_status_module_command(
+    *,
+    workspace: str,
+    plan: str | None,
+    runtime_root: str,
+    runtime_revision: str | None,
+    session: str | None,
+    marker_dir: str = _CLOUD_SESSION_MARKER_DIR,
+) -> str:
+    """Build the only SSH plan-status route.
+
+    The command never resolves a console script from ``PATH``.  It first
+    attests imports against the chosen source root/revision, then invokes the
+    Megaplan module with safe-path isolation.  This prevents the native Arnold
+    CLI named ``arnold`` from ever being selected by cloud plan status.
+    """
+
+    root = str(runtime_root or "").strip()
+    if not PurePosixPath(root).is_absolute():
+        raise CliError(
+            "status_runtime_binding_invalid",
+            "status runtime root must be an absolute path",
+        )
+    revision = str(runtime_revision or "").strip().lower()
+    if revision and not _FULL_GIT_SHA_RE.fullmatch(revision):
+        raise CliError(
+            "status_runtime_binding_invalid",
+            "status runtime revision must be a full Git SHA",
+        )
+
+    root_q = shlex.quote(root)
+    workspace_q = shlex.quote(workspace)
+    revision_assignment = (
+        f"STATUS_RUNTIME_REVISION={shlex.quote(revision)}"
+        if revision
+        else f"STATUS_RUNTIME_REVISION=$(git -C {root_q} rev-parse HEAD)"
+    )
+    runtime_prefix = (
+        "env -u PYTHONHOME PYTHONSAFEPATH=1 "
+        f"PYTHONPATH={root_q} python -P -m"
+    )
+    status_argv = [
+        "arnold_pipelines.megaplan",
+        "status",
+        "--project-dir",
+        workspace,
+    ]
+    if plan is not None:
+        status_argv.extend(["--plan", plan])
+    if session:
+        status_argv.extend(
+            ["--cloud-session", session, "--cloud-marker-dir", marker_dir]
+        )
+    return (
+        "set -e; "
+        f"cd {workspace_q}; "
+        f"{revision_assignment}; "
+        f"{runtime_prefix} arnold_pipelines.megaplan.cloud.runtime_provenance "
+        f"--expected-root {root_q} --expected-revision \"$STATUS_RUNTIME_REVISION\" "
+        ">/dev/null; "
+        f"{runtime_prefix} {shlex.join(status_argv)}"
+    )
 
 _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT = (
     "{{json .State}}\n{{json .Config.Env}}\n{{json .Config.Cmd}}\n"
@@ -2743,14 +2848,51 @@ class SshProvider(Provider):
         _write_redacted_output(result, secret_names=self._spec.secrets, env=os.environ)
         return 0
 
-    def status_payload(self, *, plan: str | None, workspace: str) -> dict:
-        command = f"cd {shlex.quote(workspace)} && arnold status"
-        if plan is not None:
-            command += f" --plan {shlex.quote(plan)}"
+    def status_payload(
+        self,
+        *,
+        plan: str | None,
+        workspace: str,
+        session: str | None = None,
+    ) -> dict:
+        runtime_root = self._spec.megaplan.src_path
+        runtime_revision: str | None = None
+        runtime_source = "configured_megaplan_source"
+        if session:
+            marker_path = str(
+                PurePosixPath(_CLOUD_SESSION_MARKER_DIR) / f"{session}.json"
+            )
+            try:
+                marker = json.loads(self.read_remote_file(marker_path))
+            except (CliError, OSError, json.JSONDecodeError):
+                marker = None
+            if marker is not None:
+                if not isinstance(marker, Mapping):
+                    raise CliError(
+                        "status_runtime_binding_invalid",
+                        "session marker must be a JSON object",
+                    )
+                selected = _status_runtime_binding_from_marker(marker)
+                if selected is not None:
+                    runtime_root, runtime_revision, runtime_source = selected
+
+        command = _megaplan_status_module_command(
+            workspace=workspace,
+            plan=plan,
+            runtime_root=runtime_root,
+            runtime_revision=runtime_revision,
+            session=session,
+        )
         result = self.ssh_exec(command)
         payload = json.loads(result.stdout)
         if not isinstance(payload, dict):
-            raise CliError("provider_failed", "arnold status did not return a JSON object")
+            raise CliError("provider_failed", "Megaplan status did not return a JSON object")
+        payload["status_runtime"] = {
+            "route": "python -P -m arnold_pipelines.megaplan status",
+            "root": runtime_root,
+            "revision": runtime_revision or "attested_at_read",
+            "source": runtime_source,
+        }
         return payload
 
     def down(self) -> int:

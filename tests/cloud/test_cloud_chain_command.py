@@ -1810,7 +1810,7 @@ def test_cloud_resume_uses_resume_command_for_failed_plan(monkeypatch, tmp_path:
     ]
 
 
-def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> None:
+def test_cloud_chain_status_payload_keeps_live_process_diagnostic_only() -> None:
     remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
     chain_yaml = (
         "milestones:\n"
@@ -1849,9 +1849,11 @@ def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> Non
         ),
     )
 
-    assert payload["runner"]["status"] == "alive"
-    assert payload["runner"]["tmux_status"] == "missing"
-    assert payload["runner"]["process_status"] == "alive"
+    assert payload["runner"]["status"] == "unknown"
+    assert payload["runner"]["authority"] == "canonical_current_target"
+    assert payload["runner"]["diagnostic_tmux_status"] == "missing"
+    assert payload["runner"]["diagnostic_process_status"] == "alive"
+    assert payload["runner"]["mutation_permitted"] is False
     assert payload["effective_status"] == "running"
 
 
@@ -2281,8 +2283,9 @@ def test_cloud_chain_status_payload_tmux_alive_sets_tmux_evidence_and_process_un
 
     assert payload["tmux_evidence"]["status"] == "alive"
     assert payload["process_evidence"]["status"] == "unknown"
-    assert payload["runner"]["tmux_status"] == "alive"
-    assert payload["runner"]["process_status"] == "unknown"
+    assert payload["runner"]["diagnostic_tmux_status"] == "alive"
+    assert payload["runner"]["diagnostic_process_status"] == "unknown"
+    assert payload["runner"]["status"] == "unknown"
 
 
 def test_cloud_chain_status_payload_active_step_from_plan_status() -> None:

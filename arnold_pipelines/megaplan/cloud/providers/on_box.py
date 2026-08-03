@@ -136,8 +136,14 @@ class OnBoxProvider(Provider):
         del follow
         return self._unsupported("logs")
 
-    def status_payload(self, *, plan: str | None, workspace: str) -> dict:
-        del plan, workspace
+    def status_payload(
+        self,
+        *,
+        plan: str | None,
+        workspace: str,
+        session: str | None = None,
+    ) -> dict:
+        del plan, workspace, session
         return self._unsupported("status")
 
     def down(self) -> int:
