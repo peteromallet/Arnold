@@ -251,6 +251,10 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
     assert config["listener_capture_command"].index("--ignored=matching") < config[
         "listener_capture_command"
     ].index("resident discord --help")
+    assert (
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=\"$runtime_src\""
+        in config["listener_capture_command"]
+    )
     assert "arnold-watchdog" not in " ".join(RESIDENT_ONLY_COMMAND)
     assert "tmux" not in " ".join(RESIDENT_ONLY_COMMAND)
     assert "fake-never-printed" not in command + script
