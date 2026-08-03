@@ -9,6 +9,7 @@ import json
 import os
 import runpy
 import shlex
+import stat
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -42,6 +43,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     _codex_step_cost,
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
+    _zero_recovery_global_scratch_observation,
     _zero_recovery_plan_snapshot,
     _zero_recovery_source_identity,
 )
@@ -1893,6 +1895,35 @@ def test_runtime_rejects_any_mount_beyond_exact_isolated_workspace() -> None:
     )
     with pytest.raises(CliError, match="runtime"):
         provider._observe_zero_recovery_canary_runtime()
+
+
+def test_zero_recovery_global_scratch_accepts_absent_dev_shm_under_ipc_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_lstat(path: os.PathLike[str] | str) -> SimpleNamespace:
+        if Path(path) == Path("/dev/shm"):
+            raise FileNotFoundError(path)
+        return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    assert _zero_recovery_global_scratch_observation() == {
+        "/tmp": "root_nonwritable",
+        "/var/tmp": "root_nonwritable",
+        "/dev/shm": "absent_ipc_none",
+    }
+
+
+def test_zero_recovery_global_scratch_still_requires_tmp_and_var_tmp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_lstat(path: os.PathLike[str] | str) -> SimpleNamespace:
+        if Path(path) == Path("/tmp"):
+            raise FileNotFoundError(path)
+        return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(CliError, match="required global scratch path is absent"):
+        _zero_recovery_global_scratch_observation()
 
 
 def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
