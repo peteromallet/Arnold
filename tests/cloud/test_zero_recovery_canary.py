@@ -1863,7 +1863,10 @@ def test_runtime_rejects_any_mount_beyond_exact_isolated_workspace() -> None:
             {"Name": "no", "MaximumRetryCount": 0},
             mounts,
             ["ALL"],
-            ["CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"],
+            [
+                "CAP_CHOWN", "CAP_DAC_READ_SEARCH", "CAP_KILL",
+                "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID",
+            ],
             ["no-new-privileges:true"],
             "none",
             {"/run/megaplan-zero-recovery": "rw,noexec,nosuid,nodev,size=256m,mode=0711"},
@@ -1878,6 +1881,9 @@ def test_runtime_rejects_any_mount_beyond_exact_isolated_workspace() -> None:
     )
     observed = provider._observe_zero_recovery_canary_runtime()
     assert observed["host_bind_count"] == 1
+    assert observed["cap_add"] == [
+        "CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"
+    ]
     provider._remote_run_compatible = lambda *args, **kwargs: subprocess.CompletedProcess(
         [], 0, output([
             exact_mount,
@@ -2471,7 +2477,9 @@ def test_offline_structural_smoke_failure_preserves_typed_evidence(
         "resources",
         "extra_mount",
         "tmpfs",
-        "ports",
+        "image_ports",
+        "host_ports",
+        "runtime_ports",
     ],
 )
 def test_offline_structural_smoke_inspect_rejects_runtime_drift(
@@ -2493,12 +2501,12 @@ def test_offline_structural_smoke_inspect_rejects_runtime_drift(
                 "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
                 "CapDrop": ["ALL"],
                 "CapAdd": [
-                    "CHOWN",
-                    "DAC_READ_SEARCH",
-                    "KILL",
-                    "SETGID",
-                    "SETPCAP",
-                    "SETUID",
+                    "CAP_CHOWN",
+                    "CAP_DAC_READ_SEARCH",
+                    "CAP_KILL",
+                    "CAP_SETGID",
+                    "CAP_SETPCAP",
+                    "CAP_SETUID",
                 ],
                 "SecurityOpt": ["no-new-privileges:true"],
                 "IpcMode": "none",
@@ -2513,8 +2521,8 @@ def test_offline_structural_smoke_inspect_rejects_runtime_drift(
                     )
                 },
             },
-            "Config": {"ExposedPorts": None, "Volumes": None},
-            "NetworkSettings": {"Ports": {}},
+            "Config": {"ExposedPorts": {"8080/tcp": {}}, "Volumes": None},
+            "NetworkSettings": {"Ports": {"8080/tcp": None}},
             "Mounts": [
                 {
                     "Type": "bind",
@@ -2556,8 +2564,16 @@ def test_offline_structural_smoke_inspect_rejects_runtime_drift(
                 "rw,nosuid,nodev,size=268435456,mode=0711"
             )
         }
-    else:
+    elif mutation == "image_ports":
         inspect_payload[0]["Config"]["ExposedPorts"] = {"80/tcp": {}}
+    elif mutation == "host_ports":
+        inspect_payload[0]["HostConfig"]["PortBindings"] = {
+            "8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]
+        }
+    else:
+        inspect_payload[0]["NetworkSettings"]["Ports"] = {
+            "8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]
+        }
     inspect_path = tmp_path / "inspect.json"
     inspect_path.write_text(json.dumps(inspect_payload), encoding="utf-8")
     validator = Path(
@@ -2600,8 +2616,8 @@ def test_offline_structural_smoke_inspect_emits_normalized_runtime_summary(
                 "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
                 "CapDrop": ["ALL"],
                 "CapAdd": [
-                    "CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP",
-                    "SETUID",
+                    "CAP_CHOWN", "CAP_DAC_READ_SEARCH", "CAP_KILL",
+                    "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID",
                 ],
                 "SecurityOpt": ["no-new-privileges:true"],
                 "IpcMode": "none",
@@ -2616,8 +2632,8 @@ def test_offline_structural_smoke_inspect_emits_normalized_runtime_summary(
                     )
                 },
             },
-            "Config": {"ExposedPorts": {}, "Volumes": {}},
-            "NetworkSettings": {"Ports": None},
+            "Config": {"ExposedPorts": {"8080/tcp": {}}, "Volumes": {}},
+            "NetworkSettings": {"Ports": {"8080/tcp": None}},
             "Mounts": [
                 {
                     "Type": "bind",

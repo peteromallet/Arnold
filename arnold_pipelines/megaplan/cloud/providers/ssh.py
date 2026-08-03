@@ -61,6 +61,14 @@ _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT = (
     "{{json .HostConfig.PortBindings}}"
 )
 
+
+def _normalized_docker_cap_add(value: object) -> object:
+    """Normalize Docker's daemon-dependent CAP_ display prefix."""
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        return value
+    return [item.removeprefix("CAP_") for item in value]
+
+
 _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT = r"""
 import hashlib, json, os, stat, sys
 
@@ -824,7 +832,7 @@ class SshProvider(Provider):
                 "Propagation": "rprivate",
             }
             or cap_drop != ["ALL"]
-            or cap_add
+            or _normalized_docker_cap_add(cap_add)
             != ["CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"]
             or security_opt != ["no-new-privileges:true"]
             or ipc_mode != "none"
@@ -870,7 +878,7 @@ class SshProvider(Provider):
             ).hexdigest(),
             "runtime_tmpfs": tmpfs,
             "cap_drop": cap_drop,
-            "cap_add": cap_add,
+            "cap_add": _normalized_docker_cap_add(cap_add),
             "security_opt": security_opt,
             "ipc_mode": ipc_mode,
             "pids_limit": pids_limit,
