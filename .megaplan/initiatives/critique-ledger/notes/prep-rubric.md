@@ -22,7 +22,7 @@ deliberation; high depth is reserved for contract/migration decisions.
 | CL4 Reconciliation/reviser/gate | 5/5 | partnered-5 | full | medium | Trace evaluator validation, flag lifecycle, revise metadata, gate carry/signals, finalize custody, and receipts. | The role-flow spans several authorities and can silently omit disposed findings or over-promote model judgment. |
 | CL5 Coordinated cutover and retirement | 5/5 | partnered-5 | thorough | high | Revalidate exact revisions, M6/integrated-loop gates, WBC custody, backup/restore, and the atomic cutover checklist. | This single authority-changing boundary must prevent false convergence and preserve recoverable custody. |
 
-All sprints use `vendor: codex`, `deepseek_provider: direct`, and explicit prep.
+All sprints use the OAuth-backed `all-codex` profile and explicit prep.
 Critique/review workers retain the selected profile's asymmetrical sense-check
 depth. No feedback phase or bakeoff is requested. The chain is review-gated,
 does not auto-approve execution, and stops on failure or escalation.

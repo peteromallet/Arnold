@@ -43,10 +43,10 @@ is not silently adopted.
 
 | Order | Sprint | Outcome | Run rubric |
 |---:|---|---|---|
-| 1 | Amended ledger foundation and replay | Version the CL1 contract additively; add WBC-backed events, correction/audit/outcome history, region freshness, bounded projections, import, and replay | 5/5, `partnered-5-glm/thorough/high +prep` |
-| 2 | Evaluator routing and mandatory blind discovery | Enforce the blind floor and route history-aware tasks with bounded, complete briefings | 5/5, `partnered-5-glm/full/medium +prep` |
-| 3 | Reconciliation, accountability, reviser, and gate truth | Add correctable semantic decisions, independent audits, structured response/outcome history, round receipts, and honest gate claims | 5/5, `partnered-5-glm/full/medium +prep` |
-| 4 | Coordinated cutover and retirement | Revalidate M6 and the amended accountability loop, back up custody, switch once, verify, and retire the replaced path | 5/5, `partnered-5-glm/thorough/high +prep` |
+| 1 | Amended ledger foundation and replay | Version the CL1 contract additively; add WBC-backed events, correction/audit/outcome history, region freshness, bounded projections, import, and replay | 5/5, `all-codex/thorough/high +prep` |
+| 2 | Evaluator routing and mandatory blind discovery | Enforce the blind floor and route history-aware tasks with bounded, complete briefings | 5/5, `all-codex/full/medium +prep` |
+| 3 | Reconciliation, accountability, reviser, and gate truth | Add correctable semantic decisions, independent audits, structured response/outcome history, round receipts, and honest gate claims | 5/5, `all-codex/full/medium +prep` |
+| 4 | Coordinated cutover and retirement | Revalidate M6 and the amended accountability loop, back up custody, switch once, verify, and retire the replaced path | 5/5, `all-codex/thorough/high +prep` |
 
 Every sprint is bounded to roughly two weeks of skilled human engineering and
 must write the named JSON handoff consumed by the next sprint. Missing,
