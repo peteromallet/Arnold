@@ -75,24 +75,26 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
     assert run.metadata["validation"]["status"] == "passed"
     assert result.resolved_spec_path == result.project_root / ".megaplan/initiatives/epic/chain.yaml"
     assert result.resolved_spec_path.is_absolute()
-    assert calls == [
-        {
-            "operation_id": "chain-1",
-            "command": (
-                "python",
-                "-m",
-                "arnold_pipelines.megaplan",
-                "chain",
-                "start",
-                "--spec",
-                str(result.resolved_spec_path),
-                "--project-dir",
-                str(result.project_root),
-            ),
-            "cwd": result.project_root,
-            "stdout": result.host_result.run_paths.stdout_path,
-        }
-    ]
+    assert len(calls) == 1
+    launch_call = calls[0]
+    assert launch_call["operation_id"] == "chain-1"
+    assert launch_call["cwd"] == result.project_root
+    assert launch_call["stdout"] == result.host_result.run_paths.stdout_path
+    command = launch_call["command"]
+    assert command[:2] == ("env", "ARNOLD_REPAIR_SESSION=agentbox-chain-1")
+    assert command[6:] == (
+        "python",
+        "-m",
+        "arnold_pipelines.megaplan",
+        "chain",
+        "start",
+        "--spec",
+        str(result.resolved_spec_path),
+        "--project-dir",
+        str(result.project_root),
+    )
+    marker = result.project_root / ".megaplan/cloud-sessions/agentbox-chain-1.json"
+    assert json.loads(marker.read_text(encoding="utf-8"))["run_id"] == "chain-1"
     assert metadata["resolved_spec_path"] == str(result.resolved_spec_path)
     assert "megaplan_chain.validation_passed" in [event["event_type"] for event in events]
     assert {resource.resource_type for resource in resources} == {
@@ -1065,7 +1067,7 @@ def test_megaplan_chain_tick_persists_classification_and_status_change_event(
     assert events[-1]["payload"]["current"]["operation_state"] == "suspended"
 
 
-def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runner(
+def test_megaplan_chain_resume_migrates_legacy_command_to_managed_owner_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1105,6 +1107,12 @@ def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runne
         lambda name: SessionStatus(name, "dead", False),
     )
     MegaplanChainHandler().tick(config, "chain-1")
+    legacy_command = tuple(starts[0]["command"])[6:]
+    update_agentbox_operation(
+        config,
+        "chain-1",
+        metadata={"command": list(legacy_command)},
+    )
 
     resumed = MegaplanChainHandler().resume(config, "chain-1")
     events = _events(run_dir_paths(config, "chain-1").events_path)
@@ -1112,6 +1120,12 @@ def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runne
     assert resumed.state is OperationState.RUNNING
     assert len(starts) == 2
     assert starts[-1]["command"] == tuple(load_agentbox_operation(config, "chain-1").metadata["command"])
+    assert starts[-1]["command"][:2] == (
+        "env",
+        "ARNOLD_REPAIR_SESSION=agentbox-chain-1",
+    )
+    marker = result.project_root / ".megaplan/cloud-sessions/agentbox-chain-1.json"
+    assert json.loads(marker.read_text(encoding="utf-8"))["run_id"] == "chain-1"
     assert starts[-1]["cwd"] == result.project_root
     assert events[-1]["event_type"] == "megaplan_chain.resumed"
 

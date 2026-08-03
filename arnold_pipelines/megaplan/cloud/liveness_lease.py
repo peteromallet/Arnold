@@ -13,6 +13,7 @@ or notification authority.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -28,13 +29,17 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-SCHEMA = "arnold.megaplan.runner_liveness_lease.v1"
+SCHEMA = "arnold.megaplan.runner_liveness_lease.v2"
 FENCE_SCHEMA = "arnold.megaplan.runner_liveness_fence.v1"
 DEFAULT_MARKER_DIR = Path("/workspace/.megaplan/cloud-sessions")
 DEFAULT_INTERVAL_S = 5.0
 DEFAULT_TTL_S = 20.0
 MAX_LEASE_SPAN_S = 120.0
 MAX_FUTURE_SKEW_S = 5.0
+OWNER_PID_ENV = "ARNOLD_LIVENESS_OWNER_PID"
+OWNER_START_ENV = "ARNOLD_LIVENESS_OWNER_PROCESS_START"
+
+_ACTIVE_PUBLISHERS: dict[tuple[int, str], "LivenessLeasePublisher"] = {}
 
 
 def _utcnow() -> datetime:
@@ -78,6 +83,12 @@ def marker_binding(marker: Mapping[str, Any]) -> str:
             "run_kind": str(marker.get("run_kind") or ""),
             "identity_digest": str(marker.get("identity_digest") or ""),
             "started_at": str(marker.get("started_at") or ""),
+            "run_id": str(marker.get("run_id") or ""),
+            "attempt_id": str(marker.get("attempt_id") or ""),
+            "incarnation_id": str(marker.get("incarnation_id") or ""),
+            "pid": marker.get("pid"),
+            "pid_namespace_id": str(marker.get("pid_namespace_id") or ""),
+            "process_start_identity": str(marker.get("process_start_identity") or ""),
         }
     )
 
@@ -88,6 +99,10 @@ def lease_path(session: str, *, marker_dir: Path = DEFAULT_MARKER_DIR) -> Path:
 
 def fence_path(session: str, *, marker_dir: Path = DEFAULT_MARKER_DIR) -> Path:
     return marker_dir / f"{session}.liveness-fence.json"
+
+
+def publisher_lock_path(session: str, *, marker_dir: Path = DEFAULT_MARKER_DIR) -> Path:
+    return marker_dir / f"{session}.liveness-publisher.lock"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -105,7 +120,9 @@ def _proc_start_identity(pid: int) -> str | None:
         raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
         tail = raw.rsplit(")", 1)[1].strip().split()
         start_ticks = tail[19]
-        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        boot_id = (
+            Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        )
         return f"{boot_id}:{start_ticks}"
     except (OSError, IndexError):
         # macOS and other non-/proc test hosts: bind to the kernel-reported
@@ -201,6 +218,33 @@ def _allocate_runner_fence(session: str, marker_dir: Path) -> int:
         return runner_fence
 
 
+def prepare_managed_run_marker(
+    session: str,
+    *,
+    marker_dir: Path,
+    workspace: str | Path,
+    remote_spec: str | Path,
+    run_kind: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Create one launch identity before a managed process can start."""
+
+    session = str(session or "").strip()
+    run_kind = str(run_kind or "").strip()
+    if not session or not run_kind:
+        raise ValueError("managed marker requires session and run_kind")
+    payload = {
+        "session": session,
+        "workspace": str(Path(workspace).resolve(strict=False)),
+        "remote_spec": str(Path(remote_spec).resolve(strict=False)),
+        "run_kind": run_kind,
+        "run_id": str(run_id or uuid.uuid4()),
+        "started_at": _iso(_utcnow()),
+    }
+    _atomic_json(Path(marker_dir) / f"{session}.json", payload)
+    return payload
+
+
 class LivenessLeasePublisher:
     """Renew a lease while one exact local process incarnation remains alive."""
 
@@ -220,36 +264,115 @@ class LivenessLeasePublisher:
         self.ttl_s = min(MAX_LEASE_SPAN_S, max(self.interval_s * 2, float(ttl_s)))
         self.target_start_identity = _proc_start_identity(self.target_pid)
         if self.target_start_identity is None:
-            raise RuntimeError(f"target process {self.target_pid} is not locally observable")
+            raise RuntimeError(
+                f"target process {self.target_pid} is not locally observable"
+        )
         self.lease_id = str(uuid.uuid4())
-        self.runner_fence = _allocate_runner_fence(self.session, self.marker_dir)
+        self.attempt_id = str(uuid.uuid4())
+        self.incarnation_id = str(uuid.uuid4())
+        self.runner_fence = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._sequence = 0
+        self._lock_handle: Any | None = None
+        self._marker_snapshot: dict[str, Any] | None = None
+        self._marker_binding = ""
+        self._closed = False
 
     @property
     def path(self) -> Path:
         return lease_path(self.session, marker_dir=self.marker_dir)
 
+    @property
+    def lock_path(self) -> Path:
+        return publisher_lock_path(self.session, marker_dir=self.marker_dir)
+
+    def _acquire_owner_fence(self) -> None:
+        if self._lock_handle is not None:
+            return
+        self.marker_dir.mkdir(parents=True, exist_ok=True)
+        handle = self.lock_path.open("a+b")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.close()
+            raise RuntimeError(
+                f"another liveness publisher owns session {self.session}"
+            ) from exc
+        self._lock_handle = handle
+        # Advance the durable generation only after this publisher has won the
+        # single-owner flock. A losing constructor must not fence the live
+        # owner merely by attempting to start.
+        self.runner_fence = _allocate_runner_fence(self.session, self.marker_dir)
+
+    def _claim_marker(self) -> None:
+        if self._marker_snapshot is not None:
+            return
+        marker_path = self.marker_dir / f"{self.session}.json"
+        marker = _read_json(marker_path)
+        if str(marker.get("session") or "") != self.session:
+            raise RuntimeError(f"canonical session marker missing for {self.session}")
+        required = {
+            "workspace": marker.get("workspace"),
+            "run_kind": marker.get("run_kind"),
+            "run_id": marker.get("run_id"),
+        }
+        missing = [
+            key for key, value in required.items() if not str(value or "").strip()
+        ]
+        if missing:
+            raise RuntimeError(
+                "canonical session marker lacks managed launch identity: "
+                + ", ".join(missing)
+            )
+        marker.update(
+            {
+                "attempt_id": self.attempt_id,
+                "incarnation_id": self.incarnation_id,
+                "pid": self.target_pid,
+                "pid_namespace_id": _namespace_id("pid", self.target_pid),
+                "process_start_identity": self.target_start_identity,
+                "liveness_claimed_at": _iso(_utcnow()),
+            }
+        )
+        _atomic_json(marker_path, marker)
+        self._marker_snapshot = marker
+        self._marker_binding = marker_binding(marker)
+
+    def _ensure_owner(self) -> None:
+        self._acquire_owner_fence()
+        self._claim_marker()
+
     def _target_matches(self) -> bool:
         return (
             _proc_start_identity(self.target_pid) == self.target_start_identity
             and _process_is_runnable(self.target_pid)
+            and bool(self._marker_binding)
+            and marker_binding(_read_json(self.marker_dir / f"{self.session}.json"))
+            == self._marker_binding
         )
 
     def _payload(self, *, live: bool) -> dict[str, Any]:
-        marker = _read_json(self.marker_dir / f"{self.session}.json")
-        if str(marker.get("session") or "") != self.session:
-            raise RuntimeError(f"canonical session marker missing for {self.session}")
+        self._ensure_owner()
+        marker = self._marker_snapshot or {}
+        if (
+            marker_binding(_read_json(self.marker_dir / f"{self.session}.json"))
+            != self._marker_binding
+        ):
+            raise RuntimeError("canonical session marker changed after publisher claim")
         now = _utcnow()
         expires = now + timedelta(seconds=self.ttl_s) if live else now
         self._sequence += 1
         payload: dict[str, Any] = {
             "schema": SCHEMA,
             "session": self.session,
-            "marker_binding": marker_binding(marker),
+            "marker_binding": self._marker_binding,
             "workspace": str(marker.get("workspace") or ""),
             "remote_spec": str(marker.get("remote_spec") or ""),
+            "run_kind": str(marker.get("run_kind") or ""),
+            "run_id": str(marker.get("run_id") or ""),
+            "attempt_id": self.attempt_id,
+            "incarnation_id": self.incarnation_id,
             "lease_id": self.lease_id,
             "runner_fence": self.runner_fence,
             "sequence": self._sequence,
@@ -270,6 +393,9 @@ class LivenessLeasePublisher:
         return payload
 
     def publish_once(self, *, live: bool = True) -> None:
+        if self._closed:
+            raise RuntimeError("closed liveness publisher cannot be resurrected")
+        self._ensure_owner()
         if live and not self._target_matches():
             raise RuntimeError("bound target process incarnation is no longer live")
         _atomic_json(self.path, self._payload(live=live))
@@ -295,6 +421,8 @@ class LivenessLeasePublisher:
         return self
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=max(1.0, self.interval_s + 0.5))
@@ -305,6 +433,13 @@ class LivenessLeasePublisher:
                 self.publish_once(live=False)
             except Exception:
                 pass
+        if self._lock_handle is not None:
+            try:
+                fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._lock_handle.close()
+                self._lock_handle = None
+        self._closed = True
 
 
 def observe_liveness_lease(
@@ -317,17 +452,38 @@ def observe_liveness_lease(
     session = str(marker.get("session") or "")
     path = lease_path(session, marker_dir=Path(marker_dir))
     raw = _read_json(path)
-    base = {"state": "unknown", "live": False, "path": str(path), "reason": "lease absent"}
+    base = {
+        "state": "unknown",
+        "live": False,
+        "path": str(path),
+        "reason": "lease absent",
+    }
     if not raw:
         return base
     if raw.get("schema") != SCHEMA:
         return {**base, "state": "degraded", "reason": "unsupported lease schema"}
+    required_identity = (
+        "run_kind",
+        "run_id",
+        "attempt_id",
+        "incarnation_id",
+        "pid_namespace_id",
+        "target_process_start_identity",
+    )
+    if any(not str(raw.get(key) or "").strip() for key in required_identity):
+        return {**base, "state": "degraded", "reason": "lease identity incomplete"}
+    if not isinstance(raw.get("target_pid"), int) or isinstance(
+        raw.get("target_pid"), bool
+    ):
+        return {**base, "state": "degraded", "reason": "lease target PID invalid"}
     supplied_digest = raw.get("record_digest")
     unsigned = dict(raw)
     unsigned.pop("record_digest", None)
     if supplied_digest != _digest(unsigned):
         return {**base, "state": "degraded", "reason": "lease digest mismatch"}
-    if raw.get("session") != session or raw.get("marker_binding") != marker_binding(marker):
+    if raw.get("session") != session or raw.get("marker_binding") != marker_binding(
+        marker
+    ):
         return {**base, "state": "degraded", "reason": "lease launch identity mismatch"}
     identity = {
         "lease_id": raw.get("lease_id"),
@@ -339,20 +495,21 @@ def observe_liveness_lease(
         "runner_fence": raw.get("runner_fence"),
     }
     fence = _read_json(fence_path(session, marker_dir=Path(marker_dir)))
-    if fence:
-        try:
-            current_fence = int(fence.get("runner_fence"))
-            lease_fence = int(raw.get("runner_fence"))
-        except (TypeError, ValueError):
-            return {**base, **identity, "state": "degraded", "reason": "runner fence invalid"}
-        if current_fence != lease_fence:
-            return {
-                **base,
-                **identity,
-                "state": "fenced",
-                "reason": "runner lease belongs to a replaced fence generation",
-                "current_runner_fence": current_fence,
-            }
+    try:
+        if fence.get("schema") != FENCE_SCHEMA or fence.get("session") != session:
+            raise ValueError("fence identity mismatch")
+        current_fence = int(fence.get("runner_fence"))
+        lease_fence = int(raw.get("runner_fence"))
+    except (TypeError, ValueError):
+        return {**base, **identity, "state": "degraded", "reason": "runner fence invalid"}
+    if current_fence != lease_fence:
+        return {
+            **base,
+            **identity,
+            "state": "fenced",
+            "reason": "runner lease belongs to a replaced fence generation",
+            "current_runner_fence": current_fence,
+        }
     generated = _parse_iso(raw.get("generated_at"))
     expires = _parse_iso(raw.get("expires_at"))
     if generated is None or expires is None:
@@ -376,6 +533,10 @@ def observe_liveness_lease(
         "reason": "fresh identity-bound runner lease",
         **identity,
         "target_pid": raw.get("target_pid"),
+        "run_kind": raw.get("run_kind"),
+        "run_id": raw.get("run_id"),
+        "attempt_id": raw.get("attempt_id"),
+        "incarnation_id": raw.get("incarnation_id"),
         "sequence": raw.get("sequence"),
     }
 
@@ -387,14 +548,83 @@ def start_from_environment() -> LivenessLeasePublisher | None:
     marker_dir = Path(
         os.environ.get("ARNOLD_REPAIR_MARKER_DIR") or str(DEFAULT_MARKER_DIR)
     )
+    current_pid = os.getpid()
+    current_start = _proc_start_identity(current_pid) or ""
+    active = _ACTIVE_PUBLISHERS.get((current_pid, session))
+    if active is not None:
+        return active
+
+    inherited_pid = 0
     try:
-        return LivenessLeasePublisher(session, marker_dir=marker_dir).start()
+        inherited_pid = int(os.environ.get(OWNER_PID_ENV) or 0)
+    except ValueError:
+        inherited_pid = 0
+    inherited_start = str(os.environ.get(OWNER_START_ENV) or "")
+    if inherited_pid and inherited_pid != current_pid:
+        if (
+            inherited_start
+            and _proc_start_identity(inherited_pid) == inherited_start
+            and _process_is_runnable(inherited_pid)
+        ):
+            # A child process inherited the managed-run environment. The
+            # exact parent incarnation remains the sole publisher.
+            return None
+    previous_pid = os.environ.get(OWNER_PID_ENV)
+    previous_start = os.environ.get(OWNER_START_ENV)
+    os.environ[OWNER_PID_ENV] = str(current_pid)
+    os.environ[OWNER_START_ENV] = current_start
+    publisher: LivenessLeasePublisher | None = None
+    try:
+        publisher = LivenessLeasePublisher(session, marker_dir=marker_dir)
+        publisher.start()
     except Exception:
+        if publisher is not None:
+            publisher.close()
+        if previous_pid is None:
+            os.environ.pop(OWNER_PID_ENV, None)
+        else:
+            os.environ[OWNER_PID_ENV] = previous_pid
+        if previous_start is None:
+            os.environ.pop(OWNER_START_ENV, None)
+        else:
+            os.environ[OWNER_START_ENV] = previous_start
         return None
+    publisher._previous_owner_env = (previous_pid, previous_start)
+    _ACTIVE_PUBLISHERS[(current_pid, session)] = publisher
+    return publisher
+
+
+@contextlib.contextmanager
+def managed_runner_lifecycle():
+    """Publish exactly once for one managed CLI process and all its children."""
+
+    session = str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+    existing = _ACTIVE_PUBLISHERS.get((os.getpid(), session)) if session else None
+    publisher = start_from_environment()
+    owns_lifecycle = publisher is not None and publisher is not existing
+    try:
+        yield publisher
+    finally:
+        if owns_lifecycle and publisher is not None:
+            publisher.close()
+            _ACTIVE_PUBLISHERS.pop((os.getpid(), session), None)
+            previous_pid, previous_start = getattr(
+                publisher, "_previous_owner_env", (None, None)
+            )
+            if previous_pid is None:
+                os.environ.pop(OWNER_PID_ENV, None)
+            else:
+                os.environ[OWNER_PID_ENV] = previous_pid
+            if previous_start is None:
+                os.environ.pop(OWNER_START_ENV, None)
+            else:
+                os.environ[OWNER_START_ENV] = previous_start
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Publish a runner-owned liveness lease")
+    parser = argparse.ArgumentParser(
+        description="Publish a runner-owned liveness lease"
+    )
     parser.add_argument("publish", nargs="?")
     parser.add_argument("--session", required=True)
     parser.add_argument("--marker-dir", type=Path, default=DEFAULT_MARKER_DIR)

@@ -5530,7 +5530,7 @@ def test_cloud_discover_relaunch_materializers_are_non_authoritative(
         "except SystemExit:",
         "    pass",
         "sys.stdout = _saved",
-        "_plan = ns['_plan_relaunch_command']('demo-plan', '/tmp/ws')",
+        "_plan = ns['_plan_relaunch_command']('demo-plan', '/tmp/ws', 'demo')",
         "_chain = ns['_chain_relaunch_command']('origin/main', '/tmp/ws', 'demo')",
         "_gate = ns['_relaunch_materializer_authority_gate']",
         "_proofs = [",

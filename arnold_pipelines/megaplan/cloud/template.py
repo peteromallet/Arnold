@@ -9,7 +9,10 @@ from pathlib import Path, PurePosixPath
 from string import Template
 
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
-from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
+from arnold_pipelines.megaplan.profiles import (
+    DEFAULT_AGENT_ROUTING,
+    effective_premium_vendor,
+)
 from arnold_pipelines.megaplan.types import (
     format_agent_spec,
     is_premium_placeholder_spec,
@@ -73,7 +76,9 @@ else
 fi"""
 )
 
-_IDLE_RUNNER = Template("""tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -l" """)
+_IDLE_RUNNER = Template(
+    """tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -l" """
+)
 
 _ZERO_RECOVERY_ENTRYPOINT = """#!/usr/bin/env bash
 set -euo pipefail
@@ -99,17 +104,29 @@ exec python3 /usr/local/bin/healthserver.py
 
 
 def _entrypoint_template() -> Template:
-    text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("entrypoint.sh.tmpl").read_text(encoding="utf-8")
+    text = (
+        resources.files("arnold_pipelines.megaplan.cloud.templates")
+        .joinpath("entrypoint.sh.tmpl")
+        .read_text(encoding="utf-8")
+    )
     return Template(text)
 
 
 def _render_resource_template(name: str, values: dict[str, str]) -> str:
-    text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath(name).read_text(encoding="utf-8")
+    text = (
+        resources.files("arnold_pipelines.megaplan.cloud.templates")
+        .joinpath(name)
+        .read_text(encoding="utf-8")
+    )
     return Template(text).safe_substitute(values)
 
 
 def _dockerfile_template() -> Template:
-    text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("Dockerfile").read_text(encoding="utf-8")
+    text = (
+        resources.files("arnold_pipelines.megaplan.cloud.templates")
+        .joinpath("Dockerfile")
+        .read_text(encoding="utf-8")
+    )
     return Template(text)
 
 
@@ -147,17 +164,58 @@ def render_ensure_repos_block(spec: CloudSpec) -> str:
     return "\n".join(blocks)
 
 
+def _managed_run_prelude(
+    *, session: str, workspace: str, remote_spec: str, run_kind: str
+) -> str:
+    """Materialize the canonical marker/env contract for image entrypoints."""
+
+    marker_dir = "/workspace/.megaplan/cloud-sessions"
+    marker_path = str(PurePosixPath(marker_dir) / f"{session}.json")
+    script = f"""
+import json, os, pathlib, tempfile, uuid
+from datetime import datetime, timezone
+
+path = pathlib.Path({marker_path!r})
+payload = {{
+    "session": {session!r},
+    "workspace": {workspace!r},
+    "remote_spec": {remote_spec!r},
+    "run_kind": {run_kind!r},
+    "run_id": str(uuid.uuid4()),
+    "started_at": datetime.now(timezone.utc).isoformat(),
+}}
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+    handle.write("\\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(tmp_name, path)
+"""
+    return (
+        "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START\n"
+        "export ARNOLD_REPAIR_QUEUE_ROOT=${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}\n"
+        f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}\n"
+        f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}\n"
+        f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(run_kind)}\n"
+        f"python3 - <<'MEGAPLAN_MANAGED_RUN_MARKER'\n{script.strip()}\n"
+        "MEGAPLAN_MANAGED_RUN_MARKER"
+    )
+
+
 def _auto_command(spec: CloudSpec) -> str:
     assert spec.auto is not None
     plan_dir = f"{spec.repo.workspace}/.megaplan/plans/{spec.auto.plan_name}"
     script = f"""
 set -euo pipefail
+{_managed_run_prelude(session="agent", workspace=spec.repo.workspace, remote_spec=plan_dir, run_kind="plan")}
 PLAN_DIR={shlex.quote(plan_dir)}
 if [[ ! -d "$PLAN_DIR" ]]; then
   IDEA="$(cat "$IDEA_FILE")"
-  arnold init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
+  python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
 fi
-exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} arnold auto --plan {shlex.quote(spec.auto.plan_name)}
+exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(spec.auto.plan_name)} --project-dir {shlex.quote(spec.repo.workspace)}
 """
     return _quoted(script)
 
@@ -166,6 +224,7 @@ def _chain_command(spec: CloudSpec) -> str:
     assert spec.chain is not None
     script = f"""
 set -euo pipefail
+{_managed_run_prelude(session="agent", workspace=spec.repo.workspace, remote_spec=spec.chain.spec, run_kind="chain")}
 exec arnold-supervise chain arnold-chain {shlex.quote(spec.chain.spec)}
 """
     return _quoted(script)
@@ -309,7 +368,7 @@ fi
 def _codex_auth_config_block(spec: CloudSpec) -> str:
     if spec.megaplan.codex_auth == "apikey":
         return ""
-    return '\n'.join(
+    return "\n".join(
         [
             'preferred_auth_method = "chatgpt"',
             'forced_login_method = "chatgpt"',
@@ -337,8 +396,12 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "CODEX_AUTH_CONFIG_BLOCK": _codex_auth_config_block(spec),
         "ROBUSTNESS": spec.auto.robustness if spec.auto is not None else "standard",
         "MODE": spec.mode,
-        "IDEA_FILE": spec.auto.idea_file if spec.auto is not None else "/workspace/idea.txt",
-        "CHAIN_SPEC": spec.chain.spec if spec.chain is not None else "/workspace/chain.yaml",
+        "IDEA_FILE": spec.auto.idea_file
+        if spec.auto is not None
+        else "/workspace/idea.txt",
+        "CHAIN_SPEC": spec.chain.spec
+        if spec.chain is not None
+        else "/workspace/chain.yaml",
         "AUTO_PLAN_NAME": spec.auto.plan_name if spec.auto is not None else "idle-plan",
         "AGENT_ROUTING_BLOCK": _agent_routing_block(spec),
         "CLAUDE_AUTH_BLOCK": _claude_auth_block(),
@@ -403,18 +466,33 @@ def materialize_deploy_dir(spec: CloudSpec, dest: Path) -> None:
 
     _write_text(dest / "Dockerfile", render_dockerfile(spec))
     _write_text(dest / "entrypoint.sh", render_entrypoint(spec), executable=True)
-    _write_text(dest / "healthserver.py", templates.joinpath("healthserver.py").read_text(encoding="utf-8"))
+    _write_text(
+        dest / "healthserver.py",
+        templates.joinpath("healthserver.py").read_text(encoding="utf-8"),
+    )
     if spec.provider == "local" and spec.local is not None:
         _write_text(dest / "docker-compose.yaml", render_docker_compose(spec))
         (dest / spec.local.workdir).mkdir(parents=True, exist_ok=True)
 
-    for name in ("mp-run", "mp-supervise", "mp-heartbeat", "mp-chain",
-                 "arnold-run", "arnold-supervise", "arnold-heartbeat", "arnold-chain",
-                 "arnold-watchdog", "arnold-kimi-goal-operator",
-                 "arnold-repair-trigger", "arnold-repair-loop",
-                 "arnold-meta-repair-loop", "arnold-progress-auditor",
-                 "arnold-supervisor-runtime", "arnold-supervisor-runtime-lib",
-                 "arnold-supervisor-gap-scan"):
+    for name in (
+        "mp-run",
+        "mp-supervise",
+        "mp-heartbeat",
+        "mp-chain",
+        "arnold-run",
+        "arnold-supervise",
+        "arnold-heartbeat",
+        "arnold-chain",
+        "arnold-watchdog",
+        "arnold-kimi-goal-operator",
+        "arnold-repair-trigger",
+        "arnold-repair-loop",
+        "arnold-meta-repair-loop",
+        "arnold-progress-auditor",
+        "arnold-supervisor-runtime",
+        "arnold-supervisor-runtime-lib",
+        "arnold-supervisor-gap-scan",
+    ):
         _write_text(
             wrappers_dir / name,
             wrappers.joinpath(name).read_text(encoding="utf-8"),

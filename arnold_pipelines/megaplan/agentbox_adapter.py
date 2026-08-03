@@ -16,8 +16,14 @@ from arnold.runtime.durable_ops import (
     is_terminal_operation_state,
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec, validate_paths
-from arnold_pipelines.megaplan.chain.status import ChainStatusSnapshot, build_chain_status_snapshot
-from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
+from arnold_pipelines.megaplan.chain.status import (
+    ChainStatusSnapshot,
+    build_chain_status_snapshot,
+)
+from arnold_pipelines.megaplan.cloud.liveness_lease import prepare_managed_run_marker
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import (
+    begin_process_adapter_attempt,
+)
 from arnold_pipelines.megaplan.discord_dm import send_discord_dm
 from arnold_pipelines.megaplan.types import CliError
 
@@ -40,8 +46,14 @@ from agentbox.operations import (
     update_agentbox_operation,
 )
 from agentbox.repos import get_repo
-from agentbox.run_dirs import RunDirPaths, append_event, read_metadata, run_dir_paths, write_metadata
-from agentbox.tmux import inspect_session
+from agentbox.run_dirs import (
+    RunDirPaths,
+    append_event,
+    read_metadata,
+    run_dir_paths,
+    write_metadata,
+)
+from agentbox.tmux import inspect_session, session_name as agentbox_session_name
 from agentbox.worktrees import WorktreeAllocation, branch_name
 
 
@@ -166,9 +178,7 @@ class MegaplanChainHandler:
 
         manifest = _load_credential_manifest(resolved_spec_path)
         if manifest is not None:
-            ok, message, fix_commands = _check_required_credentials(
-                config, manifest
-            )
+            ok, message, fix_commands = _check_required_credentials(config, manifest)
             if not ok:
                 diagnostics = _credential_diagnostics(
                     message=message,
@@ -181,7 +191,10 @@ class MegaplanChainHandler:
                 wbc_attempt.terminal(
                     status="failed_before_dispatch",
                     outcome="blocked",
-                    details={"phase": "credential_preflight", "diagnostics": dict(diagnostics)},
+                    details={
+                        "phase": "credential_preflight",
+                        "diagnostics": dict(diagnostics),
+                    },
                 )
                 raise MegaplanChainLaunchError(
                     "credential_preflight_failed",
@@ -200,13 +213,17 @@ class MegaplanChainHandler:
                 project_root=project_root,
                 extra=exc.extra,
             )
-            _record_validation_failure(config, operation_id, prepared.run_paths, diagnostics)
+            _record_validation_failure(
+                config, operation_id, prepared.run_paths, diagnostics
+            )
             wbc_attempt.terminal(
                 status="failed_before_dispatch",
                 outcome="blocked",
                 details={"phase": "validation", "diagnostics": dict(diagnostics)},
             )
-            raise MegaplanChainLaunchError(exc.code, exc.message, diagnostics=diagnostics) from exc
+            raise MegaplanChainLaunchError(
+                exc.code, exc.message, diagnostics=diagnostics
+            ) from exc
         except Exception as exc:
             diagnostics = _validation_diagnostics(
                 kind=type(exc).__name__,
@@ -214,15 +231,34 @@ class MegaplanChainHandler:
                 spec_path=resolved_spec_path,
                 project_root=project_root,
             )
-            _record_validation_failure(config, operation_id, prepared.run_paths, diagnostics)
+            _record_validation_failure(
+                config, operation_id, prepared.run_paths, diagnostics
+            )
             wbc_attempt.terminal(
                 status="failed_before_dispatch",
                 outcome="blocked",
                 details={"phase": "validation", "diagnostics": dict(diagnostics)},
             )
-            raise MegaplanChainLaunchError("validation_failed", str(exc), diagnostics=diagnostics) from exc
+            raise MegaplanChainLaunchError(
+                "validation_failed", str(exc), diagnostics=diagnostics
+            ) from exc
 
-        command = _chain_start_command(resolved_spec_path, project_root)
+        managed_session = agentbox_session_name(operation_id)
+        marker_dir = project_root / ".megaplan" / "cloud-sessions"
+        prepare_managed_run_marker(
+            managed_session,
+            marker_dir=marker_dir,
+            workspace=project_root,
+            remote_spec=resolved_spec_path,
+            run_kind="chain",
+            run_id=operation_id,
+        )
+        command = _chain_start_command(
+            resolved_spec_path,
+            project_root,
+            session=managed_session,
+            marker_dir=marker_dir,
+        )
         validation = {
             "status": "passed",
             "spec_path": str(resolved_spec_path),
@@ -251,7 +287,10 @@ class MegaplanChainHandler:
         append_event(
             prepared.run_paths,
             "megaplan_chain.validation_passed",
-            payload={"spec_path": str(resolved_spec_path), "project_root": str(project_root)},
+            payload={
+                "spec_path": str(resolved_spec_path),
+                "project_root": str(project_root),
+            },
         )
         wbc_attempt.effect(
             "validation_passed",
@@ -272,7 +311,11 @@ class MegaplanChainHandler:
             wbc_attempt.terminal(
                 status="failed",
                 outcome="indeterminate",
-                details={"phase": "host_launch", "kind": exc.kind, "diagnostics": dict(exc.diagnostics)},
+                details={
+                    "phase": "host_launch",
+                    "kind": exc.kind,
+                    "diagnostics": dict(exc.diagnostics),
+                },
             )
             raise MegaplanChainLaunchError(
                 exc.kind,
@@ -343,7 +386,9 @@ class MegaplanChainHandler:
         }
         target_state = classification.operation_state
         update_state: OperationState | None = None
-        if target_state is not current.state and can_transition_operation(current.state, target_state):
+        if target_state is not current.state and can_transition_operation(
+            current.state, target_state
+        ):
             update_state = target_state
         updated = update_agentbox_operation(
             config,
@@ -363,7 +408,10 @@ class MegaplanChainHandler:
                 },
             )
         _record_pr_and_ci(config, operation_id, updated, snapshot)
-        if is_terminal_operation_state(updated.state) and "completion_dm" not in updated.metadata:
+        if (
+            is_terminal_operation_state(updated.state)
+            and "completion_dm" not in updated.metadata
+        ):
             refreshed = load_agentbox_operation(
                 config,
                 operation_id,
@@ -419,7 +467,9 @@ class MegaplanChainHandler:
                 "runner": snapshot.runner,
             }
             _record_resume_refusal(config, operation_id, diagnostics)
-            raise MegaplanChainLaunchError("resume_not_allowed", message, diagnostics=diagnostics)
+            raise MegaplanChainLaunchError(
+                "resume_not_allowed", message, diagnostics=diagnostics
+            )
 
         run = load_agentbox_operation(
             config,
@@ -427,14 +477,44 @@ class MegaplanChainHandler:
             operation_types=(MEGAPLAN_CHAIN_OPERATION_TYPE,),
         )
         resources = open_operation_store(config).list_typed_resources(operation_id)
-        command = _stored_chain_command(run.metadata)
+        # Validate the persisted shape before migrating it. Resume always
+        # rebuilds the owner route from authoritative operation metadata so a
+        # legacy command cannot bypass lease publication and a stale process
+        # incarnation cannot be inherited by the replacement.
+        _stored_chain_command(run.metadata)
+        resolved_spec_path = _resolved_spec_from_metadata(run.metadata)
+        managed_session = agentbox_session_name(operation_id)
+        marker_dir = snapshot.project_root / ".megaplan" / "cloud-sessions"
+        prepare_managed_run_marker(
+            managed_session,
+            marker_dir=marker_dir,
+            workspace=snapshot.project_root,
+            remote_spec=resolved_spec_path,
+            run_kind="chain",
+            run_id=operation_id,
+        )
+        command = _chain_start_command(
+            resolved_spec_path,
+            snapshot.project_root,
+            session=managed_session,
+            marker_dir=marker_dir,
+        )
+        update_agentbox_operation(
+            config,
+            operation_id,
+            metadata={"command": list(command)},
+        )
         prepared = HostPreparedResources(
             operation_id=operation_id,
             run_paths=run_dir_paths(config, operation_id),
-            requested_repo_names=tuple(str(name) for name in run.metadata.get("repo_names", ())),
+            requested_repo_names=tuple(
+                str(name) for name in run.metadata.get("repo_names", ())
+            ),
             worktrees=_worktrees_from_resources(config, operation_id, list(resources)),
             log_resources=tuple(
-                resource for resource in resources if resource.resource_type is ResourceType.LOG
+                resource
+                for resource in resources
+                if resource.resource_type is ResourceType.LOG
             ),
         )
         wbc_attempt = _begin_agentbox_process_attempt(
@@ -457,7 +537,11 @@ class MegaplanChainHandler:
             wbc_attempt.terminal(
                 status="failed",
                 outcome="indeterminate",
-                details={"phase": "host_launch", "kind": exc.kind, "diagnostics": dict(exc.diagnostics)},
+                details={
+                    "phase": "host_launch",
+                    "kind": exc.kind,
+                    "diagnostics": dict(exc.diagnostics),
+                },
             )
             raise MegaplanChainLaunchError(
                 exc.kind,
@@ -508,7 +592,9 @@ class MegaplanChainHandler:
             parts.append(f"spec={snapshot.spec_path}")
         return " ".join(parts)
 
-    def cleanup_descriptor(self, config: AgentBoxConfig, operation_id: str) -> dict[str, Any]:
+    def cleanup_descriptor(
+        self, config: AgentBoxConfig, operation_id: str
+    ) -> dict[str, Any]:
         """Describe operation-owned resources without deleting anything."""
 
         run = load_agentbox_operation(
@@ -560,8 +646,25 @@ def _prevalidation_command(spec_path: Path | str) -> list[str]:
     ]
 
 
-def _chain_start_command(spec_path: Path, project_root: Path) -> tuple[str, ...]:
+def _chain_start_command(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    session: str | None = None,
+    marker_dir: Path | None = None,
+) -> tuple[str, ...]:
+    managed_env: tuple[str, ...] = ()
+    if session and marker_dir is not None:
+        managed_env = (
+            "env",
+            f"ARNOLD_REPAIR_SESSION={session}",
+            f"ARNOLD_REPAIR_MARKER_DIR={marker_dir}",
+            "ARNOLD_REPAIR_RUN_KIND=chain",
+            "ARNOLD_LIVENESS_OWNER_PID=",
+            "ARNOLD_LIVENESS_OWNER_PROCESS_START=",
+        )
     return (
+        *managed_env,
         "python",
         "-m",
         "arnold_pipelines.megaplan",
@@ -632,10 +735,14 @@ def _record_validation_failure(
             "validation": validation,
         },
     )
-    append_event(run_paths, "megaplan_chain.validation_failed", payload=dict(diagnostics))
+    append_event(
+        run_paths, "megaplan_chain.validation_failed", payload=dict(diagnostics)
+    )
 
 
-def _load_existing_megaplan_operation(config: AgentBoxConfig, operation_id: str) -> Any | None:
+def _load_existing_megaplan_operation(
+    config: AgentBoxConfig, operation_id: str
+) -> Any | None:
     try:
         return load_agentbox_operation(
             config,
@@ -668,12 +775,16 @@ def _record_resume_refusal(
         append_event(paths, "megaplan_chain.resume_refused", payload=dict(diagnostics))
 
 
-def _summarize_live_running_session(config: AgentBoxConfig, run: Any) -> HostLaunchResult | None:
+def _summarize_live_running_session(
+    config: AgentBoxConfig, run: Any
+) -> HostLaunchResult | None:
     if run.state is not OperationState.RUNNING:
         return None
     resources = open_operation_store(config).list_typed_resources(run.id)
     process_resources = [
-        resource for resource in resources if resource.resource_type is ResourceType.PROCESS_SESSION
+        resource
+        for resource in resources
+        if resource.resource_type is ResourceType.PROCESS_SESSION
     ]
     session_name = _session_name_from_run(run.metadata, process_resources)
     if not session_name:
@@ -693,7 +804,9 @@ def _summarize_live_running_session(config: AgentBoxConfig, run: Any) -> HostLau
         run_paths=run_paths,
         worktrees=_worktrees_from_resources(config, run.id, resources),
         log_resources=tuple(
-            resource for resource in resources if resource.resource_type is ResourceType.LOG
+            resource
+            for resource in resources
+            if resource.resource_type is ResourceType.LOG
         ),
         session_name=session_name,
         session_status=status,
@@ -707,7 +820,9 @@ def _summarize_live_running_session(config: AgentBoxConfig, run: Any) -> HostLau
     )
 
 
-def _session_name_from_run(metadata: Mapping[str, Any], process_resources: list[Any]) -> str | None:
+def _session_name_from_run(
+    metadata: Mapping[str, Any], process_resources: list[Any]
+) -> str | None:
     value = metadata.get("session_name")
     if isinstance(value, str) and value:
         return value
@@ -794,14 +909,37 @@ def _is_stale_runner_resume(snapshot: ChainStatusSnapshot) -> bool:
             "running_operation_without_live_runner",
             "human_verification_satisfied_runner_inactive",
         }
-        and snapshot.runner.get("status") in {"dead", "missing", "unknown", "unavailable"}
+        and snapshot.runner.get("status")
+        in {"dead", "missing", "unknown", "unavailable"}
     )
 
 
 def _stored_chain_command(metadata: Mapping[str, Any]) -> tuple[str, ...]:
     command = metadata.get("command")
     if isinstance(command, list) and all(isinstance(part, str) for part in command):
-        if tuple(command[:4]) == ("python", "-m", "arnold_pipelines.megaplan", "chain"):
+        parts = tuple(command)
+        python_at = 0
+        if parts and parts[0] == "env":
+            required_prefixes = (
+                "ARNOLD_REPAIR_SESSION=",
+                "ARNOLD_REPAIR_MARKER_DIR=",
+                "ARNOLD_REPAIR_RUN_KIND=chain",
+                "ARNOLD_LIVENESS_OWNER_PID=",
+                "ARNOLD_LIVENESS_OWNER_PROCESS_START=",
+            )
+            env_values = parts[1:6]
+            if len(env_values) != len(required_prefixes) or any(
+                not value.startswith(prefix)
+                for value, prefix in zip(env_values, required_prefixes, strict=True)
+            ):
+                parts = ()
+            python_at = 6
+        if parts[python_at : python_at + 4] == (
+            "python",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+        ):
             return tuple(command)
 
     message = "megaplan_chain operation is missing a stored chain command"
@@ -845,7 +983,9 @@ def _check_required_credentials(
     manifest: CredentialManifest,
     environ: Mapping[str, str] | None = None,
 ) -> tuple[bool, str, list[str]]:
-    records = {record.name: record for record in list_credentials(config, environ=environ)}
+    records = {
+        record.name: record for record in list_credentials(config, environ=environ)
+    }
     missing: list[str] = []
     stale: list[str] = []
 
@@ -899,7 +1039,9 @@ def _record_completion_dm(config: AgentBoxConfig, operation_id: str, run: Any) -
     paths = run_dir_paths(config, operation_id)
     dm = _build_completion_dm(run)
     update_agentbox_operation(config, operation_id, metadata={"completion_dm": dm})
-    append_event(paths, "megaplan_chain.completion_dm_ready", payload={"completion_dm": dm})
+    append_event(
+        paths, "megaplan_chain.completion_dm_ready", payload={"completion_dm": dm}
+    )
     _send_completion_dm(run, fallback_text=dm)
 
 
@@ -945,7 +1087,9 @@ def _send_completion_dm(
         else:
             send_discord_dm(payload)
     except Exception:
-        LOGGER.warning("Completion Discord DM send crashed for operation %s", run.id, exc_info=True)
+        LOGGER.warning(
+            "Completion Discord DM send crashed for operation %s", run.id, exc_info=True
+        )
 
 
 def _build_completion_dm_payload(run: Any, *, fallback_text: str) -> dict[str, Any]:
@@ -961,11 +1105,17 @@ def _build_completion_dm_payload(run: Any, *, fallback_text: str) -> dict[str, A
         {"label": "State", "value": run.state.value, "style": "code"},
     ]
     if validation:
-        fields.append({"label": "Validation", "value": validation.get("status", "unknown"), "style": "code"})
+        fields.append(
+            {
+                "label": "Validation",
+                "value": validation.get("status", "unknown"),
+                "style": "code",
+            }
+        )
     if branch:
         fields.append({"label": "Branch", "value": branch, "style": "code"})
     if pr_info.get("number") is not None:
-        fields.append({"label": "PR", "value": str(pr_info['number']), "style": "code"})
+        fields.append({"label": "PR", "value": str(pr_info["number"]), "style": "code"})
     if ci_status:
         fields.append({"label": "CI", "value": ci_status, "style": "code"})
 
@@ -1010,7 +1160,9 @@ def _record_pr_and_ci(
                 pr_number=pr_number,
                 pr_url=None,
             )
-    stored_pr_number = ((run.metadata.get("pr_info") or {}).get(repo_name) or {}).get("number")
+    stored_pr_number = ((run.metadata.get("pr_info") or {}).get(repo_name) or {}).get(
+        "number"
+    )
     if stored_pr_number is None and pr_number is None:
         return
     try:
@@ -1050,7 +1202,11 @@ def _record_credential_failure(
             "validation": {"status": "failed", "phase": "credential_preflight"},
         },
     )
-    append_event(run_paths, "megaplan_chain.credential_preflight_failed", payload=dict(diagnostics))
+    append_event(
+        run_paths,
+        "megaplan_chain.credential_preflight_failed",
+        payload=dict(diagnostics),
+    )
 
 
 __all__ = [

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, replace
 from importlib import resources
@@ -3609,13 +3610,10 @@ def _chain_start_command(
             f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
         )
     if repair_session:
-        prefix += (
-            "export ARNOLD_REPAIR_QUEUE_ROOT="
-            '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
-            "export ARNOLD_REPAIR_MARKER_DIR="
-            f"{shlex.quote(repair_marker_dir)}; "
-            f"export ARNOLD_REPAIR_SESSION={shlex.quote(repair_session)}; "
-            f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(repair_run_kind)}; "
+        prefix += _managed_run_env_prefix(
+            repair_session,
+            run_kind=repair_run_kind,
+            marker_dir=repair_marker_dir,
         )
     if engine_dir:
         cwd = shlex.quote(project_dir or engine_dir)
@@ -3660,18 +3658,47 @@ def _write_session_marker_command(marker_path: str, marker_payload: dict[str, An
     return _atomic_marker_write_command(marker_path, marker_payload)
 
 
+def _managed_run_env_prefix(
+    session: str,
+    *,
+    run_kind: str,
+    marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
+) -> str:
+    """Return the one launcher-to-runner owner-lease environment contract."""
+
+    return (
+        # Never accept a box-wide or parent-shell publisher claim. The Python
+        # owner sets these only after it has acquired the per-session fence;
+        # its genuine children inherit them after launch.
+        "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; "
+        "export ARNOLD_REPAIR_QUEUE_ROOT="
+        '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
+        f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}; "
+        f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}; "
+        f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(run_kind)}; "
+    )
+
+
 def _plan_auto_command(
     plan_name: str,
     *,
     workspace: str,
     engine_dir: str | None = None,
     log_relative: str,
+    repair_session: str | None = None,
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
     prefix = (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += _managed_run_env_prefix(
+            repair_session,
+            run_kind="plan",
+            marker_dir=repair_marker_dir,
+        )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
         prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
@@ -3682,7 +3709,8 @@ def _plan_auto_command(
     else:
         command = (
             f"cd {shlex.quote(workspace)} && "
-            f"arnold auto --plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
+            f"python3 -P -m arnold_pipelines.megaplan auto "
+            f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
         )
     return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
 
@@ -3899,6 +3927,8 @@ def _tmux_chain_launch_command(
         "remote_spec": remote_spec_path,
         "identity_digest": digest,
         "run_kind": "chain",
+        "run_id": str(uuid.uuid4()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
     from arnold_pipelines.megaplan.notification_safety import (
         notification_context_for_current_execution,
@@ -4004,6 +4034,8 @@ def _epic_chain_start_command(
     engine_dir: str | None = None,
     one_shot: bool = False,
     log_relative: str,
+    repair_session: str | None = None,
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     flags = f"--spec {shlex.quote(remote_spec_path)} --project-dir {shlex.quote(workspace)}"
     if one_shot:
@@ -4013,6 +4045,12 @@ def _epic_chain_start_command(
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += _managed_run_env_prefix(
+            repair_session,
+            run_kind="epic_chain",
+            marker_dir=repair_marker_dir,
+        )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
         prefix += (
@@ -4033,6 +4071,8 @@ def _refresh_then_epic_chain_start_command(
     workspace: str,
     one_shot: bool = False,
     log_relative: str,
+    repair_session: str | None = None,
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     refresh = _megaplan_refresh_command(
         spec,
@@ -4042,7 +4082,7 @@ def _refresh_then_epic_chain_start_command(
     log_target = str(PurePosixPath(workspace) / log_relative)
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_target)} 2>&1 || true; "
-        f"{_epic_chain_start_command(remote_spec_path, workspace=workspace, engine_dir=engine_dir, one_shot=one_shot, log_relative=log_relative)}"
+        f"{_epic_chain_start_command(remote_spec_path, workspace=workspace, engine_dir=engine_dir, one_shot=one_shot, log_relative=log_relative, repair_session=repair_session, repair_marker_dir=repair_marker_dir)}"
     )
 
 
@@ -4064,6 +4104,8 @@ def _tmux_epic_chain_launch_command(
         workspace=workspace,
         one_shot=one_shot,
         log_relative=log_relative,
+        repair_session=session_name,
+        repair_marker_dir=str(PurePosixPath(marker_path).parent),
     )
     from arnold_pipelines.megaplan.resident.provenance import (
         DELEGATION_CONTEXT_ENV,
@@ -5074,6 +5116,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         "identity_digest": launch_ctx.digest,
         "chain_slug": launch_ctx.slug,
         "run_kind": "chain",
+        "run_id": str(uuid.uuid4()),
         "allow_human_gates": bool(getattr(args, "allow_human_gates", False)),
         "relaunch_command": _refresh_then_chain_start_command(
             remote_spec_path,
@@ -5568,6 +5611,8 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         workspace=launch_ctx.workspace,
         one_shot=bool(getattr(args, "one", False)),
         log_relative=launch_ctx.log_relative,
+        repair_session=launch_ctx.session_name,
+        repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
     )
     marker_payload = {
         "session": launch_ctx.session_name,
@@ -5576,6 +5621,7 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "identity_digest": launch_ctx.digest,
         "chain_slug": launch_ctx.slug,
         "run_kind": "epic_chain",
+        "run_id": str(uuid.uuid4()),
         "relaunch_command": relaunch_command,
         "editable_source_branch": launch_spec.megaplan.ref,
         "editable_source_head": (
@@ -5807,6 +5853,7 @@ def _bootstrap_marker_payload(
         "workspace": workspace,
         "remote_spec": remote_spec,
         "run_kind": "plan",
+        "run_id": str(uuid.uuid4()),
         "plan_name": plan_name,
         "relaunch_command": relaunch_command,
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -5829,6 +5876,8 @@ def _bootstrap_launch_command(
         workspace=workspace,
         engine_dir=engine_dir,
         log_relative=log_relative,
+        repair_session=session_name,
+        repair_marker_dir=str(PurePosixPath(marker_path).parent),
     )
     marker_payload = _bootstrap_marker_payload(
         session_name=session_name,
@@ -5841,8 +5890,10 @@ def _bootstrap_launch_command(
         f"mkdir -p {shlex.quote(str(PurePosixPath(marker_path).parent))} "
         f"{shlex.quote(str(PurePosixPath(workspace) / '.megaplan' / 'cloud-logs'))} && "
         f"{_write_session_marker_command(marker_path, marker_payload)} && "
+        f"{_managed_run_env_prefix(session_name, run_kind='plan', marker_dir=str(PurePosixPath(marker_path).parent))}"
         f"cd {shlex.quote(workspace)} && "
-        f"arnold init --project-dir {shlex.quote(workspace)} "
+        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(engine_dir)}:${{PYTHONPATH:-}} "
+        f"python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(workspace)} "
         f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
         f"--robustness {shlex.quote(robustness)} --name {shlex.quote(plan_name)}"
     )
