@@ -63,9 +63,9 @@ waits for all checked items and one exact integration commit.
   one locked, expected-hash/version, field-allowlisted CAS writer.
 - [x] Retire notification adapter-to-direct-send fallbacks and the legacy repair
   loop Discord sender; ambiguous provider outcomes are `INDETERMINATE`.
-- [ ] After repair identity lands, persist the simple-fixer mutation budget and
+- [x] After repair identity lands, persist the simple-fixer mutation budget and
   effect outcomes by canonical repair occurrence across restart/claim release.
-- [ ] Route cloud status/supervisor actions through canonical current-target
+- [x] Route cloud status/supervisor actions through canonical current-target
   liveness; tmux/`ps` evidence is diagnostic only. Replace the collided SSH
   `arnold status --plan` invocation with the exact runtime-attested Megaplan
   module entrypoint; prove the native Arnold CLI is never selected.
