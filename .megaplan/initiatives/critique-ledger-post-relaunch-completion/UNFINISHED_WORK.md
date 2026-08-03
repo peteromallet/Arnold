@@ -68,6 +68,84 @@ supervision of the live Critique run.
   is not a product failure; intervention still requires dead process/tmux,
   terminal plan failure, vanished workers with no output, or a real stall.
 
+### P0.5 — later r5 CL2 failure: immediate repair versus deferred hardening
+
+The previous live-handoff observation was superseded later on 2026-08-03. CL2
+blocked in critique at `14:56:06Z`, and the accepted repair request then
+recorded a phantom L1 launch at `15:43:11Z`: the claim owner PID is dead, the
+claimed managed manifest never existed, the active claim was never transferred
+to a managed process, and the repair goal remains active with that nonexistent
+manifest as its owner. The exact read-only evidence is frozen in
+`evidence/r5-cl2-repair-control-incident-20260803.json`. This is a repair
+control-plane failure, not proof that a fixer ran slowly and not proof that the
+Sol critic failed to do useful work.
+
+The immediate root-repair branch
+`fix/watchdog-report-jsondecode-r5-20260803` is already addressing the bounded
+live-unblock slice below. Its unmerged code and tests are **not** accepted,
+installed, deployed, or F1 completion evidence. F1 consumes the integrated
+result only after exact-r5 regression proof and owns the cross-pipeline,
+installed-image, restart, response-loss and durability generalization. These
+tasks refine existing F1 claims; they do not add or renumber the closed fifteen
+deferred obligations.
+
+- [ ] **IMMEDIATE ROOT — launched/dispatched truth firewall.** An attempt may
+  say `launched` and a decision may say `dispatched` only after a real managed
+  process exists, its immutable manifest validates, its PID is live, and the
+  blocker claim is atomically bound to that exact run. A no-op, unchanged,
+  exhausted, rejected or merely occurrence-recorded `simple_fixer` outcome is
+  not a launch. Launch failure releases or settles custody and writes one typed
+  terminal/retry record; it never fabricates its own trigger PID or a future
+  manifest path. Immediate branch: implementation and focused tests in
+  progress. F1 remainder: every shipped dispatcher, installed runtime and
+  recovery layer proves the same invariant under crash/response loss.
+- [ ] **IMMEDIATE ROOT — supported stale-claim/active-goal settlement.** Add one
+  typed operator surface that resolves the exact request/blocker, verifies the
+  recorded owner identity and dead PID plus absent managed binding/manifest,
+  compare-and-swap releases or terminally seals the claim, and reconciles the
+  active goal before the same accepted request is retried. It must never require
+  deleting queue files, editing markers, synthesizing a manifest, or invoking a
+  manual trigger that creates a second occurrence. Immediate branch: exact-r5
+  settlement path in progress. F1 remainder: actor-neutral public CLI/API,
+  restart/reboot races, PID reuse, delayed writes and installed-host proof.
+- [ ] **IMMEDIATE ROOT — repair-phase gate cannot consume a stale result.** The
+  live plan has `resume_cursor.phase=critique` while `phase_result.json` is the
+  prior successful `revise` result. `recover-blocked` must validate the exact
+  deterministic-failure fingerprint and 40-character repair commit at target
+  HEAD regardless of an older phase result; a result whose phase/invocation
+  does not match the cursor is historical evidence, never recovery authority.
+  Immediate branch: handler/control-binding fix and regression in progress. F1
+  remainder: installed compatibility and all phase/cursor combinations.
+- [ ] **IMMEDIATE ROOT — current failure outranks stale prior failure.** The
+  three observed validation messages were distinct, but auto recovery reused
+  the first prior failure when computing every signature and falsely latched
+  `deterministic_phase_failure`. Current phase stderr/output must outrank the
+  captured prior failure; the prior message is fallback only when the current
+  attempt emitted no diagnostics. Immediate branch: incident-shaped regression
+  implemented locally (distinct errors do not latch; identical errors still
+  latch at the bound), pending integration. F1 remainder: installed and
+  cross-phase conformance.
+- [ ] **IMMEDIATE ROOT — reconstruct and promote the parallel aggregate.** All
+  nine current per-check and producer-v2 payloads validate, while aggregate
+  recovery ignored them and persisted only raw sentinel `parallel`. Bind every
+  child to one critique invocation/attempt, reconstruct the aggregate in stable
+  requested-check order, validate and atomically promote it, and report exact
+  failing child IDs, paths and digests when reconstruction is impossible.
+  Immediate branch: reducer/promotion regression work exists, pending accepted
+  integration. F1 remainder: provider matrix, crash/late-writer isolation,
+  installed parity and bounded artifact retention.
+- [ ] **F1 — canonical observe-only full report and durable publication.** One
+  read-only command must join plan/chain state, incarnation, live worker,
+  repair request/decision/attempt, claim owner, goal, managed manifest and
+  bounded logs into a content-addressed report without mutating, cancelling,
+  reclaiming or relaunching anything. Discord `/whats-cooking` and operator
+  status consume that same report. The interaction acknowledges immediately;
+  a durable supervised job completes collection and publishes at most one
+  version-keyed result, surviving client timeout/restart. A degraded source is
+  explicit in the report, never converted to `no failure`, `stalled`, or a
+  phantom agent. This remains post-relaunch F1 hardening except for any minimal
+  report fields required to prove the immediate r5 repair.
+
 ### P1 — launch admission hardening (parallel implementation lanes)
 
 - [ ] **HARD — provider credential admission.** Before dispatch, prove every

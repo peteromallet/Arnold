@@ -45,6 +45,19 @@ def test_deferred_obligation_drift_is_rejected() -> None:
         contract._validate_obligations(custody)
 
 
+def test_r5_phantom_launch_cannot_be_promoted_to_a_real_managed_run() -> None:
+    incident = contract._load_json(
+        Path(__file__).with_name("evidence")
+        / "r5-cl2-repair-control-incident-20260803.json"
+    )
+    incident["repair_request"]["managed_manifest_observation"] = "PRESENT"
+    with pytest.raises(
+        contract.ContractError,
+        match="r5 phantom repair-attempt evidence drift",
+    ):
+        contract._validate_r5_repair_control_incident(incident)
+
+
 def test_pending_prelaunch_evidence_cannot_be_fabricated() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["prelaunch_release_gates"][0]["evidence"] = {

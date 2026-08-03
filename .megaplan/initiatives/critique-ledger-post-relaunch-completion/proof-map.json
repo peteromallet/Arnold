@@ -3,6 +3,7 @@
     "evidence/critique-ledger-recovery/T6.2/handoff-admission/completion-manifest.json"
   ],
   "f1-owner-storage-recovery-hardening": [
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/r5-cl2-repair-control-incident-20260803.json",
     "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
     "evidence/critique-ledger-recovery/T1.5/completion-manifest.json",
     "evidence/critique-ledger-recovery/T1.7/completion-manifest.json",

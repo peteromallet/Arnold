@@ -65,6 +65,20 @@ nor a durable epic launch. The systemic tasks below remain required F1 work but
 are `DEFERRED_POST_RELAUNCH_NONBLOCKING`; they must not be used to deny a
 separately authorized relaunch or to rewrite attempt 16's exact classification.
 
+Consume—but do not duplicate—the bounded immediate root repair for the later r5
+CL2 incident recorded in
+`evidence/r5-cl2-repair-control-incident-20260803.json`. That branch is expected
+to stop phantom `launched`/`dispatched` evidence, add exact stale-claim/goal
+settlement, close the stale-`phase_result` recovery bypass, make current errors
+outrank stale prior failures, and reconstruct valid parallel-critique children.
+Those changes are only input evidence until committed, integrated, installed
+and replayed against the exact fixture. F1 owns their generalization across all
+repair layers, phases, providers, installed runtimes, process/host restarts and
+response-loss boundaries. F1 also owns one canonical observe-only full-report
+surface and a durable supervisor that publishes version-keyed status results
+after interaction acknowledgement without using observation as mutation
+authority.
+
 ## Locked decisions
 
 - The eventual independently accepted and installed Stage-A route is preserved
@@ -107,6 +121,26 @@ separately authorized relaunch or to rewrite attempt 16's exact classification.
 - A generalized fixer is real only after durable delegation provenance and
   launch receipt exist. Missing provenance emits no mutation and no repeat
   escalation.
+- `launched` and `dispatched` are evidence-bearing states, not optimistic
+  intents. They require a validated immutable managed manifest, a live child
+  PID and an atomically transferred blocker claim for the same run identity.
+  A delegated occurrence, expected path or trigger PID is insufficient.
+- A stale active claim is settled only through a supported compare-and-swap
+  operator surface that verifies the exact recorded owner and reconciles its
+  repair goal. Raw queue deletion, marker edits and synthetic manifests are
+  forbidden.
+- Recovery evidence is phase- and invocation-bound. A prior successful
+  `phase_result.json` cannot bypass the exact repair commit/failure fingerprint
+  required by a later deterministic phase failure.
+- Deterministic-failure signatures use current-attempt diagnostics. Historical
+  failure text is fallback context only when the current subprocess emitted
+  nothing.
+- Parallel critique aggregation is reconstructible from exact child producer
+  artifacts. A sentinel such as `parallel` is not actionable failure evidence
+  and cannot replace child IDs, paths, payload hashes and validation reasons.
+- Status collection is observe-only. One canonical content-addressed report
+  feeds CLI, cloud and Discord views; an interaction timeout cannot cancel the
+  durable collector or cause duplicate publication.
 - The installed-source trampoline checks the snapshot guard before exec. Every
   repair snapshot has bounded lifetime and non-overwritten `finally`/trap
   cleanup across success, failure, timeout, signal and cancellation.
@@ -185,6 +219,39 @@ receipts.
   as deployment evidence.
 - Restart and 200 unchanged polls emit at most one occurrence/version-keyed
   notification effect; missing provenance emits zero.
+- Hostile L1/L2/L3 launch tests prove no attempt or decision reaches
+  `launched`/`dispatched` before validated manifest creation, live-child proof
+  and claim transfer. No-op/exhausted delegation, process failure before
+  manifest, manifest corruption, child death before transfer and response loss
+  each settle to one typed non-launch outcome and leave no phantom goal owner.
+- The exact r5 phantom fixture is reconciled through the supported operator
+  surface: dead PID plus absent binding/manifest is compare-and-swap settled,
+  the active goal receives one authoritative transition, and retry cannot mint
+  a second occurrence. PID reuse, delayed owner write, competing settlement,
+  process restart and host restart remain fail closed.
+- Every recovery phase rejects a `phase_result` whose phase or invocation does
+  not match the current resume cursor. The r5 `revise`-result/`critique`-cursor
+  fixture requires the exact current failure fingerprint and repair commit at
+  target HEAD before ordinary same-phase replay.
+- Three distinct current critique validation errors never satisfy the
+  deterministic bound; three byte-equivalent normalized current errors still
+  do. Tests cover current stderr, current stdout, a current structured failure
+  artifact and the no-current-diagnostic fallback to prior context.
+- Parallel critique reconstruction admits the exact nine-child r5 fixture,
+  binds one invocation/attempt, promotes in stable requested-check order and
+  rejects missing, stale, duplicate, late or cross-invocation children with
+  actionable per-child diagnostics. Source, wheel and installed-provider
+  matrices prove equivalent behavior.
+- A canonical observe-only full report joins plan/chain/incarnation/worker and
+  repair request/decision/attempt/claim/goal/manifest evidence with bounded log
+  references, emits a content digest, performs zero mutations, and reports
+  partial/degraded sources explicitly. CLI, cloud status and Discord consume
+  the same schema.
+- `/whats-cooking` acknowledges within the interaction deadline, starts or
+  attaches to one durable version-keyed report job, and publishes at most one
+  result after completion across client timeout, resident restart and 200
+  unchanged polls. Supervisor crash/restart resumes collection without
+  relaunching, cancelling, reclaiming or repairing the observed subject.
 - An injected resident exit is detected and recovered through one bounded safe
   restart with receipts. ENOSPC blocks restart until a bounded reclaim and
   accepted capacity proof complete.

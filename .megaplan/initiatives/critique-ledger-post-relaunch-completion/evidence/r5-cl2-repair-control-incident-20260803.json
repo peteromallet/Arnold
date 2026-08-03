@@ -1,0 +1,77 @@
+{
+  "schema": "arnold.critique_ledger.r5_repair_control_incident.v1",
+  "captured_at": "2026-08-03T15:50:53Z",
+  "authority": "read_only_cloud_and_source_audit",
+  "session": "critique-ledger-accountability-v3-r5-20260803",
+  "workspace": "/workspace/critique-ledger-accountability-v3-r5-20260803/Arnold",
+  "plan": "cl2-wbc-backed-ledger-20260803-1357",
+  "phase_failure": {
+    "recorded_at": "2026-08-03T14:56:06Z",
+    "state": "blocked",
+    "phase": "critique",
+    "recorded_kind": "deterministic_phase_failure",
+    "retry_strategy": "repair_phase_contract",
+    "failure_fingerprint": "e9e27401982640a08dbfc5e434468e6b896ae3b363d7a34b6966bc3549ef35bc",
+    "observed_attempt_messages": [
+      "Critique output failed check validation: issue_hints, correctness",
+      "Critique output failed check validation: issue_hints, correctness, scope",
+      "Critique output failed check validation: issue_hints, correctness, scope, conventions"
+    ],
+    "classification": "FALSE_DETERMINISTIC_LATCH_DISTINCT_CURRENT_ERRORS_WERE_MASKED_BY_PRIOR_FAILURE_PRECEDENCE",
+    "aggregate_raw_output": "parallel",
+    "per_check_artifact_observation": "ALL_NINE_CURRENT_PER_CHECK_AND_PRODUCER_V2_PAYLOADS_PASS_VALIDATE_CRITIQUE_CHECKS"
+  },
+  "repair_request": {
+    "request_id": "734816b31530e56a4835cc54c265e5712b247860a1de269b598ed93faf7b1d92",
+    "blocker_id": "blocker:v2:6b4a5566e0ce0a7e4edb65f0d4f5470a5eeb6f9fcafaf0a72328c73c7f92ace4",
+    "decision_at": "2026-08-03T15:43:11Z",
+    "recorded_decision": "dispatched",
+    "recorded_attempt_status": "launched",
+    "recorded_command": "simple_fixer_delegation",
+    "claim_actor": "arnold-repair-trigger",
+    "claim_owner_pid": 1310,
+    "claim_owner_hostname": "a2c9a0d058af",
+    "claim_owner_pid_observation": "DEAD",
+    "managed_run_id": "managed-automatic-repair-2857f7c226a0dd7c03dd",
+    "managed_manifest_path": "/workspace/critique-ledger-accountability-v3-r5-20260803/Arnold/.megaplan/plans/resident-subagents/managed-automatic-repair-2857f7c226a0dd7c03dd/manifest.json",
+    "managed_manifest_observation": "ABSENT",
+    "active_claim_managed_binding": "ABSENT",
+    "classification": "PHANTOM_L1_DISPATCH_NO_MANAGED_REPAIR_PROCESS_OR_MANIFEST_WAS_ESTABLISHED"
+  },
+  "repair_goal": {
+    "goal_id": "repair-goal-406167807af0ecce698017e5",
+    "status": "active",
+    "terminal": false,
+    "semantic_completion": false,
+    "owner_run_id": "managed-automatic-repair-2857f7c226a0dd7c03dd",
+    "owner_manifest_observation": "ABSENT"
+  },
+  "additional_control_defects": [
+    "ACTIVE_CLAIM_STALE_BUT_NO_SUPPORTED_OPERATOR_CLI_SETTLES_EXACT_TRIGGER_OWNER_AND_ACTIVE_GOAL",
+    "RECOVER_BLOCKED_CAN_BYPASS_REPAIR_COMMIT_AND_FAILURE_FINGERPRINT_WHEN_STALE_PHASE_RESULT_FROM_REVISE_EXISTS",
+    "PARALLEL_CRITIQUE_RECOVERY_IGNORES_VALID_PER_CHECK_ARTIFACTS_AND_REPORTS_ONLY_THE_PARALLEL_SENTINEL",
+    "OBSERVERS_AND_INTERACTION_STATUS_LACK_ONE_CANONICAL_OBSERVE_ONLY_FULL_REPORT_PUBLICATION_PATH"
+  ],
+  "immediate_root_branch": {
+    "branch": "fix/watchdog-report-jsondecode-r5-20260803",
+    "status": "IN_PROGRESS_NOT_ACCEPTED_NOT_DEPLOYED",
+    "scope": [
+      "PHANTOM_DISPATCH_TRUTH_FIREWALL_AND_REAL_MANAGED_LAUNCH_PROOF",
+      "EXACT_STALE_CLAIM_AND_ACTIVE_GOAL_SETTLEMENT_PATH",
+      "STALE_PHASE_RESULT_REPAIR_GATE_FIX",
+      "CURRENT_FAILURE_SIGNATURE_PRECEDENCE_FIX",
+      "PER_CHECK_AGGREGATE_RECONSTRUCTION_PROMOTION_AND_ACTIONABLE_DIAGNOSTICS"
+    ],
+    "completion_rule": "NO_ITEM_IS_COMPLETE_UNTIL_COMMITTED_INTEGRATED_INSTALLED_AND_PROVEN_AGAINST_THE_EXACT_R5_FIXTURE"
+  },
+  "follow_up_ownership": {
+    "milestone": "f1-owner-storage-recovery-hardening",
+    "existing_claim_ids": [
+      "F1.production_recovery_owner",
+      "F1.exact_occurrence_handoff",
+      "F1.t1_5_topology_retirement",
+      "F1.platform_capacity_storage_hardening"
+    ],
+    "rule": "IMMEDIATE_ROOT_REPAIR_IS_INPUT_EVIDENCE_ONLY_F1_OWNS_CROSS_PIPELINE_INSTALLED_HOSTILE_AND_DURABILITY_GENERALIZATION"
+  }
+}

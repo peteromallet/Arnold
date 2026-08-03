@@ -33,6 +33,26 @@ Normal operation is observation, not redeployment. Keep the exact live tuple
 running while it advances. Do not stop it merely because a follow-up runtime
 commit exists.
 
+The later r5 CL2 incident is now an explicit exception to the earlier live
+snapshot: the plan is blocked, and the recorded L1 repair is phantom. Until the
+immediate root branch is accepted and installed, do not rerun the repair
+trigger, invoke the manual trigger, delete the active-claim directory, edit the
+goal/marker, synthesize the expected manifest, or restart the chain. Observe
+the exact request, claim, goal, absent manifest and dead PID read-only. The
+supported recovery sequence must be one owner-checked compare-and-swap
+claim/goal settlement, one real manifest-proven managed repair, one
+phase/fingerprint/HEAD-bound recovery transition, and ordinary same-phase chain
+resume. A prepared command or `dispatched` decision is not proof any step ran.
+
+Routine status must converge on one canonical observe-only full report. The
+report joins plan/chain/incarnation/worker and repair request/attempt/decision/
+claim/goal/manifest evidence, carries a content digest and performs no mutation.
+Discord interactions acknowledge before collection and attach to a durable
+version-keyed supervisor job; client timeout or resident restart must not cancel
+collection or publish the same report twice. Until that surface exists, treat
+`/whats-cooking` timeout as an availability/observation failure and inspect the
+subject separately—never as automatic evidence of a product stall.
+
 ## Complete fresh restart/relaunch procedure
 
 Use this only after the current generation is terminal or positively proven

@@ -61,6 +61,30 @@ to erase the failed-attempt history below.
   subdirectories. The live critique/revision loop owns that repair; no success
   or milestone-advance claim may be made until the exact PR head is green.
 
+### Later r5 CL2 repair-control incident
+
+The live observation above is intentionally timestamped and was superseded
+later the same day. At `2026-08-03T14:56:06Z`, CL2 stopped in critique after
+three changing validation-error sets were incorrectly collapsed into one
+deterministic signature. At `15:43:11Z`, repair request
+`734816b31530e56a4835cc54c265e5712b247860a1de269b598ed93faf7b1d92`
+then recorded `launched`/`dispatched`, but no managed repair process or manifest
+was established: trigger PID `1310` is dead, the active claim has no managed
+binding, the expected manifest is absent, and repair goal
+`repair-goal-406167807af0ecce698017e5` remains active with that absent manifest
+as owner. Exact evidence and the immediate/deferred ownership split are in
+[`evidence/r5-cl2-repair-control-incident-20260803.json`](evidence/r5-cl2-repair-control-incident-20260803.json).
+
+This was not a slow fixer and should not be attributed simply to the Sol model:
+all nine current per-check and producer-v2 critique payloads validate, while
+aggregate recovery retained only the unhelpful sentinel `parallel`. The
+immediate root branch is fixing the bounded live-unblock path. Nothing in that
+branch counts as accepted, installed or deployed until integrated and proven
+against this exact fixture. F1 retains the platform-wide truth firewall,
+supported stale-claim/goal settlement, phase-bound repair authority,
+current-error signature discipline, per-check reconstruction, canonical
+observe-only full report and durable version-keyed status publication.
+
 Discord resident availability is separately restored. Recovery epoch
 `discord-enospc-20260803-r7` created healthy container
 `a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`

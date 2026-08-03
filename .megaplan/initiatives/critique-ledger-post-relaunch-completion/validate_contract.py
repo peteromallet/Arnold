@@ -19,6 +19,10 @@ from arnold_pipelines.megaplan.chain.spec import load_spec, validate_launch_prec
 INITIATIVE = Path(__file__).resolve().parent
 ROOT = INITIATIVE.parents[2]
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+R5_REPAIR_CONTROL_EVIDENCE = (
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+    "evidence/r5-cl2-repair-control-incident-20260803.json"
+)
 
 OBLIGATIONS = {
     "F1.platform_capacity_storage_hardening": "f1-owner-storage-recovery-hardening",
@@ -2056,10 +2060,11 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         "evidence/critique-ledger-recovery/T6.2/handoff-admission/completion-manifest.json"
     ]:
         raise ContractError("F0 proof map drift")
-    if "evidence/critique-ledger-recovery/T0.3/resident-availability/completion-manifest.json" not in proof_map.get(
-        "f1-owner-storage-recovery-hardening", []
-    ):
+    f1_proofs = proof_map.get("f1-owner-storage-recovery-hardening", [])
+    if "evidence/critique-ledger-recovery/T0.3/resident-availability/completion-manifest.json" not in f1_proofs:
         raise ContractError("resident availability proof map drift")
+    if R5_REPAIR_CONTROL_EVIDENCE not in f1_proofs:
+        raise ContractError("r5 repair-control incident proof map drift")
     if proof_map.get("finite-canary-stable-exit") != STABLE_EXIT_PROOFS:
         raise ContractError("stable-exit proof map drift")
     if proof_map.get("finite-canary-prelaunch-history") != [
@@ -2069,6 +2074,61 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/RUNBOOK.md",
     ]:
         raise ContractError("prelaunch history proof map drift")
+
+
+def _validate_r5_repair_control_incident(incident: dict[str, Any]) -> None:
+    if (
+        incident.get("schema") != "arnold.critique_ledger.r5_repair_control_incident.v1"
+        or incident.get("authority") != "read_only_cloud_and_source_audit"
+        or incident.get("session") != "critique-ledger-accountability-v3-r5-20260803"
+        or incident.get("plan") != "cl2-wbc-backed-ledger-20260803-1357"
+    ):
+        raise ContractError("r5 repair-control incident identity drift")
+    phase = incident.get("phase_failure")
+    messages = phase.get("observed_attempt_messages") if isinstance(phase, dict) else None
+    if (
+        not isinstance(phase, dict)
+        or phase.get("recorded_kind") != "deterministic_phase_failure"
+        or phase.get("retry_strategy") != "repair_phase_contract"
+        or not SHA256.fullmatch(str(phase.get("failure_fingerprint") or ""))
+        or not isinstance(messages, list)
+        or len(messages) != 3
+        or len(set(messages)) != 3
+        or phase.get("classification")
+        != "FALSE_DETERMINISTIC_LATCH_DISTINCT_CURRENT_ERRORS_WERE_MASKED_BY_PRIOR_FAILURE_PRECEDENCE"
+        or phase.get("per_check_artifact_observation")
+        != "ALL_NINE_CURRENT_PER_CHECK_AND_PRODUCER_V2_PAYLOADS_PASS_VALIDATE_CRITIQUE_CHECKS"
+    ):
+        raise ContractError("r5 phase-failure incident evidence drift")
+    request = incident.get("repair_request")
+    if (
+        not isinstance(request, dict)
+        or request.get("request_id")
+        != "734816b31530e56a4835cc54c265e5712b247860a1de269b598ed93faf7b1d92"
+        or request.get("claim_owner_pid") != 1310
+        or request.get("claim_owner_pid_observation") != "DEAD"
+        or request.get("managed_manifest_observation") != "ABSENT"
+        or request.get("active_claim_managed_binding") != "ABSENT"
+        or request.get("classification")
+        != "PHANTOM_L1_DISPATCH_NO_MANAGED_REPAIR_PROCESS_OR_MANIFEST_WAS_ESTABLISHED"
+    ):
+        raise ContractError("r5 phantom repair-attempt evidence drift")
+    goal = incident.get("repair_goal")
+    immediate = incident.get("immediate_root_branch")
+    follow_up = incident.get("follow_up_ownership")
+    if (
+        not isinstance(goal, dict)
+        or goal.get("status") != "active"
+        or goal.get("terminal") is not False
+        or goal.get("owner_manifest_observation") != "ABSENT"
+        or not isinstance(immediate, dict)
+        or immediate.get("status") != "IN_PROGRESS_NOT_ACCEPTED_NOT_DEPLOYED"
+        or immediate.get("completion_rule")
+        != "NO_ITEM_IS_COMPLETE_UNTIL_COMMITTED_INTEGRATED_INSTALLED_AND_PROVEN_AGAINST_THE_EXACT_R5_FIXTURE"
+        or not isinstance(follow_up, dict)
+        or follow_up.get("milestone") != "f1-owner-storage-recovery-hardening"
+    ):
+        raise ContractError("r5 immediate/deferred repair custody drift")
 
 
 def _validate_supersession(*, require_live: bool) -> None:
@@ -2284,6 +2344,9 @@ def validate(*, require_live: bool = False) -> None:
     route_path = INITIATIVE / "finite-canary-operational-route.json"
     _validate_route(_load_json(route_path))
     proof_map = _load_json(INITIATIVE / "proof-map.json")
+    _validate_r5_repair_control_incident(
+        _load_json(INITIATIVE / "evidence/r5-cl2-repair-control-incident-20260803.json")
+    )
     chain_path = INITIATIVE / "chain.yaml"
     chain = yaml.safe_load(chain_path.read_text(encoding="utf-8"))
     if not isinstance(chain, dict):
