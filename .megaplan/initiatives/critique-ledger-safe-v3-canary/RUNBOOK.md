@@ -12,8 +12,11 @@ name, and receipt directory. Never delete or rename the preserved v2 container.
    and preserved-predecessor evidence.
 5. Invoke only `cloud run-zero-recovery-canary`; never `exec`, `chain`, `auto`,
    `resume`, `attach`, `bootstrap`, or a resident/recovery command.
-6. Collect the content-addressed run receipt. A non-PROCEED gate or any failed
-   phase ends the attempt; do not retry it.
+6. Collect the content-addressed run receipt. A first `ITERATE` may trigger only
+   the runner's one admitted revise -> critique -> gate cycle. A second
+   non-PROCEED, any `ESCALATE`/`TIEBREAKER`, or any infrastructure failure ends
+   the attempt. `product_gate_not_proceed` is safe terminal product evidence,
+   not success and not permission to finalize, launch, notify, or retry.
 
 For a complete relaunch, make a new manifest commit with a new canary container,
 repo workspace, plan name, and receipt path. Preserve every prior container and

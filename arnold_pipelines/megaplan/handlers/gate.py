@@ -1036,25 +1036,32 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         result = route_signal["result"]
         summary = route_signal["summary"]
         blocking_unresolved_ids = list(route_signal["blocking_unresolved_ids"])
-        if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1" and (
-            result == "tiebreaker_recommended" or blocking_unresolved_ids
-        ):
+        zero_recovery_canary = os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+        if zero_recovery_canary and blocking_unresolved_ids:
             raise CliError(
                 "zero_recovery_gate_not_proceed",
-                "finite canary gate may not reprompt or dispatch a tiebreaker",
+                "finite canary gate may not reprompt unresolved blocking flags",
             )
         if result == "tiebreaker_recommended":
-            result, next_step, summary = _validate_tiebreaker(
-                state, gate_summary, plan_dir, worker, args, agent,
-                resolved, signals_artifact, gate_signals, root,
-            )
-            route_signal["result"] = result
-            route_signal["summary"] = summary
-            route_signal["route_signal"] = (
-                "proceed" if next_step == "finalize"
-                else "iterate" if next_step == "revise"
-                else "escalate"
-            )
+            if zero_recovery_canary:
+                # The finite canary has no tiebreaker dispatch authority. Keep
+                # the model's TIEBREAKER product result intact and return it to
+                # the runner as terminal non-PROCEED evidence.
+                route_signal["result"] = "zero_recovery_tiebreaker_terminal"
+                route_signal["route_signal"] = "escalate"
+                result = "zero_recovery_tiebreaker_terminal"
+            else:
+                result, next_step, summary = _validate_tiebreaker(
+                    state, gate_summary, plan_dir, worker, args, agent,
+                    resolved, signals_artifact, gate_signals, root,
+                )
+                route_signal["result"] = result
+                route_signal["summary"] = summary
+                route_signal["route_signal"] = (
+                    "proceed" if next_step == "finalize"
+                    else "iterate" if next_step == "revise"
+                    else "escalate"
+                )
         if blocking_unresolved_ids:
             reprompt_prompt = _build_gate_prompt_override(
                 agent,

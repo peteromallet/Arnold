@@ -1289,7 +1289,8 @@ class SshProvider(Provider):
                 receipt_digest = unsigned.pop("receipt_digest", None)
                 required_receipt_fields = {
                     "schema", "status", "canary_id", "plan_name", "phases",
-                    "phase_results", "terminal_state", "failure", "started_at",
+                    "phase_results", "terminal_state", "product_outcome",
+                    "gate_attempts", "failure", "started_at",
                     "completed_at", "source_commit", "source_tree",
                     "canary_spec_sha256", "launch_manifest_sha256", "state_sha256", "gate_sha256",
                     "dispatch_ledger_sha256", "dispatches", "import_root",
@@ -1303,16 +1304,24 @@ class SshProvider(Provider):
                     not isinstance(receipt, dict)
                     or set(receipt) != required_receipt_fields
                     or receipt.get("schema")
-                    != "arnold.megaplan.finite_canary_run_receipt.v2"
+                    != "arnold.megaplan.finite_canary_run_receipt.v3"
                     or receipt.get("status") not in {"passed", "failed"}
                     or receipt.get("canary_id") != "critique-ledger-safe-v3-canary"
                     or receipt.get("plan_name")
                     != "critique-ledger-cl2-planning-canary"
                     or receipt.get("source_commit") != source_commit
                     or receipt.get("source_tree") != source_tree
-                    or receipt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
-                    or receipt.get("terminal_state")
-                    != ("finalized" if receipt.get("status") == "passed" else "failed")
+                    or receipt.get("terminal_state") not in {
+                        "finalized", "product_gate_not_proceed", "failed",
+                    }
+                    or (
+                        receipt.get("status") == "failed"
+                        and receipt.get("terminal_state") != "failed"
+                    )
+                    or (
+                        receipt.get("status") == "passed"
+                        and receipt.get("terminal_state") == "failed"
+                    )
                     or receipt.get("dispatch_integrity")
                     not in {"not_started", "partial", "complete", "unreadable"}
                     or (
@@ -1320,11 +1329,48 @@ class SshProvider(Provider):
                         and receipt.get("dispatch_integrity") != "complete"
                     )
                     or not isinstance(receipt.get("phase_results"), list)
-                    or len(receipt.get("phase_results")) > 5
+                    or len(receipt.get("phase_results")) > 8
                     or [item.get("phase") for item in receipt.get("phase_results") if isinstance(item, dict)]
-                    != ["init", "plan", "critique", "gate", "finalize"][
-                        : len(receipt.get("phase_results"))
+                    != receipt.get("phases")
+                    or receipt.get("phases") not in [
+                        ["init", "plan", "critique", "gate"][:length]
+                        for length in range(5)
+                    ] + [
+                        ["init", "plan", "critique", "gate", "finalize"],
+                        ["init", "plan", "critique", "gate", "revise"],
+                        ["init", "plan", "critique", "gate", "revise", "critique"],
+                        ["init", "plan", "critique", "gate", "revise", "critique", "gate"],
+                        ["init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize"],
                     ]
+                    or not isinstance(receipt.get("gate_attempts"), list)
+                    or len(receipt.get("gate_attempts")) > 2
+                    or (
+                        receipt.get("terminal_state") == "finalized"
+                        and (
+                            not isinstance(receipt.get("product_outcome"), dict)
+                            or receipt["product_outcome"].get("kind")
+                            != "proceed_finalized"
+                            or not receipt.get("phases")
+                            or receipt["phases"][-1] != "finalize"
+                            or not receipt.get("gate_attempts")
+                            or receipt["gate_attempts"][-1].get("recommendation")
+                            != "PROCEED"
+                        )
+                    )
+                    or (
+                        receipt.get("terminal_state")
+                        == "product_gate_not_proceed"
+                        and (
+                            not isinstance(receipt.get("product_outcome"), dict)
+                            or receipt["product_outcome"].get("kind")
+                            != "product_gate_not_proceed"
+                            or not receipt.get("phases")
+                            or receipt["phases"][-1] != "gate"
+                            or not receipt.get("gate_attempts")
+                            or receipt["gate_attempts"][-1].get("recommendation")
+                            == "PROCEED"
+                        )
+                    )
                     or not isinstance(receipt_digest, str)
                     or hashlib.sha256(
                         json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()

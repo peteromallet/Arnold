@@ -17,7 +17,8 @@ from arnold_pipelines.megaplan.chain.spec import (
 ROOT = Path("/workspace/Arnold")
 PLAN = ROOT / ".megaplan/plans/critique-ledger-cl2-planning-canary"
 RECEIPTS = ROOT / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts"
-PHASES = ["plan", "critique", "gate", "finalize"]
+PHASES = ["plan", "critique", "gate", "revise", "critique", "gate", "finalize"]
+PLAN_ITERATIONS = [1, 1, 1, 2, 2, 2, 2]
 
 
 def _strict(path: Path) -> dict[str, object]:
@@ -49,18 +50,27 @@ def main() -> int:
     if (
         run.get("status") != "passed"
         or run.get("terminal_state") != "finalized"
+        or run.get("product_outcome")
+        != {"kind": "proceed_finalized", "gate_attempt": 2, "recommendation": "PROCEED"}
         or [item.get("phase") for item in run.get("phase_results", [])]
         != ["init", *PHASES]
+        or [item.get("plan_iteration") for item in run.get("phase_results", [])]
+        != [0, *PLAN_ITERATIONS]
         or [item.get("returncode") for item in run.get("phase_results", [])]
-        != [0, 0, 0, 0, 0]
+        != [0] * 8
+        or [item.get("recommendation") for item in run.get("gate_attempts", [])]
+        != ["ITERATE", "PROCEED"]
     ):
         raise SystemExit("offline smoke lifecycle was not an exact pass")
     dispatches = run.get("dispatches")
-    if not isinstance(dispatches, list) or len(dispatches) != 8:
-        raise SystemExit("offline smoke did not produce four dispatch pairs")
+    if not isinstance(dispatches, list) or len(dispatches) != 14:
+        raise SystemExit("offline smoke did not produce seven dispatch pairs")
     terminals = [item for item in dispatches if item.get("event") == "terminal"]
     if (
         [item.get("phase") for item in terminals] != PHASES
+        or [item.get("plan_iteration") for item in terminals] != PLAN_ITERATIONS
+        or [item.get("dispatch_ordinal") for item in terminals]
+        != list(range(1, 8))
         or any(
             item.get("model_evidence") != "codex_cli_turn_context" for item in terminals
         )
@@ -68,11 +78,20 @@ def main() -> int:
     ):
         raise SystemExit("offline smoke dispatch evidence drifted")
     privilege_hashes: list[str] = []
-    for phase in PHASES:
-        path = PLAN / f".zero-recovery-{phase}-privilege-receipt.json"
+    for ordinal, (phase, plan_iteration) in enumerate(
+        zip(PHASES, PLAN_ITERATIONS, strict=True), start=1
+    ):
+        path = PLAN / (
+            f".zero-recovery-{ordinal:02d}-{phase}-i{plan_iteration}"
+            "-privilege-receipt.json"
+        )
         payload = _strict(path)
         if not _finite_canary_privilege_receipt_is_valid(
-            payload, phase=phase, plan_dir=PLAN
+            payload,
+            phase=phase,
+            plan_iteration=plan_iteration,
+            dispatch_ordinal=ordinal,
+            plan_dir=PLAN,
         ):
             raise SystemExit(f"offline smoke privilege receipt invalid: {phase}")
         privilege_hashes.append(_sha(path))
