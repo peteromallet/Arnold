@@ -2078,6 +2078,95 @@ def test_runner_gate_classification_rejects_state_promotion_and_third_gate() -> 
         classify("ITERATE", current_state="critiqued", active_step=None, gate_attempt=3)
 
 
+def test_runner_classifies_typed_predispatch_revise_halt_as_product_stop(
+    tmp_path: Path,
+) -> None:
+    runner = runpy.run_path(
+        str(
+            Path(
+                ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+                "run_canary.py"
+            )
+        )
+    )
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"current_state": "critiqued", "iteration": 1}),
+        encoding="utf-8",
+    )
+    (plan_dir / "gate_carry.json").write_text(
+        json.dumps(
+            {
+                "north_star_actions": [
+                    {"id": "NSA-7", "action_type": "add_human_halt"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "schema": "megaplan.phase_result",
+                "schema_version": 1,
+                "phase_result_contract_version": 1,
+                "phase": "revise",
+                "invocation_id": "typed-revise-stop",
+                "exit_kind": "blocked_by_prereq",
+                "blocked_tasks": [
+                    {
+                        "task_id": "NSA-7",
+                        "reason": "Source identity needs a product decision.",
+                        "notes": "",
+                        "blocking_action_ids": ["NSA-7"],
+                        "blocker_kind": "north_star_revise_human_halt",
+                    }
+                ],
+                "deviations": [],
+                "artifacts_written": [],
+                "cli_provenance": {},
+                "external_error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    stdout = json.dumps(
+        {
+            "success": False,
+            "error": "north_star_revise_human_halt",
+            "message": "Typed product halt.",
+            "valid_next": ["revise"],
+            "details": {
+                "step": "revise",
+                "halt_actions": [
+                    {
+                        "id": "NSA-7",
+                        "category": "correctness",
+                        "action_type": "add_human_halt",
+                        "concern": "Source identity is unresolved.",
+                    }
+                ],
+                "count": 1,
+            },
+        }
+    )
+
+    outcome = runner["classify_product_revise_stop"](
+        plan_dir,
+        stdout=stdout,
+        returncode=1,
+        plan_iteration=2,
+        ledger_path=plan_dir / "zero_recovery_dispatch_ledger.ndjson",
+        prior_dispatch_expectations=[],
+    )
+
+    assert outcome["kind"] == "product_revise_blocked"
+    assert outcome["reason_code"] == "north_star_revise_human_halt"
+    assert outcome["action_ids"] == ["NSA-7"]
+    assert outcome["revise_dispatch_started"] is False
+
+
 def test_attempt_13_gate_actions_are_hash_locked_in_brief_and_offline_fake() -> None:
     brief = Path(
         ".megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/"
@@ -2106,6 +2195,31 @@ def test_attempt_13_gate_actions_are_hash_locked_in_brief_and_offline_fake() -> 
         for match in re.finditer(r'^  "((?:[^"\\]|\\.)*)",$', fake[start:end], re.MULTILINE)
     ]
     assert fake_actions == brief_actions
+
+
+def test_cl2_runtime_source_identity_is_settled_before_gate_or_revise() -> None:
+    canonical = Path(
+        ".megaplan/initiatives/critique-ledger/briefs/"
+        "cl2-ledger-persistence-and-replay.md"
+    ).read_text(encoding="utf-8")
+    canary = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/"
+        "cl2-ledger-persistence-and-replay.md"
+    ).read_text(encoding="utf-8")
+    north_star = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (canonical, canary):
+        assert "one clean committed Git commit and its" in text
+        assert "Dirty or uncommitted worktrees are inadmissible" in text
+        assert "finalization" in text
+        assert "direct execute" in text
+        assert "batch execute" in text
+        assert "CL2 handoff" in text
+    assert "This decision is settled input" in canary
+    assert "not a human\n  halt or an open question" in canary
+    assert "must not convert it into an `add_human_halt` action" in north_star
 
 
 def test_oauth_installer_is_strict_atomic_no_follow_and_stdin_only() -> None:
@@ -2605,6 +2719,143 @@ def test_status_preserves_terminal_product_nonproceed_as_non_success() -> None:
     assert observed["receipt"]["status"] == "passed"
     assert observed["receipt"]["terminal_state"] == "product_gate_not_proceed"
     assert observed["receipt"]["product_outcome"]["recommendation"] == "ESCALATE"
+
+
+def test_status_preserves_terminal_product_revise_block_as_non_success() -> None:
+    receipt = json.loads(_valid_zero_recovery_status_receipt())
+    receipt["phases"] = ["init", "plan", "critique", "gate", "revise"]
+    receipt["phase_results"] = receipt["phase_results"][:4] + [
+        {
+            "phase": "revise",
+            "plan_iteration": 2,
+            "dispatch_ordinal": None,
+            "returncode": 1,
+            "state": "critiqued",
+            "gate_recommendation": None,
+        }
+    ]
+    receipt["terminal_state"] = "product_revise_blocked"
+    receipt["product_outcome"] = {
+        "kind": "product_revise_blocked",
+        "reason_code": "north_star_revise_human_halt",
+        "action_ids": ["NSA-7"],
+        "revise_dispatch_started": False,
+        "gate_attempt": 1,
+    }
+    receipt["gate_attempts"] = [{
+        "attempt": 1,
+        "plan_iteration": 1,
+        "recommendation": "ITERATE",
+        "state": "critiqued",
+        "gate_sha256": "e" * 64,
+    }]
+    receipt["failure"] = None
+    receipt.pop("receipt_digest")
+    receipt["receipt_digest"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    envelope = {
+        "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+        "receipt_b64": base64.b64encode(raw).decode("ascii"),
+        "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+        "receipt_count": 1,
+    }
+    provider._remote_run_compatible = lambda *_args, **_kwargs: (
+        subprocess.CompletedProcess([], 0, json.dumps(envelope), "")
+    )
+    provider.observe_container = lambda: {
+        "status": "available",
+        "container": provider._ssh.container,
+        "lifecycle": "stopped",
+    }
+    provider._reconcile_zero_recovery_canary_stop = lambda: (
+        provider.observe_container(), False
+    )
+
+    observed = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert observed["status"] == "available"
+    assert observed["receipt"]["status"] == "passed"
+    assert observed["receipt"]["terminal_state"] == "product_revise_blocked"
+    assert (
+        observed["receipt"]["product_outcome"]["reason_code"]
+        == "north_star_revise_human_halt"
+    )
+
+
+@pytest.mark.parametrize("bad_ordinal", [True, 0, 999])
+def test_status_rejects_invalid_product_revise_dispatch_ordinal(
+    bad_ordinal: object,
+) -> None:
+    receipt = json.loads(_valid_zero_recovery_status_receipt())
+    receipt["phases"] = ["init", "plan", "critique", "gate", "revise"]
+    receipt["phase_results"] = receipt["phase_results"][:4] + [
+        {
+            "phase": "revise",
+            "plan_iteration": 2,
+            "dispatch_ordinal": bad_ordinal,
+            "returncode": 1,
+            "state": "critiqued",
+            "gate_recommendation": None,
+        }
+    ]
+    receipt["terminal_state"] = "product_revise_blocked"
+    receipt["product_outcome"] = {
+        "kind": "product_revise_blocked",
+        "reason_code": "north_star_revise_unresolved_blocking",
+        "action_ids": ["NSA-1"],
+        "revise_dispatch_started": True,
+        "gate_attempt": 1,
+    }
+    receipt["gate_attempts"] = [{
+        "attempt": 1,
+        "plan_iteration": 1,
+        "recommendation": "ITERATE",
+        "state": "critiqued",
+        "gate_sha256": "e" * 64,
+    }]
+    receipt["failure"] = None
+    receipt.pop("receipt_digest")
+    receipt["receipt_digest"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    envelope = {
+        "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+        "receipt_b64": base64.b64encode(raw).decode("ascii"),
+        "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+        "receipt_count": 1,
+    }
+    provider._remote_run_compatible = lambda *_args, **_kwargs: (
+        subprocess.CompletedProcess([], 0, json.dumps(envelope), "")
+    )
+    provider.observe_container = lambda: {
+        "status": "available",
+        "container": provider._ssh.container,
+        "lifecycle": "stopped",
+    }
+    provider._reconcile_zero_recovery_canary_stop = lambda: (
+        provider.observe_container(), False
+    )
+
+    observed = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert observed["status"] == "unknown"
+    assert observed["receipt"] is None
+    assert observed["validation_error"] == "ValueError"
 
 
 @pytest.mark.parametrize(

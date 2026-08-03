@@ -11,6 +11,7 @@ Proves:
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -423,6 +424,36 @@ class TestRaiseNorthStarReviseUnresolved:
                 )
             assert exc_info.value.code == "north_star_revise_unresolved_blocking"
             assert "omitted" in str(exc_info.value)
+
+    def test_emits_typed_blocked_phase_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _min_state(meta={"current_invocation_id": "typed-unresolved"})
+        unresolved = [
+            {"id": "ns-1", "action_type": "change_plan", "reason": "omitted"}
+        ]
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.orchestration.critique_runtime.record_step_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        with pytest.raises(CliError):
+            _raise_north_star_revise_unresolved(
+                tmp_path,
+                state,  # type: ignore[arg-type]
+                iteration=3,
+                unresolved=unresolved,
+            )
+
+        result = json.loads((tmp_path / "phase_result.json").read_text(encoding="utf-8"))
+        assert result["phase"] == "revise"
+        assert result["exit_kind"] == "blocked_by_prereq"
+        assert result["external_error"] is None
+        assert result["blocked_tasks"][0]["blocking_action_ids"] == ["ns-1"]
+        assert (
+            result["blocked_tasks"][0]["blocker_kind"]
+            == "north_star_revise_unresolved_blocking"
+        )
 
     def test_raises_cli_error_with_multiple_unresolved(self) -> None:
         """Multiple unresolved actions all appear in the error message."""

@@ -37,6 +37,10 @@ backfill of historical semantic relationships.
   evidence, or reopen relationships.
 - WBC inline/reference, retention, redaction, ordering, and effect rules are
   reused, not reimplemented.
+- The CL2 runtime source identity is one clean committed Git commit and its
+  exact tree. Dirty or uncommitted worktrees are inadmissible; finalization,
+  direct execute, batch execute, and the CL2 handoff must all apply this same
+  commit/tree identity algorithm.
 
 ## Open questions
 

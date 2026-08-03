@@ -1334,7 +1334,12 @@ class SshProvider(Provider):
                     or receipt.get("terminal_state") not in (
                         {"finalized", "failed"}
                         if legacy_v2
-                        else {"finalized", "product_gate_not_proceed", "failed"}
+                        else {
+                            "finalized",
+                            "product_gate_not_proceed",
+                            "product_revise_blocked",
+                            "failed",
+                        }
                     )
                     or (
                         receipt.get("status") == "failed"
@@ -1402,6 +1407,81 @@ class SshProvider(Provider):
                             or not receipt.get("gate_attempts")
                             or receipt["gate_attempts"][-1].get("recommendation")
                             == "PROCEED"
+                        )
+                    )
+                    or (
+                        not legacy_v2
+                        and receipt.get("terminal_state")
+                        == "product_revise_blocked"
+                        and (
+                            not isinstance(receipt.get("product_outcome"), dict)
+                            or receipt["product_outcome"].get("kind")
+                            != "product_revise_blocked"
+                            or set(receipt["product_outcome"])
+                            != {
+                                "kind",
+                                "reason_code",
+                                "action_ids",
+                                "revise_dispatch_started",
+                                "gate_attempt",
+                            }
+                            or receipt["product_outcome"].get("reason_code")
+                            not in {
+                                "north_star_revise_human_halt",
+                                "north_star_revise_unresolved_blocking",
+                            }
+                            or not isinstance(
+                                receipt["product_outcome"].get("action_ids"), list
+                            )
+                            or not receipt["product_outcome"].get("action_ids")
+                            or any(
+                                not isinstance(action_id, str) or not action_id
+                                for action_id in receipt["product_outcome"]["action_ids"]
+                            )
+                            or len(set(receipt["product_outcome"]["action_ids"]))
+                            != len(receipt["product_outcome"]["action_ids"])
+                            or not receipt.get("phases")
+                            or receipt["phases"][-1] != "revise"
+                            or not receipt.get("gate_attempts")
+                            or receipt["gate_attempts"][-1].get("recommendation")
+                            != "ITERATE"
+                            or receipt.get("failure") is not None
+                            or not receipt.get("phase_results")
+                            or receipt["phase_results"][-1].get("returncode") != 1
+                            or (
+                                receipt["product_outcome"]["reason_code"]
+                                == "north_star_revise_human_halt"
+                                and (
+                                    receipt["product_outcome"].get(
+                                        "revise_dispatch_started"
+                                    )
+                                    is not False
+                                    or receipt["phase_results"][-1].get(
+                                        "dispatch_ordinal"
+                                    )
+                                    is not None
+                                )
+                            )
+                            or (
+                                receipt["product_outcome"]["reason_code"]
+                                == "north_star_revise_unresolved_blocking"
+                                and (
+                                    receipt["product_outcome"].get(
+                                        "revise_dispatch_started"
+                                    )
+                                    is not True
+                                    or type(
+                                        receipt["phase_results"][-1].get(
+                                            "dispatch_ordinal"
+                                        )
+                                    )
+                                    is not int
+                                    or receipt["phase_results"][-1].get(
+                                        "dispatch_ordinal"
+                                    )
+                                    != 4
+                                )
+                            )
                         )
                     )
                     or not isinstance(receipt_digest, str)
