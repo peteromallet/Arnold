@@ -1485,6 +1485,35 @@ def _build_session_entry(
         plan_state=plan_state_doc,
         now=now,
     )
+    marker_should_run = marker.get("should_run")
+    operator_pause = marker.get("operator_pause")
+    operator_pause_active = bool(
+        isinstance(operator_pause, Mapping) and operator_pause.get("active") is True
+    )
+    canonical_stop_intent = marker_should_run is False or operator_pause_active
+    if canonical_stop_intent and status != "complete":
+        # Marker intent is durable operator authority.  Recent activity and a
+        # gated lifecycle state (or a process that has not exited yet) are
+        # observation only: none may turn an intentionally stopped session
+        # back into active/attention status.  Process truth remains available
+        # in the orthogonal tmux/process fields.
+        status = "paused"
+        pause_reason = (
+            str(operator_pause.get("reason") or "").strip()
+            if isinstance(operator_pause, Mapping)
+            else ""
+        )
+        operator_next = (
+            f"intentional operator stop: {pause_reason}; explicit resume required"
+            if pause_reason
+            else "intentional operator stop; explicit resume required"
+        )
+    if canonical_stop_intent or status in {"complete", "paused"}:
+        projected_should_run = False
+    elif marker_should_run is True:
+        projected_should_run = True
+    else:
+        projected_should_run = plan_current_state != "paused"
     watchdog_status = _watchdog_status(watchdog_item, chain_complete)
     if (
         status == "attention"
@@ -1756,7 +1785,10 @@ def _build_session_entry(
         "run_kind": run_kind,
         "started_at": marker.get("started_at"),
         "status": status,
-        "should_run": status not in {"complete", "paused"} and plan_current_state != "paused",
+        "should_run": projected_should_run,
+        "operator_pause": (
+            dict(operator_pause) if isinstance(operator_pause, Mapping) else None
+        ),
         "tmux": liveness.get("tmux", False),
         "process": liveness.get("process", False),
         "liveness_state": liveness.get("state", "unknown"),

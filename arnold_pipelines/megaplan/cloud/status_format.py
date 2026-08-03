@@ -26,11 +26,19 @@ _STATUS_EMOJI = {
     "running": "🟢",
     "repairing": "🛠️",
     "blocked": "🚫",
+    "paused": "⏸️",
     "complete": "✅",
     "attention": "⚠️",
 }
 
-_STATUS_ORDER = ("running", "repairing", "blocked", "attention", "complete")
+_STATUS_ORDER = (
+    "running",
+    "repairing",
+    "blocked",
+    "attention",
+    "paused",
+    "complete",
+)
 
 # Activity age threshold for stale active-step warnings (seconds).
 STALE_ACTIVE_STEP_S = 30 * 60
@@ -43,6 +51,7 @@ def _summary_line(snapshot: Mapping[str, Any]) -> str:
         f"{summary.get('repairing', 0)} repairing",
         f"{summary.get('blocked', 0)} blocked",
         f"{summary.get('attention', 0)} attention",
+        f"{summary.get('paused', 0)} paused",
         f"{summary.get('complete', 0)} complete",
     ]
     return ", ".join(parts)
@@ -123,7 +132,12 @@ def format_cloud_status_short(
         in_flight = _in_flight_progress_text(entry.get("progress"))
         if in_flight:
             line += f"; {in_flight}"
-        if entry.get("operator_next") and status in {"repairing", "blocked", "attention"}:
+        if entry.get("operator_next") and status in {
+            "repairing",
+            "blocked",
+            "attention",
+            "paused",
+        }:
             line += f" ({entry['operator_next']})"
         repair_summary = _repair_dispatch_summary(entry)
         if repair_summary:
