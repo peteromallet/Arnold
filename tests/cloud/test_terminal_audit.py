@@ -20,6 +20,8 @@ from arnold_pipelines.megaplan.cloud.recovery_verifier import (
     VerificationTarget,
     VerificationVerdict,
 )
+from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
+from arnold_pipelines.megaplan.cloud import terminal_audit
 
 
 def _snapshot(_request_id: str) -> RereadSnapshot:
@@ -182,3 +184,39 @@ def test_terminal_audit_rejects_arbitrary_repair_loop_bin() -> None:
     # The comment must document the delegation intent.
     assert "Route retrigger through typed delegation shim (Step 76-80)" in source
     assert "Terminal audit never directly executes a repair-loop binary" in source
+
+
+def test_terminal_audit_unknown_liveness_never_delegates(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        terminal_audit,
+        "capture_terminal_snapshot",
+        lambda _session, _marker_dir: {
+            "captured_at": "2026-08-03T18:00:00+00:00",
+            "workspace": "/workspace/demo",
+            "current_target_liveness": {
+                "schema": SCHEMA,
+                "state": "unknown",
+                "known": False,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        terminal_audit,
+        "delegate_to_simple_fixer",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("UNKNOWN liveness delegated a retrigger")
+        ),
+    )
+
+    record = terminal_audit.run_terminal_audit(
+        session="demo",
+        repair_loop_bin=tmp_path / "repair-loop",
+        marker_dir=tmp_path / "markers",
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert record["accepted"] is False
+    assert record["command"] == []
+    assert "UNKNOWN" in record["post_retrigger_verification"]["rejection_reason"]

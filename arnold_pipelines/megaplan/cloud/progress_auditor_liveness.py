@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
+
 
 _DEAD_TMUX = frozenset({"dead", "missing", "stopped", "unavailable"})
 _DEAD_WATCHDOG = frozenset(
@@ -23,8 +25,43 @@ def classify_runner_liveness(
     tmux: Mapping[str, Any] | None,
     active_step: Mapping[str, Any] | None,
     watchdog_statuses: Sequence[str] | None = None,
+    *,
+    bound_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return one consistent ``alive|dead|unknown`` runner classification."""
+
+    if isinstance(bound_observation, Mapping):
+        state = str(bound_observation.get("state") or "unknown").strip().lower()
+        if bound_observation.get("schema") != SCHEMA or state not in {
+            "live",
+            "dead",
+            "unknown",
+        }:
+            state = "unknown"
+        known = state != "unknown"
+        return {
+            "state": state,
+            "live": state == "live",
+            "dead": state == "dead",
+            "known": known,
+            "source": str(
+                bound_observation.get("source")
+                or "insufficient_bound_liveness_evidence"
+            ),
+            "session_identity_present": bool(
+                (bound_observation.get("identity") or {}).get("source")
+                if isinstance(bound_observation.get("identity"), Mapping)
+                else False
+            ),
+            "process_identity_present": bool(
+                (bound_observation.get("identity") or {}).get("pid")
+                if isinstance(bound_observation.get("identity"), Mapping)
+                else False
+            ),
+            "tmux_live_status": "unknown",
+            "watchdog_statuses": [],
+            "control_permitted": known,
+        }
 
     tmux = tmux if isinstance(tmux, Mapping) else {}
     active_step = active_step if isinstance(active_step, Mapping) else {}

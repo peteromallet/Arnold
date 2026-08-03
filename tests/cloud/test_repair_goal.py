@@ -193,7 +193,8 @@ def test_l2_replan_epoch_scopes_deterministic_owner_breaker(tmp_path: Path) -> N
     first = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
     tripped = evaluate_repair_goal(path, action="owner-iteration-2-post-dev-fix")
     assert first["evaluation"].get("control_action") != "replan"
-    assert tripped["evaluation"]["control_action"] == "replan"
+    assert tripped["evaluation"]["control_action"] == "observe"
+    assert tripped["evaluation"]["liveness"]["state"] == "unknown"
 
     reconcile_l2_replan(
         path,
@@ -381,15 +382,15 @@ def test_live_execute_worker_is_preserved_until_review_stage(tmp_path: Path) -> 
     result = evaluate_repair_goal(path, action="pre-mechanical-relaunch")
 
     assert result["status"] == GOAL_ACTIVE
-    assert result["evaluation"]["control_action"] == "preserve_live"
+    assert result["evaluation"]["control_action"] == "investigate"
     assert result["evaluation"]["blocker_cleared"] is True
     assert result["evaluation"]["stage_advanced"] is False
-    assert result["evaluation"]["correct_worker_alive"] is True
+    assert result["evaluation"]["correct_worker_alive"] is False
 
     repeated_poll = evaluate_repair_goal(
         path, action="owner-iteration-1-post-dev-fix"
     )
-    assert repeated_poll["evaluation"]["control_action"] == "preserve_live"
+    assert repeated_poll["evaluation"]["control_action"] == "investigate"
     assert repeated_poll["evaluation"].get("circuit_breaker_required") is not True
 
 
@@ -400,7 +401,7 @@ def test_same_owner_failure_twice_opens_replan_circuit(tmp_path: Path) -> None:
     second = evaluate_repair_goal(path, action="owner-iteration-2-post-dev-fix")
 
     assert first["evaluation"]["control_action"] == "investigate"
-    assert second["evaluation"]["control_action"] == "replan"
+    assert second["evaluation"]["control_action"] == "observe"
     assert second["evaluation"]["circuit_breaker_required"] is True
     assert second["evaluation"]["deterministic_repeat_count"] == 2
 
@@ -447,7 +448,7 @@ def test_current_epoch_investigator_replan_routes_to_l2_once(tmp_path: Path) -> 
 
     assert failure["terminal_failure"]["replan_epoch"] == 0
     assert routed["status"] == GOAL_ACTIVE
-    assert routed["evaluation"]["control_action"] == "meta_repair"
+    assert routed["evaluation"]["control_action"] == "observe"
     assert routed["evaluation"]["failed_fixer_evidence"]["phase"] == (
         "investigator-replan-required"
     )
@@ -489,7 +490,7 @@ def test_productive_target_commit_resets_breaker_without_completing_goal(tmp_pat
     assert changed["status"] == GOAL_ACTIVE
     assert changed["evaluation"]["control_action"] == "investigate"
     assert changed["semantic_completion"] is False
-    assert repeated["evaluation"]["control_action"] == "replan"
+    assert repeated["evaluation"]["control_action"] == "observe"
 
 
 def test_explicit_authorization_gate_terminates_with_exact_gate_evidence(tmp_path: Path) -> None:

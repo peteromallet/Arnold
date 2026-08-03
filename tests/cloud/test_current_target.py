@@ -83,18 +83,15 @@ def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> No
         session_is_live=lambda name: name == "child-session",
     )
 
-    assert record["authoritative_source"] == "live_sibling_session"
-    assert record["target_session"] == "child-session"
+    # A tmux/session boolean from this namespace cannot prove that a sibling
+    # runner in another container is live. Without a bound lease it remains
+    # diagnostic-only and cannot replace the current target.
+    assert record["authoritative_source"] == "marker"
+    assert record["target_session"] == "parent-session"
     assert record["repair_progress"]["present"] is True
-    assert record["sibling_sessions"] == [
-        {
-            "session": "child-session",
-            "marker_path": str(marker_dir / "child-session.json"),
-            "run_kind": "chain",
-            "plan_name": "m2-child-plan",
-            "live_status": "alive",
-        }
-    ]
+    assert record["sibling_sessions"][0]["session"] == "child-session"
+    assert record["sibling_sessions"][0]["live_status"] == "unknown"
+    assert record["sibling_sessions"][0]["current_target_liveness"]["state"] == "unknown"
     assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "missing_chain_state",
@@ -105,13 +102,8 @@ def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> No
             "path": str(workspace / ".megaplan" / "plans" / "m1-parent-plan" / "state.json"),
             "plan_name": "m1-parent-plan",
         },
-        {
-            "kind": "superseded_by_live_sibling",
-            "path": str(marker_dir / "child-session.json"),
-            "session": "child-session",
-        },
     ]
-    assert "live sibling session supersedes current marker: child-session" in record["rationale"]
+    assert "live sibling session supersedes current marker: child-session" not in record["rationale"]
 
 
 def test_resolve_current_target_marks_stale_parent_from_chain_state(tmp_path: Path) -> None:

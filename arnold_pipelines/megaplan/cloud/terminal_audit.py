@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import os
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -21,6 +20,9 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     RetriggerExecutionResult,
     authoritative_terminal_snapshot_reason,
     verify_retrigger_success,
+)
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    observe_current_target_liveness,
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     append_incident_record,
@@ -94,13 +96,21 @@ def capture_terminal_snapshot(session: str, marker_dir: Path) -> dict[str, Any]:
     chain_total = len(milestones)
     total = spec_total or chain_total
     total_consistent = not (spec_total and chain_total and spec_total != chain_total)
-    if worker_pid not in (None, ""):
-        try:
-            os.kill(int(worker_pid), 0)
-        except (OSError, ValueError):
-            worker_alive = False
-        else:
+    target_liveness = observe_current_target_liveness(
+        marker,
+        marker_dir=marker_dir,
+        active_step=active_step,
+    )
+    target_identity = (
+        target_liveness.get("identity")
+        if isinstance(target_liveness.get("identity"), dict)
+        else {}
+    )
+    if target_identity.get("source") == "active_step":
+        if target_liveness.get("state") == "live":
             worker_alive = True
+        elif target_liveness.get("state") == "dead":
+            worker_alive = False
 
     return {
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -118,6 +128,7 @@ def capture_terminal_snapshot(session: str, marker_dir: Path) -> dict[str, Any]:
         "active_step_present": bool(active_step),
         "worker_pid": worker_pid,
         "worker_pid_alive": worker_alive,
+        "current_target_liveness": target_liveness,
         "remote_spec": str(marker.get("remote_spec") or "").strip(),
     }
 
@@ -164,7 +175,16 @@ def run_terminal_audit(
 
     try:
         pre_snapshot = capture_terminal_snapshot(session, marker_dir)
-        rejection = authoritative_terminal_snapshot_reason(pre_snapshot)
+        pre_liveness = pre_snapshot.get("current_target_liveness")
+        if not isinstance(pre_liveness, dict) or pre_liveness.get("known") is not True:
+            rejection = (
+                "current-target liveness is UNKNOWN; terminal audit may not "
+                "mutate, escalate, or retrigger"
+            )
+        elif pre_liveness.get("live") is True:
+            rejection = "current target is still live; terminal retrigger is forbidden"
+        else:
+            rejection = authoritative_terminal_snapshot_reason(pre_snapshot)
         if rejection:
             verification = {
                 "accepted": False,
@@ -221,6 +241,11 @@ def run_terminal_audit(
 
             sidecar = validate_repair_data(repair_data_dir / f"{session}.repair-data.json")
             post_snapshot = capture_terminal_snapshot(session, marker_dir)
+            post_liveness = post_snapshot.get("current_target_liveness")
+            post_runner_live = bool(
+                isinstance(post_liveness, dict)
+                and post_liveness.get("live") is True
+            )
             first_progress_at = post_snapshot.get("captured_at") or dt.datetime.now(
                 dt.timezone.utc
             ).isoformat()
@@ -249,7 +274,7 @@ def run_terminal_audit(
                         "blocker_cleared": True,
                         "directly_observed": True,
                         "independent": True,
-                        "canonical_runner_live": True,
+                        "canonical_runner_live": post_runner_live,
                         "fresh_progress_beyond_checkpoint": True,
                         "continued_progress": True,
                         "first_progress_observed_at": first_progress_at,

@@ -21,6 +21,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan.blocker_recovery import compact_failure_identity
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    liveness_from_current_target,
+    observe_current_target_liveness,
+)
 
 # ── M7 shadow validator import (enforcement always disabled) ────────────────
 try:
@@ -359,26 +363,18 @@ def _runner_transition_observation(
     plan_name: str,
     plan_path: Path | None,
     captured_at: str,
+    target_liveness: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Boundedly preserve a driver while it consumes a completed step result."""
 
-    target_pid: int | None = None
-    for proc_path in Path("/proc").glob("[0-9]*"):
-        try:
-            argv = [
-                item.decode("utf-8", errors="replace")
-                for item in (proc_path / "cmdline").read_bytes().split(b"\0")
-                if item
-            ]
-        except OSError:
-            continue
-        is_chain = all(item in argv for item in ("arnold_pipelines.megaplan", "chain", "start"))
-        is_plan = all(item in argv for item in ("arnold_pipelines.megaplan", "auto"))
-        matches_spec = bool(remote_spec and "--spec" in argv and remote_spec in argv)
-        matches_plan = bool(plan_name and "--plan" in argv and plan_name in argv)
-        if (is_chain and matches_spec) or (is_plan and matches_plan):
-            target_pid = int(proc_path.name)
-            break
+    identity = (
+        target_liveness.get("identity")
+        if isinstance(target_liveness.get("identity"), Mapping)
+        else {}
+    )
+    target_pid = identity.get("pid")
+    if not isinstance(target_pid, int) or isinstance(target_pid, bool):
+        target_pid = None
 
     captured_time = _parse_time(captured_at) or datetime.now(timezone.utc)
     state_age: float | None = None
@@ -388,12 +384,15 @@ def _runner_transition_observation(
             state_age = max(0.0, (captured_time - state_time).total_seconds())
         except OSError:
             pass
-    live = _pid_live(target_pid)
+    state = str(target_liveness.get("state") or "unknown")
+    live = state == "live"
     return {
         "runner_pid": target_pid,
-        "runner_pid_live": live,
+        "runner_pid_live": True if state == "live" else False if state == "dead" else None,
         "plan_state_age_seconds": state_age,
         "fresh": bool(live and state_age is not None and state_age <= _FRESH_RUNNER_TRANSITION_SECONDS),
+        "liveness_state": state,
+        "liveness_source": str(target_liveness.get("source") or ""),
     }
 
 
@@ -518,12 +517,43 @@ def capture_checkpoint(
     completed = chain.get("completed") if isinstance(chain.get("completed"), list) else []
     captured_at = utc_now()
     latest_failure = _compact_failure(state.get("latest_failure"))
+    marker_path = Path(marker_dir) / f"{session}.json" if marker_dir and session else None
+    marker = _load_json(marker_path)
+    target_liveness = observe_current_target_liveness(
+        marker,
+        marker_dir=Path(marker_dir) if marker_dir else Path("/nonexistent"),
+        active_step=(
+            state.get("active_step")
+            if isinstance(state.get("active_step"), Mapping)
+            else None
+        ),
+    )
     active_worker = _active_worker_observation(state, captured_at=captured_at)
+    active_identity = (
+        target_liveness.get("identity")
+        if isinstance(target_liveness.get("identity"), Mapping)
+        else {}
+    )
+    if str(active_identity.get("source") or "") == "active_step":
+        active_worker["worker_pid_live"] = (
+            True if target_liveness.get("state") == "live"
+            else False if target_liveness.get("state") == "dead"
+            else None
+        )
+        active_worker["fresh"] = bool(
+            active_worker["worker_pid_live"] is True
+            and active_worker.get("activity_age_seconds") is not None
+            and active_worker["activity_age_seconds"] <= _FRESH_WORKER_SECONDS
+        )
+    else:
+        active_worker["worker_pid_live"] = None
+        active_worker["fresh"] = False
     runner_transition = _runner_transition_observation(
         remote_spec=remote_spec,
         plan_name=resolved_plan,
         plan_path=plan_path,
         captured_at=captured_at,
+        target_liveness=target_liveness,
     )
     target_stage = _target_stage(state, chain)
     workspace_head = _git_head(root)
@@ -558,6 +588,7 @@ def capture_checkpoint(
         "active_worker": active_worker,
         "runner_transition": runner_transition,
         "session_identity": session_identity,
+        "current_target_liveness": target_liveness,
         "workspace_head": workspace_head,
         "quality_resolution_commit_custody": quality_resolution_commit_custody,
     }
@@ -857,6 +888,29 @@ def _continued_progress(
     candidate_plan = str(candidate.get("chain_current_plan_name") or "")
     observed_plan = str(observation.get("chain_current_plan_name") or "")
     return bool(candidate_plan and observed_plan and candidate_plan != observed_plan)
+
+
+def _fence_unknown_liveness_control(
+    evaluation: dict[str, Any], observation: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Allow diagnosis, but never escalation/replan on UNKNOWN liveness."""
+
+    target_liveness = liveness_from_current_target(observation)
+    if (
+        target_liveness.get("known") is not True
+        and evaluation.get("control_action") in {"meta_repair", "replan"}
+    ):
+        evaluation.update(
+            {
+                "control_action": "observe",
+                "reason": (
+                    "current-target liveness is UNKNOWN; preserve evidence and "
+                    "forbid mutation, escalation, or retrigger"
+                ),
+                "liveness": target_liveness,
+            }
+        )
+    return evaluation
 
 
 def _recovery_receipt(
@@ -1660,6 +1714,7 @@ def evaluate_repair_goal(
                     "deterministic owner failure repeated without a new target or productive-change token; "
                     "stop re-driving and escalate/replan"
                 )
+        _fence_unknown_liveness_control(evaluation, observation)
         cycle = {
             "observed_at": utc_now(),
             "action": action,
