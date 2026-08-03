@@ -237,8 +237,27 @@ deferred obligations.
   cloud Codex canary plus registry-closed source/wheel/installed/cloud tests for
   every production pipeline, model phase, provider, profile, runtime and
   launcher. Historical M9 mutation fixtures and current r5 commits remain input
-  evidence, never acceptance. Contract:
+  evidence, never acceptance. The real canary must run after deployment at the
+  exact final deployed/tested/receipted commit: `18b279f5ef...` or a descendant
+  that proves `18b` ancestry. An earlier `b168edbca0...` canary is rejected.
+  Contract:
   `provider-schema-dialect-family-contract.json`.
+- [ ] **HARD — F2A long inline prompt/path-probe safety.** Harden
+  `_normalize_stdin_text` so probing a long, single-line inline prompt as a
+  possible path catches `OSError`, including `ENAMETOOLONG`, and returns the
+  original prompt byte-for-byte. Cover a real overlong OS path probe,
+  monkeypatched `Path.is_file`, long Unicode, newline bypass and ordinary short
+  prompt files. Once a real file is established, a read failure is a typed
+  prompt-input error—not silently reinterpreted inline text.
+- [ ] **HARD — F2A ephemeral Codex usage/cost provenance.** Locate each
+  ephemeral call's exact rollout from its structured thread/session ID or a
+  bounded invocation/time-window correlation under the bound `CODEX_HOME`, then
+  bind rollout hash, observed model, token totals, pricing status and cost. If
+  that evidence cannot be located/read, emit typed `usage_status=unavailable`
+  plus search/session/rollout observations. A numeric compatibility `$0` is
+  non-authoritative and must never silently mean zero usage or observed model.
+  Concurrency, malformed/unreadable rollout and crash/restart tests prevent
+  cross-binding or reuse of an ephemeral session.
 - [ ] **HARD — provider credential admission.** Before dispatch, prove every
   selected provider credential and auth mechanism is available. A missing
   selected credential is typed no-spawn; it never silently authorizes an

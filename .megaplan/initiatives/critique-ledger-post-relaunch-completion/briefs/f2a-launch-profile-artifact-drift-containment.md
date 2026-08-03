@@ -22,8 +22,8 @@ boundary inside that same execution binding. It preserves provider-neutral
 canonical semantics, compiles an exact provider wire dialect only when lossless,
 and otherwise selects canonical local strict validation. Response enforcement
 and tool mode are independent axes. Historical M9 unsupported-keyword fixtures
-and current r5 implementation commits `f401431b7a`/`b168edbca0` are retained as
-input evidence; neither is accepted deployment proof.
+and current r5 implementation commits `f401431b7a`/`b168edbca0`/`18b279f5ef`
+are retained as input evidence; none is accepted deployment proof by itself.
 
 ## Difficulty and dependencies
 
@@ -115,6 +115,13 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
   for the durable occurrence or fail closed; admit exactly one repair-commit-
   bound same-phase retry. Crash, restart and response loss cannot multiply the
   attempt, fixer claim, retry or notification.
+- Harden `_normalize_stdin_text` at the path-probe boundary: `OSError`, including
+  `ENAMETOOLONG`, for a long one-line inline prompt returns the original bytes.
+  A read failure after a real file is established remains a typed input error.
+- For ephemeral Codex calls, locate and hash exact rollout/session usage under
+  the bound `CODEX_HOME`, or emit typed unavailable provenance with bounded
+  search evidence. Numeric `$0` is never authoritative evidence of zero tokens,
+  a free call or an observed model when the rollout is missing.
 
 ## Locked decisions
 
@@ -146,6 +153,10 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
 - A fixer is counted only after durable delegation provenance, a validated
   managed manifest, live child proof and atomic claim transfer. Otherwise the
   occurrence transitions once to deduplicated manual review with zero fixer.
+- Canary evidence is candidate-bound, not feature-commit-bound. The final
+  candidate must be `18b279f5ef...` or a descendant proving `18b` ancestry, and
+  the final candidate, deployed runtime, tested runtime and canary receipt
+  commits must be identical. A canary at earlier `b168edbca0...` is rejected.
 
 ## Done criteria
 
@@ -188,6 +199,18 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
   provider/profile/model/runtime/image, raw response and canonical validation
   hashes in a content-addressed receipt. A registry-closed matrix rejects every
   untested production pipeline, phase, provider, profile, runtime and launcher.
+- Inline-prompt regressions cover real and injected `ENAMETOOLONG`, long Unicode,
+  newline bypass, exact-byte preservation, normal prompt-file reads and typed
+  established-file read failure. No filesystem-probe exception escapes.
+- Ephemeral Codex regressions cover exact session lookup, bounded missing-ID
+  correlation, missing/unreadable/malformed rollout, unpriced versus unavailable
+  usage, concurrent-rollout isolation and crash/restart. Missing evidence is
+  typed unavailable and cannot silently authorize `$0`, zero tokens or model
+  provenance.
+- The final canary completion manifest proves `18b279f5ef...` is the tested
+  commit or an ancestor of it, and exact equality across final candidate,
+  deployed runtime, canary-tested and canary-receipt commits. Its receipt is
+  later than the bound deployment receipt; `b168edbca0...` cannot pass.
 
 ## Anti-scope
 

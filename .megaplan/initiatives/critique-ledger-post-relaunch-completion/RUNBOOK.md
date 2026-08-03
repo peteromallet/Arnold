@@ -91,6 +91,15 @@ response loss and polling do not replenish the phase, fixer, claim, retry or
 notification budgets. Never disable structured response validation merely
 because tools are enabled.
 
+For the F2A installed-cloud canary, bind the exact final candidate and deployed
+runtime commit before calling Codex. The tested commit and canary-receipt commit
+must equal that deployed commit, which must be `18b279f5ef...` or a descendant
+that proves `18b` ancestry; do not reuse evidence from `b168edbca0...`. Treat a
+long one-line prompt as inline text when pathname probing raises `OSError` or
+`ENAMETOOLONG`. For ephemeral calls, missing rollout/session usage is explicit
+typed unavailable provenance; a compatibility numeric `$0` is not evidence of
+zero tokens, a free call or the model that actually ran.
+
 ## Complete fresh restart/relaunch procedure
 
 Use this only after the current generation is terminal or positively proven

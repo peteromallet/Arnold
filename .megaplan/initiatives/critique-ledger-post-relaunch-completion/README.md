@@ -120,6 +120,13 @@ canary are registry-closed requirements across all production pipelines. The
 current repair commits are input evidence, not acceptance. See
 [`provider-schema-dialect-family-contract.json`](provider-schema-dialect-family-contract.json).
 
+The isolated canary added two concrete F2A obligations: long single-line inline
+prompts must survive pathname probing when the OS raises `ENAMETOOLONG`, and an
+ephemeral Codex call must either bind exact rollout/session usage or state typed
+unavailability—never silently present missing evidence as `$0`. Final acceptance
+must rerun the canary after deploying the exact final `18b279f5ef...` or
+descendant commit; an earlier `b168edbca0...` canary cannot satisfy the gate.
+
 A separate historical audit invalidates the old M11 completion/promotion claim
 at commit `d10b0fef2b6dbc283639ca14adf6790153ebd2a6`. That commit contained
 `evidence/ownership-decision-record.json` with four blockers and

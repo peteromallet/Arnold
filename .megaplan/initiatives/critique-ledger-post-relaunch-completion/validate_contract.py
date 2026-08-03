@@ -2414,6 +2414,11 @@ def _validate_provider_schema_dialect_family_contract(
                 "tree": "ccd93dff64f59aa0e3ac22dcd5a75e1e3a8bc768",
                 "subject": "BOUND_PROVIDER_CONTRACT_FAILURE_RECOVERY",
             },
+            {
+                "commit": "18b279f5ef6d2a4db693586a59de8d87d7b45ab5",
+                "tree": "a6a1eb49e8ace5632c610ab7ee3028c9da0a86b5",
+                "subject": "HARDEN_PROVIDER_CONTRACT_RECOVERY_BOUNDARY_AND_ISOLATED_CANARY_CANDIDATE",
+            },
         ]
         or evidence.get("rule")
         != "PRESERVE_AS_INPUT_EVIDENCE_UNTIL_INTEGRATED_INSTALLED_AND_ACCEPTED_BY_THIS_CONTRACT"
@@ -2565,11 +2570,33 @@ def _validate_provider_schema_dialect_family_contract(
         raise ContractError("schema-repair occurrence/claim/notification dedupe drift")
 
     canary = dialect.get("real_codex_canary")
+    final_binding = (
+        canary.get("final_candidate_binding") if isinstance(canary, dict) else None
+    )
     if (
         not isinstance(canary, dict)
         or canary.get("surface")
         != "FRESH_INSTALLED_CLOUD_RUNTIME_WITH_REAL_CODEX_PROVIDER_CALL"
         or canary.get("model_family") != "CODEX"
+        or final_binding
+        != {
+            "minimum_ancestor_commit": "18b279f5ef6d2a4db693586a59de8d87d7b45ab5",
+            "minimum_ancestor_tree": "a6a1eb49e8ace5632c610ab7ee3028c9da0a86b5",
+            "rejected_earlier_candidate": "b168edbca01388fbad55383f43c290476ff0feda",
+            "successor_rule": "FINAL_CANDIDATE_MUST_EQUAL_18B_OR_HAVE_18B_AS_GIT_ANCESTOR",
+            "exact_equality_rule": "FINAL_CANDIDATE_COMMIT_EQUALS_DEPLOYED_RUNTIME_COMMIT_EQUALS_CANARY_TESTED_COMMIT_EQUALS_CANARY_RECEIPT_COMMIT",
+            "temporal_rule": "CANARY_RECEIPT_MUST_BE_CREATED_AFTER_EXACT_FINAL_CANDIDATE_DEPLOYMENT",
+            "required_runtime_binding": [
+                "final_candidate_commit",
+                "final_candidate_tree",
+                "deployed_runtime_commit",
+                "runtime_image_digest",
+                "canary_tested_commit",
+                "canary_receipt_commit",
+                "deployment_receipt_sha256",
+                "canary_receipt_sha256",
+            ],
+        }
         or canary.get("fixtures")
         != [
             "CLOSED_SCHEMA_PROVIDER_STRICT_WITH_TOOLS_DISABLED",
@@ -2594,6 +2621,98 @@ def _validate_provider_schema_dialect_family_contract(
         }
     ):
         raise ContractError("real installed-cloud Codex canary drift")
+
+    findings = dialect.get("isolated_canary_findings")
+    prompt_finding = (
+        findings.get("long_inline_prompt_path_probe")
+        if isinstance(findings, dict)
+        else None
+    )
+    usage_finding = (
+        findings.get("ephemeral_codex_usage_provenance")
+        if isinstance(findings, dict)
+        else None
+    )
+    if (
+        not isinstance(prompt_finding, dict)
+        or prompt_finding.get("affected_seam")
+        != "arnold_pipelines.megaplan.workers._impl._normalize_stdin_text"
+        or prompt_finding.get("failure")
+        != "PATH_IS_FILE_CAN_RAISE_OSERROR_ENAMETOOLONG_FOR_LONG_SINGLE_LINE_INLINE_PROMPT"
+        or prompt_finding.get("required_behavior")
+        != "CATCH_OSERROR_INCLUDING_ENAMETOOLONG_AROUND_PATH_PROBE_AND_RETURN_ORIGINAL_INLINE_PROMPT_BYTE_FOR_BYTE"
+        or prompt_finding.get("do_not_mask")
+        != "AFTER_A_REAL_FILE_IS_ESTABLISHED_A_READ_FAILURE_IS_TYPED_PROMPT_INPUT_UNAVAILABLE_NOT_INLINE_TEXT"
+        or prompt_finding.get("required_tests")
+        != [
+            "REAL_OS_LONG_SINGLE_LINE_PROMPT_DOES_NOT_RAISE",
+            "MONKEYPATCHED_PATH_IS_FILE_OSERROR_ENAMETOOLONG_RETURNS_ORIGINAL",
+            "LONG_UNICODE_SINGLE_LINE_PROMPT_IS_BYTE_PRESERVED",
+            "NEWLINE_INLINE_PROMPT_BYPASSES_PATH_PROBE",
+            "REAL_SHORT_PROMPT_FILE_STILL_LOADS_EXACT_BYTES",
+            "ESTABLISHED_PROMPT_FILE_READ_OSERROR_IS_TYPED_NOT_SILENTLY_REINTERPRETED",
+        ]
+    ):
+        raise ContractError("long inline prompt ENAMETOOLONG canary finding drift")
+    if (
+        not isinstance(usage_finding, dict)
+        or usage_finding.get("affected_seam")
+        != "CODEX_EPHEMERAL_ROLLOUT_SESSION_USAGE_AND_COST_CAPTURE"
+        or usage_finding.get("locate_order")
+        != [
+            "PARSE_EXACT_THREAD_OR_SESSION_ID_FROM_STRUCTURED_CLI_EVENTS",
+            "LOOK_UP_EXACT_SESSION_ROLLOUT_UNDER_BOUND_CODEX_HOME",
+            "CORRELATE_EPHEMERAL_ROLLOUT_BY_INVOCATION_ID_AND_BOUNDED_START_END_WINDOW",
+            "READ_AND_HASH_EXACT_ROLLOUT_USAGE_AND_OBSERVED_MODEL",
+        ]
+        or usage_finding.get("located_required_fields")
+        != [
+            "usage_status_located",
+            "session_or_thread_id",
+            "rollout_path",
+            "rollout_sha256",
+            "observed_model",
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+            "pricing_status_priced_or_unpriced",
+            "cost_usd",
+            "provenance_source",
+        ]
+        or usage_finding.get("unavailable_required_fields")
+        != [
+            "usage_status_unavailable",
+            "typed_reason",
+            "invocation_id",
+            "searched_codex_home",
+            "searched_time_window",
+            "session_id_observation",
+            "rollout_observation",
+            "cost_pricing_unavailable",
+            "numeric_compatibility_cost_usd_zero_non_authoritative",
+        ]
+        or set(usage_finding.get("forbidden") or [])
+        != {
+            "SILENT_ZERO_DOLLAR_COST_WITHOUT_USAGE_STATUS",
+            "CLAIM_ZERO_TOKENS_WHEN_USAGE_IS_UNAVAILABLE",
+            "CLAIM_REQUESTED_MODEL_AS_OBSERVED_MODEL_WITHOUT_ROLLOUT",
+            "SEARCH_UNBOUNDED_OR_AMBIENT_CODEX_HOMES",
+            "ATTACH_ANOTHER_CONCURRENT_INVOCATIONS_ROLLOUT",
+            "PERSIST_EPHEMERAL_SESSION_AS_REUSABLE_SESSION",
+        }
+        or usage_finding.get("required_tests")
+        != [
+            "EPHEMERAL_STRUCTURED_SESSION_ID_LOCATES_EXACT_ROLLOUT",
+            "MISSING_SESSION_ID_USES_BOUNDED_INVOCATION_WINDOW_CORRELATION",
+            "MISSING_ROLLOUT_EMITS_TYPED_UNAVAILABLE_NOT_SILENT_ZERO",
+            "UNREADABLE_OR_MALFORMED_ROLLOUT_EMITS_TYPED_UNAVAILABLE",
+            "UNPRICED_MODEL_WITH_USAGE_IS_DISTINCT_FROM_USAGE_UNAVAILABLE",
+            "CONCURRENT_ROLLOUT_CANNOT_CROSS_BIND",
+            "CRASH_RESTART_PRESERVES_USAGE_PROVENANCE_OR_TYPED_UNAVAILABLE",
+        ]
+    ):
+        raise ContractError("ephemeral Codex usage/provenance canary finding drift")
 
     acceptance = dialect.get("cross_pipeline_acceptance")
     if (
@@ -2622,6 +2741,8 @@ def _validate_provider_schema_dialect_family_contract(
             "HOST_RESTART",
             "NOTIFICATION_RESPONSE_LOSS",
         ]
+        or acceptance.get("final_candidate_canary_gate")
+        != "REJECT_ANY_COMPLETION_MANIFEST_WHOSE_CANARY_COMMIT_DIFFERS_FROM_THE_EXACT_FINAL_DEPLOYED_18B_OR_SUCCESSOR_COMMIT"
         or acceptance.get("completion_evidence")
         != "evidence/critique-ledger-recovery/F2A/provider-schema-dialect-family/completion-manifest.json"
         or acceptance.get("independent_review_required") is not True

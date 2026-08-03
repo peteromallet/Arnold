@@ -379,6 +379,55 @@ def test_provider_schema_acceptance_requires_real_codex_cloud_canary() -> None:
         contract._validate_provider_schema_dialect_family_contract(dialect)
 
 
+def test_long_inline_prompt_probe_must_catch_enametoolong_and_preserve_bytes() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    finding = dialect["isolated_canary_findings"]["long_inline_prompt_path_probe"]
+    finding["required_behavior"] = "LET_OSERROR_ESCAPE"
+    with pytest.raises(
+        contract.ContractError,
+        match="long inline prompt ENAMETOOLONG canary finding drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_ephemeral_codex_usage_cannot_silently_be_recorded_as_zero_cost() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    finding = dialect["isolated_canary_findings"][
+        "ephemeral_codex_usage_provenance"
+    ]
+    finding["forbidden"].remove("SILENT_ZERO_DOLLAR_COST_WITHOUT_USAGE_STATUS")
+    with pytest.raises(
+        contract.ContractError,
+        match="ephemeral Codex usage/provenance canary finding drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_final_canary_rejects_earlier_b168_candidate() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    binding = dialect["real_codex_canary"]["final_candidate_binding"]
+    binding["minimum_ancestor_commit"] = (
+        "b168edbca01388fbad55383f43c290476ff0feda"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="real installed-cloud Codex canary drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_canary_commit_must_equal_final_deployed_commit() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["cross_pipeline_acceptance"]["final_candidate_canary_gate"] = (
+        "ALLOW_EARLIER_TESTED_COMMIT"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="provider-schema cross-pipeline registry closure drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
 def test_provider_schema_family_cannot_be_megaplan_only() -> None:
     dialect = _provider_schema_dialect_fixture()
     dialect["cross_pipeline_acceptance"]["coverage"] = "MEGAPLAN_ONLY"
