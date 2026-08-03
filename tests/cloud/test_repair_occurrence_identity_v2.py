@@ -295,6 +295,7 @@ def test_managed_lifecycle_failure_publishes_identity_then_claims_and_delegates(
         "workspace": str(workspace),
         "remote_spec": str(workspace / "chain.yaml"),
         "run_kind": "chain",
+        "run_id": "managed-demo-run-1",
         "identity_digest": "sha256:managed-demo",
         "started_at": "2026-08-03T00:00:00Z",
     }
