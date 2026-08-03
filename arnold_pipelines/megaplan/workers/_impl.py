@@ -173,8 +173,8 @@ def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
         while view:
             written = os.write(fd, view)
             view = view[written:]
-        os.fchown(fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
         os.fchmod(fd, 0o600)
+        os.fchown(fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -251,8 +251,8 @@ def _prepare_zero_recovery_model_runtime(
         )
         output_created = True
         try:
-            os.fchown(output_fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
             os.fchmod(output_fd, 0o600)
+            os.fchown(output_fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
             os.fsync(output_fd)
             output_stat = os.fstat(output_fd)
         finally:

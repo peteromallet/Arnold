@@ -1942,6 +1942,14 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     )
     assert seed < handoff < runtime_handoff
 
+    copy_start = source.index("def _zero_recovery_copy_private_file(")
+    copy_end = source.index("\ndef _prepare_zero_recovery_model_runtime", copy_start)
+    copy = source[copy_start:copy_end]
+    assert copy.index("os.fchmod(fd, 0o600)") < copy.index("os.fchown(fd,")
+    assert prepare.index("os.fchmod(output_fd, 0o600)") < prepare.index(
+        "os.fchown(output_fd,"
+    )
+
 
 def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
