@@ -613,6 +613,118 @@ def fail_phase_wbc(
     )
 
 
+def cancel_phase_wbc(
+    *,
+    state: PlanState,
+    plan_dir: Path,
+    step: str,
+    expected_attempt_id: str,
+    expected_invocation_id: str,
+    agent: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Terminalize exactly one active phase attempt as ``CANCELLED``.
+
+    This is the operator/recovery counterpart to ``complete_phase_wbc`` and
+    ``fail_phase_wbc``.  Both durable identities are mandatory CAS operands;
+    a caller can never cancel whichever attempt happens to be current.  The
+    function removes only the matching ``_phase_wbc`` custody record and does
+    not clear ``active_step`` itself.
+    """
+
+    expected_attempt_id = str(expected_attempt_id).strip()
+    expected_invocation_id = str(expected_invocation_id).strip()
+    if not expected_attempt_id or not expected_invocation_id:
+        raise ValueError("phase WBC cancellation requires attempt and invocation ids")
+    metadata = phase_wbc_state(state, step=step)
+    if metadata is None:
+        raise RuntimeError(f"active phase WBC attempt is required to cancel {step!r}")
+    actual_attempt_id = str(metadata.get("attempt_id") or "")
+    actual_invocation_id = str(metadata.get("invocation_id") or "")
+    if (
+        actual_attempt_id != expected_attempt_id
+        or actual_invocation_id != expected_invocation_id
+    ):
+        raise RuntimeError(
+            "phase WBC cancellation identity mismatch: "
+            f"expected {expected_attempt_id}/{expected_invocation_id}, "
+            f"found {actual_attempt_id}/{actual_invocation_id}"
+        )
+    derived_attempt_id = phase_wbc_attempt_id(
+        plan_dir,
+        step=step,
+        invocation_id=expected_invocation_id,
+    )
+    if derived_attempt_id != expected_attempt_id:
+        raise RuntimeError(
+            "phase WBC cancellation attempt id does not match plan/step/invocation lineage"
+        )
+    events = query_phase_wbc_events(
+        plan_dir,
+        step=step,
+        invocation_id=expected_invocation_id,
+    )
+    if tuple(event.event_type for event in events) != (AttemptEventType.STARTED,):
+        raise RuntimeError(
+            f"phase WBC attempt {expected_attempt_id} is not uniquely cancellable from STARTED"
+        )
+
+    spec = _PHASE_WBC_SPEC_BY_STEP[step]
+    source_version = str(metadata["source_version"])
+    event = _event(
+        state=state,
+        attempt_id=expected_attempt_id,
+        step=step,
+        invocation_id=expected_invocation_id,
+        sequence=2,
+        event_type=AttemptEventType.CANCELLED,
+        outcome=AttemptOutcome.CANCELLED,
+        agent=agent,
+        payload={
+            "phase": step,
+            "status": "cancelled",
+            "invocation_id": expected_invocation_id,
+            "reason": str(reason).strip() or "operator_cancelled",
+        },
+    )
+    artifacts = ImmutableAttemptArtifacts(
+        attempt_id=expected_attempt_id,
+        metadata={"phase": step, "invocation_id": expected_invocation_id},
+    )
+    _phase_facade(plan_dir).cancel_attempt(
+        attempt_id=expected_attempt_id,
+        event=event,
+        writer_id=spec.writer_id,
+        surface_name=spec.surface_name,
+        source_lookup_key=f"{step}:{expected_invocation_id}:terminal",
+        expected_source_version=source_version,
+        artifacts=artifacts,
+    )
+
+    # In-memory compare-and-remove: even after the durable terminal event, a
+    # replacement custody record must not be erased by this older operation.
+    active_step = state.get("active_step")
+    current = (
+        active_step.get(PHASE_WBC_STATE_KEY)
+        if isinstance(active_step, dict)
+        else None
+    )
+    if not isinstance(current, dict) or dict(current) != metadata:
+        raise RuntimeError(
+            "phase WBC custody changed during cancellation; refusing in-memory clear"
+        )
+    active_step.pop(PHASE_WBC_STATE_KEY, None)
+    return {
+        "step": step,
+        "attempt_id": expected_attempt_id,
+        "invocation_id": expected_invocation_id,
+        "event_type": AttemptEventType.CANCELLED.value,
+        "outcome": AttemptOutcome.CANCELLED.value,
+        "sequence": 2,
+        "active_step_preserved": True,
+    }
+
+
 def _terminal_phase_wbc(
     *,
     state: PlanState,

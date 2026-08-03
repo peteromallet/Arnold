@@ -44,10 +44,8 @@ from arnold_pipelines.megaplan._core import (
     sha256_file,
 )
 from arnold.pipeline.contract_validation import validate_payload_against_schema
-from arnold.pipeline.step_io_contract import StepIOOperation
 from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
 from arnold_pipelines.megaplan.observability.evaluand import read_evaluand_events
-from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold_pipelines.megaplan.workflows.handler_contract import apply_state_projection
 from arnold_pipelines.megaplan.orchestration.test_selection import (
@@ -60,6 +58,12 @@ from arnold_pipelines.megaplan.orchestration.task_feasibility import (
 from arnold_pipelines.megaplan.orchestration.task_splitter import (
     split_high_complexity_tasks,
 )
+from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+    FinalizeMutationContext,
+    FinalizeReadToken,
+    current_finalize_token,
+    publish_finalize_candidate,
+)
 from arnold_pipelines.megaplan.orchestration.validation_compiler import (
     compile_validation_jobs as compile_validation_contract,
 )
@@ -69,7 +73,6 @@ from arnold_pipelines.megaplan.orchestration.critique_custody import (
     validate_finalize_resolution_coverage,
     write_critique_clearance,
 )
-from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.schema_projection import (
     project_schema_owned_fields,
     require_schema_fields,
@@ -2025,7 +2028,14 @@ def _split_finalize_tasks(
     return [diagnostic.as_dict() for diagnostic in diagnostics]
 
 
-def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
+def _write_finalize_artifacts(
+    plan_dir: Path,
+    payload: dict[str, Any],
+    state: PlanState,
+    *,
+    expected_parent: FinalizeReadToken | None = None,
+    lock_held: bool = False,
+) -> str:
     contract_payload = normalize_contract_payload(
         {
             "provides": payload.get("provides", []),
@@ -2153,12 +2163,23 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     if clearance_path.exists():
         bind_finalize_custody(plan_dir, payload, read_json(clearance_path))
     atomic_write_json(plan_dir / "contract.json", contract_payload)
-    write_plan_artifact_json(
-        plan_dir, "finalize.json", payload,
-        contract_context=create_step_io_contract_context(
-            operation=StepIOOperation.WRITE,
-            explicit_root=plan_dir,
+    active_step = state.get("active_step")
+    run_id = (
+        active_step.get("run_id")
+        if isinstance(active_step, Mapping) and isinstance(active_step.get("run_id"), str)
+        else None
+    )
+    publish_finalize_candidate(
+        plan_dir,
+        payload,
+        context=FinalizeMutationContext(
+            owner="finalize",
+            operation="publish-admitted-candidate",
+            attempt_id=f"finalize:{state.get('iteration', 0)}:{run_id or 'unbound'}",
+            run_id=run_id,
         ),
+        expected_parent=expected_parent or current_finalize_token(plan_dir),
+        lock_held=lock_held,
     )
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(payload))
@@ -2247,6 +2268,10 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         except (OSError, UnicodeDecodeError):
             seed_json = None
 
+        # Bind publication to the exact authority observed before the model
+        # call.  A recovery/sidecar that replaces Finalize while this call is
+        # in flight can no longer be overwritten by the stale result.
+        finalize_parent = current_finalize_token(plan_dir)
         worker, agent, mode, refreshed = _run_worker("finalize", state, plan_dir, args, root=root)
 
         # ── T8: Scratch promotion ──────────────────────────────────
@@ -2310,7 +2335,13 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         _reject_finalize_unresolved_north_star(plan_dir, state)
 
         try:
-            artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)
+            artifact_hash = _write_finalize_artifacts(
+                plan_dir,
+                worker.payload,
+                state,
+                expected_parent=finalize_parent,
+                lock_held=True,
+            )
         except TaskFeasibilityError as error:
             return _route_finalize_task_feasibility_failure_to_revise(
                 plan_dir,

@@ -4864,9 +4864,14 @@ def _reset_stale_prerequisite_blocked_tasks(
     plan_dir: Path,
     outcome: DriverOutcome,
 ) -> list[str]:
-    finalize_path = plan_dir / "finalize.json"
     try:
-        finalize_data = json.loads(finalize_path.read_text(encoding="utf-8"))
+        from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+            FinalizeMutationContext,
+            load_finalize_for_update,
+            publish_finalize_update,
+        )
+
+        finalize_data = load_finalize_for_update(plan_dir)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return []
     if not isinstance(finalize_data, dict):
@@ -4893,7 +4898,15 @@ def _reset_stale_prerequisite_blocked_tasks(
         _clear_execute_task_attempt_fields(task)
         reset_ids.append(task_id)
     if reset_ids:
-        atomic_write_json(finalize_path, finalize_data)
+        publish_finalize_update(
+            plan_dir,
+            finalize_data,
+            context=FinalizeMutationContext(
+                owner="execute",
+                operation="reset-stale-prerequisite-blocks",
+                attempt_id="chain-recovery:" + ",".join(sorted(reset_ids)),
+            ),
+        )
     return sorted(reset_ids)
 
 

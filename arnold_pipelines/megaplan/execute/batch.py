@@ -47,6 +47,7 @@ from arnold_pipelines.megaplan._core import (
     save_state_merge_meta,
     set_active_step,
     sha256_file,
+    sha256_text,
     split_oversized_batches,
     store_raw_worker_output,
 )
@@ -99,6 +100,11 @@ from arnold_pipelines.megaplan.execute.wbc import (
     EXECUTE_DISPATCH_WBC_KEY,
     build_execute_batch_dispatch_spec,
     dispatch_wbc_summary,
+)
+from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+    FinalizeMutationContext,
+    load_finalize_for_update,
+    publish_finalize_update,
 )
 from arnold_pipelines.megaplan.execute.quality import (
     AttributionResult,
@@ -173,6 +179,36 @@ from arnold_pipelines.megaplan.workers.result_metadata import aggregate_rate_lim
 
 log = logging.getLogger(__name__)
 
+
+def _publish_execute_finalize(
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    *,
+    operation: str,
+    state: Mapping[str, Any] | None = None,
+) -> None:
+    """Publish execution-owned fields through the sole Finalize writer."""
+
+    active_step = state.get("active_step") if isinstance(state, Mapping) else None
+    run_id = (
+        active_step.get("run_id")
+        if isinstance(active_step, Mapping) and isinstance(active_step.get("run_id"), str)
+        else None
+    )
+    publish_finalize_update(
+        plan_dir,
+        finalize_data,
+        context=FinalizeMutationContext(
+            owner="execute",
+            operation=operation,
+            attempt_id=f"execute:{operation}:{run_id or 'unbound'}",
+            run_id=run_id,
+        ),
+        # All production callers are inside handle_execute's plan lock.  Tests
+        # invoke lower-level helpers directly but still exercise identical CAS.
+        lock_held=True,
+    )
+
 _UNROUTABLE_REWORK_ATTEMPTS_KEY = "unroutable_rework_attempts"
 _MAX_UNROUTABLE_REWORK_RERUNS = 2
 _ROUTABLE_REWORK_TARGET_KINDS = {"task", "bulk", "manifest"}
@@ -237,8 +273,11 @@ def _repair_missing_user_action_gate(
     _ensure_user_actions_pre_gate_task(finalize_data, state)
     if find_synthetic_before_execute_gate(finalize_data)[0] is None:
         return False
-    write_plan_artifact_json(
-        plan_dir, "finalize.json", finalize_data, contract_context=None
+    _publish_execute_finalize(
+        plan_dir,
+        finalize_data,
+        operation="repair-missing-user-action-gate",
+        state=state,
     )
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(finalize_data))
     atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="execute"))
@@ -3204,7 +3243,9 @@ def _run_and_merge_batch(
         )
     atomic_write_json(batch_artifact_path, payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
+    # The immutable batch artifact is the crash-recovery evidence.  Do not
+    # publish an interim whole-document Finalize projection here; the execute
+    # coordinator owns the single aggregate publication below.
     atomic_write_text(
         plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
     )
@@ -3223,7 +3264,11 @@ def _run_and_merge_batch(
         total_sense_check_count=total_batch_checks,
         missing_task_evidence=missing_task_evidence,
         execution_audit=execution_audit,
-        finalize_hash=sha256_file(plan_dir / "finalize.json"),
+        finalize_hash=(
+            sha256_file(plan_dir / "finalize.json")
+            if (plan_dir / "finalize.json").exists()
+            else sha256_text(json.dumps(finalize_data, indent=2) + "\n")
+        ),
         attribution_records=list(attribution_result.records),
         routing_degradations=routing_degradations,
     )
@@ -3517,7 +3562,7 @@ def handle_execute_one_batch(
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
-    finalize_data = read_json(plan_dir / "finalize.json")
+    finalize_data = load_finalize_for_update(plan_dir)
     if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
@@ -3814,7 +3859,12 @@ def handle_execute_one_batch(
             finalize_data
         )
         if deferred_checkpoint_ids:
-            atomic_write_json(plan_dir / "finalize.json", finalize_data)
+            _publish_execute_finalize(
+                plan_dir,
+                finalize_data,
+                operation="defer-baseline-checkpoints",
+                state=state,
+            )
             log.info(
                 "deferred baseline-unavailable verification checkpoint(s): %s",
                 ", ".join(deferred_checkpoint_ids),
@@ -3839,7 +3889,12 @@ def handle_execute_one_batch(
             project_dir=project_dir,
             state=state,
         )
-        atomic_write_json(plan_dir / "finalize.json", finalize_data)
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="publish-aggregate-execute",
+            state=state,
+        )
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
         write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
@@ -4254,7 +4309,7 @@ def _sync_resolved_prerequisite_blocked_tasks(
 ) -> tuple[dict[str, Any], list[str]]:
     """Reload finalize state from disk and clear stale resolved prereq blocks."""
     try:
-        refreshed = read_json(plan_dir / "finalize.json")
+        refreshed = load_finalize_for_update(plan_dir)
     except (OSError, UnicodeDecodeError, ValueError):
         refreshed = finalize_data
     if isinstance(refreshed, dict):
@@ -4265,11 +4320,11 @@ def _sync_resolved_prerequisite_blocked_tasks(
         state=state,
     )
     if reset_ids:
-        write_plan_artifact_json(
+        _publish_execute_finalize(
             plan_dir,
-            "finalize.json",
             finalize_data,
-            contract_context=None,
+            operation="clear-resolved-prerequisite-blocks",
+            state=state,
         )
         log.info(
             "%s: reset %d stale prerequisite-blocked task(s) to pending: %s",
@@ -4882,7 +4937,7 @@ def handle_execute_auto_loop(
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
-    finalize_data = read_json(plan_dir / "finalize.json")
+    finalize_data = load_finalize_for_update(plan_dir)
     if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
@@ -4972,7 +5027,12 @@ def handle_execute_auto_loop(
                 f"{preservation_violation}"
             )
         if reset_ids:
-            write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
+            _publish_execute_finalize(
+                plan_dir,
+                finalize_data,
+                operation="retry-blocked-tasks",
+                state=state,
+            )
             log.info(
                 "retry-blocked-tasks: reset %d task(s) from blocked -> pending: %s",
                 len(reset_ids),
@@ -5021,11 +5081,11 @@ def handle_execute_auto_loop(
         state=state,
     )
     if stale_authority_reset_ids:
-        write_plan_artifact_json(
+        _publish_execute_finalize(
             plan_dir,
-            "finalize.json",
             finalize_data,
-            contract_context=None,
+            operation="repair-user-action-gate",
+            state=state,
         )
         log.info(
             "stale-authority-retry: reset %d stale done task(s) to pending: %s",
@@ -5039,7 +5099,12 @@ def handle_execute_auto_loop(
     )
     if deferred_checkpoint_ids:
         baseline_unavailable_acks.extend(deferred_acks)
-        atomic_write_json(plan_dir / "finalize.json", finalize_data)
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="defer-interim-baseline-checkpoints",
+            state=state,
+        )
         log.info(
             "deferred baseline-unavailable interim verification checkpoint(s): %s",
             ", ".join(deferred_checkpoint_ids),
@@ -5244,7 +5309,12 @@ def handle_execute_auto_loop(
                     task["evidence_files"] = []
                     task["reviewer_verdict"] = ""
                     task.pop("recorded_invocation_id", None)
-            write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
+            _publish_execute_finalize(
+                plan_dir,
+                finalize_data,
+                operation="reset-blocked-after-user-action",
+                state=state,
+            )
             # Recompute blocked_task_ids after reset — should now be empty
             blocked_task_ids = {
                 task["id"]
@@ -5287,8 +5357,11 @@ def handle_execute_auto_loop(
             )
             if deferred_ids:
                 baseline_unavailable_acks.extend(deferred_acks)
-                write_plan_artifact_json(
-                    plan_dir, "finalize.json", finalize_data, contract_context=None
+                _publish_execute_finalize(
+                    plan_dir,
+                    finalize_data,
+                    operation="defer-short-circuit-checkpoints",
+                    state=state,
                 )
                 tasks = finalize_data.get("tasks", [])
                 blocked_task_ids = {
@@ -5531,8 +5604,11 @@ def handle_execute_auto_loop(
         )
         if loaded_batch_payloads:
             total_batches = max(total_batches, len(loaded_batch_payloads))
-            write_plan_artifact_json(
-                plan_dir, "finalize.json", finalize_data, contract_context=None
+            _publish_execute_finalize(
+                plan_dir,
+                finalize_data,
+                operation="resume-loaded-batches",
+                state=state,
             )
             batch_payloads = loaded_batch_payloads
     active_task_ids = set(
@@ -5765,7 +5841,7 @@ def handle_execute_auto_loop(
                     ),
                     persist_state=False,
                 )
-                finalize_data = read_json(plan_dir / "finalize.json")
+                finalize_data = load_finalize_for_update(plan_dir)
                 break
             record_step_failure(
                 plan_dir,
@@ -5891,7 +5967,7 @@ def handle_execute_auto_loop(
     if trace_chunks:
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
-    finalize_data = read_json(plan_dir / "finalize.json")
+    finalize_data = load_finalize_for_update(plan_dir)
     reconcile_finalized_review_scope_claims(
         finalize_data,
         plan_dir=plan_dir,
@@ -5951,7 +6027,12 @@ def handle_execute_auto_loop(
         plan_dir=plan_dir,
     )
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
+    _publish_execute_finalize(
+        plan_dir,
+        finalize_data,
+        operation="publish-execute-completion",
+        state=state,
+    )
     atomic_write_text(
         plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
     )

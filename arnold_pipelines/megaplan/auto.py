@@ -1996,8 +1996,11 @@ def _read_finalize_data(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
-        with (plan_dir / "finalize.json").open(encoding="utf-8") as handle:
-            data = json.load(handle)
+        from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+            load_finalize_for_update,
+        )
+
+        data = load_finalize_for_update(plan_dir)
     except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
@@ -2034,8 +2037,21 @@ def _pin_tasks_to_tier(
         mutated.append(task_id)
     if mutated and plan_dir is not None:
         try:
-            _write_json_atomic(plan_dir / "finalize.json", data)
-        except OSError:
+            from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+                FinalizeMutationContext,
+                publish_finalize_update,
+            )
+
+            publish_finalize_update(
+                plan_dir,
+                data,
+                context=FinalizeMutationContext(
+                    owner="auto",
+                    operation="pin-task-tier",
+                    attempt_id=f"auto-tier:{new_tier}:{','.join(sorted(mutated))}",
+                ),
+            )
+        except (OSError, RuntimeError):
             logging.getLogger("megaplan").warning(
                 "_pin_tasks_to_tier: failed writing finalize.json", exc_info=True
             )
