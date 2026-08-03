@@ -1,7 +1,7 @@
 """Tests for :mod:`arnold_pipelines.megaplan.workflows.override_matrix`.
 
 Covers:
-* Every ``_OVERRIDE_ACTIONS`` key is present in the matrix.
+* Every legacy-handler or control-only canonical action is present in the matrix.
 * Every matrix entry is classified as either ``terminal_route`` or
   ``additive_config``.
 * Classification sets are disjoint and cover all 11 keys.
@@ -37,7 +37,7 @@ from arnold_pipelines.megaplan.workflows.override_matrix import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_ALL_KEYS = frozenset(_OVERRIDE_ACTIONS.keys())
+_ALL_KEYS = frozenset(_OVERRIDE_ACTIONS.keys()) | frozenset(CONTROL_ROUTED_ACTIONS)
 
 # Actions with explicit native source route bindings in the override interface
 # (abort→halt, force-proceed→finalize, replan→revise).
@@ -56,7 +56,7 @@ class TestOverrideActionMatrixCompleteness:
         matrix_keys = frozenset(entry.action for entry in OVERRIDE_ACTION_MATRIX)
         assert len(matrix_keys) == 11, f"Expected 11 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
         assert matrix_keys == _ALL_KEYS, (
-            f"Matrix keys do not match _OVERRIDE_ACTIONS.\n"
+            f"Matrix keys do not match canonical dispatch registries.\n"
             f"  Missing from matrix: {sorted(_ALL_KEYS - matrix_keys)}\n"
             f"  Extra in matrix:    {sorted(matrix_keys - _ALL_KEYS)}"
         )

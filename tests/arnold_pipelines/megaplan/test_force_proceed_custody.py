@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import argparse
+import ast
+import inspect
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from arnold.control.interface import ControlTransition, ControlTransitionRequest
 from arnold_pipelines.megaplan.control_interface import apply_transition
+from arnold_pipelines.megaplan.handlers import override as override_handler
+from arnold_pipelines.megaplan.handlers.override import handle_override
 from arnold_pipelines.megaplan.handlers.finalize import (
     _reject_finalize_unresolved_north_star,
 )
 from arnold_pipelines.megaplan.planning.control_binding import (
+    PlanningControlBinding,
     planning_run_state_view,
 )
+from arnold_pipelines.megaplan.types import CliError
 
 
 def _write(path: Path, payload: object) -> None:
@@ -208,3 +217,155 @@ def test_force_proceed_retry_repairs_projections_without_duplicate_debt(
     assert second.mutated is False
     assert (plan_dir / "gate_carry.json").exists()
     assert json.loads(debt_path.read_text()) == debt_before
+
+
+def test_default_cli_route_uses_canonical_cas_custody(
+    tmp_path: Path,
+    gate_runtime: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m11-replay"
+    _write(plan_dir / "state.json", _state(tmp_path))
+    _seed_custody(plan_dir)
+    monkeypatch.delenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", raising=False)
+    monkeypatch.setattr(override_handler, "preflight_mutating_phase", lambda **kwargs: None)
+
+    response = handle_override(
+        tmp_path,
+        argparse.Namespace(
+            plan="m11-replay",
+            override_action="force-proceed",
+            reason="default route accepts explicit debt",
+            user_approved=False,
+        ),
+    )
+
+    assert response["success"] is True
+    persisted = json.loads((plan_dir / "state.json").read_text())
+    custody = persisted["meta"]["force_proceed_custody"]
+    assert persisted["current_state"] == "gated"
+    assert custody["reason"] == "default route accepts explicit debt"
+    assert custody["transaction_id"].startswith("force-proceed:")
+    assert persisted["meta"]["overrides"][-1]["custody_transaction_id"] == custody[
+        "transaction_id"
+    ]
+
+
+def test_default_cli_retry_repairs_projection_idempotently(
+    tmp_path: Path,
+    gate_runtime: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m11-replay"
+    _write(plan_dir / "state.json", _state(tmp_path))
+    _seed_custody(plan_dir)
+    monkeypatch.delenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", raising=False)
+    monkeypatch.setattr(override_handler, "preflight_mutating_phase", lambda **kwargs: None)
+    args = argparse.Namespace(
+        plan="m11-replay",
+        override_action="force-proceed",
+        reason="retryable operator decision",
+        user_approved=False,
+    )
+
+    handle_override(tmp_path, args)
+    persisted_before = json.loads((plan_dir / "state.json").read_text())
+    debt_path = tmp_path / ".megaplan" / "debt.json"
+    debt_before = json.loads(debt_path.read_text())
+    (plan_dir / "gate_carry.json").unlink()
+
+    response = handle_override(tmp_path, args)
+
+    persisted_after = json.loads((plan_dir / "state.json").read_text())
+    assert response["success"] is True
+    assert (plan_dir / "gate_carry.json").exists()
+    assert json.loads(debt_path.read_text()) == debt_before
+    assert persisted_after["meta"]["force_proceed_custody"] == persisted_before["meta"][
+        "force_proceed_custody"
+    ]
+    assert len(persisted_after["meta"]["overrides"]) == len(
+        persisted_before["meta"]["overrides"]
+    )
+
+
+def test_concurrent_default_cli_force_proceed_has_one_cas_winner_and_projection(
+    tmp_path: Path,
+    gate_runtime: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m11-replay"
+    _write(plan_dir / "state.json", _state(tmp_path))
+    _seed_custody(plan_dir)
+    monkeypatch.delenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", raising=False)
+    monkeypatch.setattr(override_handler, "preflight_mutating_phase", lambda **kwargs: None)
+    rendezvous = threading.Barrier(2)
+    original_apply = PlanningControlBinding.apply_transition
+
+    def synchronized_apply(self, run_state, transition):
+        result = original_apply(self, run_state, transition)
+        if transition.op == "override" and transition.target_id == "force-proceed":
+            rendezvous.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(PlanningControlBinding, "apply_transition", synchronized_apply)
+    import arnold_pipelines.megaplan.planning.control_binding as control_binding
+
+    original_project = control_binding.project_force_proceed_custody
+    projection_calls = 0
+    projection_lock = threading.Lock()
+
+    def counted_project(*args, **kwargs):
+        nonlocal projection_calls
+        with projection_lock:
+            projection_calls += 1
+        return original_project(*args, **kwargs)
+
+    monkeypatch.setattr(control_binding, "project_force_proceed_custody", counted_project)
+
+    def invoke() -> str:
+        try:
+            handle_override(
+                tmp_path,
+                argparse.Namespace(
+                    plan="m11-replay",
+                    override_action="force-proceed",
+                    reason="one operator decision",
+                    user_approved=False,
+                ),
+            )
+            return "winner"
+        except CliError as error:
+            assert error.extra["conflict"]
+            return "cas_loser"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: invoke(), range(2)))
+
+    assert sorted(outcomes) == ["cas_loser", "winner"]
+    assert projection_calls == 1
+    persisted = json.loads((plan_dir / "state.json").read_text())
+    assert len(persisted["meta"]["overrides"]) == 1
+    debt = json.loads((tmp_path / ".megaplan" / "debt.json").read_text())
+    assert len(debt["force_proceed_transactions"]) == 1
+
+
+def test_legacy_force_proceed_mutation_owner_is_statically_retired() -> None:
+    source = inspect.getsource(override_handler)
+    tree = ast.parse(source)
+    defined_functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "_override_force_proceed" not in defined_functions
+    assert "force-proceed" not in override_handler._OVERRIDE_ACTIONS
+    assert "force-proceed" in override_handler._control_routed_override_actions()
+
+    from arnold_pipelines.megaplan.custody import override_wbc
+
+    writer = next(
+        spec for spec in override_wbc._WRITER_SPECS if spec.transition == "force-proceed"
+    )
+    assert writer.source_file == "arnold_pipelines/megaplan/planning/control_binding.py"
+    assert writer.function_name == "PlanningControlBinding.apply_transition"
