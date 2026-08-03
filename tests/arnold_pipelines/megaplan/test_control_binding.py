@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -17,6 +18,24 @@ from arnold_pipelines.megaplan.planning.control_binding import (
     planning_run_state_view,
 )
 from arnold.control.interface import ControlTransition
+from arnold_pipelines.megaplan.profiles import load_profile_metadata, load_profiles
+from arnold_pipelines.megaplan.types import CliError
+
+
+def _profile_digest(profile: str, project_dir: Path) -> str:
+    profiles = load_profiles(project_dir=project_dir)
+    metadata = load_profile_metadata(project_dir=project_dir)
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "profile": profile,
+                "phase_map": profiles[profile],
+                "metadata": metadata.get(profile, {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def test_blocked_review_recovery_does_not_project_illegal_rerun() -> None:
@@ -110,6 +129,11 @@ def test_set_profile_preserves_encoded_phase_model_chains(monkeypatch) -> None:
     monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
     monkeypatch.setattr(
         profiles_module,
+        "load_profile_sources",
+        lambda project_dir=None: [("project", "demo", {})],
+    )
+    monkeypatch.setattr(
+        profiles_module,
         "resolve_profile",
         lambda profile_name, profiles: {
             "plan": ["codex:gpt-5.5", "claude:claude-sonnet-4-6"],
@@ -141,6 +165,11 @@ def test_set_profile_clears_stale_vendor_for_non_premium_profile(monkeypatch) ->
     import arnold_pipelines.megaplan.profiles as profiles_module
 
     monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+    monkeypatch.setattr(
+        profiles_module,
+        "load_profile_sources",
+        lambda project_dir=None: [("project", "demo", {})],
+    )
     monkeypatch.setattr(
         profiles_module,
         "resolve_profile",
@@ -179,6 +208,11 @@ def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(monkey
     import arnold_pipelines.megaplan.profiles as profiles_module
 
     monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+    monkeypatch.setattr(
+        profiles_module,
+        "load_profile_sources",
+        lambda project_dir=None: [("project", "demo", {})],
+    )
     monkeypatch.setattr(profiles_module, "load_profile_metadata", lambda project_dir=None: {"demo": {}})
     monkeypatch.setattr(
         profiles_module,
@@ -284,6 +318,8 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
         payload={
             "profile": "partnered-5-glm",
             "reason": "refresh persisted GLM-only Execute routing",
+            "expected_profile_source": "built-in",
+            "expected_profile_sha256": _profile_digest("partnered-5-glm", tmp_path),
         },
     )
 
@@ -297,6 +333,13 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
     assert result.accepted is True
     receipt = result.artifacts["profile_refresh_receipt"]
     assert receipt["same_profile_refresh"] is True
+    assert receipt["profile_source"] == "built-in"
+    assert receipt["profile_content_sha256"] == _profile_digest(
+        "partnered-5-glm", tmp_path
+    )
+    assert len(receipt["profile_source_candidates"]) == 1
+    assert receipt["profile_source_candidates"][0]["source"] == "built-in"
+    assert len(receipt["profile_source_candidates"][0]["phase_map_sha256"]) == 64
     assert receipt["from_routing_sha256"] != receipt["to_routing_sha256"]
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     execute_tiers = persisted["config"]["tier_models"]["execute"]
@@ -311,6 +354,10 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
     assert "execute=hermes:zhipu:glm-5.2" in persisted["config"]["phase_model"]
     assert persisted["current_state"] == "gated"
     assert persisted["history"] == [cancellation]
+    assert persisted["config"]["profile_binding"] == {
+        "profile_source": "built-in",
+        "profile_content_sha256": receipt["profile_content_sha256"],
+    }
     assert "active_step" not in persisted
     override_receipt = persisted["meta"]["overrides"][-1]
     assert override_receipt["same_profile_refresh"] is True
@@ -330,6 +377,50 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
     assert chain_path.read_bytes() == chain_before
     assert phase_wbc_path.read_bytes() == phase_wbc_before
 
+
+def test_same_profile_refresh_rejects_project_shadow_of_built_in(
+    tmp_path: Path,
+) -> None:
+    project_profile = tmp_path / ".megaplan" / "profiles.toml"
+    project_profile.parent.mkdir(parents=True)
+    project_profile.write_text(
+        """
+[profiles.partnered-5-glm]
+plan = "hermes:deepseek:deepseek-v4-pro"
+execute = "hermes:deepseek:deepseek-v4-pro"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    state = {
+        "name": "demo",
+        "current_state": "gated",
+        "config": {
+            "project_dir": str(tmp_path),
+            "profile": "partnered-5-glm",
+            "phase_model": ["execute=hermes:deepseek:deepseek-v4-pro"],
+        },
+        "meta": {"overrides": []},
+        "_state_meta": {"versions": {"config": 0, "meta": 0}},
+    }
+
+    with pytest.raises(CliError) as exc_info:
+        planning_control_binding().apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="set-profile",
+                payload={
+                    "profile": "partnered-5-glm",
+                    "expected_profile_source": "built-in",
+                },
+            ),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "profile_source_mismatch"
+    assert state["config"]["phase_model"] == [
+        "execute=hermes:deepseek:deepseek-v4-pro"
+    ]
 
 def test_default_cli_same_profile_refresh_always_uses_cas_owner(
     tmp_path: Path,
@@ -371,11 +462,17 @@ def test_default_cli_same_profile_refresh_always_uses_cas_owner(
             override_action="set-profile",
             profile="partnered-5-glm",
             reason="refresh persisted GLM-only Execute routing",
+            expected_profile_source="built-in",
+            expected_profile_sha256=_profile_digest("partnered-5-glm", tmp_path),
         ),
     )
 
     receipt = response["profile_refresh_receipt"]
     assert receipt["same_profile_refresh"] is True
+    assert receipt["profile_source"] == "built-in"
+    assert receipt["profile_content_sha256"] == _profile_digest(
+        "partnered-5-glm", tmp_path
+    )
     assert receipt["from_routing_sha256"] != receipt["to_routing_sha256"]
     persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert all(
