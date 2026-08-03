@@ -703,7 +703,10 @@ def test_host_transactions_fence_recheck_health_freshly_and_target_ids(
     workspace = tmp_path / "workspace"
     (workspace / ".secrets").mkdir(parents=True)
     (workspace / ".secrets" / "megaplan-resident-discord.env").write_text(
-        "DISCORD_BOT_TOKEN=fake-never-printed\n", encoding="utf-8"
+        "DISCORD_BOT_TOKEN=fake-never-printed\n"
+        "DISCORD_DM_USER_ID=123456789\n"
+        "MEGAPLAN_RESIDENT_STORE_ROOT=/workspace/arnold/.megaplan/resident\n",
+        encoding="utf-8",
     )
     runtime_workspace = workspace / RUNTIME_PATH.removeprefix("/workspace/")
     runtime_workspace.mkdir(parents=True)
@@ -888,6 +891,13 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
     assert state["source_policy"] == {"Name": "no", "MaximumRetryCount": 0}
     assert state["source_running"] is False
     assert sum(op[0] == "create" for op in state["ops"]) == 1
+    resident_env = dict(
+        row.split("=", 1) for row in state["resident"]["Config"]["Env"]
+    )
+    assert resident_env["DISCORD_DM_USER_ID"] == "123456789"
+    assert resident_env["MEGAPLAN_RESIDENT_STORE_ROOT"] == (
+        "/workspace/arnold/.megaplan/resident"
+    )
 
     state["resident"]["State"]["Running"] = False
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -1219,6 +1229,12 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
             "startup-env",
             "DISCORD_BOT_TOKEN=safe-token\nBASH_ENV=/workspace/pwn\n",
             "resident_secret_name_invalid",
+        ),
+        (
+            "allowlisted-value-shell-expansion",
+            "DISCORD_BOT_TOKEN=safe-token\n"
+            "MEGAPLAN_RESIDENT_STORE_ROOT=$(touch-/workspace/pwn)\n",
+            "resident_secret_grammar_invalid",
         ),
     ):
         secret_file.write_text(malicious_secret, encoding="utf-8")
