@@ -56,6 +56,8 @@ The clean attempt-9 relaunch waits only for the remaining paths capable of
 corrupting or duplicating the live attempt:
 
 - correct UNKNOWN liveness handling in wrappers;
+- canonical current-target liveness in cloud status/supervisor decisions (raw
+  tmux/`ps` remains diagnostic-only);
 - normalized repair occurrence and incarnation-bound leases;
 - field-scoped transactional `finalize.json` mutation;
 - retirement of notification direct-send fallbacks;

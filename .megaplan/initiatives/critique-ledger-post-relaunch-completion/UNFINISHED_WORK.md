@@ -12,24 +12,61 @@ machine-readable authority; the paths and counts below are operator guidance.
 
 ## Current handoff and action-oriented execution order
 
-Critique Ledger is durably moving at the handoff observation: cloud session
+The earlier handoff observation showed Critique Ledger moving, but it is not
+the current live state. Cloud session
 `critique-ledger-accountability-v3-r5-20260803`, plan
 `cl2-wbc-backed-ledger-20260803-1357`, product
 `e5e9f2b1c1a7e7779121405fd4801768e1e8a4c2`, fresh `v3-r5` milestone
 branches, isolated image
 `sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d`
-and runtime `82a5a012fa58f44cdc5e9e895f454d86d95b446d`. The selected
-profile is OAuth-backed all-Codex because a direct DeepSeek key was absent.
+and runtime `82a5a012fa58f44cdc5e9e895f454d86d95b446d` are immutable
+historical launch evidence, not current authority. The selected profile in that
+earlier launch was OAuth-backed all-Codex because a direct DeepSeek key was absent.
 Prep succeeded at `2026-08-03T14:04:08Z`; plan succeeded at `14:11:40Z`;
 critique began at `14:11:49Z` and six `gpt-5.6-sol` high workers produced fresh
-outputs through `14:15:21Z`. The tmux and chain process were alive at the bound
-observation. This is real progress, not whole-chain completion. Observation is
+outputs through `14:15:21Z`. The tmux and chain process were alive at that bound
+observation. This was real progress, not whole-chain completion. Observation was
 degraded: two launches reused the same minute-resolution plan ID, `introspect`
 rejects their merged journal, and outer chain status remains stale at
-`initialized`. PR #325 is open at head
+`initialized`. PR #325 was open at head
 `a73b2760369aa99f28bb02d41003325369bed6fa`; CI run `30820387356`, job
-`91708543510`, is red because two initiative documents are outside canonical
+`91708543510`, was red because two initiative documents were outside canonical
 artifact directories. Do not report “no current failure” from a stale observer.
+
+Current cutover state at `2026-08-03T19:40:55Z`: r5 remains intentionally
+paused at CL2 Finalize. Runner PID `152041` and attempt-8 Sol processes
+`160047`, `160061`, and `160240` are stopped with `SIGSTOP`; the installed
+candidate is still `18b279f5e`. Attempt 7 produced a validated 72,328-byte
+candidate, but it was not authoritatively adopted. Do not `SIGCONT` attempt 8
+and do not restart the epic from Prep. Preserve the same session, plan, and
+upstream artifacts; explicitly abort attempt 8 and create immutable attempt 9
+under the exact integrated runtime.
+
+### Relaunch gate task board
+
+Tasks marked `[parallel]` may be implemented and tested concurrently. Deployment
+waits for all checked items and one exact integration commit.
+
+- [ ] `[parallel]` Correct wrapper UNKNOWN handling: status/manual-review remain
+  observable while repair, notification, retirement, and relaunch fail closed.
+- [ ] `[parallel]` Require normalized repair occurrence identity and
+  process-start/PID-namespace/boot-bound leases end to end.
+- [ ] `[parallel]` Replace every live whole-document `finalize.json` rewrite with
+  one locked, expected-hash/version, field-allowlisted CAS writer.
+- [ ] Retire notification adapter-to-direct-send fallbacks and the legacy repair
+  loop Discord sender; ambiguous provider outcomes are `INDETERMINATE`.
+- [ ] After repair identity lands, persist the simple-fixer mutation budget and
+  effect outcomes by canonical repair occurrence across restart/claim release.
+- [ ] Route cloud status/supervisor actions through canonical current-target
+  liveness; tmux/`ps` evidence is diagnostic only.
+- [ ] Run combined regression, adversarial stale-writer/replay tests, and real
+  sibling-container/provider canaries against one candidate commit.
+- [ ] Deploy that exact commit to the cloud runtime candidate; verify remote
+  source hashes and intended Finalize=GPT-5.6 Sol high, Execute=GLM 5.2 profile.
+- [ ] Explicitly abort attempt 8, launch immutable attempt 9, and adopt or
+  recreate the valid Finalize candidate through the authorized receipt path.
+- [ ] Prove one Finalize advance, GLM Execute start, one current r5 row in
+  `/whats-cooking`, and zero duplicate notifications across unchanged polls.
 
 The resident is separately healthy: epoch `discord-enospc-20260803-r7`,
 container
@@ -52,9 +89,10 @@ supervision of the live Critique run.
   prove the old values are rejected, and restart the resident once through its
   supported receipted path. Never copy any secret value into evidence or this
   epic. This can run in parallel with passive Critique supervision.
-- [ ] Supervise r5 without redeploying it: retain periodic exact
-  plan/tmux/process/worker/runtime observations, record every milestone
-  transition, and intervene only on a new evidence-backed failure.
+- [ ] Until the attempt-9 cutover, observe the paused r5 without changing it:
+  retain periodic exact plan/process/runtime observations. After the relaunch
+  gate passes, deploy only the exact attested integration commit and supervise
+  the new attempt from canonical evidence.
 - [ ] Capture the final r5 completion or terminal-failure receipt and update the
   custody manifest. Dependency: live r5 reaches a terminal state.
 - [ ] **P0 — reconcile live PR custody before any advance/success claim.** Keep
