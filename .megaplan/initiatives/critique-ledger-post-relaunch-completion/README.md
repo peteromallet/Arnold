@@ -134,7 +134,9 @@ NO-GO and the predecessor remains stopped and recoverable.
 
 The closed-schema `prelaunch_release_gates` in `custody-manifest.json` are
 T6.2 prerequisites, not F1 work. They require an independently accepted exact
-A7/B7 candidate; a fixed root-owned symlink-free host control-state directory;
+finite-canary candidate whose implementation/manifest identities live only in
+the gate's accepted evidence; a fixed root-owned symlink-free host control-state
+directory;
 bounded all-eight-unit settlement and crash-safe fencing before reclaim;
 durable failure/reconciliation evidence; the built-image four-phase smoke;
 fresh live capacity/predeploy authority; a finalized-then-stopped finite canary;

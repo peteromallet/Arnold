@@ -59,3 +59,11 @@ def test_failure_evidence_cannot_claim_pre_intent_host_durability() -> None:
     )
     with pytest.raises(contract.ContractError, match="failure evidence authority split"):
         contract._validate_host_control_state_contract(custody)
+
+
+def test_invented_global_marker_schema_is_rejected() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    marker = custody["trusted_host_control_state_contract"]["global_containment_marker"]
+    marker["schema"] = "arnold.cloud.zero_recovery_global_containment_marker.v2"
+    with pytest.raises(contract.ContractError, match="global containment marker"):
+        contract._validate_host_control_state_contract(custody)

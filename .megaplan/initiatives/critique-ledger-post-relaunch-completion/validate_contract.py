@@ -36,7 +36,7 @@ OBLIGATIONS = {
 }
 
 PRELAUNCH_GATES = {
-    "accepted_a7_b7_candidate",
+    "accepted_finite_canary_candidate",
     "trusted_host_control_state",
     "bounded_fence_reclaim",
     "durable_failure_reconciliation",
@@ -163,7 +163,7 @@ def _validate_host_control_state_contract(custody: dict[str, Any]) -> None:
     records = contract.get("per_attempt_records")
     failures = contract.get("failure_evidence")
     if marker != {
-        "schema": "arnold.cloud.zero_recovery_global_containment_marker.v2",
+        "schema": "arnold.cloud.zero_recovery_marker.v2",
         "exact_fields": ["schema", "profile", "scope", "active"],
         "transaction_independent": True,
         "publish_after": [

@@ -81,7 +81,9 @@ machine-readable authority; the paths and counts below are operator guidance.
 - [ ] One accepted built-image four-phase smoke, fresh inventory, bootstrap
   reclaim receipt, GO predeploy receipt, apply/verify fence receipts, finite
   run/conformance/completion receipt and terminal stop receipt bind the exact
-  accepted A7/B7 implementation commit/tree, manifest commit/tree and image.
+  accepted finite-canary implementation commit/tree, manifest commit/tree and
+  image. Candidate generation names never enter the gate ID; exact accepted
+  identities live only in its evidence triple.
   Until live acceptance these identities and receipts remain typed `PENDING`;
   no placeholder is success evidence.
 - [ ] Stable exit proves v2 stopped, preserved and persistently fenced; all
