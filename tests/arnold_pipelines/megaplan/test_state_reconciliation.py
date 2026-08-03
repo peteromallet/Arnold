@@ -162,6 +162,52 @@ def test_load_plan_reconciles_completed_review_to_done(tmp_path: Path) -> None:
     assert "resume_cursor" not in persisted
 
 
+def test_load_plan_does_not_reconcile_past_unknown_active_custody(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "reviewed-plan"
+    active = {
+        "phase": "review",
+        "run_id": "foreign-run",
+        "worker_pid": 999_999,
+        "runner_incarnation": {
+            "host_id": "foreign-host",
+            "pid_namespace_id": "pid:[foreign]",
+            "worker_pid": 999_999,
+            "worker_process_start_identity": "boot:100",
+        },
+    }
+    _write_plan_state(
+        plan_dir,
+        {
+            "name": "reviewed-plan",
+            "current_state": "executed",
+            "iteration": 2,
+            "config": {},
+            "sessions": {},
+            "plan_versions": [],
+            "history": [],
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {"kind": "control_binding_mismatch"},
+            "resume_cursor": {"phase": "review", "retry_strategy": "repair_control_binding"},
+            "active_step": active,
+        },
+    )
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "review_verdict": "approved",
+                "outcome": {"result": "success", "state": "done"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, state = load_plan_from_dir(plan_dir)
+
+    assert state["current_state"] == "executed"
+    assert state["active_step"] == active
+
+
 def test_load_plan_reconciles_failed_no_next_step_after_finalize(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "finalized-plan"
     _write_plan_state(
