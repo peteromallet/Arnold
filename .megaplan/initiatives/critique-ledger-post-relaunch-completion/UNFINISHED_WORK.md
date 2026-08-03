@@ -61,7 +61,7 @@ waits for all checked items and one exact integration commit.
   process-start/PID-namespace/boot-bound leases end to end.
 - [x] `[parallel]` Replace every live whole-document `finalize.json` rewrite with
   one locked, expected-hash/version, field-allowlisted CAS writer.
-- [ ] Retire notification adapter-to-direct-send fallbacks and the legacy repair
+- [x] Retire notification adapter-to-direct-send fallbacks and the legacy repair
   loop Discord sender; ambiguous provider outcomes are `INDETERMINATE`.
 - [ ] After repair identity lands, persist the simple-fixer mutation budget and
   effect outcomes by canonical repair occurrence across restart/claim release.
