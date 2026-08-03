@@ -254,7 +254,7 @@ def test_historical_container_enospc_does_not_block_fresh_go() -> None:
     assert transaction["schema"] == zero_recovery.PREDEPLOY_SCHEMA
 
 
-def test_bootstrap_requires_exact_byte_floor_and_fresh_identical_evidence() -> None:
+def test_bootstrap_accepts_normal_counter_drift_below_exact_byte_floor() -> None:
     now = datetime(2026, 8, 2, tzinfo=timezone.utc)
     proposal = zero_recovery.build_bootstrap_reclaim_transaction(
         outer=_outer(), prelaunch=_prelaunch(go=False), inventory=_inventory(),
@@ -265,7 +265,27 @@ def test_bootstrap_requires_exact_byte_floor_and_fresh_identical_evidence() -> N
         inventory=_inventory(), now=now + timedelta(seconds=1),
     )
     changed = _inventory()
-    changed["filesystem"] = {**changed["filesystem"], "free_bytes": 1}
+    changed["filesystem"] = {
+        **changed["filesystem"],
+        "free_bytes": 1,
+        "free_inodes": 19,
+    }
+    changed_prelaunch = _prelaunch(go=False)
+    changed_prelaunch["capacity"] = {"free_bytes": 1, "free_inodes": 19}
+    zero_recovery.validate_bootstrap_reclaim_transaction(
+        proposal, target=_target(), outer=_outer(), prelaunch=changed_prelaunch,
+        inventory=changed, now=now + timedelta(seconds=1),
+    )
+
+
+def test_bootstrap_rejects_fresh_inventory_that_reaches_the_byte_floor() -> None:
+    now = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    proposal = zero_recovery.build_bootstrap_reclaim_transaction(
+        outer=_outer(), prelaunch=_prelaunch(go=False), inventory=_inventory(),
+        target=_target(), now=now,
+    )
+    changed = _inventory()
+    changed["filesystem"] = {**changed["filesystem"], "free_bytes": 101}
     with pytest.raises(CliError):
         zero_recovery.validate_bootstrap_reclaim_transaction(
             proposal, target=_target(), outer=_outer(), prelaunch=_prelaunch(go=False),
@@ -304,6 +324,9 @@ def test_bootstrap_remote_program_orders_fence_before_bounded_prune() -> None:
     ) < script.index("prune_started = True")
     assert script.index("prune_started = True") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
     assert "bootstrap_fence_reclaim_failure.v1" in script
+    assert "observe_inventory() != expected_inventory" not in script
+    assert "capacity_inventory_changed_or_no_longer_below_floor" in script
+    assert '"live_pre_inventory": pre_inventory' in script
     assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL" in script
     assert '"prune_started": prune_started' in script
     assert "file=sys.stderr" in script
@@ -985,6 +1008,14 @@ def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
         "command_argv": ["docker", "builder", "prune", "-f"],
         "returncode": 0,
         "pre_inventory_digest": "a" * 64,
+        "live_pre_inventory": {
+            "schema": "arnold.cloud.ssh_capacity_inventory.v1",
+            "status": "available",
+            "returncode": 0,
+            "errors": [],
+            "mount": {"st_dev": 1},
+            "filesystem": {"free_bytes": 1, "free_inodes": 2},
+        },
         "pre_mount": {"st_dev": 1},
         "post_mount": {"st_dev": 1},
         "pre_free_bytes": 1,
@@ -1009,10 +1040,16 @@ def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
         "systemd_jobs": [],
         "observed_at": "2026-08-03T00:00:00Z",
     }
+    receipt["live_pre_inventory_digest"] = hashlib.sha256(
+        json.dumps(
+            receipt["live_pre_inventory"], sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
     assert zero_recovery.parse_bootstrap_reclaim_receipt(
         stdout=json.dumps(receipt),
         transaction_id=transaction_id,
         transaction_digest=transaction_digest,
+        proposal_inventory_digest="a" * 64,
     ) == receipt
     hostile = dict(receipt)
     hostile["systemd_jobs"] = ["42 hostile.service start running"]
@@ -1021,6 +1058,7 @@ def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
             stdout=json.dumps(hostile),
             transaction_id=transaction_id,
             transaction_digest=transaction_digest,
+            proposal_inventory_digest="a" * 64,
         )
 
 

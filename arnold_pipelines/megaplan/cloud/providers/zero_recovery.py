@@ -22,7 +22,7 @@ PREDEPLOY_SCHEMA = "arnold.cloud.zero_recovery_predeploy.v1"
 FENCE_SCHEMA = "arnold.cloud.zero_recovery_host_fence.v1"
 BOOTSTRAP_RECLAIM_SCHEMA = "arnold.cloud.zero_recovery_bootstrap_reclaim.v1"
 BOOTSTRAP_RECLAIM_RECEIPT_SCHEMA = (
-    "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_receipt.v1"
+    "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_receipt.v2"
 )
 PRESERVATION_SCHEMA = "arnold.cloud.zero_recovery_container_preservation.v1"
 PREDEPLOY_TTL_SECONDS = 300
@@ -349,11 +349,16 @@ def _require_bootstrap_no_go(
         or prelaunch.get("returncode") != 3
         or not isinstance(capacity, Mapping)
         or set(capacity) != {"free_bytes", "free_inodes"}
-        or capacity.get("free_bytes") != filesystem.get("free_bytes")
-        or capacity.get("free_inodes") != filesystem.get("free_inodes")
+        or type(capacity.get("free_bytes")) is not int
+        or type(capacity.get("free_inodes")) is not int
+        or capacity.get("free_bytes") < 0
+        or capacity.get("free_inodes") < 0
         or capacity.get("free_bytes")
         >= thresholds.get("min_free_bytes") + thresholds.get("receipt_reserve_bytes")
+        or filesystem.get("free_bytes")
+        >= thresholds.get("min_free_bytes") + thresholds.get("receipt_reserve_bytes")
         or capacity.get("free_inodes") < thresholds.get("min_free_inodes")
+        or filesystem.get("free_inodes") < thresholds.get("min_free_inodes")
         or target.get("capacity_floor_bytes")
         != thresholds.get("min_free_bytes") + thresholds.get("receipt_reserve_bytes")
     ):
@@ -433,6 +438,24 @@ def validate_bootstrap_reclaim_transaction(
             "zero_recovery_bootstrap_invalid",
             "bootstrap reclaim transaction digest, lifetime, target, or command mismatch",
         )
+    recorded_outer = transaction.get("container_observation")
+    recorded_prelaunch = transaction.get("prelaunch_observation")
+    recorded_inventory = transaction.get("capacity_inventory")
+    if (
+        not isinstance(recorded_outer, Mapping)
+        or not isinstance(recorded_prelaunch, Mapping)
+        or not isinstance(recorded_inventory, Mapping)
+    ):
+        raise CliError(
+            "zero_recovery_bootstrap_invalid",
+            "bootstrap reclaim recorded evidence is malformed",
+        )
+    _require_bootstrap_no_go(
+        outer=recorded_outer,
+        prelaunch=recorded_prelaunch,
+        inventory=recorded_inventory,
+        target=target,
+    )
     _require_bootstrap_no_go(
         outer=outer,
         prelaunch=prelaunch,
@@ -440,13 +463,24 @@ def validate_bootstrap_reclaim_transaction(
         target=target,
     )
     if (
-        transaction.get("container_observation") != dict(outer)
-        or transaction.get("prelaunch_observation") != dict(prelaunch)
-        or transaction.get("capacity_inventory") != dict(inventory)
+        _identity(recorded_outer) != _identity(outer)
+        or recorded_prelaunch.get("thresholds") != prelaunch.get("thresholds")
+        or recorded_prelaunch.get("mount") != prelaunch.get("mount")
+        or recorded_inventory.get("mount") != inventory.get("mount")
+        or [
+            (item.get("path"), item.get("status"))
+            for item in recorded_inventory.get("scopes", [])
+            if isinstance(item, Mapping)
+        ]
+        != [
+            (item.get("path"), item.get("status"))
+            for item in inventory.get("scopes", [])
+            if isinstance(item, Mapping)
+        ]
     ):
         raise CliError(
             "zero_recovery_bootstrap_mismatch",
-            "bootstrap reclaim evidence changed before the first mutation",
+            "bootstrap reclaim stable identity changed before the first mutation",
         )
     return dict(transaction)
 
@@ -920,8 +954,45 @@ def observe_inventory():
 # its O_EXCL intent reservation and first containment mutation.
 sys.excepthook = failure_excepthook
 container_pre = observe_container()
-if observe_inventory() != expected_inventory:
-    raise RuntimeError("capacity_inventory_changed")
+pre_inventory = observe_inventory()
+thresholds = config["prelaunch_observation"]["thresholds"]
+if (
+    pre_inventory.get("schema") != expected_inventory.get("schema")
+    or pre_inventory.get("workspace") != expected_inventory.get("workspace")
+    or pre_inventory.get("mount") != expected_inventory.get("mount")
+    or pre_inventory.get("status") != "available"
+    or pre_inventory.get("returncode") != 0
+    or pre_inventory.get("errors") != []
+    or not isinstance(pre_inventory.get("docker_disk_usage"), list)
+    or [
+        (item.get("path"), item.get("status"))
+        for item in pre_inventory.get("scopes", [])
+        if isinstance(item, dict)
+    ]
+    != [
+        (item.get("path"), item.get("status"))
+        for item in expected_inventory.get("scopes", [])
+        if isinstance(item, dict)
+    ]
+    or any(
+        not isinstance(item, dict)
+        or type(item.get("size_bytes")) is not int
+        or item.get("size_bytes") < 0
+        for item in pre_inventory.get("scopes", [])
+    )
+    or type(pre_inventory.get("filesystem", {}).get("free_bytes")) is not int
+    or type(pre_inventory.get("filesystem", {}).get("free_inodes")) is not int
+    or pre_inventory["filesystem"]["free_bytes"] < 0
+    or pre_inventory["filesystem"]["free_inodes"] < 0
+    or pre_inventory["filesystem"]["free_bytes"]
+    >= config["target"]["capacity_floor_bytes"]
+    or pre_inventory["filesystem"]["free_inodes"]
+    < thresholds["min_free_inodes"]
+):
+    raise RuntimeError("capacity_inventory_changed_or_no_longer_below_floor")
+pre_inventory_digest = hashlib.sha256(
+    json.dumps(pre_inventory, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
 
 authority_dir_fd = open_authority_directory()
 intent_name = authority_filename(".bootstrap-fence-reclaim.intent")
@@ -1006,13 +1077,13 @@ systemd_jobs = require_no_recovery_unit_jobs()
 final_inventory = observe_inventory()
 if final_inventory.get("status") != "available":
     raise RuntimeError("post_reclaim_inventory_unknown")
-pre_free = expected_inventory["filesystem"]["free_bytes"]
+pre_free = pre_inventory["filesystem"]["free_bytes"]
 post_free = final_inventory["filesystem"]["free_bytes"]
 post_inodes = final_inventory["filesystem"]["free_inodes"]
 if post_free < config["target"]["capacity_floor_bytes"]:
     raise RuntimeError("post_reclaim_capacity_floor_not_met")
 receipt = {
-    "schema": "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_receipt.v1",
+    "schema": "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_receipt.v2",
     "status": "passed",
     "transaction_id": config["transaction_id"],
     "transaction_digest": config["transaction_digest"],
@@ -1020,10 +1091,12 @@ receipt = {
     "command_argv": ["docker", "builder", "prune", "-f"],
     "returncode": prune.returncode,
     "pre_inventory_digest": config["pre_inventory_digest"],
-    "pre_mount": expected_inventory["mount"],
+    "live_pre_inventory": pre_inventory,
+    "live_pre_inventory_digest": pre_inventory_digest,
+    "pre_mount": pre_inventory["mount"],
     "post_mount": final_inventory["mount"],
     "pre_free_bytes": pre_free,
-    "pre_free_inodes": expected_inventory["filesystem"]["free_inodes"],
+    "pre_free_inodes": pre_inventory["filesystem"]["free_inodes"],
     "post_free_bytes": post_free,
     "post_free_inodes": post_inodes,
     "reclaimed_bytes_delta": post_free - pre_free,
@@ -1072,7 +1145,11 @@ def bootstrap_reclaim_command(transaction: Mapping[str, Any]) -> str:
 
 
 def parse_bootstrap_reclaim_receipt(
-    *, stdout: str, transaction_id: str, transaction_digest: str
+    *,
+    stdout: str,
+    transaction_id: str,
+    transaction_digest: str,
+    proposal_inventory_digest: str,
 ) -> dict[str, Any]:
     lines = [line for line in stdout.splitlines() if line.strip()]
     try:
@@ -1081,7 +1158,8 @@ def parse_bootstrap_reclaim_receipt(
         raise CliError("zero_recovery_bootstrap_unknown", "invalid reclaim JSON") from exc
     required = {
         "schema", "status", "transaction_id", "transaction_digest",
-        "command_class", "command_argv", "returncode", "pre_inventory_digest", "pre_mount", "post_mount",
+        "command_class", "command_argv", "returncode", "pre_inventory_digest",
+        "live_pre_inventory", "live_pre_inventory_digest", "pre_mount", "post_mount",
         "pre_free_bytes", "pre_free_inodes", "post_free_bytes", "post_free_inodes",
         "reclaimed_bytes_delta", "units_before",
         "units_after_stop", "units_before_prune", "units", "container_pre",
@@ -1091,6 +1169,9 @@ def parse_bootstrap_reclaim_receipt(
         "observed_at",
     }
     units = payload.get("units") if isinstance(payload, dict) else None
+    live_pre_inventory = (
+        payload.get("live_pre_inventory") if isinstance(payload, dict) else None
+    )
     units_before_prune = (
         payload.get("units_before_prune") if isinstance(payload, dict) else None
     )
@@ -1124,12 +1205,24 @@ def parse_bootstrap_reclaim_receipt(
         or payload.get("command_class") != "docker_dangling_build_cache_prune"
         or payload.get("command_argv") != ["docker", "builder", "prune", "-f"]
         or payload.get("returncode") != 0
-        or not isinstance(payload.get("pre_inventory_digest"), str)
-        or len(payload.get("pre_inventory_digest")) != 64
+        or payload.get("pre_inventory_digest") != proposal_inventory_digest
+        or not isinstance(live_pre_inventory, dict)
+        or not isinstance(payload.get("live_pre_inventory_digest"), str)
+        or payload.get("live_pre_inventory_digest") != _digest(live_pre_inventory)
+        or live_pre_inventory.get("schema")
+        != "arnold.cloud.ssh_capacity_inventory.v1"
+        or live_pre_inventory.get("status") != "available"
+        or live_pre_inventory.get("returncode") != 0
+        or live_pre_inventory.get("errors") != []
         or not isinstance(payload.get("pre_mount"), dict)
+        or payload.get("pre_mount") != live_pre_inventory.get("mount")
         or payload.get("post_mount") != payload.get("pre_mount")
         or any(type(payload.get(key)) is not int for key in ("pre_free_bytes", "pre_free_inodes", "post_free_bytes", "post_free_inodes", "reclaimed_bytes_delta"))
         or payload.get("reclaimed_bytes_delta") != payload.get("post_free_bytes") - payload.get("pre_free_bytes")
+        or payload.get("pre_free_bytes")
+        != live_pre_inventory.get("filesystem", {}).get("free_bytes")
+        or payload.get("pre_free_inodes")
+        != live_pre_inventory.get("filesystem", {}).get("free_inodes")
         or not persistent_units_valid(units_before_prune, terminal=False)
         or not persistent_units_valid(units, terminal=True)
         or not isinstance(payload.get("container"), dict)
