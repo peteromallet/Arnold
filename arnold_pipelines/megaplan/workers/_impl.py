@@ -4281,6 +4281,20 @@ def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     return None
 
 
+def _codex_repair_input(
+    raw_transport: str,
+    canonical_output: str,
+) -> tuple[str, json.JSONDecodeError | None]:
+    """Select and diagnose the same Codex response source used by capture.
+
+    With ``--json`` the transport is JSONL and therefore is not itself one
+    model response.  The ``-o`` file is canonical whenever it is non-empty.
+    """
+
+    repair_raw = canonical_output or raw_transport
+    return repair_raw, _json_decode_error_for_raw(repair_raw)
+
+
 def _build_json_repair_prompt(error: json.JSONDecodeError, raw: str) -> str:
     prompt = (
         f"Your previous output was not valid JSON (error at line {error.lineno} "
@@ -5773,14 +5787,11 @@ def _run_codex_step_uncapped(
         capture_failure = error
         payload = None
     if payload is None:
-        parse_error = _json_decode_error_for_raw(raw)
         try:
             output_raw = output_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             output_raw = ""
-        if parse_error is None:
-            parse_error = _json_decode_error_for_raw(output_raw)
-        repair_raw = output_raw or raw
+        repair_raw, parse_error = _codex_repair_input(raw, output_raw)
         failure_reason = (
             str(capture_failure)
             if capture_failure is not None
