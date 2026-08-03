@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -94,3 +95,16 @@ def test_bare_foreign_pid_and_fresh_activity_never_establish_liveness(tmp_path: 
         plan_state=plan_state,
     )
     assert result["process"] is False
+
+
+def test_bare_marker_pid_cannot_manufacture_local_liveness(monkeypatch):
+    monkeypatch.setattr(ss, "_pid_is_live", lambda _pid: True)
+    monkeypatch.setattr(
+        ss.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr=""),
+    )
+    result = ss.default_liveness_probe(
+        {"session": "foreign", "pid": os.getpid(), "workspace": "/not-present"}
+    )
+    assert result == {"tmux": False, "process": False}
