@@ -3647,6 +3647,18 @@ def _finite_canary_repository_integrity_is_valid(
     return True
 
 
+def _finite_canary_global_scratch_is_valid(value: Any) -> bool:
+    """Accept only non-writable global scratch; IPC-none may omit /dev/shm."""
+    return bool(
+        isinstance(value, dict)
+        and set(value) == {"/tmp", "/var/tmp", "/dev/shm"}
+        and value.get("/tmp") == "root_nonwritable"
+        and value.get("/var/tmp") == "root_nonwritable"
+        and value.get("/dev/shm")
+        in {"root_nonwritable", "absent_ipc_none"}
+    )
+
+
 def _finite_canary_privilege_receipt_is_valid(
     payload: Any,
     *,
@@ -3725,12 +3737,9 @@ def _finite_canary_privilege_receipt_is_valid(
         and isinstance(runtime.get("path"), str)
         and runtime_pattern.fullmatch(runtime["path"])
         and payload.get("writable_roots") == [output_name, runtime["path"]]
-        and payload.get("global_scratch")
-        == {
-            "/tmp": "root_nonwritable",
-            "/var/tmp": "root_nonwritable",
-            "/dev/shm": "root_nonwritable",
-        }
+        and _finite_canary_global_scratch_is_valid(
+            payload.get("global_scratch")
+        )
         and payload.get("limits")
         == {
             "nproc": 64,
