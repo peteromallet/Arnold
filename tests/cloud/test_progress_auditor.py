@@ -1063,6 +1063,87 @@ def _run_gather_program(
     return json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))
 
 
+def test_zero_byte_watchdog_report_cannot_hide_in_green_checks(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan_name = "demo-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc).isoformat()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "blocked",
+                "iteration": 2,
+                "created_at": now,
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "watchdog-report.json"
+    report_path.write_bytes(b"")
+
+    result = _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "plan",
+                "sources": ["marker"],
+            }
+        ],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_WATCHDOG_REPORT": str(report_path)},
+    )
+
+    assert result["green_checks"] == []
+    assert len(result["findings"]) == 1
+    assert any(
+        reason.startswith("watchdog_report_publication_degraded:")
+        for reason in result["findings"][0]["reasons"]
+    )
+
+
+def test_event_checkpoint_degradation_is_an_l3_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _current_target_observation_degraded_reason(ev):")
+    end = text.index("\ndef _repair_data_ghost_running_reason", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+
+    reason = namespace["_current_target_observation_degraded_reason"](
+        {
+            "current_target": {
+                "event_cursors": {
+                    "projection_error": {
+                        "kind": "EventCheckpointError",
+                        "message": "non-monotonic event seq beyond checkpoint: 0 <= 1127",
+                    }
+                }
+            }
+        }
+    )
+
+    assert reason.startswith("current_target_observation_degraded:")
+    assert "marker/chain/plan truth was retained" in reason
+
+
 def test_gather_detects_deterministic_llm_retry_when_latest_failure_is_empty(
     tmp_path: Path,
 ) -> None:

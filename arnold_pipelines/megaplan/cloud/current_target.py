@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.source_cursor_contract import (
     SourceCursorVector,
 )
 from arnold_pipelines.megaplan.observability.event_checkpoint import (
+    EventCheckpointError,
     read_bounded_event_projection,
 )
 
@@ -30,6 +31,7 @@ _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
 
 _PARTIAL_EVIDENCE_KINDS = {
+    "event_checkpoint_invalid",
     "invalid_marker_json",
     "invalid_needs_human_json",
     "missing_chain_state",
@@ -195,6 +197,21 @@ def resolve_current_target(
     stale_evidence: list[dict[str, Any]] = []
     rationale: list[str] = []
     ignored_artifacts: list[dict[str, Any]] = []
+
+    projection_error = event_cursors.get("projection_error")
+    if isinstance(projection_error, Mapping):
+        events_path = _safe_text(event_cursors.get("events_path"))
+        stale_evidence.append(
+            _artifact(
+                kind="event_checkpoint_invalid",
+                path=Path(events_path) if events_path else Path("events.ndjson"),
+                error_kind=_safe_text(projection_error.get("kind")),
+                error=_safe_text(projection_error.get("message")),
+            )
+        )
+        rationale.append(
+            "event acceleration checkpoint was rejected; marker, chain, and plan truth remain available"
+        )
 
     if marker_path.exists() and not marker:
         stale_evidence.append(_artifact(kind="invalid_marker_json", path=marker_path))
@@ -678,25 +695,38 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
     events_path = plan_state_path.parent / "events.ndjson"
     line_count = 0
     latest_gate_kind = ""
+    projection_error: dict[str, str] | None = None
     if events_path.exists():
-        projection = read_bounded_event_projection(plan_state_path.parent)
-        line_count = projection.record_count
-        gate_events = [
-            event
-            for kind, event in projection.latest_by_kind.items()
-            if kind.startswith("gate")
-        ]
-        if gate_events:
-            latest_gate_kind = _safe_text(
-                max(gate_events, key=lambda item: int(item.get("seq") or -1)).get(
-                    "kind"
+        try:
+            projection = read_bounded_event_projection(plan_state_path.parent)
+        except EventCheckpointError as exc:
+            # The acceleration checkpoint is never authoritative.  A damaged or
+            # non-monotonic journal must degrade the event-derived fields without
+            # erasing the marker/chain/plan facts needed by watchdog and L3. Do
+            # not fall back to an unbounded journal scan in the observer path.
+            projection_error = {
+                "kind": "EventCheckpointError",
+                "message": str(exc),
+            }
+            line_count = 0
+        else:
+            line_count = projection.record_count
+            gate_events = [
+                event
+                for kind, event in projection.latest_by_kind.items()
+                if kind.startswith("gate")
+            ]
+            if gate_events:
+                latest_gate_kind = _safe_text(
+                    max(gate_events, key=lambda item: int(item.get("seq") or -1)).get(
+                        "kind"
+                    )
                 )
-            )
     resume_cursor = plan_state.get("resume_cursor")
     retry_strategy = ""
     if isinstance(resume_cursor, Mapping):
         retry_strategy = _safe_text(resume_cursor.get("retry_strategy"))
-    return {
+    result = {
         "events_path": str(events_path),
         "events_present": events_path.exists(),
         "line_count": line_count,
@@ -704,6 +734,9 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
         "resume_retry_strategy": retry_strategy,
         "mtime": _mtime(events_path),
     }
+    if projection_error is not None:
+        result["projection_error"] = projection_error
+    return result
 
 
 def _collect_resume_authority_failure(

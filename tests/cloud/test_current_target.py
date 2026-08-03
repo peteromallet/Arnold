@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.cloud import current_target as current_target_module
 from arnold_pipelines.megaplan.cloud.current_target import (
     _collect_sibling_sessions,
     compare_needs_human_diagnostic,
     resolve_current_target,
 )
+from arnold_pipelines.megaplan.observability.event_checkpoint import EventCheckpointError
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
     is_canonical_sidecar_path,
@@ -1319,6 +1321,60 @@ def test_resolve_current_target_reports_failed_resume_execute_authority_divergen
     assert failure["phase"] == "review"
     assert failure["plan_name"] == plan_name
     assert failure["missing_task_ids"] == ["T1"]
+
+
+def test_resolve_current_target_contains_event_checkpoint_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "checkpoint-damaged-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "current_state": "blocked",
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+        },
+        events_body='{"seq": 12, "kind": "phase_end"}\n{"seq": 0, "kind": "phase_start"}\n',
+    )
+    _write_marker(
+        marker_dir / "demo.json",
+        {
+            "session": "demo",
+            "workspace": str(workspace),
+            "run_kind": "plan",
+            "plan_name": plan_name,
+        },
+    )
+
+    def fail_projection(*_args, **_kwargs):
+        raise EventCheckpointError("non-monotonic event seq beyond checkpoint: 0 <= 12")
+
+    monkeypatch.setattr(
+        current_target_module,
+        "read_bounded_event_projection",
+        fail_projection,
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    assert record["current_refs"]["current_plan_name"] == plan_name
+    assert record["plan_state"]["current_state"] == "blocked"
+    assert record["event_cursors"]["line_count"] == 0
+    assert record["event_cursors"]["projection_error"] == {
+        "kind": "EventCheckpointError",
+        "message": "non-monotonic event seq beyond checkpoint: 0 <= 12",
+    }
+    assert record["evidence_state"]["status"] == "unknown"
+    assert record["evidence_state"]["unknown_type"] == "partial"
+    assert "event_checkpoint_invalid" in record["evidence_state"]["issue_kinds"]
 
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
     return chain_spec._state_path_for(spec_path)

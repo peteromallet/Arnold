@@ -270,7 +270,7 @@ def _runner_is_live(row: Mapping[str, Any]) -> bool:
     """Keep process/session liveness distinct from canonical display state."""
 
     return (
-        str(row.get("status") or "").casefold() in _RUNNING_SESSION_STATUSES
+        row.get("tmux") is True
         or row.get("process") is True
         or row.get("repairing") is True
     )
@@ -540,10 +540,8 @@ def render_currently_running(
     completed = discover_recently_completed_sessions(status_node)
     displayed_completed = completed[:_MAX_RECENT_COMPLETED]
 
-    if report.status_error:
-        lines.extend(
-            (_epics_heading(), f"⚠️ {_safe_label(report.status_error)}.")
-        )
+    if report.status_error and not isinstance(status_node, Mapping):
+        lines.extend((_epics_heading(), f"⚠️ {_safe_label(report.status_error)}."))
     elif stale_banner:
         lines.extend((
             _epics_heading(),
@@ -553,6 +551,8 @@ def render_currently_running(
         degraded = status_node.get("degraded") if isinstance(status_node, Mapping) else None
         sessions = discover_running_sessions(status_node)
         lines.append(_epics_heading(f"{len(sessions)} active"))
+        if report.status_error:
+            lines.append(f"⚠️ {_safe_label(report.status_error)}.")
         if degraded:
             lines.append(f"⚠️ {_degraded_label(degraded)}")
         if sessions:

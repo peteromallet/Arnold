@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import hashlib
 import importlib.util
 import json
@@ -12,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -300,6 +302,107 @@ def _extract_wrapper_function(name: str) -> str:
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+def _extract_watchdog_embedded_program(function_name: str, marker: str) -> str:
+    text = _wrapper("arnold-watchdog")
+    start = text.index(f"{function_name}() {{")
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def test_watchdog_report_enospc_preserves_last_complete_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "watchdog-report.json"
+    prior = {"timestamp_utc": "2026-08-03T00:00:00+00:00", "items": [{"status": "alive"}]}
+    report_path.write_text(json.dumps(prior) + "\n", encoding="utf-8")
+    items_path = tmp_path / "items.jsonl"
+    items_path.write_text(json.dumps({"session": "demo", "status": "alive"}) + "\n", encoding="utf-8")
+    program = _extract_watchdog_embedded_program(
+        "emit_report",
+        '<<\'PY\' > "$report_tmp"',
+    )
+    real_mkstemp = tempfile.mkstemp
+
+    def fail_same_directory(*args, **kwargs):
+        if Path(kwargs.get("dir") or "").resolve() == tmp_path.resolve():
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "mkstemp", fail_same_directory)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "emit-report",
+            str(items_path),
+            "1",
+            str(report_path),
+            "",
+            "1",
+            "0",
+        ],
+    )
+
+    with pytest.raises(OSError, match="No space left on device"):
+        exec(program, {})
+
+    assert json.loads(report_path.read_text(encoding="utf-8")) == prior
+    assert not list(tmp_path.glob(".watchdog-report.json.*.tmp"))
+
+
+def test_watchdog_report_atomic_swap_never_exposes_partial_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "watchdog-report.json"
+    prior = {"timestamp_utc": "2026-08-03T00:00:00+00:00", "items": [{"status": "alive"}]}
+    report_path.write_text(json.dumps(prior) + "\n", encoding="utf-8")
+    items_path = tmp_path / "items.jsonl"
+    items_path.write_text(json.dumps({"session": "demo", "status": "complete"}) + "\n", encoding="utf-8")
+    program = _extract_watchdog_embedded_program(
+        "emit_report",
+        '<<\'PY\' > "$report_tmp"',
+    )
+    replace_reached = threading.Event()
+    allow_replace = threading.Event()
+    real_replace = os.replace
+
+    def blocked_replace(source, target):
+        if Path(target) == report_path:
+            replace_reached.set()
+            assert allow_replace.wait(timeout=5)
+        return real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", blocked_replace)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["emit-report", str(items_path), "1", str(report_path), "", "1", "0"],
+    )
+    error: list[BaseException] = []
+
+    def publish() -> None:
+        try:
+            exec(program, {})
+        except BaseException as exc:  # pragma: no cover - asserted below
+            error.append(exc)
+
+    thread = threading.Thread(target=publish)
+    thread.start()
+    assert replace_reached.wait(timeout=5)
+    for _ in range(100):
+        assert json.loads(report_path.read_text(encoding="utf-8")) == prior
+    allow_replace.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert not error
+    published = json.loads(report_path.read_text(encoding="utf-8"))
+    assert published["items"] == [{"session": "demo", "status": "complete"}]
+    assert not list(tmp_path.glob(".watchdog-report.json.*.tmp"))
 
 
 def _extract_auditor_function(name: str) -> str:
@@ -7651,7 +7754,20 @@ plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
-dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+manual_review_dispatch_status_env() {
+  printf '%s\n' \
+    'PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair' \
+    'PLAN_STATUS_REQUEST_ID=req-phase-contract' \
+    'PLAN_STATUS_BLOCKER_ID=blocker:v1:phase-contract'
+}
+dispatch_kimi_repair() {
+  [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]
+  [[ "${PLAN_STATUS_REQUEST_ID:-}" == "req-phase-contract" ]]
+  [[ "${PLAN_STATUS_BLOCKER_ID:-}" == "blocker:v1:phase-contract" ]]
+  REPAIR_DISPATCH_RESULT=dispatched
+  echo DISPATCH >&2
+  return 0
+}
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { echo INSTALL >&2; return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 0; }
@@ -7665,11 +7781,99 @@ tmux() { echo TMUX >&2; return 1; }
 
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_unavailable\tdeterministic phase-contract failure requires a claimed repair request before relaunch\t" in report
+    assert "\trepair\trepair_running\tdeterministic phase-contract failure is under canonical repair custody\t" in report
+    assert "DISPATCH" in result.stderr
     assert "\trestart\trestarted\t" not in report
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "mechanical relaunch fenced pending phase-contract repair custody" in log_path.read_text(encoding="utf-8")
+
+
+def test_phase_contract_failure_projects_request_identity_and_can_be_claimed(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    plan_name = "cl2-wbc-backed-ledger"
+    spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 2,
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "phase": "critique",
+                "message": "critique contract failed three times",
+            },
+        },
+        events_body="{}\n",
+    )
+    session = "critique-r5"
+    (marker_dir / f"{session}.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("manual_review_dispatch_status_env"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "eval \"$(manual_review_dispatch_status_env "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} plan {shlex.quote(plan_name)})\""
+            ),
+            "printf '%s\\t%s\\t%s\\n' \"$PLAN_STATUS_DISPATCH_DECISION\" \"$PLAN_STATUS_REQUEST_ID\" \"$PLAN_STATUS_BLOCKER_ID\"",
+            (
+                "claim_active_repair_launch "
+                f"{shlex.quote(session)} {shlex.quote(str(workspace))} "
+                f"{shlex.quote(str(spec_path))} \"$PLAN_STATUS_BLOCKER_ID\" \"$PLAN_STATUS_REQUEST_ID\""
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    identity, claim_status = result.stdout.strip().splitlines()
+    decision, request_id, blocker_id = identity.split("\t")
+    assert decision == "dispatch_l1_repair"
+    assert request_id
+    assert blocker_id
+    assert claim_status == "claimed"
+    owner_path = (
+        repair_requests.active_repair_claim_lock_dir(
+            repair_requests.repair_queue_dir(marker_dir), blocker_id
+        )
+        / "owner.json"
+    )
+    owner = json.loads(owner_path.read_text(encoding="utf-8"))
+    assert owner["session"] == session
+    assert owner["request_id"] == request_id
+    assert owner["blocker_id"] == blocker_id
+    assert owner["actor"] == "arnold-watchdog"
 
 
 def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_path: Path) -> None:
