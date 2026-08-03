@@ -157,6 +157,7 @@ EXTERNAL_PERMANENT_ERROR_KINDS = frozenset(
         "context_exhausted",
         "context_length",
         "rate_limit",
+        "provider_contract",
     }
 )
 EXTERNAL_RETRYABLE_LAYERS = frozenset(
@@ -173,7 +174,6 @@ STALL_PROGRESS_EVENT_KINDS = frozenset(
         EventKind.LLM_CALL_START,
         EventKind.LLM_TOKEN_HEARTBEAT,
         EventKind.LLM_CALL_END,
-        EventKind.LLM_CALL_ERROR,
         EventKind.ARTIFACT_WRITTEN,
         EventKind.COST_RECORDED,
         EventKind.TIER_ESCALATED,
@@ -523,6 +523,8 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
     message = str(getattr(external_error, "message", "") or "").lower()
 
+    if getattr(external_error, "nonretryable", None) is True:
+        return False
     if error_kind in EXTERNAL_PERMANENT_ERROR_KINDS:
         return False
     if retry_after_s is not None:
@@ -541,6 +543,50 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     ):
         return True
     return False
+
+
+def _is_deterministic_provider_contract_error(
+    external_error: object | None,
+) -> bool:
+    """Recognize the exact typed response-contract failure shape.
+
+    Message matching is deliberately forbidden here.  A provider-contract
+    repair gate is authority-bearing, so all four producer attestations must
+    survive the phase boundary before auto may select it.
+    """
+
+    if external_error is None:
+        return False
+    return (
+        str(getattr(external_error, "error_kind", "") or "").lower()
+        == "provider_contract"
+        and str(getattr(external_error, "error_layer", "") or "").lower()
+        == "schema_error"
+        and getattr(external_error, "deterministic", None) is True
+        and getattr(external_error, "nonretryable", None) is True
+        and bool(str(getattr(external_error, "failure_fingerprint", "") or "").strip())
+    )
+
+
+def _provider_contract_repair_already_used(
+    plan_dir: Path | None,
+    phase: str,
+) -> bool:
+    """Return whether this phase has consumed its one validated repair retry."""
+
+    state = _read_state_data(plan_dir)
+    meta = state.get("meta") if isinstance(state, Mapping) else None
+    allowance = (
+        meta.get("provider_contract_repair_retry")
+        if isinstance(meta, Mapping)
+        else None
+    )
+    return bool(
+        isinstance(allowance, Mapping)
+        and allowance.get("status") == "available"
+        and allowance.get("failure_kind") == "provider_contract_failure"
+        and allowance.get("phase") == phase
+    )
 
 
 def _apply_envelope_handshake(
@@ -2527,6 +2573,10 @@ def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:
         current["latest_failure"] = None
         if "resume_cursor" in current:
             current.pop("resume_cursor", None)
+            changed = True
+        meta = current.get("meta")
+        if isinstance(meta, dict) and "provider_contract_repair_retry" in meta:
+            meta.pop("provider_contract_repair_retry", None)
             changed = True
         return changed
 
@@ -5779,6 +5829,88 @@ def drive(
                 last_artifact=_latest_artifact_name(plan_dir),
                 suggested_action="Investigate the timed-out phase and resume from the phase cursor.",
                 metadata={"timeout_seconds": phase_timeout, "idle_timeout_seconds": phase_idle_timeout, "iteration": iteration},
+            )
+        elif (
+            result is not None
+            and getattr(result, "exit_kind", None) == ExitKind.external_error.value
+            and _is_deterministic_provider_contract_error(
+                getattr(result, "external_error", None)
+            )
+        ):
+            external_error = getattr(result, "external_error", None)
+            provider = str(getattr(external_error, "provider", "unknown") or "unknown")
+            message = str(getattr(external_error, "message", "") or "")
+            provider_fingerprint = str(
+                getattr(external_error, "failure_fingerprint", "") or ""
+            )
+            repair_retry_used = _provider_contract_repair_already_used(
+                plan_dir,
+                next_step,
+            )
+            failure_kind = (
+                "provider_contract_repair_failed"
+                if repair_retry_used
+                else "provider_contract_failure"
+            )
+            retry_strategy = (
+                "manual_review" if repair_retry_used else "repair_provider_contract"
+            )
+            reason = (
+                f"phase '{next_step}' provider response contract is invalid "
+                f"for [{provider}]: {message[:500]}"
+            )
+            if repair_retry_used:
+                reason += " (the single validated post-repair retry also failed)"
+            log(
+                reason,
+                phase=next_step,
+                provider=provider,
+                error_kind="provider_contract",
+                error_layer="schema_error",
+                failure_fingerprint=provider_fingerprint,
+                repair_retry_used=repair_retry_used,
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind=failure_kind,
+                message=reason,
+                current_state=STATE_BLOCKED,
+                phase=next_step,
+                resume_cursor={
+                    "phase": next_step,
+                    "retry_strategy": retry_strategy,
+                    "provider_failure_fingerprint": provider_fingerprint,
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Validate and commit the provider response-contract repair, then "
+                    "use recover-blocked with the exact failure fingerprint and target HEAD."
+                    if not repair_retry_used
+                    else (
+                        "The bounded provider-contract repair retry was consumed. "
+                        "Inspect the compiler attestation and perform manual review; "
+                        "do not retry or switch models automatically."
+                    )
+                ),
+                metadata={
+                    "provider": provider,
+                    "error_kind": "provider_contract",
+                    "error_layer": "schema_error",
+                    "deterministic": True,
+                    "nonretryable": True,
+                    "failure_fingerprint": provider_fingerprint,
+                    "repair_retry_used": repair_retry_used,
+                    "exit_code": code,
+                    "iteration": iteration,
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase=next_step,
+                blocking_reasons=[failure_kind],
             )
         elif result is not None and getattr(result, "exit_kind", None) == ExitKind.external_error.value:
             external_error = getattr(result, "external_error", None)

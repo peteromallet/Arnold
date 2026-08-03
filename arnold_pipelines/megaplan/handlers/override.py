@@ -1254,6 +1254,15 @@ def _external_error_requires_resume(
     phase_result: Any | None,
 ) -> bool:
     latest_failure = state.get("latest_failure")
+    # Deterministic provider response-contract failures have their own
+    # commit/fingerprint-bound recovery gate below.  A generic provider resume
+    # would bypass that evidence and replay the same invalid request.
+    if (
+        isinstance(latest_failure, dict)
+        and latest_failure.get("kind") == "provider_contract_failure"
+        and resume_cursor.get("retry_strategy") == "repair_provider_contract"
+    ):
+        return False
     if (
         isinstance(latest_failure, dict)
         and latest_failure.get("kind") == "external_error"
@@ -1418,8 +1427,16 @@ def _override_recover_blocked(
     phase_repair_evidence: dict[str, str] | None = None
     deterministic_phase_repair_required = bool(
         isinstance(latest_failure, dict)
-        and latest_failure.get("kind") == "deterministic_phase_failure"
-        and resume_cursor.get("retry_strategy") == "repair_phase_contract"
+        and (
+            (
+                latest_failure.get("kind") == "deterministic_phase_failure"
+                and resume_cursor.get("retry_strategy") == "repair_phase_contract"
+            )
+            or (
+                latest_failure.get("kind") == "provider_contract_failure"
+                and resume_cursor.get("retry_strategy") == "repair_provider_contract"
+            )
+        )
     )
     if deterministic_phase_repair_required:
         # A deterministic phase failure is recorded specifically because the
@@ -1505,6 +1522,16 @@ def _override_recover_blocked(
             ),
         },
     )
+    if (
+        phase_repair_evidence is not None
+        and phase_repair_evidence.get("failure_kind")
+        == "provider_contract_failure"
+    ):
+        meta = state.setdefault("meta", {})
+        meta["provider_contract_repair_retry"] = {
+            **phase_repair_evidence,
+            "status": "available",
+        }
     save_state_merge_meta(plan_dir, state)
     response: StepResponse = {
         "success": True,

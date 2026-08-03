@@ -72,19 +72,27 @@ def validated_deterministic_phase_repair(
     repair_commit: object,
     failure_fingerprint: object,
 ) -> dict[str, str] | None:
-    """Validate an explicit code-repair receipt for a phase result that never existed.
+    """Validate an explicit code-repair receipt for a deterministic phase failure.
 
-    Deterministic internal phase failures can stop before ``phase_result.json`` is
-    emitted.  ``recover-blocked`` may replay such a phase only when its dedicated
-    repair cursor is current and the caller binds the recovery to the exact target
-    workspace HEAD.  Other missing-phase-result states retain the existing
-    fail-closed behavior.
+    Internal failures can stop before ``phase_result.json`` is emitted; provider
+    response-contract failures emit a typed external result.  ``recover-blocked``
+    may replay either only when its dedicated repair cursor is current and the
+    caller binds recovery to the exact target workspace HEAD.  Other states keep
+    the existing fail-closed behavior.
     """
 
     latest_failure = state.get("latest_failure")
+    supported_repairs = {
+        "deterministic_phase_failure": "repair_phase_contract",
+        "provider_contract_failure": "repair_provider_contract",
+    }
+    failure_kind = (
+        str(latest_failure.get("kind") or "")
+        if isinstance(latest_failure, dict)
+        else ""
+    )
     if not isinstance(latest_failure, dict) or (
-        latest_failure.get("kind") != "deterministic_phase_failure"
-        or resume_cursor.get("retry_strategy") != "repair_phase_contract"
+        supported_repairs.get(failure_kind) != resume_cursor.get("retry_strategy")
     ):
         return None
     failure_phase = str(latest_failure.get("phase") or "").strip()
@@ -141,7 +149,7 @@ def validated_deterministic_phase_repair(
             },
         )
     return {
-        "failure_kind": "deterministic_phase_failure",
+        "failure_kind": failure_kind,
         "phase": cursor_phase,
         "repair_commit": commit,
         "workspace_head": current_head,
