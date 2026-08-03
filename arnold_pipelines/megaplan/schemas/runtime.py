@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_ADDRESSED_SCHEMA,
     NORTH_STAR_ACTION_SCHEMA,
@@ -1243,6 +1244,57 @@ def _build_finalize_capture_schema() -> dict[str, Any]:
     """
 
     schema = deepcopy(SCHEMAS["finalize.json"])
+    model_properties = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"]
+    schema["properties"]["task_contract_version"] = {
+        **deepcopy(model_properties["task_contract_version"]),
+        "const": 2,
+    }
+    schema["properties"]["validation_jobs"] = {
+        **deepcopy(model_properties["validation_jobs"]),
+        # The handler, not the model, compiles executable validation jobs.
+        "maxItems": 0,
+    }
+    task_schema = schema["properties"]["tasks"]["items"]
+    model_task_schema = model_properties["tasks"]["items"]
+    v2_task_fields = (
+        "objective",
+        "estimated_minutes",
+        "dependency_reasons",
+        "routing_group",
+        "write_set",
+        "narrow_tests",
+        "checkpoint",
+    )
+    for field in v2_task_fields:
+        task_schema["properties"][field] = deepcopy(
+            model_task_schema["properties"][field]
+        )
+    task_schema["properties"]["estimated_minutes"].update(
+        minimum=1, maximum=15
+    )
+    task_schema["properties"]["dependency_reasons"] = {
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "consumes_output",
+                        "write_conflict",
+                        "human_prerequisite",
+                    ],
+                },
+                "reason": {"type": "string"},
+                "required_output": {"type": "string"},
+            },
+            "required": ["kind", "reason", "required_output"],
+            "additionalProperties": False,
+        },
+    }
+    task_schema["required"] = list(task_schema["required"]) + [
+        field for field in v2_task_fields if field not in task_schema["required"]
+    ]
     for field in (
         "critique_custody",
         "validation",

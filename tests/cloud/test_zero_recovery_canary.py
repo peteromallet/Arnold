@@ -21,6 +21,9 @@ from jsonschema import validate
 
 from arnold_pipelines.megaplan._core.io import ensure_runtime_layout
 from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
+from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+    compile_task_feasibility,
+)
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 from arnold_pipelines.megaplan.cloud.providers import ssh as ssh_provider_module
 from arnold_pipelines.megaplan.cloud.providers import zero_recovery
@@ -2263,6 +2266,10 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
         assert validate_critique_checks(
             json.loads(output.read_text(encoding="utf-8")), expected_ids=expected
         ) == []
+    if phase == "finalize":
+        assert compile_task_feasibility(
+            json.loads(output.read_text(encoding="utf-8"))
+        )["admitted"] is True
     thread = json.loads(completed.stdout.splitlines()[0])
     rollout = list((codex_home / "sessions").glob("*/*/*/rollout-*.jsonl"))
     assert len(rollout) == 1
