@@ -1331,7 +1331,18 @@ class SshProvider(Provider):
         except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             payload["validation_error"] = type(exc).__name__
         finally:
-            observation, reconciled_stop = self._reconcile_zero_recovery_canary_stop()
+            observation = self.observe_container()
+            if observation.get("lifecycle") == "running":
+                # Status is an observation surface while the finite runner is
+                # active.  Its execution owner performs the terminal stop and
+                # workspace reseal.  A poll must never become a cancellation.
+                reconciled_stop = False
+                if payload["status"] == "unknown" and payload["receipt_count"] == 0:
+                    payload["status"] = "in_progress"
+            else:
+                observation, reconciled_stop = (
+                    self._reconcile_zero_recovery_canary_stop()
+                )
         payload["container_observation"] = observation
         payload["reconciled_stop"] = reconciled_stop
         payload["terminal_workspace"] = getattr(
