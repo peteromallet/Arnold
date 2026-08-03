@@ -41,6 +41,11 @@ machine-readable authority; the paths and counts below are operator guidance.
   phase receives fresh isolated Codex state and one precreated, same-inode
   output file; no model process or writable runtime state survives into the
   next phase.
+- [ ] The model boundary has finite process, memory, per-file and aggregate
+  scratch limits. Its only aggregate writable scratch is a size-bounded,
+  noexec/nosuid/nodev phase-runtime tmpfs; `/tmp`, `/var/tmp`, `/dev/shm`, PATH
+  entries and the host bind outside the exact output are non-writable. Partial
+  setup failures reclaim or seal every UID-owned inode before any next phase.
 - [ ] Any canary runner failure fences and stops without invoking T1.5/T1.10.
 - [ ] The canary is stopped at its declared finite boundary; no background
   wrapper, timer, resident, or watchdog can continue mutating or messaging.
@@ -59,8 +64,8 @@ machine-readable authority; the paths and counts below are operator guidance.
   execution-surface unreachability.
 - [ ] Generalize the finite-canary model privilege boundary into a reusable
   cross-pipeline worker isolation profile, including per-provider UID/session
-  lifecycle and policy receipts. The finite Codex boundary itself is prelaunch;
-  multi-provider/platform adoption is follow-up work.
+  lifecycle, resource budgets and policy receipts. The finite Codex boundary
+  itself is prelaunch; multi-provider/platform adoption is follow-up work.
 
 - [ ] Repair the rejected T1.5 candidate without discarding its valid HMAC
   receipt work. Coordinated deletion or rollback of `attempts`, `claims`, and
