@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -37,6 +38,13 @@ from arnold_pipelines.megaplan.schemas import (
     SCHEMAS,
     EpicEvent,
     get_execution_schema_key,
+    strict_schema,
+)
+from arnold_pipelines.megaplan.provider_response import (
+    CompiledResponseContract,
+    ResponseEnforcement,
+    compile_response_contract,
+    persist_response_enforcement_attestation,
 )
 from arnold_pipelines.megaplan.orchestration.progress import strip_progress_env
 from arnold_pipelines.megaplan.observability.routing_ledger import (
@@ -58,6 +66,7 @@ from arnold_pipelines.megaplan.types import (
 )
 from arnold_pipelines.megaplan._core import (
     apply_session_update,
+    atomic_write_json,
     configured_robustness,
     creative_form_id,
     detect_available_agents,
@@ -2318,6 +2327,7 @@ class WorkerResult:
     attempted_specs: tuple[str, ...] = ()
     failed_attempt_reasons: tuple[str, ...] = ()
     fallback_trigger: str | None = None
+    response_enforcement_attestation: dict[str, Any] | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -2352,6 +2362,9 @@ class WorkerResult:
             attempted_specs=tuple(metadata.get("attempted_specs", ())),
             failed_attempt_reasons=tuple(metadata.get("failed_attempt_reasons", ())),
             fallback_trigger=metadata.get("fallback_trigger"),
+            response_enforcement_attestation=metadata.get(
+                "response_enforcement_attestation"
+            ),
         )
 
     def to_agent_result(self) -> Any:
@@ -2372,6 +2385,7 @@ class WorkerResult:
                 "attempted_specs": list(self.attempted_specs),
                 "failed_attempt_reasons": list(self.failed_attempt_reasons),
                 "fallback_trigger": self.fallback_trigger,
+                "response_enforcement_attestation": self.response_enforcement_attestation,
             }.items()
             if value is not None
         }
@@ -4796,6 +4810,47 @@ def run_claude_step(
     )
 
 
+def _prepare_codex_response_contract(
+    *,
+    schema: dict[str, Any],
+    plan_dir: Path,
+    step: str,
+    model: str | None,
+    provider_schema_available: bool,
+) -> tuple[CompiledResponseContract, Path | None]:
+    """Compile, persist, and expose one Codex response-enforcement decision."""
+
+    contract = compile_response_contract(
+        schema,
+        provider="codex",
+        model=model,
+        phase=step,
+        provider_schema_available=provider_schema_available,
+    )
+    persist_response_enforcement_attestation(plan_dir, contract.attestation)
+    transport_path: Path | None = None
+    if contract.transport_schema is not None:
+        transport_path = _project_local_tmp_dir(plan_dir) / (
+            f"response-schema-{step}-{contract.attestation.transport_schema_hash}.json"
+        )
+        atomic_write_json(transport_path, contract.transport_schema)
+    print(
+        "[megaplan] response enforcement "
+        f"phase={step} mode={contract.attestation.response_enforcement} "
+        f"reason={contract.attestation.enforcement_reason}",
+        flush=True,
+    )
+    return contract, transport_path
+
+
+def _codex_response_schema_args(transport_schema_file: Path | None) -> list[str]:
+    """Return Codex response arguments for the selected enforcement mode."""
+
+    if transport_schema_file is None:
+        return ["-"]
+    return ["--output-schema", str(transport_schema_file), "-"]
+
+
 def _run_codex_step_uncapped(
     step: str,
     state: PlanState,
@@ -4912,8 +4967,28 @@ def _run_codex_step_uncapped(
         if persistent and session.get("id") and not fresh and not read_only
         else ModelTier.ENFORCED
     )
-    schema = read_json(schema_file)
-    capture_schema = SCHEMAS.get(codex_schema_name, schema)
+    persisted_schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(codex_schema_name, persisted_schema)
+    # The generic strict schema is the canonical prompt/transport candidate.
+    # Provider-specific compatibility is decided separately below.
+    schema = strict_schema(deepcopy(capture_schema))
+    response_contract: CompiledResponseContract | None = None
+    transport_schema_file: Path | None = None
+    if not free_text:
+        response_contract, transport_schema_file = _prepare_codex_response_contract(
+            schema=schema,
+            plan_dir=plan_dir,
+            step=step,
+            model=model,
+            provider_schema_available=not (
+                persistent and session.get("id") and not fresh and not read_only
+            ),
+        )
+    response_attestation = (
+        response_contract.attestation.to_json()
+        if response_contract is not None
+        else None
+    )
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -4928,6 +5003,15 @@ def _run_codex_step_uncapped(
         **(prompt_kwargs or {}),
     )
     prompt = _normalize_stdin_text(rendered_prompt.prompt) or ""
+    if (
+        response_contract is not None
+        and response_contract.attestation.response_enforcement
+        == ResponseEnforcement.LOCAL_STRICT_JSON.value
+    ):
+        prompt += (
+            "\n\nResponse enforcement: return exactly one JSON object matching "
+            "the supplied canonical schema. Do not use Markdown fences or prose."
+        )
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:
@@ -4956,7 +5040,7 @@ def _run_codex_step_uncapped(
         if free_text:
             command.append("-")
         else:
-            command.extend(["--output-schema", str(schema_file), "-"])
+            command.extend(_codex_response_schema_args(transport_schema_file))
     elif persistent and session.get("id") and not fresh:
         # codex exec resume does not support --output-schema; capture_step_output
         # handles the output file validation after parsing instead. It also
@@ -5026,7 +5110,7 @@ def _run_codex_step_uncapped(
         command.extend(["-c", "tool_output_token_limit=50000"])
         if json_trace:
             command.append("--json")
-        command.extend(["--output-schema", str(schema_file), "-"])
+        command.extend(_codex_response_schema_args(transport_schema_file))
 
     try:
         # Pre-first-byte timeout: codex CLI can hang at startup (auth handshake,
@@ -5252,6 +5336,7 @@ def _run_codex_step_uncapped(
                             "compatibility_validation_step": step,
                             "schema": schema,
                             "capture_schema": capture_schema,
+                            "response_enforcement_attestation": response_attestation,
                             "capture_recovery": {
                                 "step": step,
                                 "plan_dir": str(plan_dir),
@@ -5281,6 +5366,7 @@ def _run_codex_step_uncapped(
                     trace_output=str(error.extra.get("raw_output", "")) if json_trace else None,
                     rendered_prompt=prompt,
                     worker_channel=_CODEX_WORKER_CHANNEL,
+                    response_enforcement_attestation=response_attestation,
                 )
             timeout_session_id = session.get("id") if persistent else None
             if timeout_session_id is None:
@@ -5454,6 +5540,7 @@ def _run_codex_step_uncapped(
                     "compatibility_validation_step": step,
                     "schema": schema,
                     "capture_schema": capture_schema,
+                    "response_enforcement_attestation": response_attestation,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),
@@ -5673,6 +5760,7 @@ def _run_codex_step_uncapped(
         total_tokens=prompt_tokens + completion_tokens,
         cost_pricing=cost_pricing,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        response_enforcement_attestation=response_attestation,
     )
 
 
@@ -5751,8 +5839,17 @@ def run_codex_prep_step(
     out_handle.close()
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
-    schema = read_json(schema_file)
-    capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], schema)
+    persisted_schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], persisted_schema)
+    schema = strict_schema(deepcopy(capture_schema))
+    response_contract, transport_schema_file = _prepare_codex_response_contract(
+        schema=schema,
+        plan_dir=plan_dir,
+        step=step,
+        model=model,
+        provider_schema_available=True,
+    )
+    response_attestation = response_contract.attestation.to_json()
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -5767,6 +5864,14 @@ def run_codex_prep_step(
         **(prompt_kwargs or {}),
     )
     prompt = rendered_prompt.prompt
+    if (
+        response_contract.attestation.response_enforcement
+        == ResponseEnforcement.LOCAL_STRICT_JSON.value
+    ):
+        prompt += (
+            "\n\nResponse enforcement: return exactly one JSON object matching "
+            "the supplied canonical schema. Do not use Markdown fences or prose."
+        )
     command = [
         "codex",
         "exec",
@@ -5784,7 +5889,7 @@ def run_codex_prep_step(
         ])
     command.extend(_codex_model_flag(model))
     command.extend(_codex_effort_flag(effort))
-    command.extend(["--output-schema", str(schema_file), "-"])
+    command.extend(_codex_response_schema_args(transport_schema_file))
 
     result = run_command(
         command,
@@ -5813,6 +5918,7 @@ def run_codex_prep_step(
                     "compatibility_validation_step": step,
                     "schema": schema,
                     "capture_schema": capture_schema,
+                    "response_enforcement_attestation": response_attestation,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),
@@ -5846,6 +5952,7 @@ def run_codex_prep_step(
         rendered_prompt=prompt,
         model_actual=model,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        response_enforcement_attestation=response_attestation,
     )
 
 
