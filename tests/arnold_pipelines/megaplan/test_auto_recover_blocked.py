@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 
 from arnold_pipelines.megaplan import auto
+from arnold_pipelines.megaplan._core.phase_runtime import current_runner_incarnation
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     ExitKind,
@@ -1164,11 +1166,15 @@ def test_drive_execute_prereq_block_without_user_actions_surfaces_blocked(
             {
                 "name": "demo",
                 "current_state": "finalized",
-                "active_step": {
-                    "phase": "execute",
-                    "run_id": "stale-run",
-                    "worker_pid": 12345,
-                    "started_at": "2026-07-03T10:44:49Z",
+                    "active_step": {
+                        "phase": "execute",
+                        "run_id": "stale-run",
+                        "worker_pid": os.getpid(),
+                        "runner_incarnation": {
+                            **current_runner_incarnation(),
+                            "worker_process_start_identity": "reused-process-start",
+                        },
+                        "started_at": "2026-07-03T10:44:49Z",
                     "last_activity_at": "2026-07-03T10:44:49Z",
                 },
             }

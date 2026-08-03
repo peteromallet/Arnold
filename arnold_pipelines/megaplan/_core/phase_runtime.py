@@ -2,10 +2,247 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import socket
+import subprocess
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+
+WORKER_LIVE = "live"
+WORKER_DEAD = "dead"
+WORKER_UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class WorkerLivenessObservation:
+    state: str
+    reason: str
+    evidence: dict[str, Any]
+
+
+def _pid_namespace_id(pid: int | str = "self") -> str:
+    try:
+        return os.readlink(f"/proc/{pid}/ns/pid")
+    except OSError:
+        return "unknown"
+
+
+def _process_start_identity(pid: int) -> str | None:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        start_ticks = raw.rsplit(")", 1)[1].strip().split()[19]
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(
+            encoding="utf-8"
+        ).strip()
+        return f"{boot_id}:{start_ticks}"
+    except (OSError, IndexError):
+        try:
+            os.kill(pid, 0)
+            result = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        started = result.stdout.strip()
+        if result.returncode != 0 or not started:
+            return None
+        host = socket.gethostname()
+        return f"portable-{hashlib.sha256(host.encode()).hexdigest()[:16]}:{started}"
+
+
+def current_runner_incarnation(*, pid: int | None = None) -> dict[str, Any]:
+    """Return the local process identity needed to disambiguate PID reuse."""
+
+    worker_pid = int(pid or os.getpid())
+    return {
+        "schema": "arnold.megaplan.runner_incarnation.v1",
+        "host_id": socket.gethostname(),
+        "pid_namespace_id": _pid_namespace_id(),
+        "worker_pid": worker_pid,
+        "worker_process_start_identity": _process_start_identity(worker_pid),
+    }
+
+
+def current_runner_lease_binding() -> dict[str, Any] | None:
+    """Capture the immutable identity of the runner-owned shared lease."""
+
+    session = str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+    if not session:
+        return None
+    marker_dir = Path(
+        os.environ.get("ARNOLD_REPAIR_MARKER_DIR")
+        or "/workspace/.megaplan/cloud-sessions"
+    )
+    try:
+        from arnold_pipelines.megaplan.cloud.liveness_lease import (
+            lease_path,
+            marker_binding,
+            observe_liveness_lease,
+        )
+
+        marker = json.loads((marker_dir / f"{session}.json").read_text(encoding="utf-8"))
+        raw = json.loads(lease_path(session, marker_dir=marker_dir).read_text(encoding="utf-8"))
+        observed = observe_liveness_lease(marker, marker_dir=marker_dir)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(marker, Mapping) or not isinstance(raw, Mapping):
+        return None
+    if observed.get("state") != "live":
+        return None
+    return {
+        "schema": "arnold.megaplan.active_step_runner_lease.v1",
+        "session": session,
+        "marker_dir": str(marker_dir.resolve()),
+        "marker_binding": marker_binding(marker),
+        "lease_id": raw.get("lease_id"),
+        "runner_fence": raw.get("runner_fence"),
+        "runner_container_id": raw.get("runner_container_id"),
+        "pid_namespace_id": raw.get("pid_namespace_id"),
+        "target_process_start_identity": raw.get("target_process_start_identity"),
+    }
+
+
+def active_step_cas_token(active_step: Mapping[str, Any]) -> str:
+    """Content identity used to compare-and-swap one exact active occurrence."""
+
+    encoded = json.dumps(
+        dict(active_step), sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _observe_bound_lease(
+    binding: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> WorkerLivenessObservation:
+    session = str(binding.get("session") or "")
+    marker_dir_raw = binding.get("marker_dir")
+    if not session or not isinstance(marker_dir_raw, str):
+        return WorkerLivenessObservation(WORKER_UNKNOWN, "runner lease binding incomplete", {})
+    marker_dir = Path(marker_dir_raw)
+    try:
+        from arnold_pipelines.megaplan.cloud.liveness_lease import observe_liveness_lease
+
+        marker = json.loads((marker_dir / f"{session}.json").read_text(encoding="utf-8"))
+        observed = observe_liveness_lease(marker, marker_dir=marker_dir, now=now)
+    except (OSError, ValueError, TypeError):
+        return WorkerLivenessObservation(WORKER_UNKNOWN, "bound runner lease unreadable", {})
+    if not isinstance(observed, Mapping):
+        return WorkerLivenessObservation(WORKER_UNKNOWN, "bound runner lease invalid", {})
+    observed_lease_id = observed.get("lease_id")
+    expected_lease_id = binding.get("lease_id")
+    if observed_lease_id is not None and observed_lease_id != expected_lease_id:
+        return WorkerLivenessObservation(
+            WORKER_DEAD,
+            "runner lease was replaced by a different fenced incarnation",
+            dict(observed),
+        )
+    state = str(observed.get("state") or "unknown")
+    expected_fence = binding.get("runner_fence")
+    observed_fence = observed.get("runner_fence")
+    if state == "fenced" or (
+        observed_fence is not None
+        and expected_fence is not None
+        and observed_fence != expected_fence
+    ):
+        return WorkerLivenessObservation(
+            WORKER_DEAD,
+            "runner fence generation was replaced",
+            dict(observed),
+        )
+    if state == "live" and observed_lease_id == expected_lease_id:
+        return WorkerLivenessObservation(
+            WORKER_LIVE, "fresh exact runner lease", dict(observed)
+        )
+    if state in {"expired", "stopped"} and observed_lease_id == expected_lease_id:
+        return WorkerLivenessObservation(
+            WORKER_DEAD, "exact runner lease expired or stopped", dict(observed)
+        )
+    return WorkerLivenessObservation(
+        WORKER_UNKNOWN,
+        f"runner lease cannot prove death ({state})",
+        dict(observed),
+    )
+
+
+def observe_active_step_worker(
+    active_step: Any,
+    *,
+    now: datetime | None = None,
+) -> WorkerLivenessObservation:
+    """Classify one active occurrence without treating a foreign PID miss as death."""
+
+    if not isinstance(active_step, Mapping):
+        return WorkerLivenessObservation(WORKER_UNKNOWN, "active step missing", {})
+    incarnation = active_step.get("runner_incarnation")
+    if not isinstance(incarnation, Mapping):
+        raw_legacy_pid = active_step.get("worker_pid", active_step.get("pid"))
+        try:
+            legacy_pid = int(raw_legacy_pid)
+        except (TypeError, ValueError):
+            legacy_pid = -1
+        if legacy_pid == os.getpid() and _pid_alive(legacy_pid):
+            return WorkerLivenessObservation(
+                WORKER_LIVE,
+                "legacy active step names the observing process itself",
+                {"pid": legacy_pid, "legacy": True},
+            )
+        return WorkerLivenessObservation(
+            WORKER_UNKNOWN, "active step has no runner incarnation binding", {}
+        )
+    raw_pid = active_step.get("worker_pid", incarnation.get("worker_pid"))
+    try:
+        pid = int(raw_pid)
+    except (TypeError, ValueError):
+        return WorkerLivenessObservation(WORKER_UNKNOWN, "worker pid invalid", {})
+    recorded_namespace = str(incarnation.get("pid_namespace_id") or "unknown")
+    recorded_host = str(incarnation.get("host_id") or "")
+    local_namespace = _pid_namespace_id()
+    local_host = socket.gethostname()
+    same_incarnation_domain = (
+        recorded_host == local_host
+        and (
+            (recorded_namespace != "unknown" and recorded_namespace == local_namespace)
+            or pid == os.getpid()
+        )
+    )
+    if same_incarnation_domain:
+        if not _pid_alive(pid):
+            return WorkerLivenessObservation(
+                WORKER_DEAD, "worker absent in its owning PID namespace", {"pid": pid}
+            )
+        expected_start = incarnation.get("worker_process_start_identity")
+        observed_start = _process_start_identity(pid)
+        if not expected_start or not observed_start:
+            return WorkerLivenessObservation(
+                WORKER_UNKNOWN, "worker process incarnation cannot be verified", {"pid": pid}
+            )
+        if observed_start != expected_start:
+            return WorkerLivenessObservation(
+                WORKER_DEAD, "worker PID was reused by a different process", {"pid": pid}
+            )
+        return WorkerLivenessObservation(
+            WORKER_LIVE, "exact local worker process incarnation is alive", {"pid": pid}
+        )
+    lease_binding = active_step.get("runner_lease")
+    if isinstance(lease_binding, Mapping):
+        return _observe_bound_lease(lease_binding, now=now)
+    return WorkerLivenessObservation(
+        WORKER_UNKNOWN,
+        "worker PID belongs to a foreign or unknown namespace and no bound lease exists",
+        {"pid": pid, "recorded_namespace": recorded_namespace, "local_namespace": local_namespace},
+    )
 
 
 def _pid_alive(pid: int) -> bool:
@@ -30,22 +267,12 @@ def _pid_alive(pid: int) -> bool:
 def active_step_has_live_worker(active_step: Any) -> bool:
     """Return whether an active-step record names a currently live worker.
 
-    Phase names and resumable model ``session_id`` values are identities, not
-    liveness evidence.  Only a signal-0 probe of a recorded process PID proves
-    that the worker is still present.  Invalid, absent, and dead PIDs all fail
-    closed.
+    Phase names and resumable model ``session_id`` values are not liveness.
+    Local workers require an exact process incarnation; foreign workers require
+    their exact fresh runner lease. UNKNOWN is not reported as live.
     """
 
-    if not isinstance(active_step, Mapping):
-        return False
-    raw_pid = active_step.get("worker_pid")
-    if raw_pid is None:
-        raw_pid = active_step.get("pid")
-    try:
-        pid = int(raw_pid)
-    except (TypeError, ValueError):
-        return False
-    return _pid_alive(pid)
+    return observe_active_step_worker(active_step).state == WORKER_LIVE
 
 
 DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS = 900
@@ -295,6 +522,7 @@ def build_phase_observability(
     age_seconds: int | None = None,
     lock_held: bool = False,
     worker_pid: int | None = None,
+    active_step_record: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved = resolve_phase_runtime(step, configured_timeout_seconds=configured_timeout_seconds)
     payload: dict[str, Any] = asdict(resolved)
@@ -303,21 +531,35 @@ def build_phase_observability(
         stale = age_seconds >= resolved.escalation_threshold_seconds
         payload["age_seconds"] = age_seconds
         payload["stale"] = stale
-    # Probe the recorded worker pid. If it was recorded but is no longer
-    # alive, the active step is dead regardless of where it sits in the
-    # time-vs-budget window. Cached "healthy" claims from stale state.json
-    # files used to mask this — health: "dead" forces a recover path.
-    if worker_pid is not None and not _pid_alive(int(worker_pid)):
+    observation = (
+        observe_active_step_worker(active_step_record)
+        if active_step_record is not None
+        else WorkerLivenessObservation(
+            WORKER_UNKNOWN,
+            "pid-only record has no namespace/process-incarnation binding",
+            {"pid": worker_pid},
+        )
+        if worker_pid is not None
+        else None
+    )
+    if observation is not None:
+        payload["worker_liveness"] = observation.state
+        payload["worker_liveness_reason"] = observation.reason
+    if observation is not None and observation.state == WORKER_DEAD:
         payload["health"] = "dead"
         payload["worker_pid_alive"] = False
         payload["recommended_action"] = "resume_or_recover"
+        payload["recommended_action_reason"] = observation.reason
+        return payload
+    if observation is not None and observation.state == WORKER_LIVE:
+        payload["worker_pid_alive"] = True
+    if observation is not None and observation.state == WORKER_UNKNOWN:
+        payload["health"] = "unknown"
+        payload["recommended_action"] = "wait"
         payload["recommended_action_reason"] = (
-            f"The active step's recorded worker process (pid={worker_pid}) is no longer alive; "
-            "the phase is not actually running. Re-run the step or recover via override."
+            f"Worker liveness is UNKNOWN: {observation.reason}; redispatch is forbidden."
         )
         return payload
-    if worker_pid is not None:
-        payload["worker_pid_alive"] = True
     if age_seconds is None or not stale:
         payload["health"] = "healthy"
         payload["recommended_action"] = "wait"

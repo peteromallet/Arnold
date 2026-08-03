@@ -13,6 +13,7 @@ or notification authority.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ from typing import Any, Mapping
 
 
 SCHEMA = "arnold.megaplan.runner_liveness_lease.v1"
+FENCE_SCHEMA = "arnold.megaplan.runner_liveness_fence.v1"
 DEFAULT_MARKER_DIR = Path("/workspace/.megaplan/cloud-sessions")
 DEFAULT_INTERVAL_S = 5.0
 DEFAULT_TTL_S = 20.0
@@ -82,6 +84,10 @@ def marker_binding(marker: Mapping[str, Any]) -> str:
 
 def lease_path(session: str, *, marker_dir: Path = DEFAULT_MARKER_DIR) -> Path:
     return marker_dir / f"{session}.liveness-lease.json"
+
+
+def fence_path(session: str, *, marker_dir: Path = DEFAULT_MARKER_DIR) -> Path:
+    return marker_dir / f"{session}.liveness-fence.json"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -171,6 +177,30 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
+def _allocate_runner_fence(session: str, marker_dir: Path) -> int:
+    """Durably advance the single-writer generation for one runner session."""
+
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = marker_dir / f".{session}.liveness-fence.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        current = _read_json(fence_path(session, marker_dir=marker_dir))
+        try:
+            previous = int(current.get("runner_fence", 0))
+        except (TypeError, ValueError):
+            previous = 0
+        runner_fence = max(0, previous) + 1
+        _atomic_json(
+            fence_path(session, marker_dir=marker_dir),
+            {
+                "schema": FENCE_SCHEMA,
+                "session": session,
+                "runner_fence": runner_fence,
+            },
+        )
+        return runner_fence
+
+
 class LivenessLeasePublisher:
     """Renew a lease while one exact local process incarnation remains alive."""
 
@@ -192,6 +222,7 @@ class LivenessLeasePublisher:
         if self.target_start_identity is None:
             raise RuntimeError(f"target process {self.target_pid} is not locally observable")
         self.lease_id = str(uuid.uuid4())
+        self.runner_fence = _allocate_runner_fence(self.session, self.marker_dir)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._sequence = 0
@@ -220,6 +251,7 @@ class LivenessLeasePublisher:
             "workspace": str(marker.get("workspace") or ""),
             "remote_spec": str(marker.get("remote_spec") or ""),
             "lease_id": self.lease_id,
+            "runner_fence": self.runner_fence,
             "sequence": self._sequence,
             "status": "live" if live else "stopped",
             "generated_at": _iso(now),
@@ -297,6 +329,30 @@ def observe_liveness_lease(
         return {**base, "state": "degraded", "reason": "lease digest mismatch"}
     if raw.get("session") != session or raw.get("marker_binding") != marker_binding(marker):
         return {**base, "state": "degraded", "reason": "lease launch identity mismatch"}
+    identity = {
+        "lease_id": raw.get("lease_id"),
+        "runner_container_id": raw.get("runner_container_id"),
+        "pid_namespace_id": raw.get("pid_namespace_id"),
+        "target_process_start_identity": raw.get("target_process_start_identity"),
+        "marker_binding": raw.get("marker_binding"),
+        "expires_at": raw.get("expires_at"),
+        "runner_fence": raw.get("runner_fence"),
+    }
+    fence = _read_json(fence_path(session, marker_dir=Path(marker_dir)))
+    if fence:
+        try:
+            current_fence = int(fence.get("runner_fence"))
+            lease_fence = int(raw.get("runner_fence"))
+        except (TypeError, ValueError):
+            return {**base, **identity, "state": "degraded", "reason": "runner fence invalid"}
+        if current_fence != lease_fence:
+            return {
+                **base,
+                **identity,
+                "state": "fenced",
+                "reason": "runner lease belongs to a replaced fence generation",
+                "current_runner_fence": current_fence,
+            }
     generated = _parse_iso(raw.get("generated_at"))
     expires = _parse_iso(raw.get("expires_at"))
     if generated is None or expires is None:
@@ -307,19 +363,20 @@ def observe_liveness_lease(
     if expires > generated + timedelta(seconds=MAX_LEASE_SPAN_S):
         return {**base, "state": "degraded", "reason": "lease span exceeds bound"}
     if raw.get("status") != "live" or expires <= observed:
-        return {**base, "state": "expired", "reason": "runner lease expired or stopped"}
+        return {
+            **base,
+            **identity,
+            "state": "expired",
+            "reason": "runner lease expired or stopped",
+        }
     return {
         "state": "live",
         "live": True,
         "path": str(path),
         "reason": "fresh identity-bound runner lease",
-        "runner_container_id": raw.get("runner_container_id"),
-        "pid_namespace_id": raw.get("pid_namespace_id"),
+        **identity,
         "target_pid": raw.get("target_pid"),
-        "target_process_start_identity": raw.get("target_process_start_identity"),
-        "lease_id": raw.get("lease_id"),
         "sequence": raw.get("sequence"),
-        "expires_at": raw.get("expires_at"),
     }
 
 

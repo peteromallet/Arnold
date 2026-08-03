@@ -870,6 +870,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 age_seconds=age_seconds,
                 lock_held=lock_held,
                 worker_pid=worker_pid,
+                active_step_record=details,
             )
         )
         last_activity_at = _parse_utc_timestamp(details.get("last_activity_at"))
@@ -942,6 +943,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 configured_timeout_seconds=configured_timeout_seconds,
                 lock_held=lock_held,
                 worker_pid=worker_pid,
+                active_step_record=details,
             )
         )
         if step in {"execute", "loop_execute"}:

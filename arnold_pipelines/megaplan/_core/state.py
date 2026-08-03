@@ -1841,6 +1841,9 @@ def set_active_step(
 ) -> str:
     resolved_run_id = run_id or str(uuid.uuid4())
     started_at = now_utc()
+    from arnold_pipelines.megaplan.orchestration.phase_result import generate_invocation_id
+
+    invocation_id = generate_invocation_id()
     attempt = 1 + sum(
         1
         for entry in state.get("history", [])
@@ -1856,7 +1859,20 @@ def set_active_step(
         "attempt": attempt,
         "last_activity_at": started_at,
         "last_activity_kind": "started",
+        "orphan_fence": {
+            "run_id": resolved_run_id,
+            "invocation_id": invocation_id,
+        },
     }
+    from arnold_pipelines.megaplan._core.phase_runtime import (
+        current_runner_incarnation,
+        current_runner_lease_binding,
+    )
+
+    active_step["runner_incarnation"] = current_runner_incarnation()
+    runner_lease = current_runner_lease_binding()
+    if runner_lease is not None:
+        active_step["runner_lease"] = runner_lease
     if model:
         active_step["model"] = model
     selected_spec = configured_specs or format_agent_spec(AgentSpec(agent=agent, model=model))
@@ -1877,9 +1893,7 @@ def set_active_step(
         if isinstance(session_id, str) and session_id:
             active_step["session_id"] = session_id
     state["active_step"] = active_step
-    from arnold_pipelines.megaplan.orchestration.phase_result import generate_invocation_id
-
-    state.setdefault("meta", {})["current_invocation_id"] = generate_invocation_id()
+    state.setdefault("meta", {})["current_invocation_id"] = invocation_id
     return resolved_run_id
 
 

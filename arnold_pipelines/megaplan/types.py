@@ -143,6 +143,10 @@ class ActivePhase(TypedDict, total=False):
     selected_spec_total: int
     fallback_trigger: str | None
     failed_attempt_reasons: list[str]
+    worker_pid: int
+    runner_incarnation: dict[str, Any]
+    runner_lease: dict[str, Any]
+    orphan_fence: dict[str, str]
 
 
 class PlanVersionRecord(TypedDict, total=False):
