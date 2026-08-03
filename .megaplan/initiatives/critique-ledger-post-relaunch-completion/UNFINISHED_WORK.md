@@ -145,6 +145,16 @@ claim cannot discharge an obligation.
   most one exact `docker builder prune -f` dispatch and makes ambiguity a
   terminal no-redispatch state. Replace this checkbox only with exact WBC,
   host receipt, capacity, containment and independent-review evidence.
+- [ ] Preserve and independently review the subsequent capacity-reserve
+  remediation at
+  `evidence/capacity-reserve-remediation-intent-20260803.json`. Live evidence
+  showed Docker build cache reclaim succeeded (3.83 GB to 0 B), while ext4
+  still exposed 0 available bytes because 6,407,420 blocks (~26.2 GB) were
+  reserved for root and only 938,990 blocks were free. The bounded remedy may
+  purge only the 4,384,727,040-byte pip cache and reduce the reserve to 262,144
+  blocks (1 GiB); workspace, deploy directory, npm cache, predecessor
+  container, images and volumes remain preserved. Platform T0.3 must replace
+  this emergency tuning with owned high/low watermarks and reserve policy.
 - [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
   reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
   corruption and crash behavior; define safe lifecycle retention and broad

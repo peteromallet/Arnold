@@ -1,0 +1,54 @@
+{
+  "schema": "arnold.cloud.capacity_reserve_remediation_intent.v1",
+  "status": "AUTHORIZED_PENDING_SINGLE_DISPATCH",
+  "operation_id": "critique-ledger-capacity-reserve-remediation-20260803-0349z",
+  "authority": {
+    "basis": "user-authorized bounded Critique Ledger cloud recovery and relaunch",
+    "launch_candidate_commit": "c0e5e745d796d01deb962129f834978127f3adc0",
+    "predecessor_operation_authority_commit": "c277028f7b"
+  },
+  "target": {
+    "host": "159.69.51.216",
+    "filesystem_device": "/dev/sda1",
+    "filesystem_uuid": "2ab00f5c-7182-4670-998e-e4f142f71767",
+    "block_size": 4096,
+    "observed_reserved_block_count": 6407420,
+    "target_reserved_block_count": 262144,
+    "pip_cache": "/opt/megaplan-cloud/cache/pip",
+    "observed_pip_cache_bytes": 4384727040
+  },
+  "admitted_effects_in_order": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "pip",
+        "cache",
+        "purge"
+      ],
+      "environment": {
+        "PIP_CACHE_DIR": "/opt/megaplan-cloud/cache/pip"
+      },
+      "maximum_dispatches": 1
+    },
+    {
+      "argv": [
+        "tune2fs",
+        "-r",
+        "262144",
+        "/dev/sda1"
+      ],
+      "maximum_dispatches": 1
+    }
+  ],
+  "preserved": [
+    "/opt/megaplan-cloud/workspace",
+    "/opt/megaplan-cloud/deploy",
+    "/opt/megaplan-cloud/cache/npm",
+    "megaplan-cloud-agent container",
+    "Docker images",
+    "Docker volumes"
+  ],
+  "postcondition": "available bytes exceed the canary floor while one GiB remains reserved for root",
+  "ambiguity_policy": "NO BLIND REDISPATCH; reconcile exact command outcomes, cache size, tune2fs superblock fields, capacity, containment, and durable host receipt"
+}
