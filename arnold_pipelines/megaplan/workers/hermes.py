@@ -1500,27 +1500,6 @@ def parse_agent_output(
         if payload is not None:
             print(f"[hermes-worker] Reconstructed execute payload from tool calls", file=sys.stderr)
 
-    # Fallback: the model may have written the JSON to a different file location
-    if payload is None:
-        schema_filename = STEP_SCHEMA_FILENAMES.get(step, f"{step}.json")
-        for candidate in [
-            plan_dir / f"{step}_output.json",  # template file path
-            project_dir / schema_filename,
-            plan_dir / schema_filename,
-            project_dir / f"{step}.json",
-        ]:
-            if candidate.exists() and candidate != output_path:  # skip if already checked
-                try:
-                    candidate_text = candidate.read_text(encoding="utf-8")
-                    payload = json.loads(candidate_text)
-                    print(f"[hermes-worker] Read JSON from file written by model: {candidate}", file=sys.stderr)
-                    break
-                except json.JSONDecodeError as exc:
-                    parse_error = parse_error or exc
-                    repair_raw = candidate_text
-                except OSError:
-                    pass
-
     # Last resort for template-file phases: the model investigated and produced
     # text findings but didn't write valid JSON anywhere. Ask it to restructure
     # its analysis into JSON. This catches MiniMax's pattern of outputting markdown.

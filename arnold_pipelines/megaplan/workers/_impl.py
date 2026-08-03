@@ -1734,9 +1734,12 @@ STEP_CAPTURE_SCHEMA_FILENAMES: dict[str, str] = build_capture_schema_keys_by_ste
 
 # Derive required keys per step from SCHEMAS so they aren't duplicated.
 _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
-    step: SCHEMAS.get(STEP_CAPTURE_SCHEMA_FILENAMES.get(step, filename), {}).get(
-        "required", []
-    )
+    step: SCHEMAS.get(
+        filename
+        if step == "execute"
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, filename),
+        {},
+    ).get("required", [])
     for step, filename in STEP_SCHEMA_FILENAMES.items()
 }
 _RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({
@@ -5126,7 +5129,11 @@ def _run_codex_step_uncapped(
         else ModelTier.ENFORCED
     )
     persisted_schema = read_json(schema_file)
-    capture_schema_name = STEP_CAPTURE_SCHEMA_FILENAMES.get(step, codex_schema_name)
+    capture_schema_name = (
+        codex_schema_name
+        if step == "execute"
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, codex_schema_name)
+    )
     capture_schema = SCHEMAS.get(capture_schema_name, persisted_schema)
     # Preserve the consumer's semantic required/optional contract.  Gate is
     # the one established exception: every gate reader already treats its
@@ -5160,6 +5167,7 @@ def _run_codex_step_uncapped(
         response_contract is not None
         and response_contract.attestation.response_enforcement
         == ResponseEnforcement.LOCAL_STRICT_JSON.value
+        and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
     ):
         local_strict_handoff = _prepare_local_strict_artifact_handoff(
             plan_dir,
@@ -5184,22 +5192,24 @@ def _run_codex_step_uncapped(
         and response_contract.attestation.response_enforcement
         == ResponseEnforcement.LOCAL_STRICT_JSON.value
     ):
-        assert local_strict_handoff is not None
-        candidate_path = local_strict_handoff["candidate_path"]
-        candidate_path_json = json.dumps(candidate_path, ensure_ascii=True)
         prompt += (
             "\n\nResponse enforcement: return exactly one JSON object matching "
-            "the supplied canonical schema. Do not use Markdown fences or prose. "
-            "If the complete object is too large for the final response, use the "
-            "authorized artifact handoff instead: write the complete canonical JSON "
-            f"to exactly {candidate_path!r} via a temporary sibling file followed by "
-            "an atomic rename. Do not write finalize_output.json or any other scratch "
-            "or canonical artifact. Then return only this exact receipt shape: "
-            f"{{\"schema\":\"{LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA}\","
-            f"\"path\":{candidate_path_json},\"sha256\":\"<64 lowercase hex>\","
-            "\"bytes\":<exact byte count>}. The receipt path is fixed and may not "
-            "be substituted."
+            "the supplied canonical schema. Do not use Markdown fences or prose."
         )
+        if local_strict_handoff is not None:
+            candidate_path = local_strict_handoff["candidate_path"]
+            candidate_path_json = json.dumps(candidate_path, ensure_ascii=True)
+            prompt += (
+                " If the complete object is too large for the final response, use the "
+                "authorized artifact handoff instead: write the complete canonical JSON "
+                f"to exactly {candidate_path!r} via a temporary sibling file followed by "
+                "an atomic rename. Do not write finalize_output.json or any other scratch "
+                "or canonical artifact. Then return only this exact receipt shape: "
+                f"{{\"schema\":\"{LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA}\","
+                f"\"path\":{candidate_path_json},\"sha256\":\"<64 lowercase hex>\","
+                "\"bytes\":<exact byte count>}. The receipt path is fixed and may not "
+                "be substituted."
+            )
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:
