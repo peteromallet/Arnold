@@ -3203,12 +3203,25 @@ def _codex_retry_guidance(step: str | None = None) -> str:
     return "Re-run the same step on Codex once before changing agent."
 
 
+def _codex_hard_quota_guidance() -> str:
+    """Give bounded recovery guidance for capacity that cannot recover now."""
+    return (
+        "Do not retry immediately. Restore Codex credits/capacity or wait until the "
+        "provider-stated reset, then re-run the same step on Codex exactly once."
+    )
+
+
 def _diagnose_codex_failure(raw: str, returncode: int) -> tuple[str, str]:
     """Parse Codex stderr/stdout for known error patterns. Returns (error_code, message)."""
     lower = raw.lower()
     for pattern, code, message in _CODEX_ERROR_PATTERNS:
         if pattern in lower:
-            return code, f"{message}. {_codex_retry_guidance()}"
+            guidance = (
+                _codex_hard_quota_guidance()
+                if code == "quota_exceeded"
+                else _codex_retry_guidance()
+            )
+            return code, f"{message}. {guidance}"
     if re.search(r"\bhttp\s*429\b", lower) or re.search(r"\b429\b", lower):
         return "rate_limit", f"Codex hit a rate limit (HTTP 429). {_codex_retry_guidance()}"
     if re.search(r"\bhttp\s*400\b", lower) or re.search(r"\b400\b", lower):
