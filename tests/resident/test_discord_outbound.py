@@ -120,7 +120,7 @@ def test_operational_delivery_requires_production_mode_and_production_bot_role()
     ).allows_operational_discord_delivery
 
 
-def test_production_bot_boundary_allows_operational_outbox_messages() -> None:
+def test_production_bot_boundary_without_effect_owner_fails_closed() -> None:
     async def run_case() -> None:
         channel = FakeChannel()
         sink = DiscordOutboundSink(
@@ -128,14 +128,15 @@ def test_production_bot_boundary_allows_operational_outbox_messages() -> None:
             delivery_environment="production",
             bot_role="production",
         )
-        await sink.send(
-            OutboundMessage(
-                conversation_key="discord:dm:123",
-                content="verified production delivery",
-                metadata={"completion_delivery": True},
+        with pytest.raises(RuntimeError, match="no durable DeliveryEffects owner"):
+            await sink.send(
+                OutboundMessage(
+                    conversation_key="discord:dm:123",
+                    content="verified production delivery",
+                    metadata={"completion_delivery": True},
+                )
             )
-        )
-        assert channel.sent == ["verified production delivery"]
+        assert channel.sent == []
 
     class FakeChannel:
         def __init__(self) -> None:

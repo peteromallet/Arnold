@@ -989,15 +989,26 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
 
     require_configured_runtime_launch("resident", create=True)
     authorizer = ResidentAuthorizer(config)
+    resident_state_root = Path(
+        getattr(store, "root", None) or root / ".megaplan/resident"
+    )
+    delivery_effects = None
+    if config.allows_operational_discord_delivery:
+        from .delivery_effects import open_resident_delivery_effects
+
+        delivery_effects = open_resident_delivery_effects(
+            resident_state_root / "delivery_effects",
+            production_enabled=True,
+        )
     # Dev/test residents may handle interactive test traffic, but durable
     # operational outboxes belong exclusively to the production bot boundary.
     outbound = DiscordOutboundSink(
         delivery_environment=config.mode,
         bot_role=config.discord_bot_role,
         reaction_effect_root=(
-            Path(getattr(store, "root", None) or root / ".megaplan/resident")
-            / "discord_reaction_effects"
+            resident_state_root / "discord_reaction_effects"
         ),
+        delivery_effects=delivery_effects,
     )
     confirmation_manager = StoreBackedConfirmationManager(config, store)
     runtime = ResidentRuntime(

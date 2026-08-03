@@ -606,6 +606,8 @@ class ResidentJobHandlers:
                     content=content,
                     idempotency_key=idempotency_key,
                     metadata={
+                        "delivery_kind": "autonomous_scheduled",
+                        "operational_delivery": True,
                         "conversation_id": conversation.id,
                         "message_id": message.id,
                         "scheduled_job_id": job.id,
@@ -686,6 +688,8 @@ class ResidentJobHandlers:
                     content=content,
                     idempotency_key=idempotency_key,
                     metadata={
+                        "delivery_kind": "autonomous_scheduled",
+                        "operational_delivery": True,
                         "conversation_id": conversation.id,
                         "message_id": message.id,
                         "cloud_run_id": run.id,

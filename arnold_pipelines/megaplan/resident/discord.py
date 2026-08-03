@@ -405,18 +405,29 @@ class DiscordOutboundSink(OutboundSink):
     def bind_client(self, client: Any) -> None:
         self.client = client
 
+    @property
+    def delivery_effects(self) -> Any | None:
+        """The sole durable owner for autonomous notification effects."""
+
+        return self._delivery_effects
+
     async def send(self, message: OutboundMessage) -> None:
-        if _is_operational_delivery(message) and not (
+        operational_delivery = _is_operational_delivery(message)
+        if operational_delivery and not (
             self.delivery_environment == "production" and self.bot_role == "production"
         ):
             raise RuntimeError(
                 "operational Discord delivery is disabled outside the production bot boundary"
             )
+        if operational_delivery and self._delivery_effects is None:
+            raise RuntimeError(
+                "operational Discord delivery has no durable DeliveryEffects owner"
+            )
         if self.client is None:
             raise RuntimeError("Discord client is not bound")
 
         # Step 13H: route through durable delivery effects when configured.
-        if self._delivery_effects is not None and _is_operational_delivery(message):
+        if operational_delivery:
             # A configured effect adapter is the provider boundary. A denied
             # or unavailable reservation must fail closed; falling through to
             # the direct Discord call would create a second authority path.
@@ -927,6 +938,7 @@ def _is_operational_delivery(message: OutboundMessage) -> bool:
         metadata.get("resident_reset_notification")
         or metadata.get("completion_delivery")
         or metadata.get("operational_delivery")
+        or metadata.get("delivery_kind") == "autonomous_scheduled"
     )
 
 
@@ -1525,6 +1537,7 @@ class ResidentDiscordService:
                     completion_turn_handler=getattr(
                         self.runtime, "run_managed_completion_turn", None
                     ),
+                    delivery_effects=getattr(outbound, "delivery_effects", None),
                 )
                 reset_delivery = await sweep_reset_notifications(
                     outbound=self.runtime.outbound,
@@ -2224,6 +2237,9 @@ class ResidentDiscordService:
                         project_root=Path.cwd(),
                         completion_turn_handler=getattr(
                             self.runtime, "run_managed_completion_turn", None
+                        ),
+                        delivery_effects=getattr(
+                            self.runtime.outbound, "delivery_effects", None
                         ),
                     )
                     if delivery.delivered or delivery.retry_pending or delivery.failed:

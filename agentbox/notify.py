@@ -146,7 +146,9 @@ def _outbound_message(conversation_key: str, content: str) -> Any:
         conversation_key=conversation_key,
         content=content,
         idempotency_key=f"agentbox-notify-test-{datetime.now(UTC).isoformat()}",
-        metadata={},
+        # This CLI is an explicit human-invoked transport smoke test, not an
+        # autonomous resident/outbox notification.
+        metadata={"delivery_kind": "manual_notification_test"},
     )
 
 
