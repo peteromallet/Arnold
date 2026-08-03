@@ -68,6 +68,7 @@ from .shared import (
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.orchestration.authority_readers import effective_execute_completed_task_ids
 from arnold_pipelines.megaplan.workflows.handler_contract import (
     apply_response_projection,
     apply_state_projection,
@@ -862,11 +863,20 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
 
         _circuit = _PlanCircuit()
         _finalize_data = read_json(plan_dir / "finalize.json")
+        _tasks_for_circuit = [
+            t for t in _finalize_data.get("tasks", [])
+            if isinstance(t, dict) and isinstance(t.get("id"), str)
+        ]
+        _completed_for_circuit = effective_execute_completed_task_ids(
+            _tasks_for_circuit,
+            plan_dir=plan_dir,
+            project_dir=Path(state["config"]["project_dir"]),
+            state=state,
+        )
         _pending_task_ids: list[str] = [
             str(t["id"])
-            for t in _finalize_data.get("tasks", [])
-            if isinstance(t, dict) and t.get("status") == "pending"
-            and isinstance(t.get("id"), str)
+            for t in _tasks_for_circuit
+            if t["id"] not in _completed_for_circuit
         ]
         _circuit_dispatch = evaluate_circuit_before_dispatch(
             _circuit,

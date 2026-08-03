@@ -405,7 +405,7 @@ def test_worker_result_envelopes_echo_dispatch_identity_and_attempts(
     assert payload[RESULT_ENVELOPES_KEY][0]["dispatch"] == identity.to_dict()
 
 
-def test_no_pending_replay_uses_each_proven_scope_and_quarantines_legacy(
+def test_no_pending_replay_quarantines_scoped_rows_without_result_authority(
     tmp_path: Path,
 ) -> None:
     finalize_data = {
@@ -517,13 +517,13 @@ def test_no_pending_replay_uses_each_proven_scope_and_quarantines_legacy(
 
     tasks = {task["id"]: task for task in finalize_data["tasks"]}
     checks = {check["id"]: check for check in finalize_data["sense_checks"]}
-    assert len(replayed) == 2
-    assert tasks["T1"]["status"] == "blocked"
-    assert tasks["T1"]["executor_notes"] == "proven batch-one result"
-    assert tasks["T2"]["status"] == "done"
+    assert replayed == []
+    assert tasks["T1"]["status"] == "done"
+    assert tasks["T1"].get("executor_notes") is None
+    assert tasks["T2"]["status"] == "skipped"
     assert tasks["T3"] == {"id": "T3", "status": "done"}
-    assert checks["SC1"]["executor_note"] == "batch one proven"
-    assert checks["SC2"]["executor_note"] == "batch two proven"
+    assert checks["SC1"]["executor_note"] == ""
+    assert checks["SC2"]["executor_note"] == ""
     assert checks["SC3"]["executor_note"] == "unchanged"
     events = (tmp_path / "events.ndjson").read_text(encoding="utf-8")
     assert "authority_divergence" in events

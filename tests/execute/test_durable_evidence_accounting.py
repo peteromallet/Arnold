@@ -5,15 +5,12 @@ import subprocess
 from pathlib import Path
 
 from arnold_pipelines.megaplan.execute.aggregation import _compute_execute_scope_drift
-from arnold_pipelines.megaplan.execute.batch import _durably_evidenced_finalized_task_ids
 from arnold_pipelines.megaplan._core.io import (
     list_batch_artifacts,
     resolve_batch_artifact,
 )
 from arnold_pipelines.megaplan.auto import _latest_recorded_execute_head
-from arnold_pipelines.megaplan.orchestration.execution_evidence import (
-    apply_authoritative_execute_overrides,
-)
+from arnold_pipelines.megaplan.orchestration.execution_evidence import validate_execution_evidence
 
 
 def _commit(project_dir: Path, message: str) -> str:
@@ -167,22 +164,20 @@ def test_terminal_quality_uses_finalized_evidence_and_current_partial_batch(
     )
 
     assert drift.files_added == []
-    assert _durably_evidenced_finalized_task_ids(finalized_tasks) == {"T1"}
 
 
-def test_old_batch_cannot_replace_terminal_finalize_commands(tmp_path: Path) -> None:
+def test_top_level_artifact_evidence_cannot_promote_pending_task_or_check(
+    tmp_path: Path,
+) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     (plan_dir / "execution_batch_8.json").write_text(
         json.dumps(
             {
+                "files_changed": ["runtime.py"],
+                "commands_run": ["python -m py_compile runtime.py"],
                 "task_updates": [
-                    {
-                        "task_id": "T8",
-                        "status": "done",
-                        "files_changed": ["runtime.py"],
-                        "commands_run": ["python _obsolete_ad_hoc_gate.py"],
-                    }
+                    {"task_id": "T8", "status": "pending"}
                 ]
             }
         )
@@ -193,21 +188,19 @@ def test_old_batch_cannot_replace_terminal_finalize_commands(tmp_path: Path) -> 
         "tasks": [
             {
                 "id": "T8",
-                "status": "done",
+                "status": "pending",
                 "files_changed": ["runtime.py"],
-                "commands_run": ["python -m py_compile runtime.py", "pytest tests/test_runtime.py -q"],
-                "executor_notes": "Current verification completed.",
+                "commands_run": ["python -m py_compile runtime.py"],
+                "executor_notes": "",
             }
         ],
-        "sense_checks": [],
+        "sense_checks": [{"id": "SC8", "task_id": "T8", "executor_note": ""}],
     }
 
-    reconciled = apply_authoritative_execute_overrides(finalized, plan_dir=plan_dir)
+    before = json.loads(json.dumps(finalized))
+    validate_execution_evidence(finalized, tmp_path / "project", plan_dir=plan_dir)
 
-    assert reconciled["tasks"][0]["commands_run"] == [
-        "python -m py_compile runtime.py",
-        "pytest tests/test_runtime.py -q",
-    ]
+    assert finalized == before
 
 
 from arnold_pipelines.megaplan.execute.aggregation import (

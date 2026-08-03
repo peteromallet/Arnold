@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TextIO
+from typing import Any, TextIO
 
 import re
 
@@ -32,7 +32,6 @@ from arnold_pipelines.megaplan.workers._impl import (
     session_key_for,
 )
 from arnold_pipelines.megaplan._core import (
-    list_batch_artifacts,
     creative_form_id,
     read_json,
     schemas_root,
@@ -48,7 +47,6 @@ from arnold_pipelines.megaplan.model_seam import (
     render_prompt_for_dispatch,
     render_step_message,
 )
-from arnold_pipelines.megaplan.execute.status_constants import TERMINAL_TASK_STATUSES
 
 
 def _pre_dispatch_budget_check(
@@ -2740,118 +2738,15 @@ def _reconstruct_execute_payload(
     if not tool_calls and not files_changed:
         return None
 
-    def _batch_sort_key(path: Path, prefix: str) -> int:
-        stem = path.stem
-        try:
-            return int(stem[len(prefix) :])
-        except ValueError:
-            return -1
-
-    def _validated_task_updates(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return []
-        raw_updates = payload.get("task_updates")
-        if not isinstance(raw_updates, list):
-            return []
-        valid: list[dict[str, Any]] = []
-        for item in raw_updates:
-            if not isinstance(item, dict):
-                continue
-            task_id = item.get("task_id")
-            status = item.get("status")
-            executor_notes = item.get("executor_notes")
-            files_changed = item.get("files_changed")
-            commands_run = item.get("commands_run")
-            if not isinstance(task_id, str) or not task_id.strip():
-                continue
-            if status not in TERMINAL_TASK_STATUSES:
-                continue
-            if not isinstance(executor_notes, str) or not executor_notes.strip():
-                continue
-            if not isinstance(files_changed, list) or not isinstance(commands_run, list):
-                continue
-            valid.append(item)
-        return valid
-
-    def _validated_sense_check_acknowledgments(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return []
-        raw_acks = payload.get("sense_check_acknowledgments")
-        if not isinstance(raw_acks, list):
-            return []
-        valid: list[dict[str, Any]] = []
-        for item in raw_acks:
-            if not isinstance(item, dict):
-                continue
-            sense_check_id = item.get("sense_check_id")
-            executor_note = item.get("executor_note")
-            if not isinstance(sense_check_id, str) or not sense_check_id.strip():
-                continue
-            if not isinstance(executor_note, str) or not executor_note.strip():
-                continue
-            valid.append(item)
-        return valid
-
-    latest_batch_output_payload: dict[str, Any] | None = None
-    latest_batch_output_path: Path | None = None
-    batch_output_files = sorted(
-        plan_dir.glob("execute_batch_*_output.json"),
-        key=lambda path: _batch_sort_key(path, "execute_batch_"),
-        reverse=True,
-    )
-    for batch_output_path in batch_output_files:
-        try:
-            loaded = json.loads(batch_output_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(loaded, dict):
-            continue
-        latest_batch_output_payload = loaded
-        latest_batch_output_path = batch_output_path
-        break
-
+    # Recovery observes only the current worker messages and workspace.  It
+    # deliberately does not read any prior scratch/checkpoint artifact: a
+    # persisted row becomes authoritative only after a canonical batch replay
+    # validates its dispatch identity, result envelope, fence, and evidence.
     task_updates: list[dict[str, Any]] = []
     sense_check_acknowledgments: list[dict[str, Any]] = []
-    if latest_batch_output_payload is not None:
-        task_updates.extend(_validated_task_updates(latest_batch_output_payload))
-        sense_check_acknowledgments.extend(
-            _validated_sense_check_acknowledgments(latest_batch_output_payload)
-        )
-
-    # If the scratch output is missing or contains no usable controlled-field
-    # updates, fall back to the latest audited checkpoint.  Batch-scope
-    # authority validation still rejects any update that does not belong to
-    # the active batch; reconstruction must not promote pending placeholders.
-    if not task_updates:
-        checkpoint_files = sorted(list_batch_artifacts(plan_dir), reverse=True)
-        for checkpoint_path in checkpoint_files:
-            try:
-                cp_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            checkpoint_updates = _validated_task_updates(cp_data)
-            if checkpoint_updates:
-                task_updates.extend(checkpoint_updates)
-                sense_check_acknowledgments.extend(
-                    _validated_sense_check_acknowledgments(cp_data)
-                )
-                break
-
-    output_text = (
-        latest_batch_output_payload.get("output")
-        if isinstance(latest_batch_output_payload, dict)
-        else None
-    )
-    if not isinstance(output_text, str) or not output_text.strip():
-        output_text = None
+    output_text = None
 
     extra_deviations: list[str] = []
-    if isinstance(latest_batch_output_payload, dict):
-        raw_deviations = latest_batch_output_payload.get("deviations")
-        if isinstance(raw_deviations, list):
-            extra_deviations.extend(
-                item for item in raw_deviations if isinstance(item, str) and item.strip()
-            )
 
     if mode == "doc":
         sections_written = sorted(
@@ -2879,24 +2774,6 @@ def _reconstruct_execute_payload(
         }
 
     files_list = sorted(files_changed)
-    if isinstance(latest_batch_output_payload, dict):
-        raw_files_changed = latest_batch_output_payload.get("files_changed")
-        if isinstance(raw_files_changed, list):
-            files_list = sorted(
-                {
-                    *files_list,
-                    *(
-                        item
-                        for item in raw_files_changed
-                        if isinstance(item, str) and item.strip()
-                    ),
-                }
-            )
-        raw_commands_run = latest_batch_output_payload.get("commands_run")
-        if isinstance(raw_commands_run, list):
-            for command in raw_commands_run:
-                if isinstance(command, str) and command and command not in commands_run:
-                    commands_run.append(command)
     deviations = [
         "Execute response reconstructed from tool calls — model failed to produce JSON report."
     ]

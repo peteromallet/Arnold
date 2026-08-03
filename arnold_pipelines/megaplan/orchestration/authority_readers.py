@@ -1425,10 +1425,10 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     AuthorityRoute(
         id="EXEC-02",
         file="arnold_pipelines/megaplan/execute/batch.py",
-        line_range="951-957",
-        description="Batch prerequisite gate: completed_ids from batch_status_overlay trusting raw {'done','skipped'}",
-        disposition=WARN_ONLY,
-        owner_or_reason="Authority adapters wired downstream (chain/supervisor use effective_execute_completed_task_ids); batch.py raw reads not yet replaced at source.",
+        line_range="3580-3620",
+        description="Batch prerequisite gate: completed IDs are resolved through effective_execute_completed_task_ids",
+        disposition=ENFORCED,
+        owner_or_reason="Raw batch-status overlay adoption was retired; prerequisite scheduling consumes the accepted-attempt/envelope projection.",
         route_family="execute",
     ),
     AuthorityRoute(

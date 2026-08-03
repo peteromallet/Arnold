@@ -20,9 +20,9 @@ def test_authority_route_inventory_has_no_unclassified_positive_routes() -> None
     dispositions = route_ids_by_disposition()
 
     assert set(dispositions) == {ENFORCED, WARN_ONLY, INFORMATIONAL, DEFERRED}
-    assert dispositions[ENFORCED] == ["CHAIN-01"]
+    assert dispositions[ENFORCED] == ["EXEC-02", "CHAIN-01"]
     assert dispositions[INFORMATIONAL] == ["STATUS-01"]
-    assert len(dispositions[WARN_ONLY]) == 22
+    assert len(dispositions[WARN_ONLY]) == 21
     assert len(dispositions[DEFERRED]) == 5
     assert len({route.id for route in AUTHORITY_ROUTES}) == len(AUTHORITY_ROUTES)
 

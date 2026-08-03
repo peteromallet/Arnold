@@ -697,7 +697,7 @@ def test_execute_completion_authority_accepts_batch_corroboration_for_stale_done
     assert missing == []
 
 
-def test_validate_execution_evidence_ignores_stale_pending_finalize_rows(
+def test_validate_execution_evidence_does_not_adopt_unenveloped_batch_rows(
     tmp_path: Path,
 ) -> None:
     project_dir = tmp_path / "project"
@@ -748,7 +748,7 @@ def test_validate_execution_evidence_ignores_stale_pending_finalize_rows(
         plan_dir=plan_dir,
     )
 
-    assert not any(
+    assert any(
         "Tasks left pending after execute" in finding for finding in audit["findings"]
     )
 
