@@ -2224,6 +2224,7 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
         "structural-smoke/fake_codex.py"
     )
     source = fake.read_text(encoding="utf-8")
+    assert source.startswith("#!/usr/local/bin/node\n")
     assert "socket" not in source
     assert "urllib" not in source
     assert "requests" not in source
@@ -2233,7 +2234,7 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     schema = tmp_path / ".megaplan" / "schemas" / f"{phase}.json"
     completed = subprocess.run(
         [
-            sys.executable,
+            "node",
             str(fake),
             "exec",
             "-o",
