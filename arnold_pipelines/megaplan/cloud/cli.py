@@ -61,6 +61,7 @@ _ZERO_RECOVERY_CLOUD_ACTIONS = {
     "zero-recovery-preflight",
     "resident-recover",
     "resident-down",
+    "resident-reconcile-down",
 }
 _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS = {
     "build",
@@ -400,6 +401,28 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     resident_down_parser.add_argument("--expected-source-image-id", required=True)
     resident_down_parser.add_argument("--expected-resident-image-id", required=True)
     resident_down_parser.add_argument("--expected-resident-container-id", required=True)
+    resident_reconcile_parser = cloud_sub.add_parser(
+        "resident-reconcile-down",
+        parents=[shared],
+        help="Prove, adopt, and remove one exact unreceipted listener-only resident",
+    )
+    resident_reconcile_parser.add_argument("--outage-epoch", required=True)
+    resident_reconcile_parser.add_argument("--expected-source-container-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-source-image-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-image-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-container-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-command-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-env-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-recovery-seed-host-dir", required=True)
+    resident_reconcile_parser.add_argument("--expected-recovery-seed-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-path", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-commit", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-tree", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-content-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-python-path", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-python-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-workspace-device", required=True, type=int)
+    resident_reconcile_parser.add_argument("--expected-workspace-inode", required=True, type=int)
 
     quickstart_parser = cloud_sub.add_parser(
         "quickstart",
@@ -1194,6 +1217,40 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 expected_source_image_id=args.expected_source_image_id,
                 expected_resident_image_id=args.expected_resident_image_id,
                 expected_resident_container_id=args.expected_resident_container_id,
+            )
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0
+
+        if action == "resident-reconcile-down":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "resident_reconcile_unavailable",
+                    "resident reconciliation is available only through the SSH provider",
+                )
+            reconcile = getattr(provider, "resident_reconcile_down", None)
+            if reconcile is None:
+                raise CliError(
+                    "resident_reconcile_unavailable",
+                    "SSH provider does not expose resident reconciliation",
+                )
+            payload = reconcile(
+                outage_epoch=args.outage_epoch,
+                expected_source_container_id=args.expected_source_container_id,
+                expected_source_image_id=args.expected_source_image_id,
+                expected_resident_image_id=args.expected_resident_image_id,
+                expected_resident_container_id=args.expected_resident_container_id,
+                expected_resident_command_sha256=args.expected_resident_command_sha256,
+                expected_resident_env_sha256=args.expected_resident_env_sha256,
+                expected_recovery_seed_host_dir=args.expected_recovery_seed_host_dir,
+                expected_recovery_seed_sha256=args.expected_recovery_seed_sha256,
+                expected_runtime_path=args.expected_runtime_path,
+                expected_runtime_commit=args.expected_runtime_commit,
+                expected_runtime_tree=args.expected_runtime_tree,
+                expected_runtime_content_sha256=args.expected_runtime_content_sha256,
+                expected_runtime_python_path=args.expected_runtime_python_path,
+                expected_runtime_python_sha256=args.expected_runtime_python_sha256,
+                expected_workspace_device=args.expected_workspace_device,
+                expected_workspace_inode=args.expected_workspace_inode,
             )
             sys.stdout.write(json.dumps(payload, indent=2) + "\n")
             return 0
