@@ -55,11 +55,11 @@ with the matching run ID/version. Killing the processes alone is not an abort.
 Tasks marked `[parallel]` may be implemented and tested concurrently. Deployment
 waits for all checked items and one exact integration commit.
 
-- [ ] `[parallel]` Correct wrapper UNKNOWN handling: status/manual-review remain
+- [x] `[parallel]` Correct wrapper UNKNOWN handling: status/manual-review remain
   observable while repair, notification, retirement, and relaunch fail closed.
 - [ ] `[parallel]` Require normalized repair occurrence identity and
   process-start/PID-namespace/boot-bound leases end to end.
-- [ ] `[parallel]` Replace every live whole-document `finalize.json` rewrite with
+- [x] `[parallel]` Replace every live whole-document `finalize.json` rewrite with
   one locked, expected-hash/version, field-allowlisted CAS writer.
 - [ ] Retire notification adapter-to-direct-send fallbacks and the legacy repair
   loop Discord sender; ambiguous provider outcomes are `INDETERMINATE`.
