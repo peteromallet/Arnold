@@ -86,6 +86,17 @@ export MEGAPLAN_ZERO_RECOVERY_CANARY=1
 exec python3 /usr/local/bin/healthserver.py
 """
 
+_ISOLATED_CHAIN_RUNNER_ENTRYPOINT = """#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${MEGAPLAN_ISOLATED_CHAIN_RUNNER:-}" != "1" ]]; then
+  echo "isolated chain runner requires MEGAPLAN_ISOLATED_CHAIN_RUNNER=1" >&2
+  exit 64
+fi
+export MEGAPLAN_ISOLATED_CHAIN_RUNNER=1
+exec python3 /usr/local/bin/healthserver.py
+"""
+
 
 def _entrypoint_template() -> Template:
     text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("entrypoint.sh.tmpl").read_text(encoding="utf-8")
@@ -309,6 +320,8 @@ def _codex_auth_config_block(spec: CloudSpec) -> str:
 def render_entrypoint(spec: CloudSpec) -> str:
     if spec.zero_recovery_canary:
         return _ZERO_RECOVERY_ENTRYPOINT
+    if spec.isolated_chain_runner:
+        return _ISOLATED_CHAIN_RUNNER_ENTRYPOINT
     values = {
         "REPO_URL": spec.repo.url,
         "REPO_BRANCH": spec.repo.branch,

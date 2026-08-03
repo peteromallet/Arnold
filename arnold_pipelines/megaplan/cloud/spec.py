@@ -29,6 +29,7 @@ VALID_CODEX_REASONING = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_CODEX_AUTH = ("chatgpt", "apikey")
 _SSH_ALIAS_RE = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?\Z")
 _SSH_USER_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
+_DOCKER_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,8 @@ class CloudSpec:
     extra_repos: tuple[RepoSpec, ...] = ()
     chain_session: str = "megaplan-chain"
     chain_session_explicit: bool = False
+    isolated_chain_runner: bool = False
+    isolated_chain_runner_image_id: str | None = None
     zero_recovery_canary: bool = False
     zero_recovery_predecessor_container: str | None = None
     zero_recovery_workspace_dir: str | None = None
@@ -414,6 +417,26 @@ def load_spec(path: Path) -> CloudSpec:
     mode = _string(raw.get("mode"), "mode", default="idle")
     if mode not in VALID_MODES:
         raise _invalid(f"mode must be one of {', '.join(VALID_MODES)}; got {mode!r}")
+    isolated_chain_runner = _boolean(
+        raw.get("isolated_chain_runner"), "isolated_chain_runner"
+    )
+    if isolated_chain_runner and (provider != "ssh" or mode != "idle"):
+        raise _invalid(
+            "`isolated_chain_runner: true` requires `provider: ssh` and `mode: idle`"
+        )
+    isolated_image_raw = raw.get("isolated_chain_runner_image_id")
+    isolated_chain_runner_image_id = (
+        _string(isolated_image_raw, "isolated_chain_runner_image_id")
+        if isolated_image_raw is not None
+        else None
+    )
+    if isolated_chain_runner_image_id is not None and (
+        not isolated_chain_runner
+        or not _DOCKER_IMAGE_ID_RE.fullmatch(isolated_chain_runner_image_id)
+    ):
+        raise _invalid(
+            "`isolated_chain_runner_image_id` requires the isolated profile and an exact sha256 image ID"
+        )
     zero_recovery_canary = _boolean(
         raw.get("zero_recovery_canary"), "zero_recovery_canary"
     )
@@ -421,6 +444,13 @@ def load_spec(path: Path) -> CloudSpec:
         raise _invalid(
             "`zero_recovery_canary: true` requires `provider: ssh` and `mode: idle`"
         )
+    if isolated_chain_runner and zero_recovery_canary:
+        raise _invalid(
+            "`isolated_chain_runner` and `zero_recovery_canary` are mutually exclusive"
+        )
+    secrets = _secrets(raw.get("secrets"))
+    if isolated_chain_runner and secrets:
+        raise _invalid("`isolated_chain_runner: true` requires `secrets: []`")
     predecessor_raw = raw.get("zero_recovery_predecessor_container")
     zero_recovery_predecessor_container = (
         _string(predecessor_raw, "zero_recovery_predecessor_container")
@@ -603,7 +633,7 @@ def load_spec(path: Path) -> CloudSpec:
         mode=mode,
         megaplan=megaplan,
         resources=resources,
-        secrets=_secrets(raw.get("secrets")),
+        secrets=secrets,
         auto=auto_spec,
         chain=chain_spec,
         driver=driver,
@@ -613,6 +643,8 @@ def load_spec(path: Path) -> CloudSpec:
         extra_repos=extra_repos,
         chain_session=chain_session,
         chain_session_explicit=chain_session_explicit,
+        isolated_chain_runner=isolated_chain_runner,
+        isolated_chain_runner_image_id=isolated_chain_runner_image_id,
         zero_recovery_canary=zero_recovery_canary,
         zero_recovery_predecessor_container=zero_recovery_predecessor_container,
         zero_recovery_workspace_dir=zero_recovery_workspace_dir,
