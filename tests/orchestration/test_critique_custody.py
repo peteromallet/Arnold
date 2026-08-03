@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import ast
+import inspect
+import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from arnold_pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold_pipelines.megaplan import auto
 from arnold_pipelines.megaplan.flags import (
     update_flags_after_critique,
     update_flags_after_gate,
     update_flags_after_revise,
 )
 from arnold_pipelines.megaplan.handlers.plan import _build_verifiability_flags
+from arnold_pipelines.megaplan.handlers.structured_output import promote_scratch
 from arnold_pipelines.megaplan.orchestration import critique_custody
+from arnold_pipelines.megaplan.orchestration import critique_runtime
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
     assert_finalize_custody,
@@ -27,6 +34,7 @@ from arnold_pipelines.megaplan.orchestration.critique_custody import (
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
 )
+from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 def _state(project_dir: Path, *, iteration: int = 1, robustness: str = "full") -> dict[str, Any]:
@@ -41,7 +49,7 @@ def _state(project_dir: Path, *, iteration: int = 1, robustness: str = "full") -
         },
         "plan_versions": [{"version": iteration, "file": f"plan_v{iteration}.md"}],
         "history": [],
-        "meta": {},
+        "meta": {"current_invocation_id": f"critique-invocation-{iteration}"},
         "last_gate": {},
     }
 
@@ -118,6 +126,30 @@ def _oversized_payload(*, two_findings: bool = False) -> dict[str, Any]:
     }
 
 
+def _producer_binding(
+    invocation_id: str = "critique-invocation-1",
+    *,
+    producer: str = "codex",
+    transport: str = "inline_response",
+    scratch_status: str = "unmodified",
+) -> dict[str, Any]:
+    return {
+        "schema_version": "megaplan-critique-producer-binding-v1",
+        "invocation_id": invocation_id,
+        "attempt_index": 0,
+        "attempt_id": f"{invocation_id}:0",
+        "producer": producer,
+        "provider": "openai" if producer == "codex" else None,
+        "selected_spec": "codex:gpt-5.4" if producer == "codex" else None,
+        "model_actual": "gpt-5.4" if producer == "codex" else None,
+        "session_id": None,
+        "transport": transport,
+        "scratch_status": scratch_status,
+        "registered_scratch_artifact": "critique_output.json",
+        "output_path_attested": False,
+    }
+
+
 def _persist_critique(
     plan_dir: Path,
     state: dict[str, Any],
@@ -133,6 +165,7 @@ def _persist_critique(
         state,
         payload,
         expected_check_ids=["scope"],
+        producer_binding=_producer_binding(state["meta"]["current_invocation_id"]),
     )
     update_flags_after_critique(plan_dir, payload, iteration=iteration)
     return receipt
@@ -184,6 +217,288 @@ def test_valid_oversized_task_finding_survives_normalization_and_reaches_gate(tm
     }
     assert gate_input["flag_ids"] == [canonical_id]
     assert gate_input["loss_count"] == 0
+
+
+def _rewrite_receipt_digest(receipt: dict[str, Any]) -> None:
+    receipt.pop("receipt_digest", None)
+    receipt["receipt_digest"] = critique_custody._digest(receipt)
+
+
+def test_gate_rejects_self_consistent_receipt_copied_from_older_iteration(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    old_receipt = (plan_dir / "critique_custody_v1.json").read_bytes()
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    atomic_write_text(plan_dir / "plan_v2.md", "# Plan v2\n")
+    atomic_write_json(plan_dir / "critique_v2.json", payload)
+    (plan_dir / "critique_custody_v2.json").write_bytes(old_receipt)
+
+    with pytest.raises(CritiqueCustodyError, match="does not match current iteration"):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_gate_rejects_rehashed_receipt_pointing_at_wrong_critique_path(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    atomic_write_json(plan_dir / "copied_critique.json", payload)
+    receipt["critique_artifact"] = "copied_critique.json"
+    receipt["critique_sha256"] = critique_custody.sha256_file(
+        plan_dir / "copied_critique.json"
+    )
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(CritiqueCustodyError, match="exact current canonical artifact"):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_gate_rejects_tampered_producer_attempt_even_with_rehashed_receipt(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _oversized_payload())
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["producer_binding"]["attempt_index"] = 9
+    receipt["producer_binding"]["attempt_id"] = (
+        f"{receipt['producer_binding']['invocation_id']}:9"
+    )
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(CritiqueCustodyError, match="producer binding digest mismatch"):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_receipt_restart_is_idempotent_and_never_rewrites(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    first = _persist_critique(plan_dir, state, payload)
+    path = plan_dir / "critique_custody_v1.json"
+    before = path.read_bytes()
+
+    restarted = write_critique_production_receipt(
+        plan_dir,
+        state,
+        payload,
+        expected_check_ids=["scope"],
+        producer_binding=_producer_binding(),
+    )
+
+    assert restarted == first
+    assert path.read_bytes() == before
+
+
+def test_receipt_restart_rejects_corrupted_existing_receipt(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    path = plan_dir / "critique_custody_v1.json"
+    existing = json.loads(path.read_text())
+    existing["receipt_digest"] = "sha256:" + "0" * 64
+    atomic_write_json(path, existing)
+
+    with pytest.raises(CritiqueCustodyError, match="invalid digest"):
+        write_critique_production_receipt(
+            plan_dir,
+            state,
+            payload,
+            expected_check_ids=["scope"],
+            producer_binding=_producer_binding(),
+        )
+
+
+def test_concurrent_receipt_creation_is_create_once(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    atomic_write_text(plan_dir / "plan_v1.md", "# Plan v1\n")
+    atomic_write_text(plan_dir / "critique_raw_v1.txt", "raw producer critique")
+    prepare_critique_payload(payload, expected_check_ids=["scope"])
+    atomic_write_json(plan_dir / "critique_v1.json", payload)
+
+    def publish(invocation: str) -> str:
+        try:
+            write_critique_production_receipt(
+                plan_dir,
+                state,
+                deepcopy(payload),
+                expected_check_ids=["scope"],
+                producer_binding=_producer_binding(invocation),
+            )
+            return "published"
+        except CritiqueCustodyError as error:
+            assert error.code == "critique_custody_receipt_conflict"
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(publish, ("inv-a", "inv-b")))
+
+    assert sorted(outcomes) == ["conflict", "published"]
+    receipt = json.loads((plan_dir / "critique_custody_v1.json").read_text())
+    assert receipt["producer_binding"]["invocation_id"] in {"inv-a", "inv-b"}
+
+
+@pytest.mark.parametrize("producer", ["codex", "shannon"])
+def test_inline_critique_producers_ignore_preexisting_valid_scratch(
+    tmp_path: Path,
+    producer: str,
+) -> None:
+    scratch_payload = _oversized_payload()
+    atomic_write_json(tmp_path / "critique_output.json", scratch_payload)
+    inline_payload = {"source": producer}
+    worker = WorkerResult(payload=inline_payload, raw_output="", duration_ms=1, cost_usd=0)
+
+    status, promoted = promote_scratch(
+        tmp_path,
+        "critique_output.json",
+        frozenset(scratch_payload),
+        worker,
+        seed_json="{}",
+        file_fill_instructed=False,
+    )
+
+    assert status == "unmodified"
+    assert promoted is inline_payload
+
+
+def test_hermes_critique_uses_only_registered_filled_path(tmp_path: Path) -> None:
+    scratch_payload = _oversized_payload()
+    atomic_write_json(tmp_path / "critique_output.json", scratch_payload)
+    atomic_write_json(tmp_path / "wrong_output.json", {"wrong": True})
+    worker = WorkerResult(payload={"source": "inline"}, raw_output="", duration_ms=1, cost_usd=0)
+
+    status, promoted = promote_scratch(
+        tmp_path,
+        "critique_output.json",
+        frozenset(scratch_payload),
+        worker,
+        seed_json="{}",
+        file_fill_instructed=True,
+    )
+
+    assert status == "filled"
+    assert promoted == scratch_payload
+
+
+def test_hermes_stale_or_wrong_path_scratch_is_not_adopted(tmp_path: Path) -> None:
+    seed = json.dumps(_oversized_payload(), sort_keys=True)
+    (tmp_path / "critique_output.json").write_text(seed, encoding="utf-8")
+    atomic_write_json(tmp_path / "wrong_output.json", _oversized_payload())
+    inline_payload = {"source": "fallback"}
+    worker = WorkerResult(payload=inline_payload, raw_output="", duration_ms=1, cost_usd=0)
+
+    status, promoted = promote_scratch(
+        tmp_path,
+        "critique_output.json",
+        frozenset(_oversized_payload()),
+        worker,
+        seed_json=seed,
+        file_fill_instructed=True,
+    )
+
+    assert status == "unmodified"
+    assert promoted is inline_payload
+
+
+def test_orphan_recovery_quarantines_even_valid_stale_critique_scratch(
+    tmp_path: Path,
+) -> None:
+    atomic_write_json(tmp_path / "critique_output.json", _oversized_payload())
+
+    quarantined = auto._quarantine_phase_outputs(tmp_path, "critique")
+
+    assert quarantined == ["critique_output.json"]
+    assert not (tmp_path / "critique_output.json").exists()
+    assert (tmp_path / "critique_output.json.orphaned").exists()
+
+
+def test_runtime_producer_binding_captures_available_hermes_attempt_identity(
+    tmp_path: Path,
+) -> None:
+    atomic_write_json(tmp_path / "critique_output.json", _oversized_payload())
+    worker = WorkerResult(
+        payload=_oversized_payload(),
+        raw_output="",
+        duration_ms=1,
+        cost_usd=0,
+        session_id="session-1",
+        model_actual="glm-5.2",
+        attempt_index=1,
+        attempted_specs=("hermes:deepseek:model-a", "hermes:zhipu:glm-5.2"),
+    )
+
+    binding = critique_runtime._critique_producer_binding(
+        {"meta": {"current_invocation_id": "inv-1"}},
+        worker,
+        agent="hermes",
+        scratch_filename="critique_output.json",
+        scratch_status="filled",
+        plan_dir=tmp_path,
+        parallel_reduced=False,
+    )
+
+    assert binding["attempt_id"] == "inv-1:1"
+    assert binding["selected_spec"] == "hermes:zhipu:glm-5.2"
+    assert binding["provider"] == "zhipu"
+    assert binding["model_actual"] == "glm-5.2"
+    assert binding["scratch_sha256"] == critique_custody.sha256_file(
+        tmp_path / "critique_output.json"
+    )
+
+
+def test_unbound_critique_output_recovery_is_statically_retired() -> None:
+    source = inspect.getsource(critique_runtime)
+    functions = {
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "_recover_valid_critique_output" not in functions
+    assert "_normalize_critique_payload_for_recovery" not in functions
+
+
+def test_registered_critique_seed_boundary_precedes_each_sequential_dispatch() -> None:
+    source = inspect.getsource(critique_runtime.handle_critique)
+    tree = ast.parse(source)
+    seed_lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_seed_registered_critique_scratch"
+    ]
+    dispatch_lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_run_worker"
+        and node.lineno > min(seed_lines)
+    ]
+
+    assert len(seed_lines) == len(dispatch_lines) == 2
+    assert all(any(0 < dispatch - seed <= 3 for seed in seed_lines) for dispatch in dispatch_lines)
 
 
 def test_effectively_clean_or_lost_gate_input_fails_closed(tmp_path: Path) -> None:

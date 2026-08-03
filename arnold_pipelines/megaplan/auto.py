@@ -3416,8 +3416,9 @@ def _block_for_execute_authority_divergence(
 # Output artifacts written incrementally by long-running phase workers. When
 # the worker dies mid-write these files survive on disk but lack the terminal
 # fields the recovery paths look for. The next dispatch must start clean —
-# otherwise critique's `_recover_valid_critique_output` (and friends) can
-# treat the half-written file as authoritative and short-circuit the rerun.
+# otherwise a registered file-fill provider can mistake output from the dead
+# occurrence for its own current attempt. Critique scratch is always
+# quarantined because no legacy scratch file carries invocation/attempt proof.
 _PHASE_OUTPUT_QUARANTINE: dict[str, tuple[str, ...]] = {
     "critique": ("critique_output.json",),
     "plan": ("plan_output.json",),
@@ -3449,10 +3450,20 @@ def _quarantine_phase_outputs(plan_dir: Path, step: str) -> list[str]:
             if not source.exists():
                 continue
             artifact_name = source.name
-            # Treat zero-byte AND structurally-empty payloads as corpses worth
-            # quarantining. An output file that holds a complete payload is
-            # rare in this orphan path, but we leave it alone — the handler's
-            # own recover logic will accept or reject it normally.
+            if step == "critique":
+                target = plan_dir / f"{artifact_name}.orphaned"
+                suffix = 1
+                while target.exists():
+                    target = plan_dir / f"{artifact_name}.orphaned.{suffix}"
+                    suffix += 1
+                try:
+                    source.replace(target)
+                except OSError:
+                    continue
+                quarantined.append(artifact_name)
+                continue
+            # Other legacy phase paths retain their established empty/corrupt
+            # quarantine behavior until their transports gain attempt binding.
             try:
                 text = source.read_text(encoding="utf-8")
             except OSError:

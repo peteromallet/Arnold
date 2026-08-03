@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -29,7 +31,7 @@ from arnold_pipelines.megaplan.orchestration.task_feasibility import task_contra
 from arnold_pipelines.megaplan.types import PlanState
 
 
-CUSTODY_SCHEMA_VERSION = "megaplan-critique-custody-v1"
+CUSTODY_SCHEMA_VERSION = "megaplan-critique-custody-v2"
 CLEARANCE_SCHEMA_VERSION = "megaplan-critique-clearance-v1"
 FINAL_BINDING_SCHEMA_VERSION = "megaplan-finalize-critique-binding-v1"
 _ALLOWED_FINDING_KEYS = {
@@ -63,6 +65,113 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _producer_binding_issues(binding: object) -> list[str]:
+    if not isinstance(binding, Mapping):
+        return ["producer_binding is not an object"]
+    issues: list[str] = []
+    if binding.get("schema_version") != "megaplan-critique-producer-binding-v1":
+        issues.append("producer binding schema is unsupported")
+    invocation_id = binding.get("invocation_id")
+    if not isinstance(invocation_id, str) or not invocation_id:
+        issues.append("producer invocation_id is missing")
+    attempt_index = binding.get("attempt_index")
+    if isinstance(attempt_index, bool) or not isinstance(attempt_index, int) or attempt_index < 0:
+        issues.append("producer attempt_index is invalid")
+    expected_attempt_id = (
+        f"{invocation_id}:{attempt_index}"
+        if isinstance(invocation_id, str) and isinstance(attempt_index, int)
+        else None
+    )
+    if binding.get("attempt_id") != expected_attempt_id:
+        issues.append("producer attempt_id is not bound to invocation and attempt index")
+    producer = binding.get("producer")
+    if not isinstance(producer, str) or not producer:
+        issues.append("producer identity is missing")
+    transport = binding.get("transport")
+    if transport not in {"registered_file_fill", "inline_response", "parallel_reduce"}:
+        issues.append("producer transport is invalid")
+    scratch_status = binding.get("scratch_status")
+    if not isinstance(scratch_status, str) or not scratch_status:
+        issues.append("producer scratch_status is missing")
+    if binding.get("registered_scratch_artifact") != "critique_output.json":
+        issues.append("producer scratch artifact is not the registered critique path")
+    if transport != "registered_file_fill" and scratch_status == "filled":
+        issues.append("inline/parallel producer cannot claim filled scratch custody")
+    scratch_sha = binding.get("scratch_sha256")
+    if scratch_sha is not None and (
+        not isinstance(scratch_sha, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}|[0-9a-f]{64}", scratch_sha) is None
+    ):
+        issues.append("producer scratch_sha256 is invalid")
+    if transport == "registered_file_fill" and scratch_status == "filled":
+        if scratch_sha is None:
+            issues.append("filled file transport has no scratch content hash")
+        scratch_bytes = binding.get("scratch_bytes")
+        if (
+            isinstance(scratch_bytes, bool)
+            or not isinstance(scratch_bytes, int)
+            or scratch_bytes < 0
+        ):
+            issues.append("filled file transport has invalid scratch byte count")
+    if not isinstance(binding.get("output_path_attested"), bool):
+        issues.append("producer output_path_attested must be boolean")
+    return issues
+
+
+def _receipt_semantic_payload(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    semantic = dict(receipt)
+    semantic.pop("produced_at", None)
+    semantic.pop("receipt_digest", None)
+    return semantic
+
+
+def _publish_receipt_create_once(path: Path, receipt: dict[str, Any]) -> dict[str, Any]:
+    """Atomically publish one immutable receipt or return an identical restart."""
+
+    def _existing() -> dict[str, Any]:
+        if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
+            raise CritiqueCustodyError(
+                "critique_custody_receipt_conflict",
+                [f"refusing non-exclusive custody path {path.name}"],
+            )
+        existing = read_json(path)
+        unsigned_existing = dict(existing)
+        stored_digest = unsigned_existing.pop("receipt_digest", None)
+        if stored_digest != _digest(unsigned_existing):
+            raise CritiqueCustodyError(
+                "critique_custody_receipt_conflict",
+                [f"existing custody receipt has an invalid digest: {path.name}"],
+            )
+        if _receipt_semantic_payload(existing) != _receipt_semantic_payload(receipt):
+            raise CritiqueCustodyError(
+                "critique_custody_receipt_conflict",
+                [f"create-once custody receipt already exists with different authority: {path.name}"],
+            )
+        return existing
+
+    if path.exists() or path.is_symlink():
+        return _existing()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    encoded = json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n"
+    try:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temp, path)
+        except FileExistsError:
+            return _existing()
+        return receipt
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _stable_finding_id(flag: Mapping[str, Any]) -> str:
@@ -224,8 +333,12 @@ def write_critique_production_receipt(
     payload: dict[str, Any],
     *,
     expected_check_ids: Sequence[str],
+    producer_binding: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Persist immutable custody evidence for one canonical critique artifact."""
+    producer_issues = _producer_binding_issues(producer_binding)
+    if producer_issues:
+        raise CritiqueCustodyError("critique_producer_binding_invalid", producer_issues)
     flags = prepare_critique_payload(payload, expected_check_ids=expected_check_ids)
     iteration = int(state["iteration"])
     critique_name = f"critique_v{iteration}.json"
@@ -280,6 +393,8 @@ def write_critique_production_receipt(
         "critique_artifact": critique_name,
         "critique_sha256": sha256_file(critique_path),
         "critique_payload_digest": _digest(payload),
+        "producer_binding": dict(producer_binding),
+        "producer_binding_digest": _digest(producer_binding),
         "raw_sources": raw_sources,
         "expected_check_ids": list(expected_check_ids),
         "finding_count": len(findings),
@@ -300,11 +415,25 @@ def write_critique_production_receipt(
         "admitted": True,
     }
     receipt["receipt_digest"] = _digest(receipt)
-    atomic_write_json(plan_dir / f"critique_custody_v{iteration}.json", receipt)
-    return receipt
+    receipt_path = plan_dir / f"critique_custody_v{iteration}.json"
+    _validate_production_receipt(
+        plan_dir,
+        receipt,
+        expected_iteration=iteration,
+        expected_receipt_path=receipt_path,
+        expected_plan_artifact=plan_path.name,
+    )
+    return _publish_receipt_create_once(receipt_path, receipt)
 
 
-def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> None:
+def _validate_production_receipt(
+    plan_dir: Path,
+    receipt: Mapping[str, Any],
+    *,
+    expected_iteration: int,
+    expected_receipt_path: Path,
+    expected_plan_artifact: str,
+) -> None:
     issues: list[str] = []
     if receipt.get("schema_version") != CUSTODY_SCHEMA_VERSION or receipt.get("admitted") is not True:
         issues.append("unsupported or non-admitted production receipt")
@@ -312,6 +441,33 @@ def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> 
     stored_receipt_digest = unsigned_receipt.pop("receipt_digest", None)
     if stored_receipt_digest != _digest(unsigned_receipt):
         issues.append("production receipt digest mismatch")
+    if expected_receipt_path.name != f"critique_custody_v{expected_iteration}.json":
+        issues.append("validator receipt path does not match current iteration")
+    if expected_receipt_path.parent.resolve() != plan_dir.resolve():
+        issues.append("validator receipt path is outside the plan directory")
+    if expected_receipt_path.exists() or expected_receipt_path.is_symlink():
+        if expected_receipt_path.is_symlink() or not expected_receipt_path.is_file():
+            issues.append("custody receipt path is not a regular file")
+        elif expected_receipt_path.stat().st_nlink != 1:
+            issues.append("custody receipt path has multiple hard links")
+    if receipt.get("iteration") != expected_iteration:
+        issues.append(
+            f"receipt iteration {receipt.get('iteration')!r} does not match current iteration {expected_iteration}"
+        )
+    expected_critique_name = f"critique_v{expected_iteration}.json"
+    if receipt.get("critique_artifact") != expected_critique_name:
+        issues.append(
+            f"critique artifact must be exact current canonical artifact {expected_critique_name}"
+        )
+    if receipt.get("plan_artifact") != expected_plan_artifact:
+        issues.append(
+            f"source plan artifact must be exact current plan {expected_plan_artifact}"
+        )
+    producer_binding = receipt.get("producer_binding")
+    issues.extend(_producer_binding_issues(producer_binding))
+    if isinstance(producer_binding, Mapping):
+        if receipt.get("producer_binding_digest") != _digest(producer_binding):
+            issues.append("producer binding digest mismatch")
     for field in ("plan_artifact", "critique_artifact"):
         name = receipt.get(field)
         if not isinstance(name, str) or not name or Path(name).name != name:
@@ -319,14 +475,18 @@ def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> 
     plan_name = receipt.get("plan_artifact")
     if isinstance(plan_name, str):
         plan_path = plan_dir / plan_name
-        if not plan_path.exists():
+        if plan_path.is_symlink():
+            issues.append(f"source plan artifact is a symlink: {plan_name}")
+        elif not plan_path.exists() or not plan_path.is_file():
             issues.append(f"missing source plan artifact {plan_name}")
         elif receipt.get("plan_sha256") != sha256_file(plan_path):
             issues.append(f"source plan artifact hash mismatch for {plan_name}")
     critique_name = receipt.get("critique_artifact")
     if isinstance(critique_name, str):
         critique_path = plan_dir / critique_name
-        if not critique_path.exists():
+        if critique_path.is_symlink():
+            issues.append(f"critique artifact is a symlink: {critique_name}")
+        elif not critique_path.exists() or not critique_path.is_file():
             issues.append(f"missing critique artifact {critique_name}")
         elif receipt.get("critique_sha256") != sha256_file(critique_path):
             issues.append(f"critique artifact hash mismatch for {critique_name}")
@@ -369,7 +529,19 @@ def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> 
                 issues.append("raw source row is not an object")
                 continue
             name = source.get("artifact")
-            if not isinstance(name, str) or Path(name).name != name or not (plan_dir / name).exists():
+            current_raw_pattern = re.compile(
+                rf"^(?:critique_raw_v{expected_iteration}\.txt|"
+                rf"critique_check_.+_(?:producer_v{expected_iteration}\.json|raw_v{expected_iteration}\.txt))$"
+            )
+            source_path = plan_dir / str(name)
+            if (
+                not isinstance(name, str)
+                or Path(name).name != name
+                or current_raw_pattern.fullmatch(name) is None
+                or source_path.is_symlink()
+                or not source_path.exists()
+                or not source_path.is_file()
+            ):
                 issues.append(f"raw source artifact is missing or unsafe: {name!r}")
             elif source.get("sha256") != sha256_file(plan_dir / name):
                 issues.append(f"raw source hash mismatch for {name}")
@@ -393,6 +565,34 @@ def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> 
         raise CritiqueCustodyError("critique_custody_receipt_invalid", issues)
 
 
+def _validate_receipt_at_path(
+    plan_dir: Path,
+    path: Path,
+    receipt: Mapping[str, Any],
+    *,
+    expected_plan_artifact: str | None = None,
+) -> None:
+    match = re.fullmatch(r"critique_custody_v(\d+)\.json", path.name)
+    if match is None:
+        raise CritiqueCustodyError(
+            "critique_custody_receipt_invalid",
+            [f"receipt filename is not canonical: {path.name}"],
+        )
+    plan_name = expected_plan_artifact or receipt.get("plan_artifact")
+    if not isinstance(plan_name, str) or not plan_name:
+        raise CritiqueCustodyError(
+            "critique_custody_receipt_invalid",
+            ["receipt has no source plan artifact"],
+        )
+    _validate_production_receipt(
+        plan_dir,
+        receipt,
+        expected_iteration=int(match.group(1)),
+        expected_receipt_path=path,
+        expected_plan_artifact=plan_name,
+    )
+
+
 def validate_gate_input_custody(plan_dir: Path, state: PlanState) -> dict[str, Any]:
     """Prove the latest critique and registry agree before gate dispatch."""
     iteration = int(state["iteration"])
@@ -403,7 +603,12 @@ def validate_gate_input_custody(plan_dir: Path, state: PlanState) -> dict[str, A
             [f"gate requires {path.name}; rerun critique"],
         )
     receipt = read_json(path)
-    _validate_production_receipt(plan_dir, receipt)
+    _validate_receipt_at_path(
+        plan_dir,
+        path,
+        receipt,
+        expected_plan_artifact=latest_plan_path(plan_dir, state).name,
+    )
     registry = load_flag_registry(plan_dir)
     registry_ids = {
         flag.get("id")
@@ -571,7 +776,7 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
     latest_occurrences: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
     for path in receipt_paths:
         receipt = read_json(path)
-        _validate_production_receipt(plan_dir, receipt)
+        _validate_receipt_at_path(plan_dir, path, receipt)
         source_receipts.append({"artifact": path.name, "sha256": sha256_file(path)})
         for finding in receipt.get("findings", []):
             flag_id = str(finding.get("flag_id"))
@@ -798,7 +1003,11 @@ def assert_finalize_custody(
                     issues.append(f"clearance source receipt mismatch for {source_name}")
                     continue
                 try:
-                    _validate_production_receipt(plan_dir, read_json(source_path))
+                    _validate_receipt_at_path(
+                        plan_dir,
+                        source_path,
+                        read_json(source_path),
+                    )
                 except CritiqueCustodyError as error:
                     issues.extend(error.issues)
             plan_name = clearance.get("plan_artifact")
