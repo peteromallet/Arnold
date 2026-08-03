@@ -31,7 +31,6 @@ from arnold_pipelines.megaplan.authority.binding import (
     TASK_COMPLETION_CLAIM,
     TASK_RESULT_CAPABILITY,
 )
-from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.forms.stance import validate_stance
 from arnold_pipelines.megaplan.types import PlanState
 from arnold_pipelines.megaplan.execute.status_constants import (
@@ -1450,7 +1449,13 @@ def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[s
             ),
         )
     try:
-        finalize_data = read_json(plan_dir / "finalize.json")
+        from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+            FinalizeMutationContext,
+            load_finalize_for_update,
+            publish_finalize_update,
+        )
+
+        finalize_data = load_finalize_for_update(plan_dir)
     except Exception as error:
         return {
             "reconciled": False,
@@ -1492,7 +1497,15 @@ def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[s
             artifact=latest,
             quarantine=merge_result.quarantine,
         )
-    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
+    publish_finalize_update(
+        plan_dir,
+        finalize_data,
+        context=FinalizeMutationContext(
+            owner="execute",
+            operation="reconcile-latest-execution-batch",
+            attempt_id=f"merge:{latest.name}",
+        ),
+    )
     final_md_error: str | None = None
     try:
         atomic_write_text(

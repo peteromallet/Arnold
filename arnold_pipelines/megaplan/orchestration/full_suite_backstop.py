@@ -52,7 +52,11 @@ def _load_baseline(value: Path | dict[str, Any] | None) -> dict[str, Any] | None
 
 def _read_finalize(plan_dir: Path) -> dict[str, Any] | None:
     try:
-        raw = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+        from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+            load_finalize_for_update,
+        )
+
+        raw = load_finalize_for_update(plan_dir)
     except Exception:
         return None
     return raw if isinstance(raw, dict) else None
@@ -86,7 +90,24 @@ def _write_recaptured_finalize_baseline(
     ):
         if key in captured:
             merged[key] = captured[key]
-    atomic_write_json(plan_dir / "finalize.json", merged)
+    from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+        FinalizeMutationContext,
+        publish_finalize_update,
+    )
+
+    # Preserve the read token carried by ``finalize``; mutating a detached
+    # copy would intentionally fail the authority seam.
+    finalize.clear()
+    finalize.update(merged)
+    publish_finalize_update(
+        plan_dir,
+        finalize,
+        context=FinalizeMutationContext(
+            owner="baseline",
+            operation="recapture-full-suite-baseline",
+            attempt_id="full-suite-backstop:baseline-recapture",
+        ),
+    )
 
 
 def _recapture_missing_baseline(

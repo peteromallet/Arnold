@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
-from arnold.workflow.execution_attempt_ledger import AttemptEventType
+from arnold.workflow.execution_attempt_ledger import AttemptEventType, AttemptOutcome
 from arnold_pipelines.megaplan.handlers import finalize as finalize_handler
 from arnold_pipelines.megaplan.handlers import review as review_handler
 from arnold_pipelines.megaplan.handlers import shared as shared_handlers
@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.custody.phase_wbc import (
     PHASE_WBC_LEDGER_FILENAME,
     activate_phase_wbc,
     complete_phase_wbc,
+    cancel_phase_wbc,
 )
 
 
@@ -307,6 +308,86 @@ def test_review_rework_receipt_joins_one_phase_attempt(
     assert [event.event_type for event in events] == [AttemptEventType.STARTED, AttemptEventType.COMPLETED]
     assert events[1].payload["boundary_receipt_id"] == "review_rework_effects"
     assert (plan_dir / "boundary_receipts" / "review_rework_effects.json").exists()
+
+
+def test_cancel_phase_wbc_requires_exact_identity_and_preserves_active_step(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    project_dir.mkdir()
+    plan_dir.mkdir()
+    state = _state(project_dir, current_state="gated")
+    run_id = set_active_step(state, step="finalize", agent="finalizer", mode="test")
+    metadata = activate_phase_wbc(
+        state=state,
+        plan_dir=plan_dir,
+        step="finalize",
+        agent="finalizer",
+    )
+    assert metadata is not None
+
+    result = cancel_phase_wbc(
+        state=state,
+        plan_dir=plan_dir,
+        step="finalize",
+        expected_attempt_id=str(metadata["attempt_id"]),
+        expected_invocation_id=str(metadata["invocation_id"]),
+        agent="operator",
+        reason="superseded by explicit attempt 9 relaunch",
+    )
+
+    events = _events(plan_dir, str(metadata["attempt_id"]))
+    assert [event.event_type for event in events] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.CANCELLED,
+    ]
+    assert events[-1].outcome is AttemptOutcome.CANCELLED
+    assert events[-1].sequence == 2
+    assert result["active_step_preserved"] is True
+    assert state["active_step"]["run_id"] == run_id
+    assert state["active_step"]["phase"] == "finalize"
+    assert "_phase_wbc" not in state["active_step"]
+
+
+@pytest.mark.parametrize(
+    ("attempt_suffix", "invocation_suffix"),
+    [("-wrong", ""), ("", "-wrong")],
+)
+def test_cancel_phase_wbc_rejects_metadata_mismatch_without_mutation(
+    tmp_path: Path,
+    attempt_suffix: str,
+    invocation_suffix: str,
+) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    project_dir.mkdir()
+    plan_dir.mkdir()
+    state = _state(project_dir, current_state="gated")
+    set_active_step(state, step="finalize", agent="finalizer", mode="test")
+    metadata = activate_phase_wbc(
+        state=state,
+        plan_dir=plan_dir,
+        step="finalize",
+        agent="finalizer",
+    )
+    assert metadata is not None
+
+    with pytest.raises(RuntimeError, match="identity mismatch"):
+        cancel_phase_wbc(
+            state=state,
+            plan_dir=plan_dir,
+            step="finalize",
+            expected_attempt_id=str(metadata["attempt_id"]) + attempt_suffix,
+            expected_invocation_id=str(metadata["invocation_id"]) + invocation_suffix,
+            agent="operator",
+            reason="test mismatch",
+        )
+
+    assert [event.event_type for event in _events(plan_dir, str(metadata["attempt_id"]))] == [
+        AttemptEventType.STARTED
+    ]
+    assert state["active_step"]["_phase_wbc"] == metadata
 
 
 def test_finalize_revise_fallback_records_phase_wbc_and_receipt(tmp_path: Path) -> None:
