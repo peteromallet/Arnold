@@ -42,6 +42,14 @@ and do not restart the epic from Prep. Preserve the same session, plan, and
 upstream artifacts; explicitly abort attempt 8 and create immutable attempt 9
 under the exact integrated runtime.
 
+Attempt-8 custody is exact: phase-WBC attempt
+`8fe6ab70-45c0-573e-9a26-32721b06047e`, invocation
+`21d5c8322f2148a5`, active-step run ID
+`c9cb6a4d-ec3c-4634-a08f-db273f0d96a7`, ordinal `8`. Its durable ledger has a
+single `STARTED` event and no terminal event. The abort must append the matching
+`CANCELLED` terminal event, reread it as durable, and clear active custody only
+with the matching run ID/version. Killing the processes alone is not an abort.
+
 ### Relaunch gate task board
 
 Tasks marked `[parallel]` may be implemented and tested concurrently. Deployment
