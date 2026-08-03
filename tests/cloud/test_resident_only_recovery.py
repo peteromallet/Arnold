@@ -741,6 +741,7 @@ def test_host_transactions_fence_recheck_health_freshly_and_target_ids(
     (workspace / ".secrets" / "megaplan-resident-discord.env").write_text(
         "DISCORD_BOT_TOKEN=fake-never-printed\n"
         "DISCORD_DM_USER_ID=123456789\n"
+        "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production\n"
         "MEGAPLAN_RESIDENT_STORE_ROOT=/workspace/arnold/.megaplan/resident\n",
         encoding="utf-8",
     )
@@ -851,7 +852,7 @@ if args[0] == "create":
     state["resident"] = {{"Id": resident_id, "Image": resident_image_id, "Name": "/" + resident_name,
       "State": {{"Running": False, "Paused": False, "Restarting": False, "ExitCode": 0, "StartedAt": ""}},
       "HostConfig": {{"RestartPolicy": {{"Name": "no", "MaximumRetryCount": 0}}, "CapDrop": ["ALL"], "CapAdd": None, "SecurityOpt": ["no-new-privileges:true"], "PidsLimit": 256, "Memory": 2147483648, "MemorySwap": 2147483648}},
-      "Config": {{"Entrypoint": [args[entrypoint_index + 1]], "User": "0:0", "WorkingDir": args[args.index("--workdir") + 1], "Cmd": args[image_index + 1:], "Env": [key + "=" + value for key, value in env_map.items()]}},
+      "Config": {{"Entrypoint": [args[entrypoint_index + 1]], "User": "0:0", "WorkingDir": args[args.index("--workdir") + 1], "Cmd": args[image_index + 1:], "Env": env_rows}},
       "Mounts": mounts}}
     if state.get("post_create_swap"):
         runtime_file = os.path.join(workspace, "{RUNTIME_PATH.removeprefix('/workspace/')}", "accepted-runtime.txt")
@@ -938,6 +939,10 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
     assert resident_env["MEGAPLAN_RESIDENT_STORE_ROOT"] == (
         "/workspace/arnold/.megaplan/resident"
     )
+    assert sum(
+        row.startswith("MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=")
+        for row in state["resident"]["Config"]["Env"]
+    ) == 1
 
     state["resident"]["State"]["Running"] = False
     state_path.write_text(json.dumps(state), encoding="utf-8")
