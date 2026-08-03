@@ -34,6 +34,85 @@
     "immutable_intent_count": 5,
     "rule": "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS"
   },
+  "current_canary_lineage": {
+    "schema": "arnold.critique_ledger.current_canary_lineage.v1",
+    "status": "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_FRESH_RETRY_ALL_ACCEPTANCE_GATES_PENDING",
+    "publication_gate": {
+      "generation": "A36/B36",
+      "status": "TERMINAL_NO_GO",
+      "rule": "TERMINAL_PUBLICATION_REQUIRES_SEALED_STOP"
+    },
+    "generations": [
+      {
+        "repair": {"id": "A37", "commit": "b8ffeb14ea408a2171ebcddc3bcda7b6188a36e5", "tree": "dbc56fc906f4bb1976510156f464e681302534db"},
+        "launch": {"id": "B37", "commit": "c4ac9e76e6665ef47c4f11f5e2f5b37bebb524bd", "tree": "cd4ac3774fe9013751819d05bc12838b704755cd"},
+        "change": "GATE_TERMINAL_CANARY_STATUS_ON_SEALED_STOP",
+        "acceptance": "NOT_CURRENT"
+      },
+      {
+        "repair": {"id": "A38", "commit": "a965867e658193f4b3aba8fbdfa6517a653cb36b", "tree": "f5860f777ece19caedb25426e263c169e0be324c"},
+        "launch": {"id": "B38", "commit": "84e4ff29eaac7c96b2a6334c5f938015742f11af", "tree": "e15c918e8fcb0bf4437cf534075a0c8258d725aa"},
+        "change": "ADMIT_SAFE_CAPACITY_DRIFT_DURING_RECLAIM",
+        "diagnostic_receipt_file_sha256_prefix": "4a9bae",
+        "production_receipt_file_sha256_prefix": "26c217",
+        "production_image_id_prefix": "sha256:56402",
+        "acceptance": "OFFLINE_RECEIPTS_PRESENT_LIVE_TERMINAL_FAILED"
+      },
+      {
+        "repair": {"id": "A39", "commit": "2159347ae291102dd5ec90d2aac736fc0d5a58e0", "tree": "0b6d9b7961d03665b48b505a2738d7a3612334bb"},
+        "launch": {"id": "B39", "commit": "11305b7c2c1891614b85322f8e0f3c766d2586d6", "tree": "8adcb18fa955544a7a1da1777b6d9ffbb8d5b9a0"},
+        "change": "REAP_FINITE_MODEL_DESCENDANTS_BEFORE_SEAL_AND_RUN_CONTAINER_WITH_INIT",
+        "tests": {"passed": 187, "skipped": 1},
+        "retry_isolation": {
+          "attempt": 13,
+          "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-13-20260803",
+          "container": "megaplan-cloud-agent-finite-canary-13"
+        },
+        "gates": {"offline": "PENDING", "independent": "PENDING", "live": "PENDING", "stable_exit": "PENDING"}
+      }
+    ],
+    "official_reclaim_v2": {
+      "transaction_id_prefix": "f0070",
+      "status": "PASSED",
+      "free_bytes": {"before": 807890944, "after": 1982816256, "delta": 1174925312},
+      "recovery_units": {"count": 8, "all_masked": true},
+      "systemd_jobs": [],
+      "tmux_sessions": [],
+      "processes": []
+    },
+    "live_attempt_12": {
+      "candidate": {"id": "B38", "commit": "84e4ff29eaac7c96b2a6334c5f938015742f11af", "tree": "e15c918e8fcb0bf4437cf534075a0c8258d725aa"},
+      "container": {"id_prefix": "cd07", "image_id_prefix": "sha256:56402", "exit_code": 137, "oom_killed": false, "restart_count": 0, "stopped": true},
+      "live_owner_exit_code": 1,
+      "run_receipt": {"sha256_prefix": "8dc24", "digest_prefix": "d5d182"},
+      "exact_primary_failure": "finite-model UID retained a process after provider return",
+      "downstream_failure": "uid 65532 output ownership error",
+      "root_cause": "DOCKER_HOST_CONFIG_INIT_WAS_NULL",
+      "workspace": {"attempt": 12, "sealed": true, "owner": "root", "mode": "0700", "same_inode": true},
+      "reconciliation": "TERMINAL_RECONCILED_REMOTE_RECEIPT_IMPORT_PENDING"
+    },
+    "capacity_disposition": {
+      "nominal_go_headroom": "APPROXIMATELY_335_KB",
+      "status": "OVERRIDDEN_AS_INSUFFICIENT_FOR_FRESH_CHECKOUT_AND_BUILD_TRANSIENTS"
+    },
+    "temporary_b38_diagnostic_checkout_retirement": {
+      "status": "TERMINAL_RETIRED",
+      "intent_digest_prefix": "2568",
+      "receipt_digest_prefix": "533399",
+      "creation": "O_EXCL",
+      "commit": "84e4ff29eaac7c96b2a6334c5f938015742f11af",
+      "tree": "e15c918e8fcb0bf4437cf534075a0c8258d725aa",
+      "checkout_size_bytes": 128547498,
+      "free_bytes": {"before": 1611960320, "after": 1756692480, "delta": 144732160},
+      "receipts_retained": true,
+      "evidence_retained": true
+    },
+    "unresolved_operation_reconciliation": {
+      "status": "PENDING_REMOTE_RECEIPT_IMPORT_AND_INDEPENDENT_RECONCILIATION",
+      "operation_count": 5,
+      "rule": "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS"
+    }
+  },
   "prelaunch_attempts": [
     {
       "id": "B8-build",

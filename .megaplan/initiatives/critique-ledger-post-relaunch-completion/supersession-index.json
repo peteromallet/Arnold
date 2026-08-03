@@ -25,10 +25,10 @@
       "B17-smoke", "B18-smoke", "B19-smoke", "B20-smoke", "B21-smoke",
       "B22-smoke", "B23-smoke", "B24-smoke", "B25-smoke"
     ],
-    "passing_successor": "B35-production-acceptance-smoke",
-    "pending_successor": "B36",
+    "passing_successor": "B38-production-acceptance-smoke",
+    "pending_successor": "B39",
     "accepted_successor": "B26-smoke",
-    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_B36_ALL_GATES_PENDING",
+    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ALL_GATES_PENDING",
     "rule": "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
   },
   "superseded": [

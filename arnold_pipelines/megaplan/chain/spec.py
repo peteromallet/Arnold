@@ -35,14 +35,12 @@ from arnold_pipelines.megaplan._core.io import (
     latest_projection_cursor,
     load_projection_history,
     now_utc,
-    projection_history_path,
     projection_snapshot_path,
     rebuild_projection_atomically,
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
-    VALID_DEEPSEEK_PROVIDER_CHOICES,
     VALID_DEPTH_CHOICES,
     normalize_robustness,
 )
@@ -411,10 +409,15 @@ class LaunchPreconditionSpec:
         if not isinstance(kind, str) or not kind.strip():
             raise CliError("invalid_spec", f"launch_preconditions[{index}].kind must be a string")
         kind = kind.strip()
-        if kind not in {"artifact", "chain_completed", "git_tracked"}:
+        if kind not in {
+            "artifact",
+            "chain_completed",
+            "finite_canary_receipt",
+            "git_tracked",
+        }:
             raise CliError(
                 "invalid_spec",
-                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, or `git_tracked`; got {kind!r}",
+                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, `finite_canary_receipt`, or `git_tracked`; got {kind!r}",
             )
         chain = value.get("chain")
         path = value.get("path")
@@ -444,6 +447,32 @@ class LaunchPreconditionSpec:
                 chain=chain.strip(),
                 check="chain_completed",
                 require_manifest=require_manifest,
+            )
+
+        if kind == "finite_canary_receipt":
+            if chain is not None or value.get("text") is not None:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] finite_canary_receipt does not support `chain` or `text`",
+                )
+            if not isinstance(path, str) or not path.strip():
+                raise CliError("invalid_spec", f"launch_preconditions[{index}].path is required")
+            check = value.get("check")
+            if check not in (None, "finite_canary_receipt"):
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] finite_canary_receipt does not support check {check!r}",
+                )
+            if "require_manifest" in value:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] finite_canary_receipt does not support `require_manifest`",
+                )
+            return cls(
+                name=name.strip(),
+                kind=kind,
+                path=path.strip(),
+                check="finite_canary_receipt",
             )
 
         if kind == "git_tracked":
@@ -483,13 +512,13 @@ class LaunchPreconditionSpec:
                     "invalid_spec",
                     f"launch_preconditions[{index}].check unknown key `{check_unknown[0]}`",
                 )
-            kind = check.get("kind")
-            if not isinstance(kind, str) or not kind.strip():
+            check_kind = check.get("kind")
+            if not isinstance(check_kind, str) or not check_kind.strip():
                 raise CliError(
                     "invalid_spec",
                     f"launch_preconditions[{index}].check.kind is required",
                 )
-            check_name = kind.strip()
+            check_name = check_kind.strip()
             text_raw = check.get("text")
             if text_raw is not None:
                 if not isinstance(text_raw, str) or not text_raw:
@@ -1317,7 +1346,6 @@ class ChainState:
             extra_repo_sync = []
 
         from arnold_pipelines.megaplan.orchestration.completion_contract import (
-            CONTRACT_MODE_ATOMIC,
             CONTRACT_MODE_ENFORCE,
             FAIL_CLOSED_CONTRACT_MODES,
             normalize_contract_mode,
@@ -1593,9 +1621,13 @@ class ChainState:
             return False
         if receipt_index != record_index:
             return False
-        for field in ("transaction_id", "snapshot_hash"):
-            value = record.get(field)
-            if isinstance(value, str) and value and receipt.get(field) != value:
+        for receipt_field in ("transaction_id", "snapshot_hash"):
+            value = record.get(receipt_field)
+            if (
+                isinstance(value, str)
+                and value
+                and receipt.get(receipt_field) != value
+            ):
                 return False
         return True
 
@@ -2986,6 +3018,21 @@ def validate_launch_preconditions(spec: ChainSpec, root: Path, spec_path: Path) 
                 root,
                 spec_path,
                 index=index,
+            )
+            continue
+        if precondition.kind == "finite_canary_receipt":
+            if precondition.path is None:
+                raise CliError("invalid_spec", f"{label} missing receipt path")
+            target = _resolve_launch_precondition_path(precondition.path, root)
+            from arnold_pipelines.megaplan.chain.finite_canary_receipt import (
+                validate_finite_canary_receipt,
+            )
+
+            validate_finite_canary_receipt(
+                target,
+                root,
+                spec_path,
+                label=label,
             )
             continue
         if precondition.kind == "git_tracked":

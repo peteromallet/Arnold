@@ -24,9 +24,10 @@ entire T1/T2/T3/T4/T5 portfolio blocks the finite canary is superseded. See
 
 Do not launch this chain until its content-addressed T6.2 handoff exists and all
 launch preconditions pass through the installed authority boundary.
-The parseable launch preconditions establish file/tracking presence only; F0
-performs the strict semantic handoff admission before any F1 work. F0 completes
-none of F1-F8. Incident operators must follow [`RUNBOOK.md`](RUNBOOK.md); generic
+The typed finite-canary preconditions strictly verify the completion and stable-
+exit receipt schemas, semantic state, content hashes, independent conformance,
+and clean `HEAD` custody before F0 may start. F0 repeats the handoff admission
+and completes none of F1-F8. Incident operators must follow [`RUNBOOK.md`](RUNBOOK.md); generic
 cloud deploy/chain/supervision routes are forbidden for this recovery.
 
 ## Operational-relaunch recut handoff — 2026-08-02
@@ -73,8 +74,13 @@ including immutable B8-B25 failure history, B26's independent Sol GO, the
 failed no-canary fence transaction, B27's terminal/reconciled failed live
 canary, B28-B30's terminal/reconciled failed live retries, the full A31-B35
 schema-access recovery lineage, B35 attempt 9's status-poll-induced terminal
-stop, and A36/B36's pending non-cancelling retry. Historical operation and
-remote receipt import remain pending.
+stop, A36/B36's terminal publication NO-GO, A37-B39 repair/launch lineage,
+B38 attempt 12's terminal process-leak failure, the accepted reclaim-v2 and
+bounded diagnostic-checkout retirement receipts, and B39's fresh attempt 13.
+B39 offline, independent, live and stable-exit gates remain pending. The five
+historical operations still require receipt import and independent
+reconciliation; the unrelated terminal checkout retirement does not discharge
+them.
 Conflicting or stale launch instructions are retired by
 [`supersession-index.json`](supersession-index.json). Human prose never
 overrides those typed dispositions.

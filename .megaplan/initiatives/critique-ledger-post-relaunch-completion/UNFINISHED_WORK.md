@@ -377,27 +377,66 @@ deliberately pending import; it is not permission to recreate a receipt.
   Docker stop sent SIGTERM at `06:30:26.882`, and the run exited 137 at
   `06:30:36.876`. Status cleanup unconditionally stopped and resealed the
   concurrently running canary.
-- [ ] Preserve A36/B36 lineage: repair
+- [ ] Preserve A36/B36 lineage and its terminal publication **NO-GO**: repair
   `b9a7a2d2eacca529568b625e35525762a961eda5` / tree
   `d9384fb3b9114e3d02dd4b5f66e191975819efa8` makes running status
   non-cancelling, reports `in_progress` and returns CLI success, with regression
   coverage; launch `a3288a6364fb51776f816577a5857bdebab8aa74` / tree
   `7ceb34a0a2cdd0973563d5f0c42eb4864ad85791` binds fresh attempt-10 workspace
-  and `megaplan-cloud-agent-finite-canary-10` while preserving attempt 9.
-- [ ] Reconcile B35's still-pending independent review. It cannot authorize
-  B36 or erase attempt 9.
-- [ ] Obtain B36 offline and independent acceptance before any live attempt.
-  B36 live and stable-exit gates remain pending.
+  and `megaplan-cloud-agent-finite-canary-10` while preserving attempt 9. Its
+  terminal result is not launch authority.
+- [ ] Preserve A37/B37 exactly: repair
+  `b8ffeb14ea408a2171ebcddc3bcda7b6188a36e5` / tree
+  `dbc56fc906f4bb1976510156f464e681302534db` gates terminal publication on
+  a sealed stop; launch `c4ac9e76e6665ef47c4f11f5e2f5b37bebb524bd` /
+  tree `cd4ac3774fe9013751819d05bc12838b704755cd` is retained history, not current
+  authority.
+- [ ] Preserve A38/B38 exactly: repair
+  `a965867e658193f4b3aba8fbdfa6517a653cb36b` / tree
+  `f5860f777ece19caedb25426e263c169e0be324c` admits only safe capacity drift;
+  launch `84e4ff29eaac7c96b2a6334c5f938015742f11af` / tree
+  `e15c918e8fcb0bf4437cf534075a0c8258d725aa`. Import the exact B38 diagnostic
+  and production receipt bytes currently identified only by file-SHA prefixes
+  `4a9bae` and `26c217`, and the full production image currently identified by
+  prefix `sha256:56402`; prefixes are not acceptance evidence.
+- [ ] Preserve the accepted official reclaim-v2 result: transaction prefix
+  `f0070`, 807,890,944 bytes before, 1,982,816,256 after, delta
+  1,174,925,312, all eight recovery units masked, and no recovery job, tmux
+  session or process. Import the exact transaction identity and receipt bytes.
+- [ ] Preserve B38 live attempt 12 as terminal failed. Container prefix `cd07`
+  used production-image prefix `sha256:56402`; the live owner exited 1, the
+  stopped container exited 137 with OOM false and restart count 0, and the
+  attempt-12 workspace is sealed root:0700 on the same inode. Run-receipt
+  SHA/digest prefixes are `8dc24` / `d5d182`. The exact primary failure is
+  `finite-model UID retained a process after provider return`; the later
+  UID-65532 output-ownership error is downstream. Root cause is Docker
+  `HostConfig.Init=null`, not an accepted provider result.
+- [ ] Preserve A39/B39 exactly: repair
+  `2159347ae291102dd5ec90d2aac736fc0d5a58e0` / tree
+  `0b6d9b7961d03665b48b505a2738d7a3612334bb`; launch
+  `11305b7c2c1891614b85322f8e0f3c766d2586d6` / tree
+  `8adcb18fa955544a7a1da1777b6d9ffbb8d5b9a0`, with 187 passed / 1 skipped,
+  fresh attempt-13 workspace and `megaplan-cloud-agent-finite-canary-13`.
+  Offline, independent, live and stable-exit gates all remain pending.
+- [ ] Preserve the bounded retirement of the temporary clean B38 diagnostic
+  checkout: O_EXCL intent/receipt digest prefixes `2568` / `533399`, exact B38
+  commit/tree, size 128,547,498 bytes, and free-space transition
+  1,611,960,320 → 1,756,692,480 (delta 144,732,160). Receipts and evidence were
+  retained. This terminal retirement does not reconcile any of the five older
+  immutable operations.
+- [ ] Reconcile B35's still-pending independent review and every unresolved
+  historical operation. Neither B38's terminal checkout retirement nor B39's
+  fresh retry erases attempt 9 or authorizes redispatch.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B36 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B39 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
   offline history, B27-B30 are terminal failed-live history, B31-B34 are
-  diagnostic/rejected history, B35 is the latest passing production-smoke
-  candidate with terminal attempt-9 history, and B36 is the pending successor
-  with no accepted offline/live authority. No missing receipt may be
-  synthesized.
+  diagnostic/rejected history, B35 is passing production-smoke history with
+  terminal attempt-9 history, B38 has passing diagnostic/production smoke but
+  terminal failed live attempt 12, and B39 is the fresh pending successor with
+  no accepted offline/live authority. No missing receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 

@@ -21,7 +21,12 @@ def test_chain_parses_through_installed_schema() -> None:
     parsed = contract.load_spec(Path(__file__).with_name("chain.yaml"))
     assert parsed.milestones[0].label == "f0-finite-canary-handoff-admission"
     assert parsed.milestones[1].depends_on == ["f0-finite-canary-handoff-admission"]
-    assert {item.kind for item in parsed.launch_preconditions} == {"exists", "git_tracked"}
+    assert [item.kind for item in parsed.launch_preconditions] == [
+        "finite_canary_receipt",
+        "finite_canary_receipt",
+        "git_tracked",
+        "git_tracked",
+    ]
 
 
 def test_deferred_obligation_drift_is_rejected() -> None:
@@ -57,6 +62,13 @@ def test_global_marker_cannot_be_made_transaction_bound() -> None:
     marker["transaction_independent"] = False
     with pytest.raises(contract.ContractError, match="global containment marker"):
         contract._validate_host_control_state_contract(custody)
+
+
+def test_current_b39_lineage_cannot_promote_pending_live_gate() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["current_canary_lineage"]["generations"][2]["gates"]["live"] = "ACCEPTED"
+    with pytest.raises(contract.ContractError, match="current canary evidence drift"):
+        contract._validate_current_canary_lineage(custody, require_live=False)
 
 
 def test_failure_evidence_cannot_claim_pre_intent_host_durability() -> None:

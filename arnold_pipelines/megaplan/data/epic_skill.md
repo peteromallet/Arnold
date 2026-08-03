@@ -141,6 +141,11 @@ Default is `stop_chain` for both — failures should halt unless you've delibera
 
 Use `launch_preconditions` when a chain must not start until a prerequisite file, source path, or chain completion proof exists. For ordinary dependent chains, `kind: chain_completed` verifies the prerequisite chain state, current `chain.yaml` hash, completed milestone labels, plan names, and merged PR evidence for review-merge chains.
 
+Use `kind: finite_canary_receipt` for a finite-canary completion or stable-exit
+handoff. It accepts only the closed receipt schemas, recomputes every bound
+artifact digest, verifies semantic terminal/conformance/custody evidence, and
+requires the receipt graph to be committed and clean in `HEAD`.
+
 For review-gated launch evidence, use an artifact check with `kind: review_log_clean` instead of only checking that a review log contains a marker string. It fails launch if the log contains an explicit `BLOCK` verdict or a `PASS WITH EDIT` section without an applied-edits note:
 
 ```yaml

@@ -53,6 +53,192 @@ def test_launch_preconditions_reject_unknown_keys() -> None:
         )
 
 
+def test_artifact_mapping_check_preserves_artifact_kind() -> None:
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "artifact",
+                    "kind": "artifact",
+                    "path": "artifact.md",
+                    "check": {"kind": "exists"},
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    assert spec.launch_preconditions[0].kind == "artifact"
+    assert spec.launch_preconditions[0].check == "exists"
+
+
+def test_finite_canary_receipt_precondition_parses_and_rejects_weakening() -> None:
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "finite canary",
+                    "kind": "finite_canary_receipt",
+                    "path": "completion-receipt.json",
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    parsed = spec.launch_preconditions[0]
+    assert parsed.kind == "finite_canary_receipt"
+    assert parsed.check == "finite_canary_receipt"
+
+    for extra in (
+        {"check": "exists"},
+        {"chain": "other.yaml"},
+        {"text": "passed"},
+        {"require_manifest": False},
+    ):
+        with pytest.raises(CliError, match="finite_canary_receipt"):
+            ChainSpec.from_dict(
+                {
+                    "launch_preconditions": [
+                        {
+                            "name": "finite canary",
+                            "kind": "finite_canary_receipt",
+                            "path": "completion-receipt.json",
+                            **extra,
+                        }
+                    ],
+                    "milestones": [],
+                }
+            )
+
+
+def test_finite_canary_receipt_missing_fails_closed(tmp_path: Path) -> None:
+    spec_path = _write_chain(tmp_path, "milestones: []\n")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "finite canary",
+                    "kind": "finite_canary_receipt",
+                    "path": "completion-receipt.json",
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    with pytest.raises(CliError, match="finite canary receipt missing"):
+        validate_paths(spec, tmp_path, spec_path=spec_path)
+
+
+def _stable_exit_fixture(tmp_path: Path) -> tuple[ChainSpec, Path, Path]:
+    _git(tmp_path, "init")
+    spec_path = _write_chain(tmp_path, "milestones: []\n")
+    proof_names = {
+        "built_image_smoke": "built-image-smoke-receipt.json",
+        "prelaunch_receipts_manifest": "prelaunch-receipts-manifest.json",
+        "conformance": "conformance-receipt.json",
+        "completion": "completion-receipt.json",
+        "terminal_stop": "terminal-stop-receipt.json",
+        "fresh_clone_reconstruction": "fresh-clone-reconstruction-receipt.json",
+    }
+    digests: dict[str, str] = {}
+    for role, filename in proof_names.items():
+        path = tmp_path / filename
+        path.write_text(json.dumps({"role": role}) + "\n", encoding="utf-8")
+        digests[role] = _sha256(path)
+    receipt_path = tmp_path / "stable-exit-receipt.json"
+    receipt = {
+        "schema": "arnold.critique_ledger.stable_exit_receipt.v1",
+        "status": "passed",
+        "accepted_candidate": {
+            "implementation_commit": "a" * 40,
+            "implementation_tree": "b" * 40,
+            "manifest_commit": "c" * 40,
+            "manifest_tree": "d" * 40,
+            "image_id": "sha256:" + "e" * 64,
+            "image_digest": "sha256:" + "f" * 64,
+            "independent_review_sha256": "1" * 64,
+        },
+        "receipt_digests": digests,
+        "predecessor": {"state": "stopped", "preserved": True, "persistently_fenced": True},
+        "successor": {"terminal": "finalized", "state": "stopped"},
+        "runtime_absence": {
+            "systemd_jobs": [], "tmux_sessions": [], "processes": [],
+            "notifier": False, "fixer": False, "resident": False,
+            "watchdog": False, "timer": False,
+        },
+        "host_control_state": {
+            "path": "/var/lib/arnold-zero-recovery", "uid": 0, "gid": 0,
+            "mode": "0700", "symlink_free": True, "global_marker_v2": True,
+            "global_marker_transaction_independent": True,
+            "containment_reproved_for_exit": True,
+            "per_attempt_receipts_transaction_bound": True,
+        },
+        "custody": {
+            "follow_up_commit": "a" * 40, "follow_up_tree": "b" * 40,
+            "remote_ref": "refs/heads/follow-up", "custody_anchor": "refs/tags/custody",
+            "prelaunch_tag": "refs/tags/prelaunch", "postcanary_tag": "refs/tags/postcanary",
+            "runnable_integration_ref": "refs/heads/integration",
+            "fresh_clone_receipt_sha256": "2" * 64,
+        },
+        "deferred_obligations": [
+            "F1.platform_capacity_storage_hardening",
+            "F1.physically_minimal_image",
+            "F1.cross_pipeline_model_isolation",
+            "F1.t1_5_monotonic_consumed_grant",
+            "F1.production_recovery_owner",
+            "F1.exact_occurrence_handoff",
+            "F1.notification_occurrence_version_custody",
+            "F1.t1_5_topology_retirement",
+            "F1.t1_7_transactional_storage",
+            "F1.t1_10_notification_policy",
+            "F2.t1_1_universal_admission",
+            "F2.t1_2_attempt_model_handling",
+            "F2.provider_attested_model_identity",
+            "F2.t1_3_transport_integration",
+            "F2.t1_4_t1_6_release_closure",
+        ],
+        "observed_at": "2026-08-03T12:00:00Z",
+    }
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    _commit_all(tmp_path)
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "stable exit",
+                    "kind": "finite_canary_receipt",
+                    "path": receipt_path.name,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    return spec, spec_path, receipt_path
+
+
+def test_stable_exit_receipt_requires_semantics_hashes_and_clean_head(tmp_path: Path) -> None:
+    spec, spec_path, receipt_path = _stable_exit_fixture(tmp_path)
+    validate_paths(spec, tmp_path, spec_path=spec_path)
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    payload["runtime_absence"]["processes"] = ["forged"]
+    receipt_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(CliError, match="strict semantic verification"):
+        validate_paths(spec, tmp_path, spec_path=spec_path)
+
+
+def test_stable_exit_receipt_rejects_duplicate_json_fields(tmp_path: Path) -> None:
+    spec, spec_path, receipt_path = _stable_exit_fixture(tmp_path)
+    receipt_path.write_text(
+        '{"schema":"arnold.critique_ledger.stable_exit_receipt.v1",'
+        '"schema":"arnold.critique_ledger.stable_exit_receipt.v1"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(CliError, match="duplicate JSON field"):
+        validate_paths(spec, tmp_path, spec_path=spec_path)
+
+
 def test_failure_policy_rejects_unknown_nested_keys() -> None:
     with pytest.raises(CliError, match="unknown key `then`"):
         ChainSpec.from_dict(

@@ -12,7 +12,9 @@ The follow-up chain remains closed while any prelaunch gate is pending, any
 historical operation lacks an effective terminal reconciliation, B11-B25 remain
 failed history, transaction `404dd858567d48ffbe8cb7c27d85185a` lacks imported
 failure bytes, the terminal B27-B30 live receipts lack imported bytes, B35
-attempt 9 has no run receipt, B36 gates remain pending, or F0 has not admitted the exact stable-exit
+attempt 9 has no run receipt, the A36/B36 publication gate remains a terminal
+NO-GO, B38 attempt 12 still lacks imported exact receipt bytes, B39 offline,
+independent, live and stable-exit gates remain pending, or F0 has not admitted the exact stable-exit
 handoff. There is intentionally no launch command in this runbook until an accepted installed
 authority path and its exact invocation are committed and independently
 reviewed. A generic command is not a fallback.

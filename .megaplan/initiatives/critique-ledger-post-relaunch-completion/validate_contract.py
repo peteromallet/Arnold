@@ -722,8 +722,106 @@ def _validate_schema_access_recovery_history(custody: dict[str, Any], *, require
     history = custody.get("schema_access_recovery_history")
     if history != SCHEMA_ACCESS_RECOVERY_HISTORY:
         raise ContractError("A31-B36 schema-access recovery history drift")
+
+
+def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: bool) -> None:
+    lineage = custody.get("current_canary_lineage")
+    if not isinstance(lineage, dict) or set(lineage) != {
+        "schema", "status", "publication_gate", "generations",
+        "official_reclaim_v2", "live_attempt_12", "capacity_disposition",
+        "temporary_b38_diagnostic_checkout_retirement",
+        "unresolved_operation_reconciliation",
+    }:
+        raise ContractError("A37-B39 current canary lineage schema drift")
+    generations = lineage.get("generations")
+    expected_identities = [
+        (
+            {"id": "A37", "commit": "b8ffeb14ea408a2171ebcddc3bcda7b6188a36e5", "tree": "dbc56fc906f4bb1976510156f464e681302534db"},
+            {"id": "B37", "commit": "c4ac9e76e6665ef47c4f11f5e2f5b37bebb524bd", "tree": "cd4ac3774fe9013751819d05bc12838b704755cd"},
+        ),
+        (
+            {"id": "A38", "commit": "a965867e658193f4b3aba8fbdfa6517a653cb36b", "tree": "f5860f777ece19caedb25426e263c169e0be324c"},
+            {"id": "B38", "commit": "84e4ff29eaac7c96b2a6334c5f938015742f11af", "tree": "e15c918e8fcb0bf4437cf534075a0c8258d725aa"},
+        ),
+        (
+            {"id": "A39", "commit": "2159347ae291102dd5ec90d2aac736fc0d5a58e0", "tree": "0b6d9b7961d03665b48b505a2738d7a3612334bb"},
+            {"id": "B39", "commit": "11305b7c2c1891614b85322f8e0f3c766d2586d6", "tree": "8adcb18fa955544a7a1da1777b6d9ffbb8d5b9a0"},
+        ),
+    ]
+    if (
+        lineage.get("schema") != "arnold.critique_ledger.current_canary_lineage.v1"
+        or lineage.get("status")
+        != "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_FRESH_RETRY_ALL_ACCEPTANCE_GATES_PENDING"
+        or lineage.get("publication_gate") != {
+            "generation": "A36/B36",
+            "status": "TERMINAL_NO_GO",
+            "rule": "TERMINAL_PUBLICATION_REQUIRES_SEALED_STOP",
+        }
+        or not isinstance(generations, list)
+        or len(generations) != 3
+        or [
+            (row.get("repair"), row.get("launch"))
+            for row in generations
+            if isinstance(row, dict)
+        ]
+        != expected_identities
+    ):
+        raise ContractError("A37-B39 current canary identity drift")
+    b39 = generations[2]
+    reclaim = lineage.get("official_reclaim_v2")
+    attempt = lineage.get("live_attempt_12")
+    retirement = lineage.get("temporary_b38_diagnostic_checkout_retirement")
+    unresolved = lineage.get("unresolved_operation_reconciliation")
+    if (
+        b39.get("tests") != {"passed": 187, "skipped": 1}
+        or b39.get("retry_isolation") != {
+            "attempt": 13,
+            "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-13-20260803",
+            "container": "megaplan-cloud-agent-finite-canary-13",
+        }
+        or b39.get("gates") != {
+            "offline": "PENDING", "independent": "PENDING",
+            "live": "PENDING", "stable_exit": "PENDING",
+        }
+        or not isinstance(reclaim, dict)
+        or reclaim.get("status") != "PASSED"
+        or reclaim.get("free_bytes") != {
+            "before": 807890944, "after": 1982816256, "delta": 1174925312,
+        }
+        or reclaim.get("recovery_units") != {"count": 8, "all_masked": True}
+        or any(reclaim.get(key) != [] for key in ("systemd_jobs", "tmux_sessions", "processes"))
+        or not isinstance(attempt, dict)
+        or attempt.get("exact_primary_failure")
+        != "finite-model UID retained a process after provider return"
+        or attempt.get("downstream_failure") != "uid 65532 output ownership error"
+        or attempt.get("root_cause") != "DOCKER_HOST_CONFIG_INIT_WAS_NULL"
+        or attempt.get("container", {}).get("exit_code") != 137
+        or attempt.get("container", {}).get("oom_killed") is not False
+        or attempt.get("container", {}).get("restart_count") != 0
+        or attempt.get("workspace") != {
+            "attempt": 12, "sealed": True, "owner": "root",
+            "mode": "0700", "same_inode": True,
+        }
+        or not isinstance(retirement, dict)
+        or retirement.get("status") != "TERMINAL_RETIRED"
+        or retirement.get("creation") != "O_EXCL"
+        or retirement.get("commit") != expected_identities[1][1]["commit"]
+        or retirement.get("tree") != expected_identities[1][1]["tree"]
+        or retirement.get("checkout_size_bytes") != 128547498
+        or retirement.get("free_bytes") != {
+            "before": 1611960320, "after": 1756692480, "delta": 144732160,
+        }
+        or retirement.get("receipts_retained") is not True
+        or retirement.get("evidence_retained") is not True
+        or unresolved != {
+            "status": "PENDING_REMOTE_RECEIPT_IMPORT_AND_INDEPENDENT_RECONCILIATION",
+            "operation_count": 5,
+            "rule": "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS",
+        }
+    ):
+        raise ContractError("A37-B39 current canary evidence drift")
     if require_live:
-        raise ContractError("B36 offline gate is pending")
+        raise ContractError("B39 offline, independent, live, and stable-exit gates are pending")
 
 
 def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
@@ -1109,8 +1207,8 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
     completion_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json"
     stable_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json"
     expected_preconditions = [
-        ("artifact", completion_path, {"kind": "exists"}),
-        ("artifact", stable_path, {"kind": "exists"}),
+        ("finite_canary_receipt", completion_path, None),
+        ("finite_canary_receipt", stable_path, None),
         ("git_tracked", ".megaplan/initiatives/critique-ledger-safe-v3-canary", None),
         ("git_tracked", ".megaplan/initiatives/critique-ledger-post-relaunch-completion", None),
     ]
@@ -1176,21 +1274,21 @@ def _validate_supersession(*, require_live: bool) -> None:
     if (
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
-        or attempts.get("passing_successor") != "B35-production-acceptance-smoke"
-        or attempts.get("pending_successor") != "B36"
+        or attempts.get("passing_successor") != "B38-production-acceptance-smoke"
+        or attempts.get("pending_successor") != "B39"
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
     accepted = attempts.get("accepted_successor")
     if require_live:
-        if accepted != "B35-production-acceptance-smoke":
+        if accepted != "B38-production-acceptance-smoke":
             raise ContractError("latest passing smoke is not independently accepted")
         if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
             raise ContractError("strictly later smoke is not accepted")
     elif accepted == B26_PASS["id"]:
-        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_B36_ALL_GATES_PENDING":
+        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ALL_GATES_PENDING":
             raise ContractError("latest passing smoke pending disposition drift")
-    elif accepted != "B35-production-acceptance-smoke" or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
+    elif accepted != "B38-production-acceptance-smoke" or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")
 
 
@@ -1311,6 +1409,7 @@ def validate(*, require_live: bool = False) -> None:
     _validate_obligations(custody)
     _validate_attempt_history(custody, require_live=require_live)
     _validate_schema_access_recovery_history(custody, require_live=require_live)
+    _validate_current_canary_lineage(custody, require_live=require_live)
     _validate_live_deploy_attempts(custody)
     _validate_live_canary_attempts(custody)
     _validate_prelaunch_gates(custody, require_live=require_live)
