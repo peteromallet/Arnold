@@ -764,6 +764,13 @@ def cancel_active_phase_wbc_attempt(
     attempt number.
     """
 
+    # Operator recovery is deliberately callable from a fresh process.  The
+    # process that activated the attempt registered these writers only in its
+    # own memory, so bootstrap the same explicit controlled-writer set before
+    # the terminal append.  The WBC facade still performs its normal guard;
+    # this does not bypass or relax authorization.
+    register_phase_wbc_writers()
+
     from arnold_pipelines.megaplan._core.state import (
         append_history,
         clear_active_step,

@@ -504,6 +504,81 @@ def test_cancel_active_phase_attempt_persists_ordinal_before_owner_clear(
     assert persisted["active_step"]["attempt"] == 9
 
 
+def test_cancel_active_phase_attempt_bootstraps_writer_registry_and_replays(
+    tmp_path: Path,
+) -> None:
+    """Recovery cancellation must work in a process that did not start the attempt."""
+
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    project_dir.mkdir()
+    plan_dir.mkdir()
+    state = _state(project_dir, current_state="gated")
+    state["history"] = [
+        {"step": "finalize", "result": "error", "timestamp": f"t-{index}"}
+        for index in range(7)
+    ]
+    run_id = set_active_step(
+        state,
+        step="finalize",
+        agent="finalizer",
+        mode="test",
+    )
+    metadata = activate_phase_wbc(
+        state=state,
+        plan_dir=plan_dir,
+        step="finalize",
+        agent="finalizer",
+    )
+    assert metadata is not None
+    from arnold_pipelines.megaplan._core import save_state
+
+    save_state(plan_dir, state)
+    started_state = (plan_dir / "state.json").read_bytes()
+
+    # Model a fresh operator process: the durable attempt exists, but none of
+    # the activation process's in-memory writer registrations survive.
+    _clear_registry()
+    first = cancel_active_phase_wbc_attempt(
+        plan_dir=plan_dir,
+        step="finalize",
+        expected_attempt_id=str(metadata["attempt_id"]),
+        expected_invocation_id=str(metadata["invocation_id"]),
+        expected_run_id=run_id,
+        expected_attempt_ordinal=8,
+        agent="operator",
+        reason="retire paused attempt 8 before one-shot attempt 9",
+    )
+    assert first["replayed"] is False
+    assert [event.event_type for event in _events(plan_dir, str(metadata["attempt_id"]))] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.CANCELLED,
+    ]
+
+    # Model a crash after the durable terminal append but before state.json
+    # publishes.  A second fresh process must replay, not append a duplicate.
+    (plan_dir / "state.json").write_bytes(started_state)
+    _clear_registry()
+    second = cancel_active_phase_wbc_attempt(
+        plan_dir=plan_dir,
+        step="finalize",
+        expected_attempt_id=str(metadata["attempt_id"]),
+        expected_invocation_id=str(metadata["invocation_id"]),
+        expected_run_id=run_id,
+        expected_attempt_ordinal=8,
+        agent="operator",
+        reason="retire paused attempt 8 before one-shot attempt 9",
+    )
+    assert second["replayed"] is True
+    assert [event.event_type for event in _events(plan_dir, str(metadata["attempt_id"]))] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.CANCELLED,
+    ]
+    persisted = json.loads((plan_dir / "state.json").read_text())
+    assert "active_step" not in persisted
+    assert persisted["history"][-1]["phase_wbc_attempt_id"] == metadata["attempt_id"]
+
+
 def test_finalize_revise_fallback_records_phase_wbc_and_receipt(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     plan_dir = tmp_path / "plan"
