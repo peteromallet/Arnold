@@ -139,8 +139,9 @@ def _legacy_migration_fixture(tmp_path: Path) -> dict:
                 "last_state": "paused",
                 "metadata": {
                     "operator_pause": {"active": True, "plan": plan},
+                    "chain_spec_path": remote_spec,
                     "execution_binding": {
-                        "spec_path": remote_spec,
+                        "launched_identity": {"spec_path": remote_spec},
                         "runtime_binding": {"current_identity": runtime},
                     },
                 },
@@ -312,6 +313,10 @@ def test_legacy_marker_migration_binds_exact_chain_runtime_and_immutable_evidenc
         ("session", "identity fields changed"),
         ("chain_plan", "current plan guard"),
         ("chain_pause", "durably paused chain"),
+        ("chain_spec_missing", "canonical chain and launched execution bindings"),
+        ("chain_spec_conflict", "canonical chain and launched execution bindings"),
+        ("launch_spec_missing", "canonical chain and launched execution bindings"),
+        ("launch_spec_conflict", "canonical chain and launched execution bindings"),
         ("marker_pause", "marker-side operator-pause"),
         ("should_run", "should_run=false"),
         ("chain_runtime", "chain runtime digest"),
@@ -338,12 +343,32 @@ def test_legacy_marker_migration_rejects_stale_or_ambiguous_custody(
         )
     elif mutation == "session":
         overrides["expected_session"] = "another-session"
-    elif mutation in {"chain_plan", "chain_pause", "chain_runtime"}:
+    elif mutation in {
+        "chain_plan",
+        "chain_pause",
+        "chain_spec_missing",
+        "chain_spec_conflict",
+        "launch_spec_missing",
+        "launch_spec_conflict",
+        "chain_runtime",
+    }:
         state = json.loads(fixture["chain_state_path"].read_text(encoding="utf-8"))
         if mutation == "chain_plan":
             state["current_plan_name"] = "another-plan"
         elif mutation == "chain_pause":
             state["last_state"] = "gated"
+        elif mutation == "chain_spec_missing":
+            state["metadata"].pop("chain_spec_path")
+        elif mutation == "chain_spec_conflict":
+            state["metadata"]["chain_spec_path"] = "/workspace/other/chain.yaml"
+        elif mutation == "launch_spec_missing":
+            state["metadata"]["execution_binding"]["launched_identity"].pop(
+                "spec_path"
+            )
+        elif mutation == "launch_spec_conflict":
+            state["metadata"]["execution_binding"]["launched_identity"][
+                "spec_path"
+            ] = "/workspace/other/chain.yaml"
         else:
             state["metadata"]["execution_binding"]["runtime_binding"][
                 "current_identity"
