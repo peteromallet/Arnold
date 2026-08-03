@@ -600,10 +600,25 @@ def run_parallel_critique(
                     [],
                     [],
                 )
-            _flags_only = _flags_only_unverifiable_payload(
-                raw_payload,
-                check_id=str(_cid),
-                question=str(unit.extra.get("question", "")),
+            # A producer may return both its canonical check assessment and
+            # supporting flags.  The flags-only compatibility path must never
+            # replace that valid check: flag evidence is allowed to be terse,
+            # while check findings intentionally have a stronger minimum
+            # detail contract.  Treating a full payload as flags-only caused
+            # valid parallel critiques to fail nondeterministically depending
+            # on which lens happened to include a short evidence locator.
+            _has_usable_check = (
+                isinstance(_checks_list, list)
+                and any(isinstance(item, dict) for item in _checks_list)
+            )
+            _flags_only = (
+                None
+                if _has_usable_check
+                else _flags_only_unverifiable_payload(
+                    raw_payload,
+                    check_id=str(_cid),
+                    question=str(unit.extra.get("question", "")),
+                )
             )
             if _flags_only is not None:
                 _verified = raw_payload.get("verified_flag_ids", [])

@@ -8,6 +8,82 @@ from arnold_pipelines.megaplan.orchestration import parallel_critique
 from arnold_pipelines.megaplan.types import AgentMode, CliError
 
 
+def test_parallel_critique_preserves_full_check_when_supporting_flag_evidence_is_terse(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The r5 critique incident: full checks must not become flags-only checks."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    producer = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Are the proposed changes technically correct?",
+                "findings": [
+                    {
+                        "detail": (
+                            "The repository-backed correctness assessment is complete "
+                            "and includes concrete implementation evidence."
+                        ),
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [
+            {
+                "id": "SHORT-EVIDENCE",
+                "concern": "A shared public contract needs synchronization.",
+                "category": "correctness",
+                "severity_hint": "likely-minor",
+                "evidence": "plan_v2.md:55-61.",
+            }
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    monkeypatch.setattr(
+        parallel_critique,
+        "single_check_critique_prompt",
+        lambda *_args, **_kwargs: "critique prompt",
+    )
+    monkeypatch.setattr(
+        parallel_critique,
+        "scatter_worker_units",
+        lambda **_kwargs: GenericScatterResult(
+            ordered_results=[producer],
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        ),
+    )
+    check = {
+        "id": "correctness",
+        "question": "Are the proposed changes technically correct?",
+        "complexity": 5,
+        "_resolved_agent_mode": AgentMode(
+            agent="codex",
+            mode="fresh",
+            refreshed=False,
+            model="gpt-5.6-sol",
+            resolved_model="gpt-5.6-sol",
+        ),
+    }
+
+    worker = parallel_critique.run_parallel_critique(
+        {"config": {"mode": "code", "project_dir": str(tmp_path)}, "iteration": 2},
+        plan_dir,
+        root=tmp_path,
+        model="gpt-5.6-sol",
+        checks=(check,),
+    )
+
+    assert worker.payload["checks"] == producer["checks"]
+    assert worker.payload["flags"][0]["evidence"] == "plan_v2.md:55-61."
+
+
 def test_parallel_critique_persists_raw_output_on_worker_error(
     tmp_path: Path, monkeypatch
 ) -> None:
