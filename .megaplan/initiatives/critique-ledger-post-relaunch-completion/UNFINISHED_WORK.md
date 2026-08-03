@@ -20,10 +20,16 @@ branches, isolated image
 `sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d`
 and runtime `82a5a012fa58f44cdc5e9e895f454d86d95b446d`. The selected
 profile is OAuth-backed all-Codex because a direct DeepSeek key was absent.
-Prep succeeded at `2026-08-03T14:04:08Z` after 393,318 ms (artifact SHA-256
-prefix `b8f292c2`), advancing state to `prepped`; tmux remains alive and a
-`gpt-5.6-sol` high worker is active in `plan`, with no current failure. This is
-a durable phase transition, not whole-chain completion.
+Prep succeeded at `2026-08-03T14:04:08Z`; plan succeeded at `14:11:40Z`;
+critique began at `14:11:49Z` and six `gpt-5.6-sol` high workers produced fresh
+outputs through `14:15:21Z`. The tmux and chain process were alive at the bound
+observation. This is real progress, not whole-chain completion. Observation is
+degraded: two launches reused the same minute-resolution plan ID, `introspect`
+rejects their merged journal, and outer chain status remains stale at
+`initialized`. PR #325 is open at head
+`a73b2760369aa99f28bb02d41003325369bed6fa`; CI run `30820387356`, job
+`91708543510`, is red because two initiative documents are outside canonical
+artifact directories. Do not report “no current failure” from a stale observer.
 
 The resident is separately healthy: epoch `discord-enospc-20260803-r7`,
 container
@@ -51,6 +57,16 @@ supervision of the live Critique run.
   transition, and intervene only on a new evidence-backed failure.
 - [ ] Capture the final r5 completion or terminal-failure receipt and update the
   custody manifest. Dependency: live r5 reaches a terminal state.
+- [ ] **P0 — reconcile live PR custody before any advance/success claim.** Keep
+  the content of `annexes/wbc-integration.md` and `validation/m6-end-to-end.md`,
+  move it to canonical initiative artifact locations, and prove the exact PR
+  #325 head and required checks are green. Consume accepted r5 CL2 work in F0/F3;
+  never create a duplicate implementation dispatch, branch, PR or publication.
+- [ ] **P0 — record observation degradation without stopping healthy work.**
+  Bind the plan ID, both journal prefixes, chain process, tmux, active workers,
+  PR head and observer errors in the r5 terminal handoff. A projection failure
+  is not a product failure; intervention still requires dead process/tmux,
+  terminal plan failure, vanished workers with no output, or a real stall.
 
 ### P1 — launch admission hardening (parallel implementation lanes)
 
@@ -68,7 +84,11 @@ supervision of the live Critique run.
   branch/plan can be inherited or attached to the wrong generation.
 - [ ] Make clone/setup a synchronous completion contract: launch may not report
   success until checkout, credential seed, identity, `gh` auth and remote
-  setup have either completed or emitted one typed terminal failure.
+  setup have either completed or emitted one typed terminal failure. Git tokens
+  travel over stdin, never argv/logs/remotes; credential storage is owner-only;
+  bot identity is fixed and nonsecret; Git transport auth and `gh` API auth are
+  proved separately with push plus PR read/write smoke. Omit any prerequisite
+  and initialization must fail. Repeat in a restarted fresh container.
 - [ ] Eliminate duplicate launch-owned environment. One declarative owner sets
   runtime selectors; reject `.cloud-hot-env`, inherited `PYTHONPATH` or other
   late overrides that disagree with the pinned runtime.
@@ -96,6 +116,31 @@ supervision of the live Critique run.
   either advance or explicitly fork projection history. A cursor mismatch must
   be repaired from canonical state or become one actionable incident; it must
   not repeat as a warning on every append.
+- [ ] **VERY HARD — event-incarnation/checkpoint and status convergence.** Two
+  legitimate fresh launches in one minute reused the minute-resolution plan ID
+  and collapsed into one invalid journal (`0..9` followed by `0..N`), while
+  transaction IDs also collided. `megaplan introspect` aborts with
+  `EventCheckpointError: non-monotonic event seq beyond checkpoint: 0 <= 9`.
+  At the same observation, `megaplan trace` reads the journal and shows fresh
+  30-second plan heartbeats, `megaplan status` reports `prepped/plan` with a
+  healthy worker, while `megaplan chain status` still projects
+  `last_state: initialized`. Make store incarnation part of every checkpoint
+  and projection cursor; reset/fork atomically on incarnation change; make all
+  supported observers return the same canonical lifecycle/active-phase tuple
+  within a bounded lag. Replay the exact two-incarnation fixture and prove
+  `introspect`, `trace`, `status`, `doctor`, cloud status and chain status never
+  crash, silently skip binding checks or disagree past the declared lag. Add a
+  per-session fresh-launch lease; reap the previous process tree before reset;
+  give each launch and event an immutable incarnation ID; include incarnation
+  in transaction identity; sequence strictly within an incarnation; rotate
+  journal/checkpoint/projections atomically; and make rapid same-minute launches
+  either distinct or one typed conflict. A degraded reader returns typed
+  `OBSERVATION_DEGRADED` evidence and never infers `stalled` from its own fault.
+- [ ] **HARD — repair M9 work-ledger transition emission.** `auto.py` currently
+  passes `transition` both explicitly and inside metadata, producing
+  `TypeError: emit_transition() got multiple values for keyword argument
+  'transition'` after phases. Strip reserved fields before forwarding; prove
+  every phase emits exactly one idempotent transition with no warning or hole.
 - [ ] **HARD — resident pre-fence admission and diagnostics.** Before changing
   source restart policy, perform every read-only source/image/runtime/secret/
   capacity check. Emit the exact failed stage and rollback proof; never collapse
@@ -110,14 +155,19 @@ supervision of the live Critique run.
 ### P3 — integration and release
 
 - [ ] Join P1/P2 manifests, run cross-pipeline composition, response-loss,
-  restart, replay, ENOSPC and installed-image tests, and independently review
-  the result. Dependencies: all P1 and P2 items.
+  restart, replay, event-incarnation/checkpoint, observer-convergence, ENOSPC
+  and installed-image tests, and independently review the result. Dependencies:
+  all P1 and P2 items.
 - [ ] Execute the ordinary F1/F2 and CL2-CL5 milestone work below, deploy it,
   and complete the 24h/72h/7d observations. Parallelize only work explicitly
   separated by accepted manifests; effect-owner and release-authority work
   remains ordered.
 
-## Stable canary boundary
+## Preserved finite-canary history and deferred evidence
+
+The checklist below remains historical/deferred custody. Its obsolete missing
+safe-v3 completion and stable-exit receipt paths are not executable launch
+preconditions for this recut follow-up chain and must never be fabricated.
 
 - [ ] The v3 handoff records exact deployed commit/tree/image/source identities.
 - [ ] A real `.megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml`,
@@ -634,13 +684,15 @@ deliberately pending import; it is not permission to recreate a receipt.
   `c7bcb06af536acfe759c1b31a785afc19afe92d4`). The operator redeployed the
   same isolated collector to stop it. It is not a durable launch and the
   initialized plan must not be resumed or reused.
-- [ ] **Pre-F0 launch blocker — fix hot-environment runtime ordering and prove a
+- [x] **Pre-F0 launch blocker resolved — hot-environment runtime ordering and a
   fresh matched-runtime retry.** The post-launch stability observation must
   prove `editable_root == import_root == configured pinned runtime root` and
   `editable_revision == source_revision == configured pinned runtime revision`,
   as well as exit zero, session alive and advancement past init. This is a T6.2
   precursor and does not add, renumber, discharge or accelerate any deferred
-  F1/F2 obligation.
+  F1/F2 obligation. r5 proved all four runtime fields at immutable runtime
+  `82a5a012fa58f44cdc5e9e895f454d86d95b446d`; the exact binding is retained in
+  its chain execution metadata and current operational-handoff record.
 - [x] Preserve the read-only storage root-cause inventory. Post-run free bytes
   1,484,693,504 are below hard floor 1,611,661,312 by 126,967,808 bytes. The
   preserved production predecessor writable snapshot/container is approximately

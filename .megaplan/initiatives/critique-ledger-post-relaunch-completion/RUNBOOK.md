@@ -63,7 +63,7 @@ ambiguous, reconcile and stop; do not redispatch.
 
    ```bash
    PYTHONPATH="$RUNTIME_CHECKOUT" \
-     python -m arnold_pipelines.megaplan.cli cloud chain \
+     python -m arnold_pipelines.megaplan cloud chain \
      --cloud-yaml "$PRODUCT_CHECKOUT/.megaplan/initiatives/critique-ledger/cloud.yaml" \
      --fresh --no-editable-install-sync \
      "$PRODUCT_CHECKOUT/.megaplan/initiatives/critique-ledger/chain.yaml"
@@ -79,6 +79,28 @@ ambiguous, reconcile and stop; do not redispatch.
 7. Observe again after the initial worker boundary. Only then record the new
    generation as durably moving. A failed admission gets one evidence-rich
    terminal result, not a retry loop or repeated user notification.
+
+Use `megaplan introspect` first for routine observation. If it returns an event
+checkpoint/incarnation error, do not infer that the worker failed and do not
+restart it: collect `megaplan trace`, `megaplan status`, `megaplan chain status`
+and the exact tmux/process identity. A healthy live worker plus recent trace
+heartbeats is a WATCH outcome; the observer disagreement is a separate typed
+incident owned by F1. Never mutate the journal or checkpoint of a live plan to
+make an observer green.
+
+Before claiming milestone advance or completion, bind the exact milestone PR
+head to required green checks. A red check caused by noncanonical initiative
+artifact layout is real release debt even when model workers are healthy:
+preserve the document contents, move them into supported artifact directories,
+rerun the exact-head checks, and let the ordinary critique/revision path repair
+it. Do not create a replacement PR or restart a healthy chain to clear CI.
+
+The follow-up epic itself starts only after the live r5 Critique chain satisfies
+its installed `chain_completed` precondition with `require_manifest: true`.
+Run that precondition in the exact cloud workspace before dispatch. “Static
+contract PASS” is not launch readiness; a current active plan, incomplete
+milestone, stale chain/spec hash, missing acceptance record or absent completion
+manifest is an intentional hard stop.
 
 Resident recovery is a separate transaction. It must retain separate exact
 source and resident image IDs, run the read-only pre-fence admission before any

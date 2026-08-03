@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from arnold_pipelines.megaplan.chain.spec import load_spec
+from arnold_pipelines.megaplan.chain.spec import load_spec, validate_launch_preconditions
 
 
 INITIATIVE = Path(__file__).resolve().parent
@@ -2013,25 +2013,26 @@ def _validate_route(route: dict[str, Any]) -> None:
 
 
 def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, Any]) -> None:
-    completion_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json"
-    stable_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json"
     expected_preconditions = [
-        ("finite_canary_receipt", completion_path, None),
-        ("stable_exit_receipt", stable_path, None),
-        ("git_tracked", ".megaplan/initiatives/critique-ledger-safe-v3-canary", None),
+        (
+            "chain_completed",
+            ".megaplan/initiatives/critique-ledger/chain.yaml",
+            True,
+        ),
+        ("git_tracked", ".megaplan/initiatives/critique-ledger", None),
         ("git_tracked", ".megaplan/initiatives/critique-ledger-post-relaunch-completion", None),
     ]
     preconditions = chain.get("launch_preconditions")
     if not isinstance(preconditions, list) or len(preconditions) != len(expected_preconditions):
         raise ContractError("chain launch precondition count drift")
-    for row, (kind, path, check) in zip(preconditions, expected_preconditions):
-        if (
-            not isinstance(row, dict)
-            or row.get("kind") != kind
-            or row.get("path") != path
-            or row.get("check") != check
-        ):
+    for row, (kind, target, require_manifest) in zip(preconditions, expected_preconditions):
+        if not isinstance(row, dict) or row.get("kind") != kind:
             raise ContractError("chain launch precondition drift")
+        if kind == "chain_completed":
+            if row.get("chain") != target or row.get("require_manifest") is not require_manifest:
+                raise ContractError("chain completion precondition drift")
+        elif row.get("path") != target:
+            raise ContractError("chain launch precondition path drift")
     milestones = chain.get("milestones")
     expected_labels = [
         "f0-finite-canary-handoff-admission",
@@ -2074,6 +2075,19 @@ def _validate_supersession(*, require_live: bool) -> None:
     index = _load_json(INITIATIVE / "supersession-index.json")
     if index.get("schema") != "arnold.critique_ledger.supersession_index.v2":
         raise ContractError("supersession index schema drift")
+    current_generation = index.get("current_operational_generation")
+    handoff_path = INITIATIVE / "current-operational-handoff.json"
+    if (
+        not isinstance(current_generation, dict)
+        or current_generation.get("path")
+        != ".megaplan/initiatives/critique-ledger-post-relaunch-completion/current-operational-handoff.json"
+        or current_generation.get("sha256") != _sha256(handoff_path)
+        or current_generation.get("status") != "RUNNING_OBSERVATION_DEGRADED"
+        or current_generation.get("launch_authority") != "SEPARATELY_AUTHORIZED_R5"
+        or current_generation.get("follow_up_disposition")
+        != "BLOCKED_ON_R5_CHAIN_COMPLETION_MANIFEST"
+    ):
+        raise ContractError("current operational generation supersession drift")
     operation_rows = index.get("operation_supersession")
     if not isinstance(operation_rows, list) or [
         (row.get("operation_id"), row.get("superseded_by")) for row in operation_rows if isinstance(row, dict)
@@ -2227,9 +2241,11 @@ def validate(*, require_live: bool = False) -> None:
     if custody.get("schema") != "arnold.critique_ledger.unfinished_work_custody.v4":
         raise ContractError("custody manifest schema must be v4")
     _validate_obligations(custody)
-    _validate_attempt_history(custody, require_live=require_live)
-    _validate_schema_access_recovery_history(custody, require_live=require_live)
-    _validate_current_canary_lineage(custody, require_live=require_live)
+    # The safe-v3 canary lineage is immutable history after the r5 recut. Its
+    # absent terminal receipt paths must not decide current launch readiness.
+    _validate_attempt_history(custody, require_live=False)
+    _validate_schema_access_recovery_history(custody, require_live=False)
+    _validate_current_canary_lineage(custody, require_live=False)
     _validate_attempt_14_prelaunch(custody)
     _validate_attempt_15_prelaunch(custody)
     _validate_attempt_16_terminal(custody)
@@ -2238,7 +2254,7 @@ def validate(*, require_live: bool = False) -> None:
     _validate_storage_root_cause_follow_up(custody)
     _validate_live_deploy_attempts(custody)
     _validate_live_canary_attempts(custody)
-    _validate_prelaunch_gates(custody, require_live=require_live)
+    _validate_prelaunch_gates(custody, require_live=False)
     _validate_host_control_state_contract(custody)
     reconciliation = custody.get("live_operation_reconciliation")
     if reconciliation != {
@@ -2264,7 +2280,7 @@ def validate(*, require_live: bool = False) -> None:
             raise ContractError("custody operation reconciliation pointer drift")
     if _sha256(INITIATIVE / "evidence/operation-reconciliation-manifest.json") != reconciliation.get("sha256"):
         raise ContractError("custody operation reconciliation hash mismatch")
-    _validate_operation_reconciliation(require_live=require_live)
+    _validate_operation_reconciliation(require_live=False)
     route_path = INITIATIVE / "finite-canary-operational-route.json"
     _validate_route(_load_json(route_path))
     proof_map = _load_json(INITIATIVE / "proof-map.json")
@@ -2273,14 +2289,21 @@ def validate(*, require_live: bool = False) -> None:
     if not isinstance(chain, dict):
         raise ContractError("chain.yaml must contain a mapping")
     try:
-        load_spec(chain_path)
+        parsed_chain = load_spec(chain_path)
     except Exception as exc:
         raise ContractError(f"installed chain parser rejected chain.yaml: {exc}") from exc
     _validate_chain_and_proof_map(chain, proof_map)
-    _validate_supersession(require_live=require_live)
+    _validate_supersession(require_live=False)
     _validate_runbook()
     _validate_readme(route_path)
-    _validate_stable_exit_receipt(require_live=require_live)
+    _validate_stable_exit_receipt(require_live=False)
+    if require_live:
+        try:
+            validate_launch_preconditions(parsed_chain, ROOT, chain_path)
+        except Exception as exc:
+            raise ContractError(
+                f"current r5 chain-completion launch precondition failed: {exc}"
+            ) from exc
 
 
 def main() -> int:

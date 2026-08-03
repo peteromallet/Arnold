@@ -1,9 +1,30 @@
-# F0 — finite-canary handoff admission
+# F0 — r5 terminal handoff and historical canary admission
 
-Admit the post-relaunch epic only after independently verifying the exact
-finite-canary and stable-exit handoff. This milestone is a deterministic,
-read-only evidence boundary. It must not deploy, dispatch, retry, restart,
-resume, supervise, notify, or otherwise mutate cloud or product state.
+Admit the post-relaunch epic only after the installed `chain_completed`
+precondition independently verifies the exact terminal r5 CL2-CL5 predecessor
+and its content-addressed completion manifest. This milestone is a
+deterministic, read-only evidence boundary. It must not deploy, dispatch, retry,
+restart, resume, supervise, notify, or otherwise mutate cloud or product state.
+
+First verify from committed/current chain evidence that:
+
+- r5 has no active plan and has advanced past every declared milestone;
+- each CL2-CL5 completion record binds its exact plan, accepted commit, merged
+  PR evidence where required, and proof-map entry;
+- the current Critique `chain.yaml` hash equals the hash bound in chain state;
+- the exact completion manifest recomputes and covers every required milestone;
+- PR #325 and successor milestone PR heads/checks are reconciled, with no red
+  required check and no noncanonical initiative artifact path;
+- accepted r5 work is consumed by content hash and every incomplete/rejected
+  artifact is classified, with zero duplicate dispatch, branch, PR or provider
+  effect; and
+- the plan-ID collision, two journal prefixes, stale outer state, `introspect`
+  failure and M9 warning are preserved as degraded-observer evidence, never
+  rewritten into product failure or success.
+
+Then preserve the following finite-canary evidence as historical incident
+custody. Missing obsolete safe-v3 completion/stable-exit paths are not launch
+preconditions and must not be fabricated:
 
 Verify all of the following from committed evidence bytes:
 

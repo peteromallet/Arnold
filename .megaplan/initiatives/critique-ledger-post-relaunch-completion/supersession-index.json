@@ -1,5 +1,12 @@
 {
   "schema": "arnold.critique_ledger.supersession_index.v2",
+  "current_operational_generation": {
+    "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/current-operational-handoff.json",
+    "sha256": "fb8fd5a27c6469e8bf36ed41b227947aa0240a29495dd599c1751821f82a1dbb",
+    "status": "RUNNING_OBSERVATION_DEGRADED",
+    "launch_authority": "SEPARATELY_AUTHORIZED_R5",
+    "follow_up_disposition": "BLOCKED_ON_R5_CHAIN_COMPLETION_MANIFEST"
+  },
   "current_operational_route": {
     "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json",
     "sha256": "189b289d4b5d556b1ab65c344220bd4e7fec2b2526a53227c1767912e1ff9a21",

@@ -1,9 +1,10 @@
 # Critique Ledger post-relaunch completion epic
 
-This epic begins only after the fresh v3 successor has passed the independently
-verified finite-slice safe-canary gate (recovery task T6.2): fresh initialization
-through the first owner-accepted transition strictly beyond v2's
-`gated/finalize` cursor, followed by envelope expiry/stop.
+This epic begins only after the separately authorized live r5 Critique chain
+has completed every CL2-CL5 milestone and published a content-addressed chain
+completion manifest. The earlier finite-slice safe-canary lineage remains
+immutable incident history; it is no longer this chain's executable launch
+precondition.
 
 It preserves the remainder of the 55-task recovery checklist, including deferred
 platform-wide hardening, without making that generalization, product completion,
@@ -22,12 +23,11 @@ That audit is retained for task-by-task rationale but its conclusion that the
 entire T1/T2/T3/T4/T5 portfolio blocks the finite canary is superseded. See
 `supersession-index.json`.
 
-Do not launch this chain until its content-addressed T6.2 handoff exists and all
-launch preconditions pass through the installed authority boundary.
-The typed finite-canary preconditions strictly verify the completion and stable-
-exit receipt schemas, semantic state, content hashes, independent conformance,
-and clean `HEAD` custody before F0 may start. F0 repeats the handoff admission
-and completes none of F1-F8. Incident operators must follow [`RUNBOOK.md`](RUNBOOK.md); generic
+Do not launch this chain until the live r5 predecessor has no active plan, all
+CL2-CL5 milestones have accepted completion records, its current `chain.yaml`
+hash matches the state, and its content-addressed completion manifest passes
+the installed `chain_completed` precondition. F0 reconciles that handoff and
+completes none of F1-F8. Incident operators must follow [`RUNBOOK.md`](RUNBOOK.md); generic
 cloud deploy/chain/supervision routes are forbidden for this recovery.
 
 ## Current operational handoff — 2026-08-03
@@ -47,11 +47,19 @@ to erase the failed-attempt history below.
 - The route is OAuth-backed all-Codex because no direct DeepSeek provider key
   was admitted. It must not claim that DeepSeek ran. The observed live worker
   is `gpt-5.6-luna` in prep.
-- The chain tmux remains alive. Prep completed successfully at
-  `2026-08-03T14:04:08Z` after 393,318 ms, advancing plan state to `prepped`;
-  the prep artifact SHA-256 begins `b8f292c2`. The current active worker is
-  `gpt-5.6-sol` with high reasoning in `plan`, with no current failure. This is
-  a durable successful phase transition, not a whole-chain completion receipt.
+- At the latest bound observation (`2026-08-03T14:15:48Z`), the chain tmux and
+  chain process were alive. Prep completed at `14:04:08Z`, plan completed at
+  `14:11:40Z`, and six `gpt-5.6-sol` high critique workers had produced fresh
+  critique artifacts. This proves current progress, not milestone or whole-
+  chain completion. Observation is degraded: the plan journal contains two
+  launch incarnations under the same minute-resolution plan ID, `introspect`
+  rejects the resulting non-monotonic sequence, and outer chain status remains
+  stale at `initialized` while the plan is in critique.
+- PR #325 is open at head
+  `a73b2760369aa99f28bb02d41003325369bed6fa`. Its current CI run is red because
+  two initiative documents were written outside canonical artifact
+  subdirectories. The live critique/revision loop owns that repair; no success
+  or milestone-advance claim may be made until the exact PR head is green.
 
 Discord resident availability is separately restored. Recovery epoch
 `discord-enospc-20260803-r7` created healthy container
@@ -60,6 +68,10 @@ from image
 `sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20`
 using immutable runtime `31d2e052104a57eb48e782dce8bdf678e6731caf`;
 its receipt is healthy with reason `discord_ready`.
+
+Machine-readable current custody is
+[`current-operational-handoff.json`](current-operational-handoff.json); its
+timestamped status is evidence, not a mutable live-status oracle.
 
 The shortest safe operator route is therefore to supervise the live r5 chain,
 leave its exact source/runtime/image tuple unchanged, and execute the ordered

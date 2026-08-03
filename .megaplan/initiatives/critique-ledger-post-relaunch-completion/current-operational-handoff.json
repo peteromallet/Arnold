@@ -1,0 +1,62 @@
+{
+  "schema": "arnold.critique_ledger.operational_handoff.v1",
+  "generation": {
+    "session": "critique-ledger-accountability-v3-r5-20260803",
+    "plan": "cl2-wbc-backed-ledger-20260803-1357",
+    "product_revision": "e5e9f2b1c1a7e7779121405fd4801768e1e8a4c2",
+    "runtime_revision": "82a5a012fa58f44cdc5e9e895f454d86d95b446d",
+    "collector_image_id": "sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d",
+    "collector_container_id": "782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117"
+  },
+  "latest_bound_observation": {
+    "observed_at": "2026-08-03T14:15:48Z",
+    "tmux": "alive",
+    "chain_process": "alive",
+    "plan_state": "planned",
+    "active_operation": "critique",
+    "completed_phases": [
+      "prep",
+      "plan"
+    ],
+    "fresh_critique_outputs_through": "2026-08-03T14:15:21Z",
+    "terminal": false,
+    "whole_chain_complete": false
+  },
+  "runtime_binding": {
+    "import_root": "/workspace/runtime-candidates/arnold-82a5a012fa58f44cdc5e9e895f454d86d95b446d",
+    "editable_root": "/workspace/runtime-candidates/arnold-82a5a012fa58f44cdc5e9e895f454d86d95b446d",
+    "source_revision": "82a5a012fa58f44cdc5e9e895f454d86d95b446d",
+    "editable_revision": "82a5a012fa58f44cdc5e9e895f454d86d95b446d",
+    "verified": true
+  },
+  "pull_request": {
+    "number": 325,
+    "head": "a73b2760369aa99f28bb02d41003325369bed6fa",
+    "state": "open",
+    "checks": "red",
+    "github_run_id": 30820387356,
+    "github_job_id": 91708543510,
+    "root_failure": "initiative artifacts outside canonical subdirectories"
+  },
+  "observation_degraded": {
+    "status": true,
+    "plan_id_collision": "two fresh launches in one minute reused the same minute-resolution plan ID",
+    "event_prefixes": [
+      "0..9",
+      "0..N"
+    ],
+    "introspect_error": "EventCheckpointError: non-monotonic event seq beyond checkpoint: 0 <= 9",
+    "outer_chain_state": "initialized",
+    "outer_chain_state_disposition": "stale while blocking driver is active",
+    "work_ledger_warning": "emit_transition() got multiple values for keyword argument transition"
+  },
+  "resident": {
+    "recovery_epoch": "discord-enospc-20260803-r7",
+    "container_id": "a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a",
+    "image_id": "sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20",
+    "runtime_revision": "31d2e052104a57eb48e782dce8bdf678e6731caf",
+    "health": "healthy/discord_ready"
+  },
+  "follow_up_launch_rule": "BLOCKED_UNTIL_R5_CHAIN_COMPLETED_WITH_CONTENT_ADDRESSED_MANIFEST",
+  "intervention_rule": "WATCH_UNLESS_PROCESS_OR_TMUX_DIES_TERMINAL_FAILURE_APPEARS_WORKERS_VANISH_WITHOUT_OUTPUT_OR_REAL_STALL_THRESHOLD_EXPIRES"
+}

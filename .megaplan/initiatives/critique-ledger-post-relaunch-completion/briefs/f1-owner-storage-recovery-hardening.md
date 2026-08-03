@@ -25,7 +25,8 @@ an immutable preinstalled helper, `/run` same-boot staging, durable post-reclaim
 sealing, ambiguity-safe reconciliation, and a supported strict receipt reader.
 Also close the newly observed control-plane gaps: durable occurrence/state-
 version notification dedupe; one provenance-safe bounded generalized fixer;
-M7 projection-cursor reconciliation; resident read-only admission before its
+M7 projection-cursor reconciliation; event-incarnation/checkpoint repair and
+cross-observer lifecycle convergence; resident read-only admission before its
 source fence; stage-specific recovery diagnostics; a versioned receipt schema
 that includes a separate `resident_image_id`; and hash-locked recovery-image
 dependencies. Rotate every resident credential exposed when a diagnostic
@@ -193,6 +194,25 @@ receipts.
   separate recovery transition.
 - M7 projection history is reconciled or explicitly forked for a fresh
   generation; cursor mismatch cannot become an indefinitely repeated warning.
+- The exact r5 two-incarnation event fixture (`0..9`, then `0..N`) is replayed.
+  `introspect`, `trace`, plan status, doctor, cloud status and chain status all
+  remain readable and converge on one lifecycle/active-phase tuple within a
+  declared bounded lag; an incarnation change atomically rotates checkpoint
+  and projection cursors instead of raising a non-monotonic-sequence error.
+- A per-session fresh-launch lease prevents overlap. Reset cannot delete a plan
+  until its previous process tree is terminated and reaped; two launches in one
+  minute receive distinct plan/incarnation identities or one typed conflict.
+  Events and transaction IDs include incarnation; sequence is strictly
+  monotonic within it. Checkpoints bind plan, incarnation, sequence, byte
+  offset and source digest. Historical incarnations remain inspectable.
+- The canonical observer tuple is plan, incarnation, lifecycle, active phase,
+  worker liveness and observation timestamp. All supported observers converge
+  within 60 seconds. A broken checkpoint returns typed degraded evidence and
+  never infers a product stall. The installed cloud regression proves one
+  active runner, one current incarnation and zero repeated cursor warnings.
+- Work-ledger emitters remove reserved fields from metadata before forwarding;
+  each auto phase transition produces exactly one idempotent transition and no
+  `multiple values for keyword argument 'transition'` warning.
 - Resident receipt v2 migration and compatibility tests bind
   `resident_image_id`; built-image import tests use hash-locked dependencies.
 - All resident credentials exposed in the diagnostic transcript are rotated,

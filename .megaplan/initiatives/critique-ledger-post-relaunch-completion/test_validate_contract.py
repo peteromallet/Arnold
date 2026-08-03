@@ -22,11 +22,20 @@ def test_chain_parses_through_installed_schema() -> None:
     assert parsed.milestones[0].label == "f0-finite-canary-handoff-admission"
     assert parsed.milestones[1].depends_on == ["f0-finite-canary-handoff-admission"]
     assert [item.kind for item in parsed.launch_preconditions] == [
-        "finite_canary_receipt",
-        "stable_exit_receipt",
+        "chain_completed",
         "git_tracked",
         "git_tracked",
     ]
+    assert parsed.launch_preconditions[0].chain == ".megaplan/initiatives/critique-ledger/chain.yaml"
+    assert parsed.launch_preconditions[0].require_manifest is True
+
+
+def test_live_readiness_is_bound_to_current_r5_chain_completion() -> None:
+    with pytest.raises(
+        contract.ContractError,
+        match="current r5 chain-completion launch precondition failed",
+    ):
+        contract.validate(require_live=True)
 
 
 def test_deferred_obligation_drift_is_rejected() -> None:

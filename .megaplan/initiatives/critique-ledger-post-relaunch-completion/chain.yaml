@@ -7,15 +7,13 @@ review_policy:
 anchors:
   north_star: NORTHSTAR.md
 launch_preconditions:
-  - name: safe v3 finite canary completed with content-addressed proof
-    kind: finite_canary_receipt
-    path: .megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json
-  - name: post-canary stable exit and remote custody independently verified
-    kind: stable_exit_receipt
-    path: .megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json
-  - name: complete finite-canary input and evidence is committed and clean
+  - name: live r5 Critique chain completed with content-addressed milestone proof
+    kind: chain_completed
+    chain: .megaplan/initiatives/critique-ledger/chain.yaml
+    require_manifest: true
+  - name: complete Critique chain input is committed and clean
     kind: git_tracked
-    path: .megaplan/initiatives/critique-ledger-safe-v3-canary
+    path: .megaplan/initiatives/critique-ledger
   - name: complete follow-up epic input is committed and clean
     kind: git_tracked
     path: .megaplan/initiatives/critique-ledger-post-relaunch-completion
@@ -29,7 +27,7 @@ milestones:
     depth: high
     with_prep: true
     prep_clarify: false
-    notes: Difficulty 3/5. Sole read-only bridge from closed A40, immutable terminal failed/misclassified attempt-14 history, terminal infrastructure-failed attempt-15 history, and B16 attempt-16's validated infrastructure-recovery/product-non-PROCEED receipt into completion, stable-exit, operation-reconciliation and fresh-clone admission. Attempt 16 is not an infrastructure failure, PROCEED, finalized result or durable epic launch. Its remaining product and broader systemic hardening is deferred to F2/F1 and does not block a separately authorized relaunch. The contained v3 full-SHA retry also remains unaccepted until a fresh post-launch stability read proves editable/import roots and revisions equal the configured pinned runtime; its initialized plan cannot be reused. F0 still requires exact completion and stable-exit evidence, cannot launch/revise/finalize, and completes no F1-F8 obligation.
+    notes: Difficulty 3/5. Sole read-only bridge from the separately authorized r5 CL2-CL5 predecessor into this systemic follow-up. Reconcile the exact terminal chain state, completion manifest, PR heads/checks, accepted work and degraded-observer evidence before consuming any work. Preserve closed A40 and attempts 14-16 as immutable history, but do not require their obsolete missing canary receipt paths. F0 cannot launch/revise/finalize and completes no F1-F8 obligation.
   - label: f1-owner-storage-recovery-hardening
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f1-owner-storage-recovery-hardening.md
     branch: epic/critique-ledger-v3/f1-owner-storage-recovery-hardening
