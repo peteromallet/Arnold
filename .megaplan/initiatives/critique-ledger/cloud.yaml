@@ -2,8 +2,8 @@ provider: ssh
 
 repo:
   url: https://github.com/peteromallet/Arnold.git
-  branch: megaplan/critique-ledger-accountability-v2-20260728
-  workspace: /workspace/critique-ledger-accountability-v2-20260728/Arnold
+  branch: megaplan/critique-ledger-accountability-v3-20260803
+  workspace: /workspace/critique-ledger-accountability-v3-20260803/Arnold
 
 agents:
   default: codex
@@ -12,17 +12,16 @@ codex:
   model: gpt-5.6-sol
   reasoning: high
 
-chain_session: critique-ledger-accountability-v2-20260728
-mode: chain
-
-chain:
-  spec: /workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
+chain_session: critique-ledger-accountability-v3-20260803
+mode: idle
+isolated_chain_runner: true
+isolated_chain_runner_image_id: sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d
 
 megaplan:
-  ref: megaplan/custody-control-plane/m10-safe-retry-recovery-and-effects
+  ref: fix/isolated-chain-runner-20260803
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17
+  src_path: /workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4
 
 resources:
   volume: agent-volume
@@ -34,6 +33,6 @@ ssh:
   port: 22
   remote_dir: /opt/megaplan-cloud/deploy
   workspace_dir: /opt/megaplan-cloud/workspace
-  container: megaplan-cloud-agent
+  container: megaplan-cloud-agent-critique-ledger-v3
 
 secrets: []
