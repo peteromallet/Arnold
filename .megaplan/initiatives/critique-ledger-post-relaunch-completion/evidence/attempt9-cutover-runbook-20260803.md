@@ -8,18 +8,21 @@ planning artifacts. Do **not** restart Prep and do **not** resume attempt 8.
 The recovery boundary is:
 
 1. durably pause every obsolete Critique marker;
-2. terminate only the frozen attempt-8 process incarnation;
-3. durably cancel attempt 8 in its WBC ledger;
-4. bind the legacy r5 marker to its proven old runtime, then cut both chain and
+2. replace the old resident-only listener with one attested to the exact new
+   candidate, proving `/whats-cooking` and notification delivery load the new
+   code before the failure state can change;
+3. terminate only the frozen attempt-8 process incarnation;
+4. durably cancel attempt 8 in its WBC ledger;
+5. bind the legacy r5 marker to its proven old runtime, then cut both chain and
    marker runtime custody to the exact deployed engine;
-5. while still paused, reapply `partnered-5-glm` through the supported control
+6. while still paused, reapply `partnered-5-glm` through the supported control
    route and prove the persisted Execute coordinator and tiers 1–10 are all
    GLM-family routes;
-6. while the chain remains paused and the plan lifecycle remains `gated`, invoke
+7. while the chain remains paused and the plan lifecycle remains `gated`, invoke
    exactly one direct Finalize command under that exact new runtime;
-7. verify the new Finalize WBC is ordinal 9 and completes with lifecycle state
+8. verify the new Finalize WBC is ordinal 9 and completes with lifecycle state
    `finalized` and `next_step=execute`;
-8. only then explicitly resume the same chain with `--no-push` into GLM-family
+9. only then explicitly resume the same chain with `--no-push` into GLM-family
    Execute.
 
 This ordering is the integrated launch contract in
@@ -66,6 +69,8 @@ file-receipt protocol.
   - ordinal `8`, phase `finalize`
   - WBC has exactly one event: sequence 1, `STARTED`.
 - Frozen process identities (container PID / start ticks):
+  - tmux server `151724 / 25944913`; raw cmdline SHA-256
+    `692946e7ea42f486e0bdd084bc9a6b19416c7d126c4f3963f7d48b29e7614039`
   - tmux pane bash `151725 / 25944914`
   - chain runner `152041 / 25945230`
   - Codex node wrapper `160047 / 26116032`
@@ -115,7 +120,7 @@ Before mutation, re-read and compare:
 
 - container IDs and health;
 - the exact attempt/WBC/run/ordinal tuple above;
-- all five PID start ticks and command lines (or prove all are already absent);
+- all six PID start ticks and command lines (or prove all are already absent);
 - old runtime provenance still equals `CUTOVER_OLD_RUNTIME_SHA`;
 - the deployed registry pins Finalize to Sol high and Execute's coordinator
   plus every complexity tier 1–10 to GLM-family routes; separately record the
@@ -156,7 +161,60 @@ Verify the identity digest is exactly `CUTOVER_OLD_RUNTIME_SHA` and the receipt
 reports no errors. The migration control process must run from a separate
 new-engine venv, so receipt verification is independent.
 
-### 3. Retire the frozen attempt-8 process incarnation
+### 3. Recover the resident, then retire frozen attempt 8
+
+Before changing attempt custody, replace the resident-only listener through the
+supported recovery surface. The existing resident is already running the
+reviewed seven-commit listener-recovery donor, so it can be stopped with exact
+custody. The new candidate includes that same recovery series plus the durable
+notification owner.
+
+From the attested new-candidate control environment, first call
+`cloud resident-down` for epoch `discord-enospc-20260803-r7`, guarded by:
+
+- source container
+  `277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab`;
+- source image
+  `sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94`;
+- resident image
+  `sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20`;
+- resident container
+  `a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`.
+
+Then call `cloud resident-recover` under a fresh, never-reused outage epoch with
+the same source identities, the independently admitted compatible resident
+image, and exact new runtime path/commit/tree. Guard the interpreter as
+`/root/.pyenv/versions/3.11.11/bin/python3.11` with SHA-256
+`2575448bc13e2a87f48b65eeaa6d72de75e250616340b377a8989a80317a0ec5`.
+Use
+`.megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml` for both
+commands. Never print or copy the resident secret environment.
+
+Required postconditions are: top status `healthy`, reason `discord_ready`,
+`listener_only=true`, `resident_running=true`; singleton container name
+`megaplan-cloud-agent-resident-only`; restart policy `no`; start receipt bound
+to the exact candidate path/commit/tree/interpreter; custody runtime and seed
+mounted read-only; workspace mounted read-write; and logs after `started_at`
+contain the readiness line with `listener_only=True`. Run unchanged completion
+and subagent sweeps across a resident restart and require one provider attempt
+per durable effect identity.
+
+If new health fails, call `resident-down` with the new epoch and exact new
+resident ID, then recover under another fresh rollback epoch using old runtime
+`/workspace/runtime-candidates/arnold-31d2e052104a57eb48e782dce8bdf678e6731caf`,
+commit `31d2e052104a57eb48e782dce8bdf678e6731caf`, tree
+`4a6c152c3e898c7bd379f1566ec2f1f11091fd4f`, and the same old resident image.
+Keep r5 frozen; do not continue the cutover.
+
+This finite resident recovery is the explicit selector for `/whats-cooking`
+and Discord during the r5 cutover. The global `.cloud-hot-env` and
+`resident-runtime.env` selectors are not silently treated as updated. Keep
+their watchdog/auditor/supervisor consumers inactive until the follow-up epic
+performs the separate atomic global promotion; r5 itself is bound through its
+chain and marker runtime identities below.
+
+After the resident is proven healthy, retire the frozen attempt-8 process
+incarnation.
 
 The r5 plan lock is held by the frozen Finalize call, so the normal durable
 pause cannot commit until that exact owner is gone. First verify watchdog,
@@ -165,9 +223,15 @@ stop only those supervisors and record which were active for later restoration.
 
 In one guarded operator script, re-read `/proc/<pid>/stat` and command lines,
 require every extant PID to match the PID/start-ticks/command identity above,
-then send `SIGKILL` leaf-to-root to `160240`, `160061`, `160047`, `152041`, and
-`151725`. Kill the exact tmux session if it remains. Never signal by a broad
-pattern, unresolved variable, or container-wide kill.
+and require the exact tmux session to resolve to PID `151724`. Parse
+`/proc/<pid>/stat` after the closing `)` because the tmux server comm contains a
+space. First invoke `tmux kill-session -t
+critique-ledger-accountability-v3-r5-20260803`. Then reconcile all six known
+PIDs: missing means the clean session termination retired it; present with the
+same start ticks and command identity may receive guarded `TERM`, followed by
+`KILL` if it remains; any mismatched incarnation is an abort and must never be
+signalled. Never signal by a broad pattern, unresolved variable, or
+container-wide kill.
 
 Postconditions:
 
