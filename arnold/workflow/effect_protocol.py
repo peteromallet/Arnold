@@ -268,6 +268,16 @@ class EffectProtocol:
         * The attempt is still dispatch-eligible (no terminal outcome).
         * Run Authority and Custody are current (Step 10B item 3).
         """
+        self.verify_dispatch_eligible(attempt_id, glek, provider_id)
+        return apply_fn(idempotency_key, request_payload)
+
+    def verify_dispatch_eligible(
+        self,
+        attempt_id: str,
+        glek: str,
+        provider_id: str,
+    ) -> None:
+        """Apply every pre-provider dispatch fence without calling a provider."""
         if is_production_enabled(provider_id):
             raise ProductionEffectBlockedError(
                 f"Production effect dispatch is action-off in M10 for "
@@ -299,8 +309,6 @@ class EffectProtocol:
             raise EffectProtocolError(
                 f"Custody epoch for attempt {attempt_id!r} is not current"
             )
-
-        return apply_fn(idempotency_key, request_payload)
 
     # ── Step 8C item 1: accept terminal outcome ────────────────────────
 
@@ -336,6 +344,15 @@ class EffectProtocol:
         return self._store.accept_terminal_outcome(
             attempt_id, glek, OUTCOME_INDETERMINATE, {"reason": reason}
         )
+
+    def accepted_outcome_for_glek(self, glek: str) -> Any:
+        """Return the one accepted outcome for *glek*, if any.
+
+        Adapters use this read-only lookup to adopt an already-completed
+        effect after restart instead of treating the dispatch fence as a
+        retryable transport failure.
+        """
+        return self._store.get_global_effect_outcome_by_glek(glek)
 
     # ── Step 10B: retry gate ───────────────────────────────────────────
 

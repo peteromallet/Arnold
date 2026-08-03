@@ -5,8 +5,7 @@ parent/target/channel global-effect keys and durable
 reserve/start/intent/global-reservation contracts.
 
 Step 13G2: Route outbound seams in ``discord_dm.py`` and
-``agentbox_adapter.py`` through the delivery effects adapter while
-keeping real Discord action-off (SD3).
+``agentbox_adapter.py`` through the delivery effects adapter.
 
 The adapter introduces no new ledger — it wraps the single durable
 :class:`EffectProtocol`.
@@ -15,7 +14,6 @@ The adapter introduces no new ledger — it wraps the single durable
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -115,8 +113,9 @@ class DeliveryEffects:
     Step 13G1: thin adapter with stable parent/target/channel GLEKs.
     Step 13G2: routes discord_dm and agentbox_adapter outbound seams.
 
-    Real Discord is action-off in M10 (SD3).  The *apply_fn* must be
-    a fake transport that does not call the live Discord API.
+    ``apply_fn`` is the single provider callback.  Once this adapter is
+    selected, denial or ambiguity fails closed and cannot fall through to a
+    competing direct-provider path.
     """
 
     def __init__(
@@ -189,18 +188,14 @@ class DeliveryEffects:
         Args:
             target: Stable delivery target identity.
             intent_payload: The delivery payload (message, metadata).
-            apply_fn: Transport callable — MUST be fake in M10.
+            apply_fn: The one transport callable for this logical effect.
             attempt_id: Explicit attempt id.
 
         Returns:
             DeliveryOutcome with the GLEK, outcome, and error.
         """
         if self._production_enabled:
-            LOGGER.warning(
-                "Production delivery dispatch attempted for %s — "
-                "production is action-off in M10",
-                target.target_key,
-            )
+            LOGGER.info("Production delivery effect selected for %s", target.target_key)
 
         verdict = self._gate(target)
         if verdict not in (
@@ -217,11 +212,40 @@ class DeliveryEffects:
                 evidence={"gate_verdict": verdict.value},
             )
 
-        aid = attempt_id or str(uuid.uuid4())
         ei = self._build_effect_identity(target)
+        stable_idempotency_key = str(
+            intent_payload.get("idempotency_key")
+            or f"resident-delivery:{ei.global_logical_effect_key}"
+        )
+        aid = attempt_id or str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"arnold:resident-delivery:{ei.global_logical_effect_key}:{stable_idempotency_key}",
+            )
+        )
         ident, prov, adapter, versions, grant_ref = self._build_identity_bundle(aid)
 
         try:
+            accepted = self._protocol.accepted_outcome_for_glek(
+                ei.global_logical_effect_key
+            )
+            if accepted is not None and str(getattr(accepted, "outcome_kind", "")) in {
+                OUTCOME_COMPLETED,
+                OUTCOME_FAILED,
+                OUTCOME_INDETERMINATE,
+            }:
+                evidence = dict(getattr(accepted, "outcome_payload", {}) or {})
+                kind = str(getattr(accepted, "outcome_kind", OUTCOME_INDETERMINATE))
+                return DeliveryOutcome(
+                    ok=kind == OUTCOME_COMPLETED,
+                    channel=target.channel.value,
+                    action=target.action,
+                    glek=ei.global_logical_effect_key,
+                    outcome_kind=kind,
+                    error=None if kind == OUTCOME_COMPLETED else "existing effect outcome is not completed",
+                    evidence={**evidence, "adopted": True},
+                    attempt_id=str(getattr(accepted, "attempt_id", aid)),
+                )
             reservation = self._protocol.reserve_and_start(
                 attempt_id=aid,
                 effect_identity=ei,
@@ -232,6 +256,25 @@ class DeliveryEffects:
                 grant_ref=grant_ref,
             )
             glek = reservation.global_logical_effect_key
+
+            accepted = self._protocol.accepted_outcome_for_glek(glek)
+            if accepted is not None and str(getattr(accepted, "outcome_kind", "")) in {
+                OUTCOME_COMPLETED,
+                OUTCOME_FAILED,
+                OUTCOME_INDETERMINATE,
+            }:
+                evidence = dict(getattr(accepted, "outcome_payload", {}) or {})
+                kind = str(getattr(accepted, "outcome_kind", OUTCOME_INDETERMINATE))
+                return DeliveryOutcome(
+                    ok=kind == OUTCOME_COMPLETED,
+                    channel=target.channel.value,
+                    action=target.action,
+                    glek=glek,
+                    outcome_kind=kind,
+                    error=None if kind == OUTCOME_COMPLETED else "existing effect outcome is not completed",
+                    evidence={**evidence, "adopted": True},
+                    attempt_id=str(getattr(accepted, "attempt_id", aid)),
+                )
 
             self._protocol.persist_intent(
                 attempt_id=aid,
@@ -245,31 +288,25 @@ class DeliveryEffects:
             )
 
             provider_key = f"resident:{target.channel.value}:{target.action}"
-            idempotency_key = str(
-                intent_payload.get("idempotency_key")
-                or f"resident-delivery:{glek}"
-            )
             try:
                 result = self._protocol.dispatch(
                     aid,
                     glek,
                     provider_id=provider_key,
                     apply_fn=lambda _key, payload: apply_fn(payload),
-                    idempotency_key=idempotency_key,
+                    idempotency_key=stable_idempotency_key,
                     request_payload=dict(intent_payload),
                 )
             except Exception as exc:
-                self._protocol.accept_outcome(
-                    aid, glek, OUTCOME_FAILED,
-                    {"error": f"{type(exc).__name__}: {exc}"},
-                )
+                reason = f"provider outcome unknown: {type(exc).__name__}: {exc}"
+                self._protocol.accept_indeterminate(aid, glek, reason)
                 return DeliveryOutcome(
                     ok=False,
                     channel=target.channel.value,
                     action=target.action,
                     glek=glek,
-                    outcome_kind=OUTCOME_FAILED,
-                    error=str(exc),
+                    outcome_kind=OUTCOME_INDETERMINATE,
+                    error=reason,
                     attempt_id=aid,
                 )
 
@@ -284,13 +321,151 @@ class DeliveryEffects:
                 evidence=evidence,
                 attempt_id=aid,
             )
-
         except Exception as exc:
             return DeliveryOutcome(
                 ok=False,
                 channel=target.channel.value,
                 action=target.action,
                 glek="",
+                outcome_kind=OUTCOME_INDETERMINATE,
+                error=f"Protocol error: {type(exc).__name__}: {exc}",
+                attempt_id=aid,
+            )
+
+    async def deliver_async(
+        self,
+        *,
+        target: DeliveryTarget,
+        intent_payload: dict[str, Any],
+        apply_fn: Callable[..., Any],
+        attempt_id: str | None = None,
+    ) -> DeliveryOutcome:
+        """Async provider variant with the same fail-closed effect protocol.
+
+        The provider callback is awaited exactly once.  Any exception may
+        have followed an accepted provider write, so it is durably recorded
+        as INDETERMINATE and can never be automatically redriven.
+        """
+        verdict = self._gate(target)
+        if verdict not in (
+            ActionGateVerdict.AUTHORIZED,
+            ActionGateVerdict.SHADOW_AUTHORIZED,
+        ):
+            return DeliveryOutcome(
+                ok=False,
+                channel=target.channel.value,
+                action=target.action,
+                glek="",
+                outcome_kind=OUTCOME_FAILED,
+                error=f"Action gate blocked: {verdict.value}",
+                evidence={"gate_verdict": verdict.value},
+            )
+
+        ei = self._build_effect_identity(target)
+        stable_idempotency_key = str(
+            intent_payload.get("idempotency_key")
+            or f"resident-delivery:{ei.global_logical_effect_key}"
+        )
+        aid = attempt_id or str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"arnold:resident-delivery:{ei.global_logical_effect_key}:{stable_idempotency_key}",
+            )
+        )
+        ident, prov, adapter, versions, grant_ref = self._build_identity_bundle(aid)
+        glek = ""
+        try:
+            accepted = self._protocol.accepted_outcome_for_glek(
+                ei.global_logical_effect_key
+            )
+            if accepted is not None and str(getattr(accepted, "outcome_kind", "")) in {
+                OUTCOME_COMPLETED,
+                OUTCOME_FAILED,
+                OUTCOME_INDETERMINATE,
+            }:
+                evidence = dict(getattr(accepted, "outcome_payload", {}) or {})
+                kind = str(getattr(accepted, "outcome_kind", OUTCOME_INDETERMINATE))
+                return DeliveryOutcome(
+                    ok=kind == OUTCOME_COMPLETED,
+                    channel=target.channel.value,
+                    action=target.action,
+                    glek=ei.global_logical_effect_key,
+                    outcome_kind=kind,
+                    error=None if kind == OUTCOME_COMPLETED else "existing effect outcome is not completed",
+                    evidence={**evidence, "adopted": True},
+                    attempt_id=str(getattr(accepted, "attempt_id", aid)),
+                )
+            reservation = self._protocol.reserve_and_start(
+                attempt_id=aid,
+                effect_identity=ei,
+                identity=ident,
+                provenance=prov,
+                adapter=adapter,
+                versions=versions,
+                grant_ref=grant_ref,
+            )
+            glek = reservation.global_logical_effect_key
+            accepted = self._protocol.accepted_outcome_for_glek(glek)
+            if accepted is not None and str(getattr(accepted, "outcome_kind", "")) in {
+                OUTCOME_COMPLETED,
+                OUTCOME_FAILED,
+                OUTCOME_INDETERMINATE,
+            }:
+                evidence = dict(getattr(accepted, "outcome_payload", {}) or {})
+                kind = str(getattr(accepted, "outcome_kind", OUTCOME_INDETERMINATE))
+                return DeliveryOutcome(
+                    ok=kind == OUTCOME_COMPLETED,
+                    channel=target.channel.value,
+                    action=target.action,
+                    glek=glek,
+                    outcome_kind=kind,
+                    error=None if kind == OUTCOME_COMPLETED else "existing effect outcome is not completed",
+                    evidence={**evidence, "adopted": True},
+                    attempt_id=str(getattr(accepted, "attempt_id", aid)),
+                )
+            self._protocol.persist_intent(
+                attempt_id=aid,
+                glek=glek,
+                intent_payload=intent_payload,
+                identity=ident,
+                provenance=prov,
+                adapter=adapter,
+                versions=versions,
+                grant_ref=grant_ref,
+            )
+            provider_key = f"resident:{target.channel.value}:{target.action}"
+            self._protocol.verify_dispatch_eligible(aid, glek, provider_key)
+            try:
+                result = await apply_fn(stable_idempotency_key, dict(intent_payload))
+            except Exception as exc:
+                reason = f"provider outcome unknown: {type(exc).__name__}: {exc}"
+                self._protocol.accept_indeterminate(aid, glek, reason)
+                return DeliveryOutcome(
+                    ok=False,
+                    channel=target.channel.value,
+                    action=target.action,
+                    glek=glek,
+                    outcome_kind=OUTCOME_INDETERMINATE,
+                    error=reason,
+                    attempt_id=aid,
+                )
+            evidence = dict(result) if isinstance(result, dict) else {"result": str(result)[:500]}
+            self._protocol.accept_outcome(aid, glek, OUTCOME_COMPLETED, evidence)
+            return DeliveryOutcome(
+                ok=True,
+                channel=target.channel.value,
+                action=target.action,
+                glek=glek,
+                outcome_kind=OUTCOME_COMPLETED,
+                evidence=evidence,
+                attempt_id=aid,
+            )
+        except Exception as exc:
+            return DeliveryOutcome(
+                ok=False,
+                channel=target.channel.value,
+                action=target.action,
+                glek=glek,
                 outcome_kind=OUTCOME_INDETERMINATE,
                 error=f"Protocol error: {type(exc).__name__}: {exc}",
                 attempt_id=aid,

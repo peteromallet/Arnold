@@ -9749,7 +9749,7 @@ def test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery(tmp_path: 
     assert "pytest_workspace" in log_path.read_text(encoding="utf-8")
 
 
-def test_repair_escalation_fixture_workspace_cannot_reach_discord(tmp_path: Path) -> None:
+def test_repair_escalation_is_retired_to_canonical_outbox(tmp_path: Path) -> None:
     fixture_workspace = tmp_path / "ws"
     fixture_workspace.mkdir()
     data_path = tmp_path / "repair-data.json"
@@ -9789,9 +9789,9 @@ def test_repair_escalation_fixture_workspace_cannot_reach_discord(tmp_path: Path
     result = _run_watchdog_shell(script)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "test_execution_suppressed"
+    assert result.stdout == "canonical_notification_outbox"
     assert not (tmp_path / "dm-called").exists()
-    assert "pytest_workspace" in log_path.read_text(encoding="utf-8")
+    assert "sender retired" in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_needs_human_missing_discord_config_records_durable_intent(tmp_path: Path) -> None:

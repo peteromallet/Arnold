@@ -416,7 +416,7 @@ class DiscordOutboundSink(OutboundSink):
             raise RuntimeError("Discord client is not bound")
 
         # Step 13H: route through durable delivery effects when configured.
-        if self._delivery_effects is not None:
+        if self._delivery_effects is not None and _is_operational_delivery(message):
             # A configured effect adapter is the provider boundary. A denied
             # or unavailable reservation must fail closed; falling through to
             # the direct Discord call would create a second authority path.
@@ -616,16 +616,45 @@ class DiscordOutboundSink(OutboundSink):
             if isinstance(message.metadata, dict):
                 intent["metadata"] = dict(message.metadata)
 
-            outcome = self._delivery_effects.deliver(
+            async def _provider_apply(
+                provider_idempotency_key: str,
+                _payload: dict[str, Any],
+            ) -> dict[str, Any]:
+                delivery_target = DiscordDeliveryTarget.from_conversation_key(
+                    message.conversation_key
+                )
+                channel = await self._resolve_channel(delivery_target)
+                message_ids: list[str] = []
+                for index, chunk in enumerate(split_discord_message(message.content)):
+                    nonce = hashlib.sha256(
+                        f"{provider_idempotency_key}:{index}".encode("utf-8")
+                    ).hexdigest()[:24]
+                    sent = await channel.send(chunk, nonce=nonce)
+                    message_ids.append(str(getattr(sent, "id", "")))
+                return {
+                    "delivered": True,
+                    "channel": "resident",
+                    "message_ids": message_ids,
+                    "message_count": len(message_ids),
+                }
+
+            outcome = await self._delivery_effects.deliver_async(
                 target=target,
                 intent_payload=intent,
-                apply_fn=lambda payload: {"delivered": True, "channel": "resident"},
+                apply_fn=_provider_apply,
             )
 
             if outcome.ok:
                 if isinstance(message.metadata, dict):
                     message.metadata["delivery_effects_routed"] = True
                     message.metadata["delivery_glek"] = outcome.glek
+                    ids = [
+                        str(value)
+                        for value in outcome.evidence.get("message_ids", [])
+                        if str(value)
+                    ]
+                    message.metadata["discord_message_ids"] = ids
+                    message.metadata["discord_message_id"] = ids[0] if ids else ""
                 LOGGER.info(
                     "Resident delivery routed through WBC: glek=%s channel=%s",
                     outcome.glek,

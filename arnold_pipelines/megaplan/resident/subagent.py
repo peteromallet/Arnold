@@ -7189,26 +7189,56 @@ async def sweep_managed_agent_deliveries(
                     if isinstance(metadata, dict):
                         sweep_intent["metadata"] = dict(metadata)
 
-                    sweep_outcome = delivery_effects.deliver(
-                        target=sweep_target,
-                        intent_payload=sweep_intent,
-                        apply_fn=lambda p: {"delivered": True},
-                    )
-                    if not sweep_outcome.ok:
-                        raise RuntimeError(
-                            f"Completion sweep delivery blocked by WBC: {sweep_outcome.error}"
+                    async def _provider_apply(
+                        _provider_idempotency_key: str,
+                        _intent: dict[str, Any],
+                    ) -> dict[str, Any]:
+                        await outbound.send(
+                            OutboundMessage(
+                                conversation_key=str(origin["conversation_key"]),
+                                content=content,
+                                idempotency_key=f"resident-subagent-completion:{run_id}",
+                                metadata=metadata,
+                            )
                         )
-                    effect_routed = True
-                    effect_message_ids = [
-                        str(value)
-                        for value in sweep_outcome.evidence.get("message_ids", [])
-                        if str(value)
-                    ]
-                    metadata["discord_message_ids"] = effect_message_ids or [
-                        f"effect:{sweep_outcome.glek}"
-                    ]
-                    metadata["delivery_effects_routed"] = True
-                    metadata["delivery_glek"] = sweep_outcome.glek
+                        return {
+                            "delivered": True,
+                            "message_ids": list(metadata.get("discord_message_ids") or []),
+                        }
+
+                    if getattr(outbound, "_delivery_effects", None) is delivery_effects:
+                        await outbound.send(
+                            OutboundMessage(
+                                conversation_key=str(origin["conversation_key"]),
+                                content=content,
+                                idempotency_key=f"resident-subagent-completion:{run_id}",
+                                metadata=metadata,
+                            )
+                        )
+                        effect_routed = True
+                        sweep_outcome = None
+                    else:
+                        sweep_outcome = await delivery_effects.deliver_async(
+                            target=sweep_target,
+                            intent_payload=sweep_intent,
+                            apply_fn=_provider_apply,
+                        )
+                    if sweep_outcome is not None:
+                        if not sweep_outcome.ok:
+                            raise RuntimeError(
+                                f"Completion sweep delivery blocked by WBC: {sweep_outcome.error}"
+                            )
+                        effect_routed = True
+                        effect_message_ids = [
+                            str(value)
+                            for value in sweep_outcome.evidence.get("message_ids", [])
+                            if str(value)
+                        ]
+                        metadata["discord_message_ids"] = effect_message_ids or [
+                            f"effect:{sweep_outcome.glek}"
+                        ]
+                        metadata["delivery_effects_routed"] = True
+                        metadata["delivery_glek"] = sweep_outcome.glek
                 except Exception as delivery_route_exc:
                     raise RuntimeError("Completion sweep delivery routing unavailable") from delivery_route_exc
 

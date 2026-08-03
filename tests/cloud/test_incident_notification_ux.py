@@ -328,3 +328,16 @@ def test_watchdog_source_has_no_provider_fallback() -> None:
     assert "arnold-discord-dm" not in source
     assert 'curl -fsS' not in source
     assert "write_opened(" not in source
+
+
+def test_repair_loop_direct_notification_writer_is_retired() -> None:
+    source = Path("arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop").read_text(
+        encoding="utf-8"
+    )
+    assert "DISCORD_DM_BIN" not in source
+    function = source.split("send_discord_escalation() {", 1)[1].split(
+        'log "starting session=', 1
+    )[0]
+    assert "canonical_notification_outbox" in function
+    assert "EscalationLedgerWriter" not in function
+    assert "discord-payload" not in function
