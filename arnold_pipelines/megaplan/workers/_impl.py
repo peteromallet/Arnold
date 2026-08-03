@@ -123,6 +123,10 @@ _ZERO_RECOVERY_EPIC_JOURNAL_DIR = (
 _ZERO_RECOVERY_EMPTY_RUNTIME_DIRS = {
     _ZERO_RECOVERY_EPIC_JOURNAL_DIR,
     ".megaplan/blobs",
+    # run_command creates its stdin tempfile here and unlinks the file on every
+    # terminal path. The trusted empty directory may persist; any surviving
+    # child is still rejected by the direct-source manifest walk.
+    ".megaplan/worker_tmp",
 }
 
 
