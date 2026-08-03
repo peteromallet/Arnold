@@ -1290,7 +1290,28 @@ def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
             "plans": items,
         }
     plan_dir, state = cli_mod.load_plan(root, args.plan)
-    return _build_status_payload(plan_dir, state)
+    payload = _build_status_payload(plan_dir, state)
+
+    # Cloud callers need the same plan projection as every other status
+    # consumer, plus the resolver's identity-bound current-target record.  Do
+    # this inside the selected Megaplan runtime so a laptop-side observer never
+    # tries to interpret container-local PIDs or leases.  The extra arguments
+    # are intentionally hidden: they are a provider adapter contract, not a
+    # user-facing alternative status mode.
+    cloud_session = str(getattr(args, "cloud_session", "") or "").strip()
+    cloud_marker_dir = str(getattr(args, "cloud_marker_dir", "") or "").strip()
+    if cloud_session and cloud_marker_dir:
+        from arnold_pipelines.megaplan.cloud.current_target import (
+            resolve_current_target,
+        )
+
+        payload["current_target"] = resolve_current_target(
+            cloud_session,
+            marker_dir=Path(cloud_marker_dir),
+            repair_data_dir=Path(cloud_marker_dir) / "repair-data",
+            workspace_hint=root,
+        )
+    return payload
 
 
 def handle_audit(root: Path, args: argparse.Namespace) -> StepResponse:

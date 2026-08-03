@@ -185,14 +185,28 @@ class LocalProvider(Provider):
         _write_redacted_output(result, secret_names=self._spec.secrets, env=os.environ)
         return 0
 
-    def status_payload(self, *, plan: str | None, workspace: str) -> dict:
-        command = f"cd {shlex.quote(workspace)} && arnold status"
-        if plan is not None:
-            command += f" --plan {shlex.quote(plan)}"
+    def status_payload(
+        self,
+        *,
+        plan: str | None,
+        workspace: str,
+        session: str | None = None,
+    ) -> dict:
+        from arnold_pipelines.megaplan.cloud.providers.ssh import (
+            _megaplan_status_module_command,
+        )
+
+        command = _megaplan_status_module_command(
+            workspace=workspace,
+            plan=plan,
+            runtime_root=self._spec.megaplan.src_path,
+            runtime_revision=None,
+            session=session,
+        )
         result = self.ssh_exec(command)
         payload = json.loads(result.stdout)
         if not isinstance(payload, dict):
-            raise CliError("provider_failed", "arnold status did not return a JSON object")
+            raise CliError("provider_failed", "Megaplan status did not return a JSON object")
         return payload
 
     def down(self) -> int:

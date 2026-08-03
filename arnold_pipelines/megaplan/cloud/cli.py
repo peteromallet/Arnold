@@ -6,6 +6,7 @@ import argparse
 import base64
 import contextlib
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -6956,6 +6957,38 @@ def _try_provider_method(provider, method_name: str, *args: Any, **kwargs: Any) 
     return {"status": "unknown", "payload": result}
 
 
+def _provider_plan_status_payload(
+    provider: Any,
+    *,
+    plan: str,
+    workspace: str,
+    session: str,
+) -> dict[str, Any]:
+    """Read plan status, passing cloud identity only to aware providers.
+
+    ``session`` was added to the provider contract so the remote Megaplan
+    runtime can emit a canonical current-target observation.  Signature
+    inspection preserves third-party/read-only provider doubles while keeping
+    the production SSH route explicit; no TypeError fallback can mask a real
+    provider bug.
+    """
+
+    method = getattr(provider, "status_payload", None)
+    kwargs: dict[str, Any] = {"plan": plan, "workspace": workspace}
+    if method is not None:
+        try:
+            parameters = inspect.signature(method).parameters.values()
+        except (TypeError, ValueError):
+            parameters = ()
+        if any(
+            parameter.name == "session"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        ):
+            kwargs["session"] = session
+    return _try_provider_method(provider, "status_payload", **kwargs)
+
+
 def _classify_effective_status(
     chain_state: Any,
     effective: dict[str, Any],
@@ -7323,6 +7356,113 @@ def _active_step_evidence_from_plan_status(plan_status: Mapping[str, Any]) -> di
     }
 
 
+def _canonical_runner_from_plan_status(
+    plan_status: Mapping[str, Any],
+    *,
+    session: str,
+    workspace: str,
+    remote_spec: str,
+    plan_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Project runner state only from the exact resolved current target.
+
+    Raw tmux and process probes are intentionally absent from this function.
+    They are observer diagnostics and cannot grant or veto control authority.
+    """
+
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        control_liveness_from_current_target,
+    )
+
+    target = plan_status.get("current_target")
+    target = target if isinstance(target, Mapping) else {}
+    refs = target.get("current_refs")
+    refs = refs if isinstance(refs, Mapping) else {}
+    marker = target.get("marker")
+    marker = marker if isinstance(marker, Mapping) else {}
+    target_plan = target.get("plan_state")
+    target_plan = target_plan if isinstance(target_plan, Mapping) else {}
+
+    mismatches: list[str] = []
+    if not target:
+        mismatches.append("current_target_missing")
+    if str(target.get("target_session") or target.get("session") or "") != session:
+        mismatches.append("session_mismatch")
+    if marker.get("present") is not True:
+        mismatches.append("marker_missing")
+    if str(marker.get("session") or "") != session:
+        mismatches.append("marker_session_mismatch")
+    if str(refs.get("workspace") or marker.get("workspace") or "") != workspace:
+        mismatches.append("workspace_mismatch")
+    if str(refs.get("remote_spec") or marker.get("remote_spec") or "") != remote_spec:
+        mismatches.append("remote_spec_mismatch")
+    if str(refs.get("current_plan_name") or "") != plan_name:
+        mismatches.append("current_plan_mismatch")
+    if target_plan.get("present") is not True:
+        mismatches.append("plan_state_missing")
+    if str(target_plan.get("name") or "") != plan_name:
+        mismatches.append("plan_state_name_mismatch")
+
+    liveness = control_liveness_from_current_target(target, action="mutation")
+    if not mismatches and liveness.get("action_permitted") is True:
+        source = str(liveness.get("source") or "")
+        identity = liveness.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        lease = liveness.get("lease")
+        lease = lease if isinstance(lease, Mapping) else {}
+        if source == "matched_local_process_identity":
+            required = (
+                identity.get("pid"),
+                identity.get("pid_namespace_id"),
+                identity.get("process_start_identity"),
+            )
+            if not all(required):
+                mismatches.append("local_process_incarnation_incomplete")
+        elif source == "fresh_owner_lease":
+            required = (
+                lease.get("target_pid"),
+                lease.get("runner_container_id"),
+                lease.get("pid_namespace_id"),
+                lease.get("target_process_start_identity"),
+                lease.get("run_id"),
+                lease.get("attempt_id"),
+                lease.get("incarnation_id"),
+                lease.get("runner_fence"),
+            )
+            if not all(value is not None and str(value) for value in required):
+                mismatches.append("owner_lease_incarnation_incomplete")
+        else:
+            mismatches.append("unsupported_liveness_authority_source")
+    if mismatches:
+        liveness = control_liveness_from_current_target(None, action="mutation")
+        liveness["reason"] = "current target did not match the exact chain target"
+        liveness["diagnostics"] = mismatches
+
+    state = str(liveness.get("state") or "unknown")
+    action_permitted = bool(liveness.get("action_permitted") is True)
+    exact_target = not mismatches
+    runner_identity = liveness.get("identity")
+    runner_identity = runner_identity if isinstance(runner_identity, Mapping) else {}
+    runner = {
+        "status": state if state in {"alive", "dead"} else "unknown",
+        "state": state,
+        "authority": "canonical_current_target",
+        "exact_target": exact_target,
+        "mutation_permitted": bool(exact_target and action_permitted),
+        "session": session,
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "plan_name": plan_name,
+        "reason": str(liveness.get("reason") or ""),
+        "identity": dict(runner_identity),
+    }
+    # The current-target liveness vocabulary is live/dead/unknown, whereas
+    # the longstanding runner surface uses alive/dead/unknown.
+    if state == "live":
+        runner["status"] = "alive"
+    return runner, liveness
+
+
 def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status --chain`."""
     from arnold_pipelines.megaplan import chain as chain_module
@@ -7385,22 +7525,29 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     # Plan status via provider.status_payload when a current plan exists.
     plan_status: dict[str, Any]
     if chain_state.current_plan_name:
-        plan_status = _try_provider_method(
+        plan_status = _provider_plan_status_payload(
             provider,
-            "status_payload",
             plan=chain_state.current_plan_name,
             workspace=resolved_workspace,
+            session=resolved_session,
         )
     else:
         plan_status = {"status": "missing", "reason": "no current plan"}
     latest_failure = _latest_failure_from_plan_status(plan_status)
 
-    # Runner / heartbeat info via optional ssh_exec probe. Prefer explicit tmux
-    # liveness but fall back to matching chain process evidence because tmux can
-    # disappear while the chain runner and its child worker remain alive.
-    tmux_evidence: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
-    process_evidence: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
-    runner: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
+    # Raw tmux/process evidence remains useful to an operator, but is never
+    # projected into canonical runner liveness.  Only the remote resolver's
+    # exact current-target record below can authorize control decisions.
+    tmux_evidence: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": "runner probe not implemented",
+        "authoritative": False,
+    }
+    process_evidence: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": "runner probe not implemented",
+        "authoritative": False,
+    }
     try:
         ssh_meth = getattr(provider, "ssh_exec", None)
         if ssh_meth is not None:
@@ -7419,39 +7566,61 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
             )
             stdout = proc.stdout or ""
             if proc.returncode == 0 and "tmux_alive" in stdout:
-                tmux_evidence = {"status": "alive", "session": resolved_session}
-                process_evidence = {"status": "unknown", "remote_spec": remote_spec}
-                runner = {
+                tmux_evidence = {
                     "status": "alive",
                     "session": resolved_session,
-                    "detail": "tmux session present",
-                    "tmux_status": tmux_evidence["status"],
-                    "process_status": process_evidence["status"],
+                    "authoritative": False,
+                }
+                process_evidence = {
+                    "status": "unknown",
+                    "remote_spec": remote_spec,
+                    "authoritative": False,
                 }
             elif proc.returncode == 0 and "process_alive" in stdout:
-                tmux_evidence = {"status": "missing", "session": resolved_session}
-                process_evidence = {"status": "alive", "remote_spec": remote_spec}
-                runner = {
-                    "status": "alive",
+                tmux_evidence = {
+                    "status": "missing",
                     "session": resolved_session,
-                    "detail": "matching chain process present; tmux session absent",
-                    "tmux_status": tmux_evidence["status"],
-                    "process_status": process_evidence["status"],
+                    "authoritative": False,
+                }
+                process_evidence = {
+                    "status": "alive",
+                    "remote_spec": remote_spec,
+                    "authoritative": False,
                 }
             else:
-                tmux_evidence = {"status": "missing", "session": resolved_session}
-                process_evidence = {"status": "dead", "remote_spec": remote_spec}
-                runner = {
-                    "status": "dead",
+                tmux_evidence = {
+                    "status": "missing",
                     "session": resolved_session,
-                    "detail": "tmux session absent and no matching chain process",
-                    "tmux_status": tmux_evidence["status"],
-                    "process_status": process_evidence["status"],
+                    "authoritative": False,
+                }
+                process_evidence = {
+                    "status": "dead",
+                    "remote_spec": remote_spec,
+                    "authoritative": False,
                 }
     except Exception as exc:
-        tmux_evidence = {"status": "unknown", "reason": str(exc), "session": resolved_session}
-        process_evidence = {"status": "unknown", "reason": str(exc), "remote_spec": remote_spec}
-        runner = {"status": "unknown", "reason": str(exc)}
+        tmux_evidence = {
+            "status": "unknown",
+            "reason": str(exc),
+            "session": resolved_session,
+            "authoritative": False,
+        }
+        process_evidence = {
+            "status": "unknown",
+            "reason": str(exc),
+            "remote_spec": remote_spec,
+            "authoritative": False,
+        }
+
+    runner, current_target_liveness = _canonical_runner_from_plan_status(
+        plan_status,
+        session=resolved_session,
+        workspace=resolved_workspace,
+        remote_spec=remote_spec,
+        plan_name=chain_state.current_plan_name or "",
+    )
+    runner["diagnostic_tmux_status"] = tmux_evidence.get("status")
+    runner["diagnostic_process_status"] = process_evidence.get("status")
 
     # Log paths (structured from the resolved workspace).
     chain_log_name = (
@@ -7571,6 +7740,10 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         "plan_status": plan_status,
         "latest_failure": latest_failure,
         "runner": runner,
+        "current_target": plan_status.get("current_target")
+        if isinstance(plan_status.get("current_target"), Mapping)
+        else {},
+        "current_target_liveness": current_target_liveness,
         "marker_evidence": marker_evidence,
         "tmux_evidence": tmux_evidence,
         "process_evidence": process_evidence,

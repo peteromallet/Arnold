@@ -159,7 +159,13 @@ class Provider(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def status_payload(self, *, plan: str | None, workspace: str) -> dict:
+    def status_payload(
+        self,
+        *,
+        plan: str | None,
+        workspace: str,
+        session: str | None = None,
+    ) -> dict:
         raise NotImplementedError
 
     @abc.abstractmethod

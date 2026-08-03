@@ -168,6 +168,35 @@ BLOCKED_REFUSAL_REASONS: dict[str, str] = {
 }
 
 
+def _canonical_runner_mutation_gate(
+    runner: Any,
+    *,
+    require_dead: bool,
+) -> tuple[bool, str]:
+    """Authorize supervisor effects only from the exact canonical target.
+
+    The cloud status payload deliberately carries tmux/``ps`` observations as
+    diagnostics.  This gate never reads them.  A known canonical live target
+    may authorize benign sync refresh, while restart/advance/wake additionally
+    require canonical death so a second runner cannot be created.
+    """
+
+    if not isinstance(runner, dict):
+        return False, "canonical current-target runner evidence is missing"
+    if runner.get("authority") != "canonical_current_target":
+        return False, "runner evidence is not canonical current-target authority"
+    if runner.get("exact_target") is not True:
+        return False, "canonical runner does not match the exact session/workspace/spec/plan"
+    if runner.get("mutation_permitted") is not True:
+        return False, "canonical current-target liveness is UNKNOWN or malformed"
+    state = str(runner.get("state") or "").lower()
+    if state not in {"live", "dead"}:
+        return False, "canonical current-target liveness is not known"
+    if require_dead and state != "dead":
+        return False, "canonical current target is live; duplicate launch refused"
+    return True, "canonical exact-target liveness permits mutation"
+
+
 def _supervisor_problem_signature(
     *, reason: str, current_plan_name: str
 ) -> dict[str, str]:
@@ -467,7 +496,14 @@ def cloud_supervise_tick(
     ssh_meth = getattr(provider, "ssh_exec", None)
     sync_refresh: dict[str, Any] = {"status": "skipped", "reason": "no ssh_exec"}
     sync_refreshed = False
-    if ssh_meth is not None and feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+    sync_liveness_ok, sync_liveness_reason = _canonical_runner_mutation_gate(
+        runner, require_dead=False
+    )
+    if (
+        ssh_meth is not None
+        and feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)
+        and sync_liveness_ok
+    ):
         try:
             chain_state_raw = payload.get("chain_state", {})
             pr_number_raw = (
@@ -493,10 +529,17 @@ def cloud_supervise_tick(
         except Exception as exc:
             # Sync refresh failure is now visible in the tick report.
             sync_refresh = {"status": "failed", "reason": str(exc)}
-    elif ssh_meth is not None:
+    elif ssh_meth is not None and not feature_flags.mutation_authorized(
+        feature_flags.MUTATION_PATH_L1
+    ):
         sync_refresh = {
             "status": "blocked",
             "reason": "L1 mutation authorization required for remote sync-state refresh",
+        }
+    elif ssh_meth is not None:
+        sync_refresh = {
+            "status": "blocked",
+            "reason": sync_liveness_reason,
         }
 
     # ------------------------------------------------------------------
@@ -706,6 +749,30 @@ def cloud_supervise_tick(
 
         if pr_state_output == "merged":
             # PR merged — advance with one-shot tick
+            liveness_ok, liveness_reason = _canonical_runner_mutation_gate(
+                runner, require_dead=True
+            )
+            if not liveness_ok:
+                return _report(
+                    success=True,
+                    event="supervisor_blocked",
+                    spec=remote_spec,
+                    effective_status=status,
+                    next_action="blocked",
+                    acted=False,
+                    refused_reason=(
+                        "merged PR cannot advance without canonical exact-target "
+                        f"dead liveness: {liveness_reason}"
+                    ),
+                    runner=runner,
+                    sync=sync_info,
+                    pr=pr_info,
+                    logs=logs_info,
+                    sync_refresh=sync_refresh,
+                    provider_consistency=provider_consistency,
+                    extra_repo_sync=extra_repo_sync_info,
+                    human_verification=human_verification,
+                )
             if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
                 return l1_mutation_blocked_report("merged PR eligible for advance")
             try:
@@ -773,8 +840,10 @@ def cloud_supervise_tick(
 
     # --- stale_bookkeeping with dead/missing runner → restart ---
     if status == "stale_bookkeeping":
-        runner_status = runner.get("status", "unavailable") if isinstance(runner, dict) else "unavailable"
-        if runner_status in ("dead", "unavailable") and ssh_meth is not None:
+        liveness_ok, liveness_reason = _canonical_runner_mutation_gate(
+            runner, require_dead=True
+        )
+        if liveness_ok and ssh_meth is not None:
             if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
                 return l1_mutation_blocked_report("stale bookkeeping eligible for restart")
             try:
@@ -818,14 +887,11 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
         else:
-            # Runner alive but bookkeeping stale, or no ssh_exec — blocked
+            # Canonical target is live/unknown, or no ssh_exec — blocked.
             if ssh_meth is None:
                 reason = "stale bookkeeping but provider lacks ssh_exec; cannot restart runner"
             else:
-                reason = (
-                    f"stale bookkeeping but runner status is '{runner_status}'; "
-                    "supervisor will not force-restart a live runner"
-                )
+                reason = f"stale bookkeeping restart refused: {liveness_reason}"
             return _report(
                 success=True,
                 event="supervisor_blocked",
@@ -903,12 +969,10 @@ def cloud_supervise_tick(
 
         # (c) All deferred-must criteria verified by latest ``pass`` records
         #     AND the resolved runner session is dead / unavailable → wake
-        runner_status = (
-            runner.get("status", "unavailable")
-            if isinstance(runner, dict)
-            else "unavailable"
+        liveness_ok, liveness_reason = _canonical_runner_mutation_gate(
+            runner, require_dead=True
         )
-        if runner_status in ("dead", "unavailable") and ssh_meth is not None:
+        if liveness_ok and ssh_meth is not None:
             if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
                 return l1_mutation_blocked_report("verified runner eligible for wake")
             try:
@@ -957,7 +1021,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
 
-        # (d) All verified AND runner is alive → noop / running
+        # (d) All verified but target is live/unknown → no mutation.
         if ssh_meth is None:
             return _report(
                 success=True,
@@ -969,6 +1033,27 @@ def cloud_supervise_tick(
                 refused_reason=(
                     "all human-verification criteria satisfied but provider "
                     "lacks ssh_exec; cannot wake runner"
+                ),
+                runner=runner,
+                sync=sync_info,
+                pr=pr_info,
+                logs=logs_info,
+                sync_refresh=sync_refresh,
+                provider_consistency=provider_consistency,
+                extra_repo_sync=extra_repo_sync_info,
+                human_verification=human_verification,
+            )
+        if not liveness_ok:
+            return _report(
+                success=True,
+                event="supervisor_blocked",
+                spec=remote_spec,
+                effective_status=status,
+                next_action="blocked",
+                acted=False,
+                refused_reason=(
+                    "human-verification wake refused without canonical exact-target "
+                    f"dead liveness: {liveness_reason}"
                 ),
                 runner=runner,
                 sync=sync_info,
