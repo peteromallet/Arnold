@@ -184,6 +184,42 @@ def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
         os.close(fd)
 
 
+def _prepare_zero_recovery_schema_input(schema_file: Path) -> None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return
+    if os.geteuid() != 0:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary schema grant requires the trusted root harness",
+        )
+    schema_stat = os.lstat(schema_file)
+    if (
+        not stat.S_ISREG(schema_stat.st_mode)
+        or schema_stat.st_nlink != 1
+        or schema_stat.st_uid != 0
+        or schema_stat.st_gid != 0
+        or schema_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary schema is not root-owned immutable data",
+        )
+    os.chmod(schema_file, 0o644, follow_symlinks=False)
+    granted = os.lstat(schema_file)
+    if (
+        (granted.st_dev, granted.st_ino) != (schema_stat.st_dev, schema_stat.st_ino)
+        or not stat.S_ISREG(granted.st_mode)
+        or granted.st_nlink != 1
+        or granted.st_uid != 0
+        or granted.st_gid != 0
+        or stat.S_IMODE(granted.st_mode) != 0o644
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary schema read-only grant did not seal exact identity",
+        )
+
+
 def _prepare_zero_recovery_model_runtime(
     *, step: str, plan_dir: Path, output_path: Path
 ) -> dict[str, Any] | None:
@@ -4736,6 +4772,7 @@ def _run_codex_step_uncapped(
             output_path=output_path,
             include_cpu_signal=not strict_structured_liveness,
         )
+        _prepare_zero_recovery_schema_input(schema_file)
         worker_plan_before = _zero_recovery_plan_snapshot(
             root, plan_dir, output_path=output_path
         )

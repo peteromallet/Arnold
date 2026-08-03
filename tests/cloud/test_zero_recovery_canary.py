@@ -49,6 +49,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     _codex_step_cost,
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
+    _prepare_zero_recovery_schema_input,
     _reclaim_zero_recovery_tree,
     run_command,
     _zero_recovery_global_scratch_observation,
@@ -2033,6 +2034,73 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     reclaim_end = source.index("\ndef _zero_recovery_runtime_usage", reclaim_start)
     reclaim = source[reclaim_start:reclaim_end]
     assert reclaim.index("os.chown(path, 0, 0") < reclaim.index("with os.scandir(path)")
+
+
+def test_zero_recovery_schema_grant_is_exact_root_owned_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    schema = tmp_path / "plan.json"
+    schema.write_text("{}\n", encoding="utf-8")
+    real_lstat = os.lstat
+    identity = real_lstat(schema)
+    mode = 0o600
+
+    def fake_lstat(path: os.PathLike[str] | str) -> SimpleNamespace | os.stat_result:
+        if Path(path) != schema:
+            return real_lstat(path)
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | mode,
+            st_nlink=1,
+            st_uid=0,
+            st_gid=0,
+            st_dev=identity.st_dev,
+            st_ino=identity.st_ino,
+        )
+
+    def fake_chmod(
+        path: os.PathLike[str] | str,
+        granted_mode: int,
+        *,
+        follow_symlinks: bool,
+    ) -> None:
+        nonlocal mode
+        assert Path(path) == schema
+        assert follow_symlinks is False
+        mode = granted_mode
+
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    monkeypatch.setattr(os, "chmod", fake_chmod)
+
+    _prepare_zero_recovery_schema_input(schema)
+    assert mode == 0o644
+
+
+def test_zero_recovery_schema_grant_rejects_writable_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    schema = tmp_path / "plan.json"
+    schema.write_text("{}\n", encoding="utf-8")
+    identity = os.lstat(schema)
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        os,
+        "lstat",
+        lambda _path: SimpleNamespace(
+            st_mode=stat.S_IFREG | 0o666,
+            st_nlink=1,
+            st_uid=0,
+            st_gid=0,
+            st_dev=identity.st_dev,
+            st_ino=identity.st_ino,
+        ),
+    )
+    with pytest.raises(CliError, match="root-owned immutable"):
+        _prepare_zero_recovery_schema_input(schema)
 
 
 def test_zero_recovery_runtime_accounts_for_and_seals_inert_unix_socket(
