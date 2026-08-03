@@ -379,12 +379,16 @@ def _reclaim_zero_recovery_tree(path: Path) -> None:
             f"model runtime contains a hard-linked file: {path}",
         )
     if stat.S_ISDIR(current.st_mode):
+        # The trusted harness has CHOWN but deliberately lacks DAC_OVERRIDE.
+        # After UID process emptiness is proven, take ownership of the
+        # directory before recursing so an ephemeral symlink entry can be
+        # unlinked from its formerly model-owned 0700 parent.
+        os.chown(path, 0, 0, follow_symlinks=False)
+        os.chmod(path, 0o700, follow_symlinks=False)
         with os.scandir(path) as entries:
             children = [Path(entry.path) for entry in entries]
         for child in children:
             _reclaim_zero_recovery_tree(child)
-        os.chown(path, 0, 0, follow_symlinks=False)
-        os.chmod(path, 0o700, follow_symlinks=False)
     else:
         os.chown(path, 0, 0, follow_symlinks=False)
         os.chmod(path, 0o600, follow_symlinks=False)
