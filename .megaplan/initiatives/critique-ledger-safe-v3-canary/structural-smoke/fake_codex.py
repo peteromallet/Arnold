@@ -49,6 +49,31 @@ function firstGateActions() {
   }));
 }
 
+function critiqueResolutionCoverage(output) {
+  const clearancePath = path.join(path.dirname(output), "critique_clearance.json");
+  let clearance;
+  try {
+    clearance = JSON.parse(fs.readFileSync(clearancePath, "utf8"));
+  } catch (error) {
+    throw new Error(`fake codex finalize requires valid ${clearancePath}: ${error.message}`);
+  }
+  const findingIds = clearance.finding_ids;
+  if (
+    clearance.admitted !== true
+    || !Array.isArray(findingIds)
+    || findingIds.some((findingId) => typeof findingId !== "string" || findingId.length === 0)
+    || new Set(findingIds).size !== findingIds.length
+    || clearance.finding_count !== findingIds.length
+  ) {
+    throw new Error(`fake codex finalize requires valid ${clearancePath}`);
+  }
+  return findingIds.map((findingId) => ({
+    finding_id: findingId,
+    task_ids: ["SMOKE-1"],
+    resolution_evidence: "SMOKE-1 exercises the bounded plan requirement admitted by critique clearance.",
+  }));
+}
+
 function payload(schemaName, output) {
   if (schemaName === "plan.json") {
     return {
@@ -208,7 +233,7 @@ function payload(schemaName, output) {
       sense_checks: [],
       user_actions: [],
       meta_commentary: "Offline structural smoke only.",
-      critique_resolution_coverage: [],
+      critique_resolution_coverage: critiqueResolutionCoverage(output),
     };
     if (schemaName === "finalize_capture.json") {
       return captured;
