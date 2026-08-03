@@ -43,6 +43,7 @@ from arnold_pipelines.megaplan._core import (
     active_phase_name,
     find_plan_dir,
     list_batch_artifacts,
+    plan_lock,
     sha256_file,
 )
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
@@ -50,7 +51,13 @@ from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
 )
-from arnold_pipelines.megaplan._core.phase_runtime import _pid_alive
+from arnold_pipelines.megaplan._core.phase_runtime import (
+    WORKER_DEAD,
+    WORKER_LIVE,
+    WORKER_UNKNOWN,
+    active_step_cas_token,
+    observe_active_step_worker,
+)
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from arnold_pipelines.megaplan.runtime.process import kill_group
@@ -2852,8 +2859,75 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
     # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json"
     try:
-        with state_path.open(encoding="utf-8") as handle:
-            state_data = json.load(handle)
+        with plan_lock(plan_dir, step="auto-recover-execute-callback"):
+            with state_path.open(encoding="utf-8") as handle:
+                state_data = json.load(handle)
+            return _recover_execute_callback_failure_state_locked(plan_dir, state_data)
+    except FileNotFoundError:
+        return False
+    except json.JSONDecodeError:
+        _warn_read_fallback(
+            "M3A_WARN_CALLBACK_RECOVERY_READ",
+            path=state_path,
+            reason="corrupt_json",
+        )
+        return False
+    except (CliError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        _warn_read_fallback(
+            "M3A_WARN_CALLBACK_RECOVERY_READ",
+            path=state_path,
+            reason="unreadable_or_locked",
+        )
+        return False
+
+
+def _active_step_recovery_snapshot(
+    state_data: Mapping[str, Any],
+    *,
+    expected_phase: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return a mutation fence only when persisted custody is absent or dead.
+
+    Artifact authority can prove that work completed, but it cannot prove that
+    a persisted worker occurrence is no longer running.  A LIVE or UNKNOWN
+    occurrence therefore retains custody; only an exact DEAD observation may
+    be recovered.  Callers must hold ``plan_lock`` while using the returned
+    snapshot and compare it again in their state mutation.
+    """
+
+    active_step = state_data.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return True, None
+    snapshot = dict(active_step)
+    if active_phase_name(snapshot) != expected_phase:
+        return False, snapshot
+    observation = observe_active_step_worker(snapshot)
+    if observation.state != WORKER_DEAD:
+        return False, snapshot
+    return True, snapshot
+
+
+def _active_step_snapshot_matches(
+    current: Mapping[str, Any],
+    expected: Mapping[str, Any] | None,
+) -> bool:
+    live = current.get("active_step")
+    if expected is None:
+        return not isinstance(live, Mapping)
+    return (
+        isinstance(live, Mapping)
+        and dict(live) == dict(expected)
+        and active_step_cas_token(live) == active_step_cas_token(expected)
+    )
+
+
+def _recover_execute_callback_failure_state_locked(
+    plan_dir: Path,
+    state_data: object,
+) -> bool:
+    """Locked implementation for callback recovery."""
+
+    try:
         if not isinstance(state_data, dict):
             return False
         if state_data.get("current_state") != STATE_FAILED:
@@ -2900,31 +2974,34 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
                 return False
         if not (plan_dir / "execution.json").exists():
             return False
+        recovery_allowed, expected_active = _active_step_recovery_snapshot(
+            state_data,
+            expected_phase="execute",
+        )
+        if not recovery_allowed:
+            return False
         next_state = (
             STATE_EXECUTED if execute_result == "success" else STATE_FINALIZED
         )
+        changed = False
+
+        def _patch(current: dict[str, Any]) -> bool:
+            nonlocal changed
+            if not _active_step_snapshot_matches(current, expected_active):
+                return False
+            current["current_state"] = next_state
+            current.pop("active_step", None)
+            changed = True
+            return True
+
         write_plan_state(
             plan_dir,
             mode="patch-many",
-            patch={"current_state": next_state, "active_step": None},
-            mutation=lambda current: (current.pop("active_step", None), True)[1],
+            patch={},
+            mutation=_patch,
         )
-        return True
-    except FileNotFoundError:
-        return False
-    except json.JSONDecodeError:
-        _warn_read_fallback(
-            "M3A_WARN_CALLBACK_RECOVERY_READ",
-            path=state_path,
-            reason="corrupt_json",
-        )
-        return False
-    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
-        _warn_read_fallback(
-            "M3A_WARN_CALLBACK_RECOVERY_READ",
-            path=state_path,
-            reason="unreadable",
-        )
+        return changed
+    except (CliError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
         return False
 
 
@@ -2941,6 +3018,16 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
 
     if plan_dir is None:
         return False
+    try:
+        with plan_lock(plan_dir, step="auto-recover-execute-artifacts"):
+            return _recover_completed_execute_artifacts_after_failure_locked(plan_dir)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return False
+
+
+def _recover_completed_execute_artifacts_after_failure_locked(plan_dir: Path) -> bool:
+    """Locked implementation for completed-execute adoption."""
+
     state_path = plan_dir / "state.json"
     try:
         state_data = json.loads(state_path.read_text(encoding="utf-8"))
@@ -2950,11 +3037,12 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
         return False
     if state_data.get("current_state") != STATE_FINALIZED:
         return False
-    active_step = state_data.get("active_step")
-    if isinstance(active_step, dict):
-        active_phase = active_phase_name(active_step)
-        if active_phase and active_phase != "execute":
-            return False
+    recovery_allowed, _expected_active = _active_step_recovery_snapshot(
+        state_data,
+        expected_phase="execute",
+    )
+    if not recovery_allowed:
+        return False
     if not (plan_dir / "execution.json").exists():
         return False
     if _latest_review_requires_rework_after_execution(plan_dir):
@@ -2985,17 +3073,28 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
     if plan_dir is None:
         return False
     try:
+        with plan_lock(plan_dir, step="auto-recover-gate-artifact"):
+            return _recover_completed_gate_artifact_after_failure_locked(plan_dir)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return False
+
+
+def _recover_completed_gate_artifact_after_failure_locked(plan_dir: Path) -> bool:
+    """Locked implementation for completed-gate adoption."""
+
+    try:
         state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         gate_data = json.loads((plan_dir / "gate.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return False
     if not isinstance(state_data, dict) or state_data.get("current_state") != STATE_CRITIQUED:
         return False
-    active_step = state_data.get("active_step")
-    if isinstance(active_step, dict):
-        active_phase = active_phase_name(active_step)
-        if active_phase and active_phase != "gate":
-            return False
+    recovery_allowed, expected_active = _active_step_recovery_snapshot(
+        state_data,
+        expected_phase="gate",
+    )
+    if not recovery_allowed:
+        return False
     if not isinstance(gate_data, dict):
         return False
     if gate_data.get("recommendation") != "PROCEED" or gate_data.get("passed") is not True:
@@ -3063,7 +3162,12 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
                 except OSError:
                     return False
 
+    changed = False
+
     def _patch(current: dict[str, Any]) -> bool:
+        nonlocal changed
+        if not _active_step_snapshot_matches(current, expected_active):
+            return False
         current["current_state"] = STATE_GATED
         current.pop("active_step", None)
         current.setdefault("meta", {})["gate_artifact_recovery"] = {
@@ -3072,15 +3176,16 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
             "critique_custody_receipt": custody_path.name,
             "critique_custody_sha256": custody_digest,
         }
+        changed = True
         return True
 
     write_plan_state(
         plan_dir,
         mode="patch-many",
-        patch={"current_state": STATE_GATED, "active_step": None},
+        patch={},
         mutation=_patch,
     )
-    return True
+    return changed
 
 
 def _latest_review_requires_rework_after_execution(plan_dir: Path) -> bool:
@@ -3401,14 +3506,14 @@ def _clear_orphaned_active_step(
     plan_dir: Path | None,
     expected_step: str,
     *,
+    expected_active_step: Mapping[str, Any] | None = None,
     quarantine: bool = True,
 ) -> bool:
     """Strip an orphaned ``active_step`` from ``state.json`` in place.
 
-    Returns True iff the cleanup actually wrote a change. The expected step
-    name is used purely as a safety check — if state.json's ``active_step``
-    no longer matches (because some other actor cleared it), we leave it
-    alone rather than racing with a healthy phase.
+    Returns True iff the cleanup won an exact compare-and-swap. The expected
+    step plus full active-occurrence snapshot (run, invocation, incarnation,
+    lease/fence, heartbeat) prevent racing a concurrent resume or replacement.
 
     ``quarantine`` controls whether ``<step>_output.json`` is renamed aside.
     Dead-worker orphans still quarantine half-written outputs; completed
@@ -3452,12 +3557,25 @@ def _clear_orphaned_active_step(
     recorded_step = active_phase_name(current_active)
     if recorded_step != expected_step:
         return False
-    quarantined = (
-        _quarantine_phase_outputs(plan_dir, expected_step) if quarantine else []
-    )
+    expected_snapshot = dict(expected_active_step or current_active)
+    expected_token = active_step_cas_token(expected_snapshot)
+    quarantined: list[str] = []
+    cleared = False
 
     def _patch_orphan_recovery(current: dict[str, Any]) -> bool:
+        nonlocal cleared
+        live_active = current.get("active_step")
+        if not isinstance(live_active, dict):
+            return False
+        if (
+            live_active != expected_snapshot
+            or active_step_cas_token(live_active) != expected_token
+        ):
+            return False
+        if quarantine:
+            quarantined.extend(_quarantine_phase_outputs(plan_dir, expected_step))
         changed = current.pop("active_step", None) is not None
+        cleared = changed
         if quarantined:
             meta = current.setdefault("meta", {})
             if isinstance(meta, dict):
@@ -3465,6 +3583,7 @@ def _clear_orphaned_active_step(
                 if isinstance(history, list):
                     history.append({
                         "step": expected_step,
+                        "active_step_cas": expected_token,
                         "quarantined": list(quarantined),
                     })
                     changed = True
@@ -3484,7 +3603,71 @@ def _clear_orphaned_active_step(
             f"M3B_HALT_ORPHAN_CLEAR_WRITE: failed to clear orphaned active_step in {state_path}: {exc}",
             extra={"path": str(state_path), "expected_step": expected_step},
         ) from exc
-    return True
+    return cleared
+
+
+def _clear_completed_active_step(
+    plan_dir: Path | None,
+    expected_step: str,
+    result: object | None,
+) -> bool:
+    """Clear only the exact occurrence acknowledged by ``PhaseResult``.
+
+    The phase subprocess normally clears its own occurrence.  This fallback
+    covers the narrow crash-after-result seam, but must never erase a newer
+    resume/replacement that claimed the same phase name.  The invocation id is
+    the result-to-occurrence binding; the full snapshot token is the CAS fence.
+    """
+
+    if (
+        plan_dir is None
+        or result is None
+        or getattr(result, "phase", None) != expected_step
+    ):
+        return False
+    result_invocation = getattr(result, "invocation_id", None)
+    if not isinstance(result_invocation, str) or not result_invocation:
+        return False
+    try:
+        with plan_lock(plan_dir, step=f"auto-clear-completed-{expected_step}"):
+            state_data = _read_state_data(plan_dir)
+            if not isinstance(state_data, dict):
+                return False
+            active_step = state_data.get("active_step")
+            if not isinstance(active_step, Mapping):
+                return False
+            expected_active = dict(active_step)
+            if (
+                active_phase_name(expected_active) != expected_step
+                or expected_active.get("invocation_id") != result_invocation
+            ):
+                return False
+            expected_token = active_step_cas_token(expected_active)
+            changed = False
+
+            def _patch(current: dict[str, Any]) -> bool:
+                nonlocal changed
+                live_active = current.get("active_step")
+                if (
+                    not isinstance(live_active, Mapping)
+                    or dict(live_active) != expected_active
+                    or active_step_cas_token(live_active) != expected_token
+                ):
+                    return False
+                current.pop("active_step", None)
+                changed = True
+                return True
+
+            write_plan_state(
+                plan_dir,
+                mode="patch-many",
+                patch={},
+                mutation=_patch,
+                validate_current_state=False,
+            )
+            return changed
+    except (CliError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -4513,17 +4696,7 @@ def drive(
         return code, out, err, result
 
     def _clear_completed_phase_active_step(next_step: str, result: object | None) -> None:
-        if plan_dir is None or result is None or getattr(result, "phase", None) != next_step:
-            return
-        try:
-            write_plan_state(
-                plan_dir,
-                mode="patch-many",
-                patch={"active_step": None},
-                mutation=lambda current: (current.pop("active_step", None), True)[1],
-            )
-        except Exception:
-            return
+        _clear_completed_active_step(plan_dir, next_step, result)
 
     def _outcome(
         status: str,
@@ -4945,36 +5118,53 @@ def drive(
             )
 
         active_step = status.get("active_step")
+        persisted_state_for_active = _read_state_data(plan_dir) or {}
+        persisted_active_step = persisted_state_for_active.get("active_step")
+        if isinstance(persisted_active_step, Mapping):
+            # state.json is custody authority.  A stale or degraded status
+            # projection must not hide a persisted occurrence and thereby
+            # bypass the LIVE/UNKNOWN redispatch prohibition.
+            active_step = dict(persisted_active_step)
+        else:
+            persisted_active_step = active_step if isinstance(active_step, Mapping) else None
         orphan_actions = {
             "resume_or_recover",
             "rerun_same_step",
             "rerun_execute",
             "terminate_idle_step",
         }
-        # A cached "wait" verdict can mask a worker that has since died.
-        # build_phase_observability probes pid liveness for the status view, but
-        # this driver wait path historically did not. If the recorded worker is
-        # no longer alive, reclassify to resume_or_recover so the orphan-recovery
-        # block below clears and re-dispatches, instead of waiting forever on a
-        # dead process (the dead-worker wedge).
+        worker_observation_state: str | None = None
+        # A PID is meaningful only inside the runner incarnation that recorded
+        # it.  Same-namespace processes are bound by PID + process start
+        # identity; foreign namespaces require the exact shared runner lease.
+        # UNKNOWN is deliberately non-actionable and therefore cannot cause a
+        # duplicate dispatch.
         if isinstance(active_step, dict):
-            _recorded_worker_pid = active_step.get("worker_pid")
-            if _recorded_worker_pid is not None:
-                try:
-                    _worker_alive = _pid_alive(int(_recorded_worker_pid))
-                except (TypeError, ValueError):
-                    _worker_alive = True
-                if not _worker_alive:
-                    active_step["recommended_action"] = "resume_or_recover"
-                    active_step.setdefault("health", "dead")
-                    active_step["worker_pid_alive"] = False
-                    active_step["recommended_action_reason"] = (
-                        f"active step's recorded worker (pid={_recorded_worker_pid}) "
-                        "is no longer alive; recovering instead of waiting"
-                    )
+            worker_observation = observe_active_step_worker(
+                persisted_active_step or active_step
+            )
+            worker_observation_state = worker_observation.state
+            active_step["worker_liveness"] = worker_observation.state
+            active_step["worker_liveness_reason"] = worker_observation.reason
+            if worker_observation.state == WORKER_DEAD:
+                active_step["recommended_action"] = "resume_or_recover"
+                active_step["health"] = "dead"
+                active_step["recommended_action_reason"] = worker_observation.reason
+            elif worker_observation.state == WORKER_LIVE:
+                active_step["recommended_action"] = "wait"
+                active_step["health"] = "healthy"
+                active_step["recommended_action_reason"] = worker_observation.reason
+            elif worker_observation.state == WORKER_UNKNOWN:
+                active_step["recommended_action"] = "wait"
+                active_step["health"] = "unknown"
+                active_step["recommended_action_reason"] = (
+                    f"worker liveness is UNKNOWN: {worker_observation.reason}; "
+                    "redispatch is forbidden until exact death or replacement is proven"
+                )
         if (
             isinstance(active_step, dict)
             and active_step.get("recommended_action") not in orphan_actions
+            and worker_observation_state not in {WORKER_LIVE, WORKER_UNKNOWN}
         ):
             is_stale, idle_seconds = _active_step_last_activity_stale(
                 active_step,
@@ -5021,10 +5211,21 @@ def drive(
                             log=log,
                             outcome=_outcome,
                         )
-                _clear_orphaned_active_step(
-                    plan_dir, active_name, quarantine=False
+                cleared = _clear_orphaned_active_step(
+                    plan_dir,
+                    active_name,
+                    expected_active_step=persisted_active_step,
+                    quarantine=False,
                 )
-                active_step = None
+                if cleared:
+                    active_step = None
+                else:
+                    log(
+                        f"active step '{active_name}' changed during completed-phase recovery; "
+                        "refusing redispatch until the new occurrence is observed"
+                    )
+                    iteration -= 1
+                    continue
 
         if (
             isinstance(active_step, dict)
@@ -5082,7 +5283,18 @@ def drive(
                 recommended_action=active_step.get("recommended_action"),
                 health=active_step.get("health"),
             )
-            _clear_orphaned_active_step(plan_dir, orphan_step)
+            cleared = _clear_orphaned_active_step(
+                plan_dir,
+                orphan_step,
+                expected_active_step=persisted_active_step,
+            )
+            if not cleared:
+                log(
+                    f"active step '{orphan_step}' changed during orphan recovery; "
+                    "exact CAS refused the clear and redispatch"
+                )
+                iteration -= 1
+                continue
 
         # Review-cycle progress: a fresh review.json means a real review
         # pass completed since the last iteration. This counts as forward
