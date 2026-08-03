@@ -91,7 +91,7 @@ on_escalate:
 merge_policy: auto
 driver:
   execution_binding: required
-  intended_initiative_revision: a290e57cb7
+  intended_initiative_revision: 8035f7e838
   initiative_path: .megaplan/initiatives/critique-ledger
   robustness: full
   phase_timeout: 10800
