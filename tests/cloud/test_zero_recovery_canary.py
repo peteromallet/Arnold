@@ -74,6 +74,11 @@ from arnold_pipelines.megaplan.cloud.spec import (
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
+from arnold_pipelines.megaplan.finite_canary_policy import (
+    ALLOWED_SUCCESS_ROUTES,
+    finite_canary_policy_allows_route,
+    finite_canary_policy_is_exact,
+)
 from arnold_pipelines.megaplan.chain.spec import (
     _finite_canary_dispatches_are_valid,
     _finite_canary_global_scratch_is_valid,
@@ -86,6 +91,62 @@ from arnold_pipelines.megaplan.chain.spec import (
     _finite_canary_fence_is_valid,
     _finite_canary_review_inputs_match,
 )
+
+
+def _finite_canary_policy() -> dict[str, object]:
+    return {
+        "allowed_success_routes": copy.deepcopy(ALLOWED_SUCCESS_ROUTES),
+        "max_revise_cycles": 1,
+        "max_gate_attempts": 2,
+        "finalize_requires": "PROCEED",
+    }
+
+
+@pytest.mark.parametrize("phases", ALLOWED_SUCCESS_ROUTES)
+def test_finite_canary_policy_accepts_exact_bounded_routes(
+    phases: list[str],
+) -> None:
+    policy = _finite_canary_policy()
+    assert finite_canary_policy_is_exact(policy)
+    assert finite_canary_policy_allows_route(policy, phases)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "tampered_value"),
+    [
+        ("missing_field", None),
+        ("tampered_revise_cycles", 2),
+        ("tampered_gate_attempts", 3),
+        ("tampered_finalize_requirement", "ITERATE"),
+        ("extra_route", None),
+    ],
+)
+def test_finite_canary_policy_mutations_fail_closed(
+    mutation: str, tampered_value: object
+) -> None:
+    policy = _finite_canary_policy()
+    if mutation == "missing_field":
+        policy.pop("max_gate_attempts")
+    elif mutation == "extra_route":
+        routes = policy["allowed_success_routes"]
+        assert isinstance(routes, list)
+        routes.append(["init", "plan", "critique", "gate", "revise", "finalize"])
+    else:
+        field = {
+            "tampered_revise_cycles": "max_revise_cycles",
+            "tampered_gate_attempts": "max_gate_attempts",
+            "tampered_finalize_requirement": "finalize_requires",
+        }[mutation]
+        policy[field] = tampered_value
+
+    assert not finite_canary_policy_is_exact(policy)
+
+
+def test_finite_canary_policy_rejects_completion_route_not_in_manifest() -> None:
+    assert not finite_canary_policy_allows_route(
+        _finite_canary_policy(),
+        ["init", "plan", "critique", "gate", "revise", "finalize"],
+    )
 
 
 def _bounded_run_contract(*, revised: bool) -> dict[str, object]:

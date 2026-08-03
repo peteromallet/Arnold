@@ -47,6 +47,12 @@ from arnold_pipelines.megaplan.profiles import (
     normalize_robustness,
 )
 from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.finite_canary_policy import (
+    DIRECT_SUCCESS_ROUTE,
+    ONE_REVISION_SUCCESS_ROUTE,
+    finite_canary_policy_allows_route,
+    finite_canary_policy_is_exact,
+)
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.anchors import resolve_anchor_path, validate_anchor_source
 
@@ -3015,10 +3021,8 @@ def _validate_chain_completed_precondition(
 
 
 _FINITE_CANARY_SCHEMA = "arnold.megaplan.finite_canary_receipt.v1"
-_FINITE_CANARY_PHASES = ["init", "plan", "critique", "gate", "finalize"]
-_FINITE_CANARY_REVISED_PHASES = [
-    "init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize",
-]
+_FINITE_CANARY_PHASES = list(DIRECT_SUCCESS_ROUTE)
+_FINITE_CANARY_REVISED_PHASES = list(ONE_REVISION_SUCCESS_ROUTE)
 _FINITE_CANARY_ROLES = {
     "canary_spec",
     "proof_map",
@@ -4382,8 +4386,14 @@ def _validate_finite_canary_receipt(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: canary spec is invalid: {exc}",
         ) from exc
+    canary_fields = {
+        "schema", "canary_id", "engine_commit", "engine_tree", "brief",
+        "north_star", "plan_name", "phases", "terminal_state", "model_spec",
+        "robustness", "adaptive_critique", "receipts", "policy",
+    }
     if (
         not isinstance(canary, dict)
+        or set(canary) != canary_fields
         or canary.get("schema") != "arnold.megaplan.finite_canary.v1"
         or canary.get("canary_id") != subject.get("canary_id")
         or canary.get("plan_name") != subject.get("plan_name")
@@ -4393,6 +4403,10 @@ def _validate_finite_canary_receipt(
         or canary.get("terminal_state") != "finalized"
         or canary.get("model_spec") != "codex:gpt-5.6-sol:high"
         or canary.get("adaptive_critique") is not False
+        or not finite_canary_policy_is_exact(canary.get("policy"))
+        or not finite_canary_policy_allows_route(
+            canary.get("policy"), payload.get("phases")
+        )
     ):
         raise CliError(
             "launch_precondition_failed",
