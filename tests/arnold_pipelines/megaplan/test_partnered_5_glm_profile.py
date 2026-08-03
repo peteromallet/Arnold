@@ -6,9 +6,11 @@ from typing import Any
 
 from arnold_pipelines.megaplan.profiles import load_profile_metadata, load_profiles
 from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
+from arnold_pipelines.megaplan._core.dispatch import resolve_dispatch_spec
 
 
 GLM_SPEC = "hermes:zhipu:glm-5.2"
+FIREWORKS_GLM_SPEC = "hermes:fireworks:accounts/fireworks/models/glm-5p2"
 FINALIZE_SPEC = "codex:gpt-5.6-sol:high"
 FORBIDDEN_GPT_TOKENS = ("codex", "openai", "gpt")
 
@@ -64,7 +66,7 @@ def _profile_args(profile: str) -> Namespace:
     )
 
 
-def test_partnered_5_glm_is_exact_gpt_replacement_of_partnered_5(
+def test_partnered_5_glm_preserves_phase_shape_with_finalize_as_only_gpt_route(
     tmp_path: Path,
 ) -> None:
     profiles = load_profiles(project_dir=tmp_path)
@@ -75,10 +77,11 @@ def test_partnered_5_glm_is_exact_gpt_replacement_of_partnered_5(
     base_metadata = metadata["partnered-5"]
     glm_metadata = metadata["partnered-5-glm"]
 
-    assert glm == _expected_glm_profile(base)
+    expected = _expected_glm_profile(base)
+    assert glm == expected
     assert glm_metadata["adaptive_critique"] == base_metadata["adaptive_critique"]
-    assert glm_metadata["tier_models"] == _replace_gpt_specs(
-        base_metadata["tier_models"]
+    assert glm_metadata["tier_models"]["critique"] == _replace_gpt_specs(
+        base_metadata["tier_models"]["critique"]
     )
 
 
@@ -100,7 +103,7 @@ def test_partnered_5_glm_resolution_contains_only_finalize_gpt_route(
     assert GLM_SPEC in resolved_specs
 
 
-def test_partnered_5_glm_preserves_non_gpt_phase_and_tier_routes(
+def test_partnered_5_glm_preserves_non_gpt_phase_and_critique_routes(
     tmp_path: Path,
 ) -> None:
     base_args = _profile_args("partnered-5")
@@ -115,5 +118,26 @@ def test_partnered_5_glm_preserves_non_gpt_phase_and_tier_routes(
         for entry in expected_phase_models
     ]
     assert glm_args.phase_model == expected_phase_models
-    assert glm_args.tier_models == _replace_gpt_specs(base_args.tier_models)
+    assert glm_args.tier_models["critique"] == _replace_gpt_specs(
+        base_args.tier_models["critique"]
+    )
     assert glm_args.prep_models == _replace_gpt_specs(base_args.prep_models)
+
+
+def test_partnered_5_glm_all_resolved_execute_tiers_are_glm_family(
+    tmp_path: Path,
+) -> None:
+    args = _profile_args("partnered-5-glm")
+
+    apply_profile_expansion(args, tmp_path)
+
+    assert "execute=hermes:zhipu:glm-5.2" in args.phase_model
+    execute_tiers = args.tier_models["execute"]
+    assert set(execute_tiers) == set(range(1, 11))
+    for tier in range(1, 11):
+        resolved = _flatten_specs(execute_tiers[tier])
+        assert resolved == [GLM_SPEC, FIREWORKS_GLM_SPEC, GLM_SPEC]
+        assert resolve_dispatch_spec(args.tier_models, "execute", tier) == GLM_SPEC
+        assert all("glm" in spec.lower() for spec in resolved)
+        assert all("deepseek" not in spec.lower() for spec in resolved)
+        assert all(not _is_gpt_spec(spec) for spec in resolved)
