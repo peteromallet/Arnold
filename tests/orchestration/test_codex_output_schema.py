@@ -135,6 +135,59 @@ def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() 
     _assert_array_schemas_have_items(capture_schema)
 
 
+def test_finalize_user_action_contract_cannot_drift_from_prompt_or_handler() -> None:
+    contract_action = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"]["user_actions"][
+        "items"
+    ]
+    capture_action = SCHEMAS["finalize_model_output.json"]["properties"][
+        "user_actions"
+    ]["items"]
+
+    assert capture_action == contract_action
+    assert set(contract_action["required"]) == {
+        "id",
+        "description",
+        "phase",
+        "requires_human_only_reason",
+    }
+    assert contract_action["properties"]["phase"]["enum"] == [
+        "before_execute",
+        "after_execute",
+    ]
+
+
+def test_attempt9_shaped_legacy_user_action_fails_then_exact_field_repair_passes() -> None:
+    schema = SCHEMAS["finalize_model_output.json"]
+    payload = {
+        "tasks": [],
+        "sense_checks": [],
+        "watch_items": [],
+        "user_actions": [
+            {
+                "id": "U1",
+                "description": "Approve the legal license exception",
+                "phase": "before_execute",
+            }
+        ],
+        "meta_commentary": "Attempt 9 legacy shape",
+    }
+
+    failed = validate_payload_against_schema(payload, schema)
+    assert not failed.ok
+    assert any(
+        "requires_human_only_reason" in diagnostic.message
+        for diagnostic in failed.diagnostics
+    )
+
+    payload["user_actions"][0]["requires_human_only_reason"] = (
+        "Legal liability requires a human signatory."
+    )
+    assert validate_payload_against_schema(payload, schema).ok
+
+    payload["user_actions"][0]["action"] = "legacy alias"
+    assert not validate_payload_against_schema(payload, schema).ok
+
+
 def test_finalize_model_capture_does_not_require_handler_enrichment_fields() -> None:
     """A valid worker payload must cross capture before handler enrichment."""
 

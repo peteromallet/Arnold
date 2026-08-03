@@ -8,11 +8,16 @@ from copy import deepcopy
 import pytest
 
 from arnold.execution.step_invocation import StepInvocation
+from arnold_pipelines.megaplan.auto import _is_retryable_external_error
 from arnold_pipelines.megaplan.model_seam import (
     LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
     capture_step_output,
 )
 from arnold.pipeline.model_seam import ModelStructuralAuditError
+from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
+from arnold_pipelines.megaplan.orchestration.phase_result_classify import (
+    classify_external_error_payload,
+)
 from arnold_pipelines.megaplan.provider_response import (
     ProviderResponseContractError,
     ResponseEnforcement,
@@ -22,12 +27,19 @@ from arnold_pipelines.megaplan.provider_response import (
 )
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.workers._impl import (
+    _WORKER_DISPATCH_BINDING,
+    _build_response_contract_repair_prompt,
     _codex_repair_input,
+    _new_response_occurrence,
+    _persist_codex_response_evidence,
     _codex_provider_contract_error,
     _codex_response_schema_args,
     _is_codex_provider_schema_rejection,
     _local_response_contract_error,
     _prepare_local_strict_artifact_handoff,
+    _preflight_trusted_container_artifact_handoff,
+    _response_output_path,
+    _select_codex_terminal_output,
 )
 
 
@@ -39,11 +51,247 @@ def test_codex_repair_diagnoses_canonical_output_not_jsonl_transport() -> None:
 
     assert selected == canonical
     assert parse_error is None
-from arnold_pipelines.megaplan.auto import _is_retryable_external_error
-from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
-from arnold_pipelines.megaplan.orchestration.phase_result_classify import (
-    classify_external_error_payload,
-)
+
+
+def test_codex_repair_never_falls_back_to_jsonl_transport() -> None:
+    transport = '{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}\n'
+
+    selected, parse_error = _codex_repair_input(transport, "")
+
+    assert selected == ""
+    assert parse_error is None
+
+
+def test_codex_terminal_selection_requires_nonempty_equal_unambiguous_output() -> None:
+    selected = '{"tasks":[],"user_actions":[]}'
+    transport = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": selected},
+        }
+    )
+    assert _select_codex_terminal_output(transport, selected + "\n") == selected + "\n"
+
+    with pytest.raises(ModelStructuralAuditError, match="empty"):
+        _select_codex_terminal_output(transport, "")
+    with pytest.raises(ModelStructuralAuditError, match="does not equal"):
+        _select_codex_terminal_output(transport, '{"different":true}')
+    ambiguous = transport + "\n" + json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": '{"other":true}'},
+        }
+    )
+    with pytest.raises(ModelStructuralAuditError, match="ambiguous"):
+        _select_codex_terminal_output(ambiguous, selected)
+
+
+def test_response_occurrence_and_evidence_bind_exact_wbc_invocation(tmp_path) -> None:
+    state = {
+        "name": "attempt9",
+        "iteration": 2,
+        "active_step": {"run_id": "finalize-invocation-9"},
+        "meta": {},
+    }
+    token = _WORKER_DISPATCH_BINDING.set(
+        {
+            "worker_wbc_attempt_id": "worker-attempt-9",
+            "phase_wbc_attempt_id": "phase-attempt-9",
+        }
+    )
+    try:
+        first = _new_response_occurrence(state, tmp_path, step="finalize")
+        second = _new_response_occurrence(state, tmp_path, step="finalize")
+    finally:
+        _WORKER_DISPATCH_BINDING.reset(token)
+
+    assert first["occurrence_id"] != second["occurrence_id"]
+    assert first["invocation_id"] == "finalize-invocation-9"
+    assert first["worker_wbc_attempt_id"] == "worker-attempt-9"
+    assert first["phase_wbc_attempt_id"] == "phase-attempt-9"
+    transport = '{"type":"turn.completed"}\n'
+    selected = '{"tasks":[],"user_actions":[]}'
+    receipt = _persist_codex_response_evidence(
+        tmp_path,
+        occurrence=first,
+        repair_ordinal=0,
+        raw_transport=transport,
+        terminal_output=selected,
+        output_path=tmp_path / "primary.json",
+        model="gpt-5.6-sol",
+        selection_error=None,
+    )
+    assert receipt["repair_ordinal"] == 0
+    assert receipt["transport"]["sha256"].startswith("sha256:")
+    assert receipt["selected_terminal_output"]["sha256"].startswith("sha256:")
+    persisted = json.loads((tmp_path / receipt["receipt_path"]).read_text())
+    assert persisted["worker_wbc_attempt_id"] == "worker-attempt-9"
+    with pytest.raises(Exception, match="already exists"):
+        _persist_codex_response_evidence(
+            tmp_path,
+            occurrence=first,
+            repair_ordinal=0,
+            raw_transport=transport,
+            terminal_output=selected,
+            output_path=tmp_path / "primary.json",
+            model="gpt-5.6-sol",
+            selection_error=None,
+        )
+
+
+def test_repair_prompt_contains_full_selected_object_and_canonical_schema() -> None:
+    prefix = "x" * 21000
+    selected = json.dumps({"prefix": prefix, "user_actions": [{"id": "U1"}]})
+    schema = {"type": "object", "required": ["user_actions"]}
+
+    prompt = _build_response_contract_repair_prompt(
+        step="finalize",
+        schema=schema,
+        failure_reason="requires_human_only_reason is required",
+        selected_output=selected,
+    )
+
+    assert selected in prompt
+    assert json.dumps(schema, sort_keys=True) in prompt
+    assert "requires_human_only_reason is required" in prompt
+    assert "NDJSON" in prompt
+
+
+def test_primary_and_repair_output_paths_are_occurrence_unique(tmp_path) -> None:
+    primary = _response_output_path(
+        tmp_path, step="finalize", occurrence_id="a" * 64, repair_ordinal=0
+    )
+    repair = _response_output_path(
+        tmp_path, step="finalize", occurrence_id="a" * 64, repair_ordinal=1
+    )
+    assert primary != repair
+    primary.parent.mkdir(parents=True, exist_ok=True)
+    primary.write_text("original", encoding="utf-8")
+    assert not repair.exists()
+    assert primary.read_text(encoding="utf-8") == "original"
+
+
+def test_trusted_container_handoff_preflight_requires_explicit_trust_and_is_clean(
+    tmp_path, monkeypatch
+) -> None:
+    handoff = _prepare_local_strict_artifact_handoff(tmp_path, step="finalize")
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    with pytest.raises(Exception, match="requires explicit"):
+        _preflight_trusted_container_artifact_handoff(handoff)
+
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    _preflight_trusted_container_artifact_handoff(handoff)
+    root = __import__("pathlib").Path(handoff["root"])
+    assert not list(root.glob(".handoff-canary-*"))
+
+    def deny_atomic_rename(*_args, **_kwargs):
+        raise OSError("rename denied")
+
+    monkeypatch.setattr(os, "replace", deny_atomic_rename)
+    with pytest.raises(Exception, match="atomic non-empty") as raised:
+        _preflight_trusted_container_artifact_handoff(handoff)
+    assert raised.value.extra["pre_dispatch"] is True
+
+
+def test_finalize_semantic_repair_preserves_primary_and_uses_exact_missing_field(
+    tmp_path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    ensure_runtime_layout(runtime_root)
+    plan_dir = runtime_root / ".megaplan" / "plans" / "attempt9"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "name": "attempt9",
+        "idea": "repair the exact missing field",
+        "current_state": "gated",
+        "iteration": 2,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {"current_invocation_id": "finalize-attempt9"},
+    }
+    legacy = {
+        "tasks": [],
+        "sense_checks": [],
+        "watch_items": [],
+        "user_actions": [
+            {
+                "id": "U1",
+                "description": "Approve the legal exception",
+                "phase": "before_execute",
+            }
+        ],
+        "meta_commentary": "legacy attempt9 shape",
+    }
+    repaired = deepcopy(legacy)
+    repaired["user_actions"][0]["requires_human_only_reason"] = (
+        "Legal liability requires a human signatory."
+    )
+    outputs: list[tuple[object, str, str]] = []
+
+    def fake_run_command(command, **kwargs):
+        output_path = __import__("pathlib").Path(command[command.index("-o") + 1])
+        payload = legacy if not outputs else repaired
+        rendered = json.dumps(payload, separators=(",", ":"))
+        output_path.write_text(rendered, encoding="utf-8")
+        outputs.append((output_path, rendered, kwargs["stdin_text"]))
+        event = json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": rendered},
+            }
+        )
+        return _impl.CommandResult(
+            command=list(command),
+            cwd=tmp_path,
+            returncode=0,
+            stdout=event + "\n",
+            stderr="",
+            duration_ms=5,
+        )
+
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        _impl,
+        "_codex_step_cost",
+        lambda *args, **kwargs: (0.0, 0, 0, "gpt-5.6-sol", None),
+    )
+    primary = plan_dir / "attempt9-primary.json"
+
+    result = _impl.run_codex_step(
+        "finalize",
+        state,
+        plan_dir,
+        root=runtime_root,
+        persistent=False,
+        fresh=True,
+        model="gpt-5.6-sol",
+        output_path=primary,
+        prompt_override="Return the finalized task graph.",
+    )
+
+    assert len(outputs) == 2
+    assert outputs[0][0] == primary
+    assert outputs[1][0] != primary
+    assert primary.read_text(encoding="utf-8") == outputs[0][1]
+    assert "requires_human_only_reason" not in outputs[0][1]
+    assert "requires_human_only_reason" in outputs[1][1]
+    assert outputs[0][1] in outputs[1][2]
+    assert "Canonical JSON Schema (complete)" in outputs[1][2]
+    assert result.payload == repaired
+    receipts = list(
+        (plan_dir / ".megaplan" / "model-response-evidence" / "occurrences").glob(
+            "*/repair-*.json"
+        )
+    )
+    assert {path.name for path in receipts} == {"repair-0.json", "repair-1.json"}
 
 
 @pytest.mark.parametrize(
@@ -492,6 +740,19 @@ def test_local_strict_artifact_handoff_round_trip_is_exact_and_schema_audited(tm
     assert "codex_capture:artifact_handoff" in captured.contract_result.provenance.sources
 
 
+def test_local_strict_artifact_handoff_rejects_zero_byte_receipt(tmp_path) -> None:
+    root = tmp_path / "handoff"
+    root.mkdir()
+    candidate = root / "empty.candidate.json"
+    candidate.write_bytes(b"")
+
+    with pytest.raises(ModelStructuralAuditError, match="bytes is invalid"):
+        capture_step_output(
+            _artifact_handoff_invocation(tmp_path, candidate),
+            _artifact_receipt(candidate, b""),
+        )
+
+
 @pytest.mark.parametrize("mutation", ["path", "digest", "size", "extra"])
 def test_local_strict_artifact_handoff_rejects_unbound_receipts(tmp_path, mutation) -> None:
     root = tmp_path / "handoff"
@@ -596,6 +857,8 @@ def test_local_response_contract_exhaustion_is_nonretryable_and_bounded() -> Non
         "exhausted": True,
         "occurrence_id": budget["occurrence_id"],
         "failure_fingerprint": budget["failure_fingerprint"],
+        "occurrence": {},
+        "evidence_receipt": None,
     }
     assert external["nonretryable"] is True
     assert external["failure_fingerprint"] == budget["failure_fingerprint"]

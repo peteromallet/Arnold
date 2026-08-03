@@ -189,11 +189,24 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["id", "description", "phase"],
+                "additionalProperties": False,
+                "required": [
+                    "id",
+                    "description",
+                    "phase",
+                    "requires_human_only_reason",
+                ],
                 "properties": {
                     "id": {"type": "string"},
                     "description": {"type": "string"},
-                    "phase": {"type": "string"},
+                    "phase": {
+                        "type": "string",
+                        "enum": ["before_execute", "after_execute"],
+                    },
+                    "requires_human_only_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
                 },
             },
         },
