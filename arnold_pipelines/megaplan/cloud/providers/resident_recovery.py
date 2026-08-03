@@ -71,7 +71,11 @@ done < <(find "$runtime_src" -type l -print0)
 runtime_python=$(readlink -f "$runtime_python")
 [[ "$(sha256sum "$runtime_python" | awk '{print $1}')" == "$expected_python_sha256" ]]
 if [[ "$check_help" == 1 ]]; then
-  help=$(cd "$runtime_src" && PYTHONPATH="$runtime_src" "$runtime_python" -P -m arnold_pipelines.megaplan resident discord --help)
+  # The source is copied into an immutable snapshot immediately after this
+  # capability probe.  A normal Python import writes ignored ``__pycache__``
+  # entries, which would make the subsequent strict ``--ignored=matching``
+  # capture reject the snapshot that this probe itself just dirtied.
+  help=$(cd "$runtime_src" && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$runtime_src" "$runtime_python" -P -m arnold_pipelines.megaplan resident discord --help)
   [[ "$help" == *"--listener-only"* && "$help" == *"--recovery-seed"* ]]
 fi
 workspace_dev=$(stat -c '%d' /workspace)
