@@ -4,9 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.current_target_liveness import (
     SCHEMA,
+    control_liveness_from_current_target,
     observe_current_target_liveness,
 )
 from arnold_pipelines.megaplan.cloud.liveness_lease import LivenessLeasePublisher
@@ -233,3 +236,86 @@ def test_repair_goal_unknown_liveness_fences_escalation() -> None:
 
     assert result["control_action"] == "observe"
     assert result["status"] == "active"
+
+
+def _canonical(state: str) -> dict[str, object]:
+    known = state in {"live", "dead"}
+    return {
+        "schema": SCHEMA,
+        "state": state,
+        "live": state == "live",
+        "dead": state == "dead",
+        "known": known,
+        "source": "test_bound_identity",
+        "identity": {"source": "marker", "pid": 42},
+        "lease": {},
+        "diagnostics": [],
+        "control_permitted": known,
+        "mutation_permitted": known,
+        "escalation_permitted": known,
+        "retrigger_permitted": known,
+    }
+
+
+@pytest.mark.parametrize(
+    ("state", "permitted"),
+    [("live", True), ("dead", True), ("unknown", False)],
+)
+def test_wrapper_control_adapter_is_strict_tri_state(
+    state: str, permitted: bool
+) -> None:
+    result = control_liveness_from_current_target(
+        {"current_target_liveness": _canonical(state)}, action="mutation"
+    )
+
+    assert result["state"] == state
+    assert result.get("action_permitted", False) is permitted
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        None,
+        {},
+        {"current_target_liveness": {"schema": SCHEMA, "state": "dead"}},
+        {
+            "current_target_liveness": {
+                **_canonical("dead"),
+                "mutation_permitted": False,
+            }
+        },
+        {
+            "current_target_liveness": {
+                **_canonical("live"),
+                "state": "dead",
+            },
+            "active_step_heartbeat": {
+                "worker_pid": 42,
+                "pid_live": True,
+                "active": True,
+            },
+            "tmux_process": {"session_live": True, "live_status": "alive"},
+        },
+    ],
+)
+def test_missing_or_corrupt_canonical_record_blocks_legacy_control(
+    target: dict[str, object] | None,
+) -> None:
+    result = control_liveness_from_current_target(target, action="mutation")
+
+    assert result["state"] == "unknown"
+    assert result["action_permitted"] is False
+    assert result["mutation_permitted"] is False
+
+
+def test_legacy_classifier_is_explicitly_diagnostic_only() -> None:
+    result = classify_runner_liveness(
+        {"pid": 42, "pid_live": True, "session": "legacy", "session_live": True},
+        {"present": True, "worker_pid": 42, "worker_pid_alive": True},
+        [],
+    )
+
+    assert result["state"] == "alive"
+    assert result["diagnostic_only"] is True
+    assert result["authoritative"] is False
+    assert result["control_permitted"] is False

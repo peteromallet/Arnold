@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud import feature_flags
+from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -595,6 +596,21 @@ def test_repair_custody_summary_threads_coalesced_without_live_owner_projection(
 
 
 def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
+    canonical_dead = {
+        "schema": SCHEMA,
+        "state": "dead",
+        "live": False,
+        "dead": True,
+        "known": True,
+        "source": "matched_local_process_identity",
+        "identity": {},
+        "lease": {},
+        "diagnostics": [],
+        "control_permitted": True,
+        "mutation_permitted": True,
+        "escalation_permitted": True,
+        "retrigger_permitted": True,
+    }
     return {
         "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
         "repair_custody_summary": {
@@ -617,7 +633,10 @@ def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
             "failed_meta_run_count": 0,
             "failed_meta_record_count": 0,
         },
-        "current_target": {"tmux_process": {"live_status": "stopped"}},
+        "current_target": {
+            "current_target_liveness": canonical_dead,
+            "tmux_process": {"live_status": "stopped"},
+        },
         "active_step_liveness": {
             "present": True,
             "worker_pid_alive": False,
@@ -756,7 +775,7 @@ def test_unclaimed_exhaustion_correlates_alert_to_current_request() -> None:
     )
 
 
-def test_marker_launch_failure_without_chain_state_reason() -> None:
+def test_marker_launch_failure_without_canonical_dead_is_diagnostic_only() -> None:
     namespace = _load_superfixer_cycle_functions()
     evidence = {
         "current_state": "initialized",
@@ -776,11 +795,10 @@ def test_marker_launch_failure_without_chain_state_reason() -> None:
 
     reason = namespace["_marker_present_stopped_without_chain_state_reason"](evidence)
 
-    assert reason.startswith("marker_launch_failure_without_chain_state:")
-    assert "engine_ref_not_advertised" in reason
+    assert reason == ""
 
 
-def test_marker_launch_failure_is_actionable_even_when_tmux_liveness_is_unknown() -> None:
+def test_marker_launch_failure_is_not_actionable_when_canonical_liveness_is_unknown() -> None:
     namespace = _load_superfixer_cycle_functions()
     evidence = {
         "current_state": "unknown",
@@ -800,8 +818,7 @@ def test_marker_launch_failure_is_actionable_even_when_tmux_liveness_is_unknown(
 
     reason = namespace["_marker_present_stopped_without_chain_state_reason"](evidence)
 
-    assert reason.startswith("marker_launch_failure_without_chain_state:")
-    assert "launch_verification_failed" in reason
+    assert reason == ""
 
 
 def _extract_gather_function(name: str, next_name: str) -> str:
@@ -3824,7 +3841,7 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
-    def test_failed_launch_without_chain_state_becomes_finding_not_green_check(
+    def test_failed_launch_without_bound_liveness_stays_diagnostic_only(
         self, tmp_path: Path
     ) -> None:
         del tmp_path
@@ -3853,8 +3870,7 @@ class TestLiveSignalFiltering:
             if reason
         ]
 
-        assert len(reasons) == 1
-        assert reasons[0].startswith("marker_launch_failure_without_chain_state:")
+        assert reasons == []
 
     def test_meta_repair_summary_ignores_partial_liveness_for_live_active_step_after_finalize(
         self, tmp_path: Path
@@ -4355,7 +4371,7 @@ class TestLiveSignalFiltering:
         assert len(findings["findings"]) == 1
         reasons = findings["findings"][0]["reasons"]
         assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
-        assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+        assert not any("plan_active_step_ghost_worker" in reason for reason in reasons)
 
     def test_gather_flags_completed_repair_request_missing_profile_preservation_clause(
         self, tmp_path: Path
@@ -4560,7 +4576,9 @@ class TestLiveSignalFiltering:
         assert evidence["claim_count"] == 0
         assert evidence["attempt_count"] == 0
         assert evidence["repair_outcome"] == "repair_exhausted"
-        assert evidence["runner_dead"] is True
+        # The accepted-unclaimed request independently authorizes this custody
+        # finding; bare active-step/tmux absence no longer proves runner death.
+        assert evidence["runner_dead"] is False
         assert evidence["chain_incomplete"] is True
         assert evidence["absent_or_stale_l2"] is True
         assert evidence["retry_budget"]["remaining_attempts"] == 3

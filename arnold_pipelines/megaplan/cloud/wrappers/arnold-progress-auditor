@@ -3968,6 +3968,7 @@ def _incident_live_snapshot(
     if not isinstance(tmux_pid, int):
         tmux_pid = None
     tmux_evidence = {
+        "authority": "diagnostic_only",
         "session": tmux_process.get("session") or process_session_id,
         "pid": tmux_pid,
         "pid_live": tmux_process.get("pid_live") if isinstance(tmux_process.get("pid_live"), bool) else None,
@@ -3975,6 +3976,7 @@ def _incident_live_snapshot(
         "live_status": str(tmux_process.get("live_status") or "").strip().lower(),
     }
     active_step_evidence = dict(active_step_liveness) if isinstance(active_step_liveness, dict) else {"present": False}
+    active_step_evidence["authority"] = "diagnostic_only"
     live_evidence_sources = []
     if active_step_evidence.get("worker_pid_alive") is True:
         live_evidence_sources.append("active_step_pid")
@@ -3991,6 +3993,7 @@ def _incident_live_snapshot(
                 "started_at": latest_attempt.get("updated_at") or latest_attempt.get("created_at") or incident.get("last_timestamp"),
                 "worker_pid": active_step_evidence.get("worker_pid") or tmux_pid,
                 "live_evidence_sources": live_evidence_sources,
+                "authority": "diagnostic_only",
             }
         )
     snapshot = {
@@ -4014,6 +4017,7 @@ def _incident_live_snapshot(
         },
         "processes": processes,
         "corroboration": {
+            "authority": "diagnostic_only",
             "repair_iteration_count": repair_data.get("iteration_count"),
             "watchdog_report_count": len(prior_watchdog_report_refs),
             "attempt_ref_count": len(attempt_refs),
@@ -4681,8 +4685,23 @@ def _active_step_liveness(active):
     return result
 
 def _active_step_ghost_worker_reason(ev):
+    try:
+        from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+            control_liveness_from_current_target,
+        )
+    except ImportError:
+        return ""
     liveness = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
-    if not isinstance(liveness, dict) or not liveness.get("present"):
+    target = ev.get("current_target") if isinstance(ev, dict) else {}
+    canonical = control_liveness_from_current_target(
+        target if isinstance(target, dict) else {}, action="escalation"
+    )
+    if (
+        not isinstance(liveness, dict)
+        or not liveness.get("present")
+        or canonical.get("state") != "dead"
+        or canonical.get("action_permitted") is not True
+    ):
         return ""
     pid = liveness.get("worker_pid") or ""
     if not pid or liveness.get("worker_pid_alive") is not False:
@@ -4793,19 +4812,33 @@ def _superfixer_cycle_evidence(ev):
     ]
     if failed_l2:
         watchdog_statuses.append("terminal_repair_failure")
-    liveness = classify_runner_liveness(
-        tmux_process,
-        active,
-        watchdog_statuses,
+    bound_observation = (
+        target.get("current_target_liveness")
+        if isinstance(target.get("current_target_liveness"), dict)
+        else None
     )
+    try:
+        liveness = classify_runner_liveness(
+            tmux_process,
+            active,
+            watchdog_statuses,
+            bound_observation=bound_observation,
+        )
+    except TypeError:
+        # Mixed source overlays may expose the pre-canonical classifier.  Do
+        # not call it without the bound record: compatibility is fail-closed,
+        # never a route back to PID/tmux authorization.
+        liveness = {
+            "state": "unknown",
+            "live": False,
+            "dead": False,
+            "known": False,
+            "source": "canonical_classifier_runtime_unavailable",
+            "control_permitted": False,
+            "authoritative": False,
+        }
     dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
-    watchdog_stopped = any(
-        str(item.get("matched_status") or "").strip().lower()
-        in {"stopped", "dead", "progress_stall", "broken_superfixer", "canonical_launch_evidence_missing"}
-        for item in watchdog_refs
-        if isinstance(item, dict)
-    )
-    runner_dead = liveness["dead"]
+    runner_dead = bool(liveness["dead"] and liveness.get("control_permitted") is True)
     incomplete_chain = _chain_state_looks_nonterminal(chain_current)
 
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
@@ -4882,6 +4915,12 @@ def _stale_l1_l2_cycle_reason(ev):
     )
 
 def _marker_present_stopped_without_chain_state_reason(ev):
+    try:
+        from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+            control_liveness_from_current_target,
+        )
+    except ImportError:
+        return ""
     session_header = ev.get("session_header") if isinstance(ev, dict) else {}
     session_header = session_header if isinstance(session_header, dict) else {}
     marker_path = str(session_header.get("marker_path") or "").strip()
@@ -4897,28 +4936,19 @@ def _marker_present_stopped_without_chain_state_reason(ev):
     current_target = ev.get("current_target") if isinstance(ev, dict) else {}
     current_target = current_target if isinstance(current_target, dict) else {}
     tmux_process = current_target.get("tmux_process") if isinstance(current_target.get("tmux_process"), dict) else {}
-    tmux_live = (
-        tmux_process.get("pid_live") is True
-        or tmux_process.get("session_live") is True
-        or str(tmux_process.get("live_status") or "").strip().lower() == "alive"
+    canonical = control_liveness_from_current_target(
+        current_target, action="escalation"
     )
-    active = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
-    active = active if isinstance(active, dict) else {}
-    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
-    explicit_stopped = str(tmux_process.get("live_status") or "").strip().lower() in {
-        "dead", "missing", "stopped", "unavailable"
-    }
-    watchdog_refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
-    watchdog_refs = watchdog_refs if isinstance(watchdog_refs, list) else []
-    watchdog_stopped = any(
-        str(item.get("matched_status") or "").strip().lower() in {"stopped", "dead", "progress_stall", "broken_superfixer"}
-        for item in watchdog_refs
-        if isinstance(item, dict)
+    # The legacy values above remain in the evidence pack so an operator can
+    # explain the observer's view.  They cannot establish death or authorize
+    # escalation; only the identity-bound canonical record can do that.
+    runner_dead = bool(
+        canonical.get("state") == "dead"
+        and canonical.get("action_permitted") is True
     )
-    runner_dead = bool(not tmux_live and (dead_active_step or explicit_stopped or watchdog_stopped))
     launch_outcome = session_header.get("launch_outcome") if isinstance(session_header.get("launch_outcome"), dict) else {}
     launch_failed = str(launch_outcome.get("status") or "").strip().lower() == "failed"
-    if not runner_dead and not launch_failed:
+    if not runner_dead:
         return ""
 
     current_state = str(ev.get("current_state") or "").strip().lower()
