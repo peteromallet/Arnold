@@ -390,6 +390,61 @@ def test_cancel_phase_wbc_rejects_metadata_mismatch_without_mutation(
     assert state["active_step"]["_phase_wbc"] == metadata
 
 
+def test_cancel_phase_wbc_replays_after_ledger_append_before_state_persist(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    project_dir.mkdir()
+    plan_dir.mkdir()
+    persisted_state = _state(project_dir, current_state="gated")
+    set_active_step(
+        persisted_state,
+        step="finalize",
+        agent="finalizer",
+        mode="test",
+    )
+    metadata = activate_phase_wbc(
+        state=persisted_state,
+        plan_dir=plan_dir,
+        step="finalize",
+        agent="finalizer",
+    )
+    assert metadata is not None
+
+    # Simulate a crash after the durable terminal append but before the
+    # mutated state object was persisted: discard the first in-memory copy.
+    first_process_state = json.loads(json.dumps(persisted_state))
+    first = cancel_phase_wbc(
+        state=first_process_state,
+        plan_dir=plan_dir,
+        step="finalize",
+        expected_attempt_id=str(metadata["attempt_id"]),
+        expected_invocation_id=str(metadata["invocation_id"]),
+        agent="operator",
+        reason="attempt 8 abort",
+    )
+    assert first["replayed"] is False
+    assert "_phase_wbc" in persisted_state["active_step"]
+
+    second = cancel_phase_wbc(
+        state=persisted_state,
+        plan_dir=plan_dir,
+        step="finalize",
+        expected_attempt_id=str(metadata["attempt_id"]),
+        expected_invocation_id=str(metadata["invocation_id"]),
+        agent="operator",
+        reason="attempt 8 abort replay",
+    )
+    assert second["replayed"] is True
+    assert "_phase_wbc" not in persisted_state["active_step"]
+    events = _events(plan_dir, str(metadata["attempt_id"]))
+    assert [event.event_type for event in events] == [
+        AttemptEventType.STARTED,
+        AttemptEventType.CANCELLED,
+    ]
+
+
 def test_finalize_revise_fallback_records_phase_wbc_and_receipt(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     plan_dir = tmp_path / "plan"
