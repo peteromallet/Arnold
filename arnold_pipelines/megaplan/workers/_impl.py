@@ -237,7 +237,6 @@ def _prepare_zero_recovery_model_runtime(
             runtime / "xdg-config",
         ):
             os.mkdir(directory, 0o700)
-            os.chown(directory, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
         canonical_codex = Path("/root/.codex")
         _zero_recovery_copy_private_file(
             canonical_codex / "auth.json", codex_home / "auth.json"
@@ -258,6 +257,18 @@ def _prepare_zero_recovery_model_runtime(
             output_stat = os.fstat(output_fd)
         finally:
             os.close(output_fd)
+        # The trusted root process deliberately lacks DAC_OVERRIDE. Construct
+        # and seed the complete tree before transferring its directories to
+        # the finite model UID; chowning `home` first would make `.codex`
+        # uncreatable under the admitted capability set.
+        for directory in (
+            codex_home,
+            home,
+            tmp,
+            runtime / "xdg-cache",
+            runtime / "xdg-config",
+        ):
+            os.chown(directory, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
         os.chown(runtime, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
         probe_env = _zero_recovery_model_env(
             {
