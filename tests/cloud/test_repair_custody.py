@@ -26,6 +26,19 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     project_repair_custody,
 )
 from arnold_pipelines.megaplan.run_state import CanonicalState, resolve_run_state
+from tests.cloud.repair_identity_fixtures import identity_for_signature, repair_identity
+
+
+def _enqueue(**kwargs: object) -> dict[str, object]:
+    signature = dict(kwargs["problem_signature"])  # type: ignore[arg-type]
+    kwargs.setdefault(
+        "repair_identity",
+        identity_for_signature(
+            session=str(kwargs["session"]),
+            signature=signature,
+        ),
+    )
+    return repair_requests.enqueue_repair_request(**kwargs)
 
 
 def _fingerprint(**overrides: str) -> BlockerFingerprintV1:
@@ -110,7 +123,7 @@ def test_taskless_phase_failure_normalizes_identity_and_fails_closed(
     tmp_path: Path,
 ) -> None:
     queue_root = _queue_root(tmp_path)
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         session="custody-session",
         source="lifecycle_failure",
@@ -235,7 +248,7 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     repair_data_dir.mkdir()
     queue_root = _queue_root(tmp_path)
 
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -293,7 +306,7 @@ def test_self_coalesced_request_remains_claimable_and_accepted_unclaimed(
     repair_data_dir.mkdir()
     queue_root = _queue_root(tmp_path)
 
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -310,7 +323,7 @@ def test_self_coalesced_request_remains_claimable_and_accepted_unclaimed(
         root_cause_hint="repairable blocker",
         created_at="2026-07-04T01:00:00Z",
     )
-    replay = repair_requests.enqueue_repair_request(
+    replay = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -357,6 +370,7 @@ def test_self_coalesced_request_remains_claimable_and_accepted_unclaimed(
         session="demo-session",
         pid=4242,
         is_pid_live=lambda _pid: True,
+        repair_identity=queued["request"]["repair_identity"],
     )
     assert claim.claimed is True
 
@@ -419,7 +433,17 @@ def test_custody_projection_rejects_stale_request_with_mismatched_repair_identit
     plan_state = _plan_state()
     plan_state["plan_revision"] = "sha256:plan-rev-1"
     plan_state["fence_token"] = "fence-1"
-    repair_requests.enqueue_repair_request(
+    current_identity = repair_identity(
+        session="demo-session",
+        plan="agentic-replay-viewer",
+        failure_kind="blocked_recovery_not_resolved",
+        phase="execute",
+        task="T1",
+        plan_revision="sha256:plan-rev-1",
+    )
+    current_target["repair_identity"] = current_identity
+    plan_state["repair_identity"] = current_identity
+    _enqueue(
         queue_root=queue_root,
         session="demo-session",
         source="watchdog",
@@ -433,18 +457,21 @@ def test_custody_projection_rejects_stale_request_with_mismatched_repair_identit
         },
         target={"plan_dir": "/tmp/plan"},
         root_cause_hint="repairable blocker",
-        repair_identity={
-            "environment_id": "/workspace/demo",
-            "session_id": "demo-session",
-            "chain_id": "/workspace/demo/chain.yaml",
-            "plan_revision": "sha256:stale-plan",
-            "phase": "execute",
-            "task_id": "T1",
-            "attempt_number": 9,
-            "failure_kind": "blocked_recovery_not_resolved",
-            "blocker_digest": "blocker:v1:stale",
-            "coordinator_fence_token": "fence-stale",
-        },
+        repair_identity=repair_identity(
+            session="demo-session",
+            plan="agentic-replay-viewer",
+            failure_kind="blocked_recovery_not_resolved",
+            phase="execute",
+            task="T1",
+            attempt=9,
+            plan_revision="sha256:stale-plan",
+            fence_token=9,
+            run_incarnation_id="stale-run-incarnation",
+            coordinator_attempt_id="stale-coordinator-attempt",
+            run_authority_grant_id="stale-grant",
+            lease_id="stale-lease",
+            custody_epoch=9,
+        ),
         created_at="2026-07-04T01:00:00Z",
     )
 
@@ -469,7 +496,7 @@ def test_custody_projection_rejects_identity_free_request_when_current_target_ha
     plan_state = _plan_state()
     plan_state["plan_revision"] = "sha256:plan-rev-1"
     plan_state["fence_token"] = "fence-1"
-    repair_requests.enqueue_repair_request(
+    _enqueue(
         queue_root=queue_root,
         session="demo-session",
         source="watchdog",
@@ -484,6 +511,7 @@ def test_custody_projection_rejects_identity_free_request_when_current_target_ha
         target={"plan_dir": "/tmp/plan"},
         root_cause_hint="legacy identity-free request",
         created_at="2026-07-04T01:00:00Z",
+        repair_identity=None,
     )
 
     projection = project_repair_custody(
@@ -666,7 +694,7 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     repair_data_dir.mkdir()
     queue_root = _queue_root(tmp_path)
 
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -738,7 +766,7 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     queue_root = _queue_root(tmp_path)
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -772,6 +800,7 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
         child_pid=4242,
         managed_run_id="managed-1",
         managed_manifest_path="/durable/managed-1/manifest.json",
+        repair_identity=queued["request"]["repair_identity"],
     )
 
     projection = project_repair_custody(
@@ -795,7 +824,7 @@ def test_reserved_managed_run_is_claimed_but_not_launched(
     tmp_path: Path,
 ) -> None:
     queue_root = _queue_root(tmp_path)
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         session="demo-session",
         source="watchdog",
@@ -869,7 +898,7 @@ def test_queue_dispatch_attempt_uses_terminal_managed_manifest(tmp_path: Path) -
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     queue_root = _queue_root(tmp_path)
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -921,6 +950,7 @@ def test_queue_dispatch_attempt_uses_terminal_managed_manifest(tmp_path: Path) -
         child_pid=4242,
         managed_run_id="managed-1",
         managed_manifest_path=str(manifest_path),
+        repair_identity=queued["request"]["repair_identity"],
     )
 
     projection = project_repair_custody(
@@ -947,7 +977,7 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     managed_dir.mkdir(parents=True)
     queue_root = _queue_root(tmp_path)
 
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -1059,7 +1089,7 @@ def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_pa
     repair_data_dir.mkdir()
     queue_root = _queue_root(tmp_path)
 
-    stale = repair_requests.enqueue_repair_request(
+    stale = _enqueue(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
@@ -1251,7 +1281,7 @@ def test_custody_projection_includes_verdict_evidence_when_present(
     repair_data_dir.mkdir(parents=True)
 
     # Enqueue a request using queue_root
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_root,
         session="demo-session",
         source="watchdog",

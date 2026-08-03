@@ -20,6 +20,24 @@ import pytest
 
 from arnold.pipeline.types import StepContext as NeutralStepContext
 from arnold.pipeline.steps.human_gate import HumanGateStep
+from tests.cloud.repair_identity_fixtures import repair_identity
+
+
+def _owned_identity(
+    *,
+    session: str = "test-session-001",
+    plan: str = "test-plan",
+    kind: str = "stall_detected",
+    phase: str = "execute",
+    task: str = "T1",
+) -> dict[str, object]:
+    return repair_identity(
+        session=session,
+        plan=plan,
+        failure_kind=kind,
+        phase=phase,
+        task=task,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +158,16 @@ class TestLifecycleFailureEnqueue:
             current_state="executed",
             phase="review",
             suggested_action="retry review",
-            metadata={"blocked_task_id": "T19"},
+            metadata={
+                "blocked_task_id": "T19",
+                "repair_identity": _owned_identity(
+                    session="canonical-chain-session",
+                    plan="demo-plan",
+                    kind="phase_failed",
+                    phase="review",
+                    task="T19",
+                ),
+            },
         )
         request = _read_requests(queue_root)[0]
         assert request["session"] == "canonical-chain-session"
@@ -159,6 +186,13 @@ class TestLifecycleFailureEnqueue:
         plan_dir.mkdir(parents=True)
         state = {
             "current_state": "blocked",
+            "repair_identity": _owned_identity(
+                session="blocked-chain",
+                plan="blocked-plan",
+                kind="quality_gate_blocked",
+                phase="review",
+                task="T24",
+            ),
             "latest_failure": {
                 "kind": "quality_gate_blocked",
                 "message": "deterministic review check failed",
@@ -202,7 +236,10 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="execute",
             suggested_action="manual_review",
-            metadata={"blocked_task_id": "T1"},
+            metadata={
+                "blocked_task_id": "T1",
+                "repair_identity": _owned_identity(),
+            },
         )
 
         requests = _read_requests(_queue_root(tmp_path))
@@ -257,7 +294,17 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="critique",
             suggested_action="repair the deterministic phase contract",
-            metadata={"count": 3, "max_attempts": 3},
+            metadata={
+                "count": 3,
+                "max_attempts": 3,
+                "repair_identity": _owned_identity(
+                    session="custody-control-plane-20260714",
+                    plan="m6-exact-contract-and-20260716-1303",
+                    kind="deterministic_phase_failure",
+                    phase="critique",
+                    task="phase:critique",
+                ),
+            },
             retry_strategy="repair_phase_contract",
         )
 
@@ -291,7 +338,10 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="execute",
             suggested_action="manual_review",
-            metadata={"blocked_task_id": "T1"},
+            metadata={
+                "blocked_task_id": "T1",
+                "repair_identity": _owned_identity(),
+            },
         )
 
         _enqueue_lifecycle_failure_request(
@@ -302,7 +352,10 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="execute",
             suggested_action="manual_review",
-            metadata={"blocked_task_id": "T1"},
+            metadata={
+                "blocked_task_id": "T1",
+                "repair_identity": _owned_identity(),
+            },
         )
 
         requests = _read_requests(_queue_root(tmp_path))
@@ -330,7 +383,10 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="execute",
             suggested_action="",
-            metadata={"blocked_task_id": "T1"},
+            metadata={
+                "blocked_task_id": "T1",
+                "repair_identity": _owned_identity(),
+            },
         )
 
         _enqueue_lifecycle_failure_request(
@@ -341,7 +397,13 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="execute",
             suggested_action="",
-            metadata={"blocked_task_id": "T2"},
+            metadata={
+                "blocked_task_id": "T2",
+                "repair_identity": _owned_identity(
+                    kind="iteration_cap",
+                    task="T2",
+                ),
+            },
         )
 
         requests = _read_requests(_queue_root(tmp_path))
@@ -370,7 +432,7 @@ class TestLifecycleFailureEnqueue:
                 current_state="blocked",
                 phase="execute",
                 suggested_action="",
-                metadata={},
+                metadata={"repair_identity": _owned_identity()},
             )
 
         # The function completed without propagating the exception
@@ -426,28 +488,48 @@ class TestLifecycleFailureEnqueue:
             current_state="blocked",
             phase="execute",
             suggested_action="manual_review",
-            metadata={"blocked_task_id": "T1"},
+            metadata={
+                "blocked_task_id": "T1",
+                "repair_identity": _owned_identity(
+                    session="demo-session",
+                    plan="demo-plan",
+                ),
+            },
         )
-        first_supervisor = enqueue_supervisor_repair_request(
-            queue_root=queue_root,
-            marker_dir=marker_dir,
+        supervisor_identity = _owned_identity(
             session="demo-session",
-            workspace=workspace,
-            remote_spec=".megaplan/initiatives/demo/chain.yaml",
-            run_kind="chain",
-            reason="retry budget exhausted",
-            log_path="/tmp/supervise.log",
+            plan="demo-plan",
+            kind="supervised_run_exhausted",
+            phase="arnold-supervise",
+            task="phase:arnold-supervise",
         )
-        second_supervisor = enqueue_supervisor_repair_request(
-            queue_root=queue_root,
-            marker_dir=marker_dir,
-            session="demo-session",
-            workspace=workspace,
-            remote_spec=".megaplan/initiatives/demo/chain.yaml",
-            run_kind="chain",
-            reason="retry budget exhausted",
-            log_path="/tmp/supervise.log",
-        )
+        with patch(
+            "arnold_pipelines.megaplan.cloud.current_target.resolve_current_target",
+            return_value={
+                "current_refs": {"current_plan_name": "demo-plan"},
+                "repair_identity": supervisor_identity,
+            },
+        ):
+            first_supervisor = enqueue_supervisor_repair_request(
+                queue_root=queue_root,
+                marker_dir=marker_dir,
+                session="demo-session",
+                workspace=workspace,
+                remote_spec=".megaplan/initiatives/demo/chain.yaml",
+                run_kind="chain",
+                reason="retry budget exhausted",
+                log_path="/tmp/supervise.log",
+            )
+            second_supervisor = enqueue_supervisor_repair_request(
+                queue_root=queue_root,
+                marker_dir=marker_dir,
+                session="demo-session",
+                workspace=workspace,
+                remote_spec=".megaplan/initiatives/demo/chain.yaml",
+                run_kind="chain",
+                reason="retry budget exhausted",
+                log_path="/tmp/supervise.log",
+            )
 
         requests = _read_requests(queue_root)
         assert {request["source"] for request in requests} == {
@@ -476,7 +558,16 @@ class TestLifecycleFailureEnqueue:
 
         with patch(
             "arnold_pipelines.megaplan.cloud.current_target.resolve_current_target",
-            return_value={"current_refs": {"current_plan_name": "m6-plan"}},
+            return_value={
+                "current_refs": {"current_plan_name": "m6-plan"},
+                "repair_identity": _owned_identity(
+                    session="custody-chain",
+                    plan="m6-plan",
+                    kind="chain_execution_binding_drift",
+                    phase="chain_execution_binding",
+                    task="chain_execution_binding:editable_runtime_import_root_mismatch",
+                ),
+            },
         ):
             result = enqueue_supervisor_repair_request(
                 queue_root=queue_root,

@@ -1,4 +1,5 @@
 from arnold_pipelines.megaplan.cloud.repair_revalidation import revalidate_repair_target
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 
 def _target(*, state="critiqued", cursor=10, pid="101", pid_live=True, tmux=True):
@@ -23,18 +24,18 @@ def _target(*, state="critiqued", cursor=10, pid="101", pid_live=True, tmux=True
 
 
 def _identity(*, attempt_number: int = 1, fence_token: str = "fence-1") -> dict[str, object]:
-    return {
-        "environment_id": "/workspace/demo",
-        "session_id": "demo",
-        "chain_id": "/workspace/demo/chain.yaml",
-        "plan_revision": "sha256:plan-rev-1",
-        "phase": "finalize",
-        "task_id": "T24",
-        "attempt_number": attempt_number,
-        "failure_kind": "quality_gate_blocked",
-        "blocker_digest": "blocker:v1:demo",
-        "coordinator_fence_token": fence_token,
-    }
+    return repair_identity(
+        session="demo",
+        plan="plan",
+        failure_kind="quality_gate_blocked",
+        phase="finalize",
+        task="T24",
+        attempt=attempt_number,
+        plan_revision="sha256:plan-rev-1",
+        fence_token=attempt_number,
+        coordinator_attempt_id=f"coordinator:{attempt_number}",
+        custody_epoch=attempt_number,
+    )
 
 
 def test_stale_pre_gate_evidence_is_superseded_by_current_finalize_target() -> None:

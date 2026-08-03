@@ -19,6 +19,10 @@ from arnold_pipelines.megaplan.cloud.current_target import resolve_current_targe
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import enqueue_audit_repair_request
+from tests.cloud.repair_identity_fixtures import (
+    identity_for_signature,
+    repair_identity,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRIGGER = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-repair-trigger"
@@ -67,16 +71,21 @@ def _write_marker(
 
 
 def _enqueue(marker_dir: Path, workspace: Path, session: str = "demo") -> dict[str, object]:
+    signature = _signature()
     return repair_requests.enqueue_repair_request(
         queue_root=_queue_root(workspace),
         marker_dir=marker_dir,
         session=session,
         source="test",
-        problem_signature=_signature(),
+        problem_signature=signature,
         root_cause_hint="failure details",
         workspace=workspace,
         run_kind="chain",
         created_at="2026-07-01T00:00:00Z",
+        repair_identity=identity_for_signature(
+            session=session,
+            signature=signature,
+        ),
     )
 
 
@@ -409,6 +418,10 @@ def test_terminal_request_ids_preserve_self_coalesced_owner_and_skip_distinct_du
         workspace=workspace,
         run_kind="chain",
         created_at="2026-07-01T00:10:00Z",
+        repair_identity=identity_for_signature(
+            session="demo",
+            signature=_signature(),
+        ),
     )
     repair_requests.write_decision(
         _queue_root(workspace),
@@ -484,6 +497,13 @@ def test_repeated_l1_dispatch_stays_on_the_same_canonical_simple_fixer_occurrenc
             "gate_recommendation": "repair the deterministic phase contract",
             "blocked_task_id": "phase:finalize",
         },
+        repair_identity=repair_identity(
+            session="demo",
+            plan=plan_name,
+            failure_kind="deterministic_phase_failure",
+            phase="finalize",
+            task="phase:finalize",
+        ),
         root_cause_hint="critique_finding_identity_reused",
     )
     # L1 occurrence repair is owned by simple_fixer.  The legacy repair-loop
@@ -557,6 +577,13 @@ def test_exact_trigger_claims_taskless_lifecycle_phase_failure(tmp_path: Path) -
         workspace=workspace,
         run_kind="chain",
         created_at="2026-07-22T04:48:40Z",
+        repair_identity=repair_identity(
+            session="demo",
+            plan="m3",
+            failure_kind="deterministic_phase_failure",
+            phase="finalize",
+            task="phase:finalize",
+        ),
     )
     request_id = queued["request"]["request_id"]
 
@@ -618,6 +645,13 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
             "session": "demo",
             "workspace": str(workspace),
             "current_state": "blocked",
+            "repair_identity": repair_identity(
+                session="demo",
+                plan="m3",
+                failure_kind="L3_TRUE_STALL",
+                phase="progress_auditor",
+                task="l3-escalation-demo-m3",
+            ),
             "session_header": {"kind": "chain"},
             "deterministic_superfixer_evidence": {
                 "actionable": True,
@@ -700,6 +734,13 @@ def test_typed_l3_request_is_not_downgraded_when_target_also_looks_l1_repairable
             "session": "demo",
             "workspace": str(workspace),
             "current_state": "blocked",
+            "repair_identity": repair_identity(
+                session="demo",
+                plan="m3",
+                failure_kind="L3_TRUE_STALL",
+                phase="progress_auditor",
+                task="l3-escalation-l1-shaped-target",
+            ),
             "session_header": {"kind": "chain"},
             "deterministic_superfixer_evidence": {
                 "actionable": True,
@@ -805,18 +846,13 @@ def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_pat
     _write_marker(marker_dir, workspace)
     # Step 40 (T26): human-gate enqueue requires a complete F01 occurrence
     # identity so the request cannot become repair authority on its own.
-    occurrence_identity = {
-        "environment": "ci",
-        "session": "demo",
-        "chain": "demo",
-        "plan_revision": "r1",
-        "phase": "execute",
-        "task": "T1",
-        "attempt": "1",
-        "normalized_failure_kind": "blocked_recovery_not_resolved",
-        "blocker_or_phase_result_hash": "a" * 64,
-        "fence": "fence-1",
-    }
+    occurrence_identity = repair_identity(
+        session="demo",
+        plan="m3",
+        failure_kind="blocked_recovery_not_resolved",
+        phase="execute",
+        task="T1",
+    )
     queued = repair_requests.enqueue_human_gate_repair_request(
         queue_root=_queue_root(workspace),
         marker_dir=workspace / ".megaplan" / "plans" / "m3",
@@ -916,6 +952,7 @@ def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Pa
         actor="other-trigger",
         session="demo",
         pid=os.getpid(),
+        repair_identity=queued["request"]["repair_identity"],
     )
     assert claim.claimed
 
@@ -1177,6 +1214,13 @@ def test_trigger_routes_typed_supervisor_binding_drift_to_l2(tmp_path: Path) -> 
                 "active_errors=editable_runtime_import_root_mismatch"
             ),
         },
+        repair_identity=repair_identity(
+            session="demo",
+            plan="m6-plan",
+            failure_kind="chain_execution_binding_drift",
+            phase="chain_execution_binding",
+            task="chain_execution_binding:editable_runtime_import_root_mismatch",
+        ),
         root_cause_hint="typed binding drift",
     )
     repair_bin = _repair_stub(tmp_path)
@@ -1360,7 +1404,9 @@ def test_trigger_terminalizes_request_after_chain_advances_to_new_plan(
     assert "target advanced from m3 to m4" in stale[0]["reason"]
 
 
-def test_trigger_rejects_superseded_request_for_live_sibling(tmp_path: Path) -> None:
+def test_trigger_does_not_treat_live_sibling_as_supersession_authority(
+    tmp_path: Path,
+) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
     _write_marker(marker_dir, workspace, session="demo")
@@ -1386,9 +1432,8 @@ raise SystemExit(0 if sys.argv[-1] == "live-sibling" else 1)
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "repair-args.json").exists()
     superseded = [item for item in _decisions(marker_dir) if item["decision"] == "superseded"]
-    assert len(superseded) == 1
-    assert superseded[0]["related_request_id"] == "live-sibling"
-    assert "live sibling session" in superseded[0]["reason"]
+    assert superseded == []
+    assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
 
 
 def test_trigger_skips_terminal_requests_and_reports_no_actionable(tmp_path: Path) -> None:
@@ -1461,28 +1506,27 @@ def test_repair_trigger_wrapper_delegates_to_simple_fixer(tmp_path: Path) -> Non
     canonical runner records the occurrence.  No authority is created from
     labels, liveness, WBC receipts, or rebuildable projections.
     """
-    from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
+    from arnold_pipelines.megaplan.custody.contracts import normalize_custody_target_key
 
     module = _load_trigger_module()
     queue_dir = tmp_path / ".megaplan" / "repair-queue"
     queue_dir.mkdir(parents=True, exist_ok=True)
-    occurrence_target = CustodyTargetKey(
-        environment="/workspace/demo",
+    exact_identity = repair_identity(
         session="demo",
-        chain="/workspace/demo/chain.yaml",
-        plan_revision="sha256:plan-rev-1",
+        plan="m3",
+        failure_kind="blocked_step",
         phase="execute",
         task="T1",
-        attempt="1",
-        normalized_failure_kind="blocked_step",
-        blocker_or_phase_result_hash="sha256:blocker-1",
-        fence="fence-1",
     )
+    occurrence = exact_identity["occurrence"]
+    occurrence_target = normalize_custody_target_key(occurrence["target"])
+    assert occurrence_target is not None
     result = module._delegate_repair_to_simple_fixer(
         occurrence_target=occurrence_target,
         queue_dir=queue_dir,
         request_id="req-trigger-1",
         session="demo",
+        repair_identity=exact_identity,
     )
     assert result.delegated is False
     assert result.outcome == "delegation_failed"

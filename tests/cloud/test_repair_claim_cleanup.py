@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud import repair_requests
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -69,9 +70,29 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     launcher_path = tmp_path / "launcher.py"
     launcher_path.write_text("import time\n\ntime.sleep(30)\n", encoding="utf-8")
 
-    blocker_id = "blocker:v1:test"
-    request_id = "req-test"
     queue_root = workspace / ".megaplan" / "repair-queue"
+    identity = repair_identity(
+        session="demo-session",
+        plan="demo-plan",
+        failure_kind="phase_failed",
+        phase="execute",
+        task="T1",
+    )
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="test-dispatcher",
+        problem_signature={
+            "failure_kind": "phase_failed",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "demo-plan",
+            "blocked_task_id": "T1",
+        },
+        repair_identity=identity,
+    )
+    blocker_id = str(queued["request"]["blocker_id"])
+    request_id = str(queued["request"]["request_id"])
     claim = repair_requests.claim_active_repair_request(
         queue_root,
         blocker_id=blocker_id,
@@ -81,18 +102,46 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
         pid=os.getpid(),
         command="arnold-repair-loop demo-session /tmp/ws /tmp/spec.json",
         cwd=str(workspace),
+        repair_identity=identity,
     )
     assert claim.claimed
     decoy_queue_root = tmp_path / "decoy-workspace" / ".megaplan" / "repair-queue"
+    decoy_identity = repair_identity(
+        session="demo-session",
+        plan="demo-plan",
+        failure_kind="phase_failed",
+        phase="execute",
+        task="T1",
+        run_incarnation_id="decoy-run-incarnation",
+        coordinator_attempt_id="decoy-coordinator-attempt",
+        run_authority_grant_id="decoy-grant",
+        lease_id="decoy-lease",
+    )
+    decoy_queued = repair_requests.enqueue_repair_request(
+        queue_root=decoy_queue_root,
+        session="demo-session",
+        source="decoy-dispatcher",
+        problem_signature={
+            "failure_kind": "phase_failed",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "demo-plan",
+            "blocked_task_id": "T1",
+        },
+        repair_identity=decoy_identity,
+    )
+    decoy_blocker_id = str(decoy_queued["request"]["blocker_id"])
+    decoy_request_id = str(decoy_queued["request"]["request_id"])
     decoy_claim = repair_requests.claim_active_repair_request(
         decoy_queue_root,
-        blocker_id=blocker_id,
-        request_id="decoy-request",
+        blocker_id=decoy_blocker_id,
+        request_id=decoy_request_id,
         actor="decoy-dispatcher",
         session="demo-session",
         pid=os.getpid(),
         command="decoy",
         cwd=str(workspace),
+        repair_identity=decoy_identity,
     )
     assert decoy_claim.claimed
 
@@ -128,5 +177,7 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
         blocker_id,
     )
     assert not claim_lock_dir.exists()
-    assert repair_requests.active_repair_claim_lock_dir(decoy_queue_root, blocker_id).exists()
+    assert repair_requests.active_repair_claim_lock_dir(
+        decoy_queue_root, decoy_blocker_id
+    ).exists()
     assert not list(snapshot_dir.glob("arnold-repair-loop.*"))

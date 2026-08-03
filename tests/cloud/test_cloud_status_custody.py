@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
+from tests.cloud.repair_identity_fixtures import identity_for_signature
 
 
 class _StatusProvider:
@@ -90,6 +91,10 @@ def _payload(tmp_path: Path, *, plan_status: dict, custody_setup: str) -> dict:
             root_cause_hint="repairable blocker",
             workspace=workspace,
             run_kind="chain",
+            repair_identity=identity_for_signature(
+                session=session,
+                signature=signature,
+            ),
         )
         if custody_setup == "repairing":
             repair_requests.write_decision(
@@ -169,6 +174,10 @@ def test_custody_reads_only_the_explicit_central_queue(tmp_path: Path) -> None:
         session="demo-session",
         source="lifecycle_failure",
         problem_signature=signature,
+        repair_identity=identity_for_signature(
+            session="demo-session",
+            signature=signature,
+        ),
     )
     split_request_dir = split_queue / "requests"
     split_request_dir.mkdir(parents=True)

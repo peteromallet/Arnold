@@ -24,8 +24,23 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     project_repair_custody,
 )
 from arnold_pipelines.megaplan.cloud.repair_lock import RepairLockResult
-from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    enqueue_repair_request as _enqueue_repair_request,
+)
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
+from tests.cloud.repair_identity_fixtures import identity_for_signature
+
+
+def enqueue_repair_request(**kwargs: object) -> dict[str, object]:
+    signature = dict(kwargs["problem_signature"])  # type: ignore[arg-type]
+    kwargs.setdefault(
+        "repair_identity",
+        identity_for_signature(
+            session=str(kwargs["session"]),
+            signature=signature,
+        ),
+    )
+    return _enqueue_repair_request(**kwargs)
 
 
 def _plan_state(**overrides: object) -> dict[str, object]:
