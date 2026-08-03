@@ -1476,6 +1476,7 @@ class SshProvider(Provider):
         outage_epoch: str,
         expected_source_container_id: str,
         expected_source_image_id: str,
+        expected_resident_image_id: str,
         expected_runtime_path: str,
         expected_runtime_commit: str,
         expected_runtime_tree: str,
@@ -1498,6 +1499,7 @@ class SshProvider(Provider):
             source_container=self._resident_recovery_source_container(),
             expected_source_container_id=expected_source_container_id,
             expected_source_image_id=expected_source_image_id,
+            expected_resident_image_id=expected_resident_image_id,
             expected_runtime_path=expected_runtime_path,
             expected_runtime_commit=expected_runtime_commit,
             expected_runtime_tree=expected_runtime_tree,
@@ -1534,6 +1536,7 @@ class SshProvider(Provider):
             or fence.get("workspace") != self._ssh.workspace_dir
             or start.get("source_container_id") != expected_source_container_id
             or start.get("source_image_id") != expected_source_image_id
+            or start.get("resident_image_id") != expected_resident_image_id
             or start.get("workspace") != self._ssh.workspace_dir
             or start.get("resident_container") != expected_resident
             or health.get("outage_epoch") != outage_epoch
@@ -1565,6 +1568,7 @@ class SshProvider(Provider):
         outage_epoch: str,
         expected_source_container_id: str,
         expected_source_image_id: str,
+        expected_resident_image_id: str,
         expected_resident_container_id: str,
     ) -> dict[str, Any]:
         """Stop/remove only the resident identity minted for one outage epoch."""
@@ -1572,6 +1576,7 @@ class SshProvider(Provider):
             source_container=self._resident_recovery_source_container(),
             expected_source_container_id=expected_source_container_id,
             expected_source_image_id=expected_source_image_id,
+            expected_resident_image_id=expected_resident_image_id,
             expected_resident_container_id=expected_resident_container_id,
             workspace=self._ssh.workspace_dir,
             outage_epoch=outage_epoch,

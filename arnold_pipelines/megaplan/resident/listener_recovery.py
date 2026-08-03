@@ -26,6 +26,7 @@ _SEED_FIELDS = {
     "nonce",
     "source_container_id",
     "source_image_id",
+    "resident_image_id",
     "workspace_host_path",
     "workspace_identity",
     "runtime_path",
@@ -204,6 +205,7 @@ def require_listener_recovery_seed(
         or not _HEX64.fullmatch(str(seed.get("nonce") or ""))
         or not _HEX64.fullmatch(str(seed.get("source_container_id") or ""))
         or not _IMAGE_ID.fullmatch(str(seed.get("source_image_id") or ""))
+        or not _IMAGE_ID.fullmatch(str(seed.get("resident_image_id") or ""))
         or not isinstance(seed.get("workspace_host_path"), str)
         or not str(seed.get("workspace_host_path")).startswith("/")
         or not _HEX64.fullmatch(container_id)

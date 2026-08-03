@@ -257,9 +257,10 @@ def test_cloud_image_bakes_source_runtime_floor_without_pypi_name_collision() ->
         '"python-ulid>=3.0"',
         '"psutil>=5.9"',
         '"httpx>=0.27"',
+        '"discord.py>=2.6,<3"',
     ):
         assert requirement in dockerfile
-    assert "import httpx, psutil, pydantic, ulid, yaml" in dockerfile
+    assert "import discord, httpx, psutil, pydantic, ulid, yaml" in dockerfile
     assert 'ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"' not in dockerfile
 
 

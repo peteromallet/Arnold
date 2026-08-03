@@ -101,9 +101,10 @@ RUN if [ -n "$MEGAPLAN_INSTALL_SPEC" ]; then \
         "pydantic>=2.0" \
         "python-ulid>=3.0" \
         "psutil>=5.9" \
-        "httpx>=0.27"; \
+        "httpx>=0.27" \
+        "discord.py>=2.6,<3"; \
     fi \
-    && python3 -c 'import httpx, psutil, pydantic, ulid, yaml'
+    && python3 -c 'import discord, httpx, psutil, pydantic, ulid, yaml'
 RUN /usr/sbin/groupadd --gid 65532 finite-model \
     && /usr/sbin/useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin finite-model \
     && mkdir -p /run/megaplan-zero-recovery \
