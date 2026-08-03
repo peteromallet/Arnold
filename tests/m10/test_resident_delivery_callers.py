@@ -20,6 +20,7 @@ from arnold_pipelines.megaplan.resident.delivery_effects import (
     DeliveryEffects,
     OUTCOME_COMPLETED,
     OUTCOME_FAILED,
+    OUTCOME_INDETERMINATE,
 )
 
 
@@ -209,8 +210,125 @@ def test_lost_ack_does_not_crash_adapter(mock_delivery_effects):
         apply_fn=flaky_transport,
     )
     assert not outcome.ok
-    assert outcome.outcome_kind == OUTCOME_FAILED
+    assert outcome.outcome_kind == OUTCOME_INDETERMINATE
     assert "ACK lost" in outcome.error
+
+
+def _durable_effects(db_path):
+    from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+    from arnold.workflow.effect_protocol import EffectProtocol
+    from arnold.workflow.ledger_outbox import SqliteLedgerOutbox
+
+    store = SqliteAttemptLedgerStore(str(db_path))
+    return DeliveryEffects(EffectProtocol(store, SqliteLedgerOutbox(store))), store
+
+
+def test_applied_then_timeout_is_indeterminate_and_never_redriven(tmp_path):
+    effects, store = _durable_effects(tmp_path / "effects.db")
+    target = DeliveryTarget(
+        channel=DeliveryChannel.RESIDENT,
+        parent_id="incident-1",
+        target_id="notification-1",
+        action="send",
+    )
+    calls = 0
+
+    def applied_then_timeout(_payload):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("provider accepted before connection timed out")
+
+    first = effects.deliver(
+        target=target,
+        intent_payload={"content": "needs review", "idempotency_key": "occurrence-1"},
+        apply_fn=applied_then_timeout,
+    )
+    second = effects.deliver(
+        target=target,
+        intent_payload={"content": "needs review", "idempotency_key": "occurrence-1"},
+        apply_fn=applied_then_timeout,
+    )
+    assert first.outcome_kind == OUTCOME_INDETERMINATE
+    assert second.outcome_kind == OUTCOME_INDETERMINATE
+    assert second.evidence["adopted"] is True
+    assert calls == 1
+    store.close()
+
+
+def test_two_hundred_identical_polls_and_restart_apply_once(tmp_path):
+    db_path = tmp_path / "effects.db"
+    target = DeliveryTarget(
+        channel=DeliveryChannel.RESIDENT,
+        parent_id="incident-2",
+        target_id="notification-2",
+        action="send",
+    )
+    calls = 0
+
+    def provider(_payload):
+        nonlocal calls
+        calls += 1
+        return {"message_ids": ["provider-message-1"]}
+
+    effects, store = _durable_effects(db_path)
+    for _ in range(100):
+        outcome = effects.deliver(
+            target=target,
+            intent_payload={"content": "same", "idempotency_key": "occurrence-2"},
+            apply_fn=provider,
+        )
+        assert outcome.ok
+    store.close()
+
+    restarted, restarted_store = _durable_effects(db_path)
+    for _ in range(100):
+        outcome = restarted.deliver(
+            target=target,
+            intent_payload={"content": "same", "idempotency_key": "occurrence-2"},
+            apply_fn=provider,
+        )
+        assert outcome.ok
+        assert outcome.evidence.get("adopted") is True
+    assert calls == 1
+    restarted_store.close()
+
+
+def test_async_provider_timeout_is_indeterminate_and_not_retried(tmp_path):
+    import asyncio
+
+    effects, store = _durable_effects(tmp_path / "async-effects.db")
+    target = DeliveryTarget(
+        channel=DeliveryChannel.RESIDENT,
+        parent_id="incident-async",
+        target_id="notification-async",
+        action="send",
+    )
+    calls = 0
+
+    async def provider(_key, _payload):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("accepted then timed out")
+
+    async def exercise():
+        first = await effects.deliver_async(
+            target=target,
+            intent_payload={"content": "same", "idempotency_key": "occurrence-async"},
+            apply_fn=provider,
+        )
+        second = await effects.deliver_async(
+            target=target,
+            intent_payload={"content": "same", "idempotency_key": "occurrence-async"},
+            apply_fn=provider,
+        )
+        return first, second
+
+    first, second = asyncio.run(exercise())
+    assert first.outcome_kind == OUTCOME_INDETERMINATE
+    assert second.outcome_kind == OUTCOME_INDETERMINATE
+    assert second.evidence.get("adopted") is True
+    assert calls == 1
+    store.close()
 
 
 # ── Completion sweep delivery ─────────────────────────────────────────────────
