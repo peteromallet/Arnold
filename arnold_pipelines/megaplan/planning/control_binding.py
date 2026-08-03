@@ -380,6 +380,65 @@ def _routing_sha256(config: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
+def _profile_source_binding(
+    profile_name: str,
+    *,
+    project_dir: Path,
+    profiles: Mapping[str, Mapping[str, Any]],
+    metadata: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Bind a resolved profile to the registry layer and exact logical content.
+
+    Profile lookup deliberately supports built-in, user, and project layers.
+    A name alone therefore is not custody evidence: a project file can shadow a
+    built-in without changing the requested name.  Keep normal overlay behavior,
+    but make the selected layer and content independently attestable.
+    """
+
+    from arnold_pipelines.megaplan.profiles import load_profile_sources
+
+    candidates: list[dict[str, str]] = []
+    for source, candidate_name, phase_map in load_profile_sources(
+        project_dir=project_dir
+    ):
+        if candidate_name != profile_name:
+            continue
+        candidate_digest = hashlib.sha256(
+            json.dumps(
+                {"profile": profile_name, "phase_map": phase_map},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        candidates.append({"source": source, "phase_map_sha256": candidate_digest})
+    if not candidates:
+        # ``resolve_profile`` normally owns this error.  Retain a defensive
+        # fail-closed guard if the registry changes between the two reads.
+        raise CliError(
+            "profile_source_unavailable",
+            f"Profile '{profile_name}' has no resolvable registry source.",
+        )
+    selected = candidates[-1]
+    effective_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "profile": profile_name,
+                "phase_map": dict(profiles[profile_name]),
+                "metadata": dict(metadata.get(profile_name, {})),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return (
+        {
+            "profile_source": selected["source"],
+            "profile_content_sha256": effective_digest,
+        },
+        candidates,
+    )
+
+
 def _next_meta(
     state: Mapping[str, object],
     *,
@@ -1443,6 +1502,71 @@ class PlanningControlBinding:
             profiles = load_profiles(project_dir=_project_dir(state))
             metadata = load_profile_metadata(project_dir=_project_dir(state))
             resolved = resolve_profile(new_profile, profiles)
+            profile_binding, profile_source_candidates = _profile_source_binding(
+                new_profile,
+                project_dir=_project_dir(state),
+                profiles=profiles,
+                metadata=metadata,
+            )
+            previous_profile = state["config"].get("profile")
+            previous_binding = state["config"].get("profile_binding")
+            expected_source = transition.payload.get("expected_profile_source")
+            expected_digest = transition.payload.get("expected_profile_sha256")
+            if expected_source is not None and expected_source not in {
+                "built-in",
+                "user",
+                "project",
+            }:
+                raise CliError(
+                    "invalid_args",
+                    "--expected-profile-source must be built-in, user, or project",
+                )
+            if (
+                expected_source is not None
+                and profile_binding["profile_source"] != expected_source
+            ):
+                raise CliError(
+                    "profile_source_mismatch",
+                    f"Profile '{new_profile}' resolved from {profile_binding['profile_source']}, "
+                    f"not expected source {expected_source}.",
+                    extra={"profile_source_candidates": profile_source_candidates},
+                )
+            if (
+                expected_digest is not None
+                and profile_binding["profile_content_sha256"] != expected_digest
+            ):
+                raise CliError(
+                    "profile_content_mismatch",
+                    f"Profile '{new_profile}' content does not match the expected digest.",
+                    extra={"resolved_profile_binding": profile_binding},
+                )
+            if previous_profile == new_profile:
+                prior_source = (
+                    previous_binding.get("profile_source")
+                    if isinstance(previous_binding, Mapping)
+                    else None
+                )
+                if (
+                    prior_source is not None
+                    and profile_binding["profile_source"] != prior_source
+                    and expected_source is None
+                ):
+                    raise CliError(
+                        "profile_source_changed",
+                        f"Same-profile refresh for '{new_profile}' changed source from "
+                        f"{prior_source} to {profile_binding['profile_source']}.",
+                    )
+                if (
+                    prior_source is None
+                    and expected_source is None
+                    and len(profile_source_candidates) > 1
+                ):
+                    raise CliError(
+                        "profile_source_ambiguous",
+                        f"Same-profile refresh for '{new_profile}' has multiple registry "
+                        "definitions; pass --expected-profile-source to bind the intended one.",
+                        extra={"profile_source_candidates": profile_source_candidates},
+                    )
             try:
                 tier_models = _resolve_tier_models_with_inheritance(
                     new_profile,
@@ -1463,9 +1587,9 @@ class PlanningControlBinding:
                 )
             except CliError:
                 inherited_prep_models = {}
-            previous_profile = state["config"].get("profile")
             next_config = dict(state["config"])
             next_config["profile"] = new_profile
+            next_config["profile_binding"] = profile_binding
             next_config["phase_model"] = profile_to_phase_models(resolved)
             if tier_models:
                 next_config["tier_models"] = _canonicalize_tier_models_for_json(
@@ -1490,6 +1614,8 @@ class PlanningControlBinding:
             profile_refresh_receipt = {
                 "profile": new_profile,
                 "same_profile_refresh": previous_profile == new_profile,
+                **profile_binding,
+                "profile_source_candidates": profile_source_candidates,
                 "from_routing_sha256": _routing_sha256(state["config"]),
                 "to_routing_sha256": _routing_sha256(next_config),
             }

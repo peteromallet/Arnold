@@ -586,6 +586,8 @@ def _handle_routed_override(
             "source": getattr(args, "source", None),
             "robustness": getattr(args, "robustness", None),
             "profile": getattr(args, "profile", None),
+            "expected_profile_source": getattr(args, "expected_profile_source", None),
+            "expected_profile_sha256": getattr(args, "expected_profile_sha256", None),
             "phase": getattr(args, "phase", None),
             "model": getattr(args, "model", None),
             "effort": getattr(args, "effort", None),

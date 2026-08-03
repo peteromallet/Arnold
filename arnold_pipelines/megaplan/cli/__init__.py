@@ -299,6 +299,15 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--user-approved", action="store_true", default=False)
     override_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED)
     override_parser.add_argument("--profile")
+    override_parser.add_argument(
+        "--expected-profile-source",
+        choices=("built-in", "user", "project"),
+        help="Fail closed unless set-profile resolves from this registry layer.",
+    )
+    override_parser.add_argument(
+        "--expected-profile-sha256",
+        help="Fail closed unless the resolved profile content has this SHA-256 digest.",
+    )
     override_parser.add_argument("--phase")
     override_parser.add_argument("--model")
     override_parser.add_argument("--effort")
