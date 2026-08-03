@@ -206,7 +206,12 @@ def test_two_running_plus_one_repairing(fx):
     )
     fx.add_repair_progress("c")
 
-    snap = fx.build()
+    snap = fx.build(
+        liveness_probe=lambda marker: {
+            "tmux": False,
+            "process": marker.get("session") in {"a", "b"},
+        }
+    )
     assert snap["summary"]["running"] == 2
     assert snap["summary"]["repairing"] == 0
     assert snap["summary"]["attention"] == 1
@@ -818,7 +823,7 @@ def test_active_plan_step_counts_as_live_process_and_latest_activity(fx, monkeyp
     )
     monkeypatch.setattr(ss, "_pid_is_live", lambda pid: pid == 4242)
 
-    snap = fx.build()
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     entry = _by_session(snap, "manual")
 
     assert entry["status"] == "running"
@@ -875,7 +880,8 @@ def test_fresh_sidecar_cannot_make_dead_active_step_runner_running(fx):
     assert entry["tmux"] is False
     assert entry["process"] is False
     assert entry["status"] == "attention"
-    assert "dead worker PID" in entry["operator_next"]
+    assert "process state is unknown" in entry["operator_next"]
+    assert "activity sidecars do not establish liveness" in entry["operator_next"]
     assert entry["advancement"]["action"] != "preserve_live"
 
 
@@ -1216,7 +1222,12 @@ def test_summary_counts_partition_all_sessions(fx):
     fx.add_session("dn"); fx.add_chain_health("dn", chain_complete=True, completed_count=2, milestone_count=2, last_state="done")
     fx.add_session("att"); fx.add_chain_health("att", last_state="executed", updated_at=NOW - timedelta(hours=8))
 
-    snap = fx.build()
+    snap = fx.build(
+        liveness_probe=lambda marker: {
+            "tmux": False,
+            "process": marker.get("session") in {"r1", "r2"},
+        }
+    )
     summary = snap["summary"]
     total = sum(summary.values())
     assert total == 6, summary
@@ -1235,7 +1246,10 @@ def test_summary_counts_partition_all_sessions(fx):
 
 def test_missing_watchdog_report_marks_degraded_but_still_builds(fx):
     fx.add_session("a"); fx.add_chain_health("a")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    snap = fx.build(
+        watchdog_report_path=fx.root / "absent.json",
+        liveness_probe=lambda _marker: {"tmux": False, "process": True},
+    )
     assert snap["degraded"] is not None
     assert snap["degraded"]["reasons"]
     assert _by_session(snap, "a")["status"] == "running"
@@ -1310,7 +1324,10 @@ def test_snapshot_adds_separate_read_only_shadow_views_without_reclassification(
     )
     fx.add_plan_state("shadowed", "plan-a", current_state="executed")
 
-    entry = _by_session(fx.build(), "shadowed")
+    entry = _by_session(
+        fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True}),
+        "shadowed",
+    )
 
     # Existing compatibility fields and classification retain their established
     # values even when the sibling views disagree about runner/publication state.
@@ -1335,7 +1352,7 @@ def test_snapshot_adds_separate_read_only_shadow_views_without_reclassification(
         and item["source"].endswith("/plan-a/state.json")
         for item in entry["execution_authority"]["diagnostics"]
     )
-    assert entry["runner"]["status"] == "stopped"
+    assert entry["runner"]["status"] == "live"
     publication = {item["field"]: item for item in entry["publication"]["observations"]}
     assert publication["pull_request"]["value"] == "42"
     assert publication["branch"]["state"] == "unknown"
@@ -1380,7 +1397,9 @@ def test_detailed_status_renders_separate_shadow_views_with_hashes_and_sources(f
     health["branch"] = "health-branch"
     health_file.write_text(json.dumps(health), encoding="utf-8")
 
-    detailed = sf.format_cloud_status_detailed(fx.build())
+    detailed = sf.format_cloud_status_detailed(
+        fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    )
 
     # The established session/evidence surface remains present, followed by
     # operator-facing views that do not imply authority or mutate the snapshot.
@@ -1529,7 +1548,13 @@ def test_discord_short_degraded_when_snapshot_absent():
 def test_attention_only_empty_when_nothing_noteworthy(fx):
     fx.add_session("a"); fx.add_chain_health("a")
     fx.add_session("d"); fx.add_chain_health("d", chain_complete=True, completed_count=1, milestone_count=1, last_state="done")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    snap = fx.build(
+        watchdog_report_path=fx.root / "absent.json",
+        liveness_probe=lambda marker: {
+            "tmux": False,
+            "process": marker.get("session") == "a",
+        },
+    )
     assert sf.format_attention_only(snap) == ""
 
 
@@ -1706,7 +1731,10 @@ def test_fresher_incomplete_chain_health_beats_stale_watchdog_complete(fx):
         encoding="utf-8",
     )
 
-    snap = fx.build(watchdog_report_path=watchdog_path)
+    snap = fx.build(
+        watchdog_report_path=watchdog_path,
+        liveness_probe=lambda _marker: {"tmux": False, "process": True},
+    )
     entry = _by_session(snap, "epic-run")
 
     assert entry["status"] == "running"
@@ -1737,7 +1765,7 @@ def test_session_entry_progress_none_without_milestones(fx):
 def test_plan_activity_summary_propagates_progress(fx):
     fx.add_session("epic-run", plan_name="s2-loop")
     fx.add_chain_health("epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=2)
-    snap = fx.build()
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     summary = ss.plan_activity_summary(snap)
     assert summary["degraded"] is False
     active = summary["active_working"]
@@ -2020,7 +2048,7 @@ def test_session_entry_carries_s4_enriched_fields(fx):
         milestone_count=4,
         last_state="executed",
     )
-    snap = fx.build()
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     entry = _by_session(snap, "epic-run")
 
     # All six S4 fields must be present.
@@ -2094,7 +2122,7 @@ def test_activity_phase_derives_from_legacy_status_running(fx):
     fx.add_session("s1", plan_name="planA")
     fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
 
-    snap = fx.build()
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     entry = _by_session(snap, "s1")
     # No current_phase or active_step phase → fall back to status-derived.
     assert entry["activity_phase"] == "execute"
@@ -2241,7 +2269,7 @@ def test_plan_activity_summary_propagates_plan_percent(fx):
         milestone_count=4,
         last_state="executed",
     )
-    snap = fx.build()
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     active = ss.plan_activity_summary(snap)["active_working"]
     assert active[0]["progress"]["plan_percent"] == 100
     assert active[0]["progress"]["plan_state"] == "executed"

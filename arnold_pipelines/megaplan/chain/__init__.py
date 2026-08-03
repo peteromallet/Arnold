@@ -9360,7 +9360,11 @@ def run_chain_cli(
     fresh = bool(getattr(args, "fresh", False))
     require_anchor_override = getattr(args, "require_anchor", None)
     missing_anchor_ack_override = getattr(args, "missing_anchor_ack", None)
+    lease_publisher = None
     try:
+        from arnold_pipelines.megaplan.cloud.liveness_lease import start_from_environment
+
+        lease_publisher = start_from_environment()
         _require_active_initiative_chain(root, spec_path)
         spec_for_anchor_check = chain_spec.load_spec(spec_path)
         chain_spec.validate_anchor_requirement(
@@ -9395,6 +9399,9 @@ def run_chain_cli(
             )
     except CliError as exc:
         return _emit_error(exc)
+    finally:
+        if lease_publisher is not None:
+            lease_publisher.close()
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
     if result["status"] in {"done", "paused", "awaiting_pr_merge"}:
         return 0
