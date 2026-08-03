@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -1042,7 +1043,63 @@ def _record_completion_dm(config: AgentBoxConfig, operation_id: str, run: Any) -
     append_event(
         paths, "megaplan_chain.completion_dm_ready", payload={"completion_dm": dm}
     )
-    _send_completion_dm(run, fallback_text=dm)
+    # Completion ticks are autonomous operational notifications.  They must
+    # share the resident's durable effect owner so a concurrent tick or a
+    # restarted AgentBox process adopts the accepted outcome instead of
+    # contacting Discord again.
+    delivery_effects = None
+    try:
+        from arnold_pipelines.megaplan.resident.delivery_effects import (
+            open_resident_delivery_effects,
+        )
+
+        configured_root = str(
+            os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or ""
+        ).strip()
+        resident_root = (
+            Path(configured_root).expanduser().resolve()
+            if configured_root
+            else config.workspace_root / "resident_store"
+        )
+        delivery_effects = open_resident_delivery_effects(
+            resident_root / "delivery_effects",
+            production_enabled=True,
+        )
+        result = _send_completion_dm(
+            run,
+            fallback_text=dm,
+            delivery_effects=delivery_effects,
+        )
+        append_event(
+            paths,
+            "megaplan_chain.completion_dm_delivery",
+            payload={
+                "ok": bool(result.get("ok")),
+                "reason": result.get("reason"),
+                "outcome_kind": result.get("outcome_kind"),
+                "glek": result.get("glek"),
+            },
+        )
+    except Exception as exc:
+        # Fail closed: absence/corruption of the sole durable owner never
+        # falls through to the direct Discord transport.
+        LOGGER.warning(
+            "Completion Discord DM has no usable durable effect owner for operation %s",
+            run.id,
+            exc_info=True,
+        )
+        append_event(
+            paths,
+            "megaplan_chain.completion_dm_delivery",
+            payload={
+                "ok": False,
+                "reason": "durable_delivery_owner_unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    finally:
+        if delivery_effects is not None:
+            delivery_effects.close()
 
 
 def _build_completion_dm(run: Any) -> str:
@@ -1078,18 +1135,29 @@ def _send_completion_dm(
     *,
     fallback_text: str,
     delivery_effects: Any | None = None,
-) -> None:
-    """Send completion DM, optionally routed through delivery effects (Step 13G2)."""
+) -> dict[str, Any]:
+    """Send an autonomous completion DM through the sole durable owner."""
+    if delivery_effects is None:
+        raise RuntimeError(
+            "AgentBox completion DM has no durable DeliveryEffects owner"
+        )
     try:
         payload = _build_completion_dm_payload(run, fallback_text=fallback_text)
-        if delivery_effects is not None:
-            send_discord_dm(payload, delivery_effects=delivery_effects)
-        else:
-            send_discord_dm(payload)
-    except Exception:
+        payload["idempotency_key"] = (
+            f"agentbox-completion:{run.id}:{run.state.value}"
+        )
+        return send_discord_dm(payload, delivery_effects=delivery_effects)
+    except Exception as exc:
         LOGGER.warning(
             "Completion Discord DM send crashed for operation %s", run.id, exc_info=True
         )
+        return {
+            "ok": False,
+            "reason": "delivery_adapter_indeterminate",
+            "outcome_kind": "INDETERMINATE",
+            "error": f"{type(exc).__name__}: {exc}",
+            "message_count": 0,
+        }
 
 
 def _build_completion_dm_payload(run: Any, *, fallback_text: str) -> dict[str, Any]:

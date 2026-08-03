@@ -193,6 +193,7 @@ def test_production_notification_wiring_inventory_is_closed() -> None:
     production_roots = (repo / "arnold_pipelines", repo / "agentbox")
     constructors: list[tuple[Path, ast.Call]] = []
     sweeps: list[tuple[Path, ast.Call]] = []
+    legacy_discord_sends: list[tuple[Path, ast.Call]] = []
     for root in production_roots:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -210,6 +211,8 @@ def test_production_notification_wiring_inventory_is_closed() -> None:
                     constructors.append((path.relative_to(repo), node))
                 elif name == "sweep_managed_agent_deliveries":
                     sweeps.append((path.relative_to(repo), node))
+                elif name == "send_discord_dm":
+                    legacy_discord_sends.append((path.relative_to(repo), node))
 
     # The only standalone constructor is an explicitly named manual test
     # helper. The resident production constructor must inject the owner.
@@ -229,6 +232,18 @@ def test_production_notification_wiring_inventory_is_closed() -> None:
     assert all(
         "delivery_effects" in {keyword.arg for keyword in call.keywords}
         for _path, call in sweeps
+    )
+
+    # The legacy HTTP helper has one remaining production caller: AgentBox
+    # terminal completion.  It is autonomous and therefore must explicitly
+    # inject the durable owner.  The shell wrapper is outside this Python AST
+    # inventory and is an operator-invoked interactive utility.
+    assert {str(path) for path, _ in legacy_discord_sends} == {
+        "arnold_pipelines/megaplan/agentbox_adapter.py"
+    }
+    assert all(
+        "delivery_effects" in {keyword.arg for keyword in call.keywords}
+        for _path, call in legacy_discord_sends
     )
 
 

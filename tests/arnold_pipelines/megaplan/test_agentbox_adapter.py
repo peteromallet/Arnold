@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -20,6 +22,7 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     MegaplanChainHandler,
     MegaplanChainLaunchError,
     _record_completion_dm,
+    _send_completion_dm,
 )
 from arnold_pipelines.megaplan.custody.process_adapter_wbc import process_adapter_wbc_dir
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
@@ -1235,7 +1238,8 @@ def test_record_completion_dm_emits_event_and_sends_discord_dm(
     payloads: list[dict[str, object]] = []
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
-        lambda payload: payloads.append(dict(payload)) or {"ok": True, "message_count": 1},
+        lambda payload, **_kwargs: payloads.append(dict(payload))
+        or {"ok": True, "message_count": 1},
     )
 
     run = load_agentbox_operation(config, "chain-1")
@@ -1245,7 +1249,9 @@ def test_record_completion_dm_emits_event_and_sends_discord_dm(
     events = _events(run_dir_paths(config, "chain-1").events_path)
 
     assert "Operation chain-1 completed with state succeeded." in updated.metadata["completion_dm"]
-    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert events[-2]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_delivery"
+    assert events[-1]["payload"]["ok"] is True
     assert payloads[0]["title"] == "Megaplan chain complete - chain-1"
     assert payloads[0]["links"] == [{"label": "PR", "url": "https://github.com/example/repo/pull/42"}]
     assert any(field["label"] == "CI" and field["value"] == "passed" for field in payloads[0]["fields"])
@@ -1273,14 +1279,173 @@ def test_record_completion_dm_never_raises_when_discord_send_crashes(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
-        lambda payload: (_ for _ in ()).throw(RuntimeError("boom")),
+        lambda payload, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
     run = load_agentbox_operation(config, "chain-1")
     _record_completion_dm(config, "chain-1", run)
 
     events = _events(run_dir_paths(config, "chain-1").events_path)
-    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_delivery"
+    assert events[-1]["payload"]["outcome_kind"] == "INDETERMINATE"
+
+
+def test_agentbox_completion_delivery_is_once_across_concurrent_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-once",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-once", state=OperationState.RUNNING)
+    update_agentbox_operation(config, "chain-once", state=OperationState.SUCCEEDED)
+    run = load_agentbox_operation(config, "chain-once")
+
+    # Exercise the real effect protocol while replacing only the transport
+    # boundary.  Both independently opened owners represent concurrent or
+    # restarted AgentBox ticks sharing the canonical SQLite ledger.
+    provider_calls = 0
+    provider_lock = threading.Lock()
+
+    def effect_routed_send(payload, *, delivery_effects):
+        occurrence = str(payload["idempotency_key"])
+
+        def provider(_intent):
+            nonlocal provider_calls
+            with provider_lock:
+                provider_calls += 1
+            return {"ok": True, "message_ids": ["discord-1"], "message_count": 1}
+
+        outcome = delivery_effects.deliver_agentbox(
+            operation_id=run.id,
+            payload={**dict(payload), "idempotency_key": occurrence},
+            apply_fn=provider,
+        )
+        return {
+            "ok": outcome.ok,
+            "glek": outcome.glek,
+            "outcome_kind": outcome.outcome_kind,
+        }
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        effect_routed_send,
+    )
+    from arnold_pipelines.megaplan.resident.delivery_effects import (
+        open_resident_delivery_effects,
+    )
+
+    effects_root = tmp_path / "shared-effects"
+
+    def tick(owner) -> dict[str, object]:
+        try:
+            return _send_completion_dm(
+                run,
+                fallback_text="done",
+                delivery_effects=owner,
+            )
+        finally:
+            owner.close()
+
+    first_owner = open_resident_delivery_effects(effects_root)
+    second_owner = open_resident_delivery_effects(effects_root)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(tick, (first_owner, second_owner)))
+    restarted = tick(open_resident_delivery_effects(effects_root))
+
+    assert provider_calls == 1
+    assert sum(bool(item["ok"]) for item in (first, second, restarted)) >= 1
+    assert {
+        item["glek"] for item in (first, second, restarted) if item["glek"]
+    } == {restarted["glek"]}
+
+
+def test_agentbox_completion_ambiguous_provider_outcome_is_not_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-ambiguous",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-ambiguous", state=OperationState.RUNNING)
+    update_agentbox_operation(config, "chain-ambiguous", state=OperationState.SUCCEEDED)
+    run = load_agentbox_operation(config, "chain-ambiguous")
+    provider_calls = 0
+
+    def effect_routed_send(payload, *, delivery_effects):
+        occurrence = str(payload["idempotency_key"])
+
+        def ambiguous_provider(_intent):
+            nonlocal provider_calls
+            provider_calls += 1
+            raise TimeoutError("provider may have accepted the DM")
+
+        outcome = delivery_effects.deliver_agentbox(
+            operation_id=run.id,
+            payload={**dict(payload), "idempotency_key": occurrence},
+            apply_fn=ambiguous_provider,
+        )
+        return {
+            "ok": outcome.ok,
+            "glek": outcome.glek,
+            "outcome_kind": outcome.outcome_kind,
+        }
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        effect_routed_send,
+    )
+    from arnold_pipelines.megaplan.resident.delivery_effects import (
+        open_resident_delivery_effects,
+    )
+
+    effects_root = tmp_path / "shared-effects"
+    outcomes = []
+    for _ in range(2):
+        owner = open_resident_delivery_effects(effects_root)
+        try:
+            outcomes.append(
+                _send_completion_dm(
+                    run,
+                    fallback_text="done",
+                    delivery_effects=owner,
+                )
+            )
+        finally:
+            owner.close()
+
+    assert provider_calls == 1
+    assert [item["outcome_kind"] for item in outcomes] == [
+        "INDETERMINATE",
+        "INDETERMINATE",
+    ]
+
+
+def test_agentbox_completion_without_effect_owner_fails_closed(
+    tmp_path: Path,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-no-owner",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    run = load_agentbox_operation(config, "chain-no-owner")
+
+    with pytest.raises(RuntimeError, match="no durable DeliveryEffects owner"):
+        _send_completion_dm(run, fallback_text="done")
 
 
 def _config_with_repo(tmp_path: Path, repo_name: str) -> AgentBoxConfig:
