@@ -1676,7 +1676,7 @@ def test_codex_actual_model_comes_from_rollout_not_requested_value(tmp_path: Pat
     assert _read_codex_observed_model(rollout) is None
 
 
-def test_malformed_status_still_reconciles_running_exact_canary() -> None:
+def test_malformed_status_still_reconciles_observed_stopped_exact_canary() -> None:
     provider = object.__new__(SshProvider)
     provider._spec = _spec()
     provider._ssh = SshSpec(
@@ -1693,6 +1693,7 @@ def test_malformed_status_still_reconciles_running_exact_canary() -> None:
     observations = iter(
         [
             {"status": "available", "container": provider._ssh.container, "lifecycle": "stopped"},
+            {"status": "available", "container": provider._ssh.container, "lifecycle": "stopped"},
         ]
     )
     provider._remote_run_compatible = remote
@@ -1705,6 +1706,45 @@ def test_malformed_status_still_reconciles_running_exact_canary() -> None:
     assert payload["status"] == "unknown"
     assert payload["reconciled_stop"] is True
     assert sum(shlex.split(command)[:2] == ["docker", "stop"] for command in commands) == 1
+
+
+def test_status_poll_never_stops_running_canary_without_receipt() -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    commands: list[str] = []
+
+    def remote(command: str, **kwargs):
+        commands.append(command)
+        assert command.startswith("python3 ")
+        envelope = {
+            "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+            "receipt_b64": None,
+            "receipt_sha256": None,
+            "receipt_count": 0,
+        }
+        return subprocess.CompletedProcess([], 0, json.dumps(envelope), "")
+
+    provider._remote_run_compatible = remote
+    provider.observe_container = lambda: {
+        "status": "available",
+        "container": provider._ssh.container,
+        "lifecycle": "running",
+    }
+    provider._reconcile_zero_recovery_canary_stop = lambda: (_ for _ in ()).throw(
+        AssertionError("status poll attempted terminal reconciliation")
+    )
+
+    payload = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert payload["status"] == "in_progress"
+    assert payload["reconciled_stop"] is False
+    assert payload["container_observation"]["lifecycle"] == "running"
+    assert not any(
+        shlex.split(command)[:2] == ["docker", "stop"] for command in commands
+    )
 
 
 def test_execute_attempts_exact_stop_even_when_first_observation_raises() -> None:
@@ -1732,7 +1772,7 @@ def test_execute_attempts_exact_stop_even_when_first_observation_raises() -> Non
 
 
 @pytest.mark.parametrize("read_failure", [SystemExit("read aborted"), None])
-def test_status_blind_stops_when_read_or_observation_raises(read_failure) -> None:
+def test_status_only_reconciles_after_observed_stopped_state(read_failure) -> None:
     provider = object.__new__(SshProvider)
     provider._spec = _spec()
     provider._ssh = provider._spec.ssh
@@ -1751,7 +1791,7 @@ def test_status_blind_stops_when_read_or_observation_raises(read_failure) -> Non
         provider.observe_container = lambda: (_ for _ in ()).throw(
             RuntimeError("observation failed")
         )
-        expected = CliError
+        expected = RuntimeError
     else:
         provider.observe_container = lambda: {
             "status": "available", "container": provider._ssh.container,
@@ -1764,9 +1804,12 @@ def test_status_blind_stops_when_read_or_observation_raises(read_failure) -> Non
         provider.zero_recovery_canary_status(
             source_commit="a" * 40, source_tree="b" * 40
         )
-    assert ["docker", "stop", provider._ssh.container] in [
-        shlex.split(command) for command in commands
-    ]
+    stop_command = ["docker", "stop", provider._ssh.container]
+    parsed_commands = [shlex.split(command) for command in commands]
+    if read_failure is None:
+        assert stop_command not in parsed_commands
+    else:
+        assert stop_command in parsed_commands
 
 
 def test_isolated_workspace_creator_is_single_use_empty_nofollow_and_custodied(

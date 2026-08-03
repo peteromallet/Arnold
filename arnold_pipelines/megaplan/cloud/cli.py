@@ -1019,7 +1019,11 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 source_tree=canary_admission["_admission_source_tree"],
             )
             sys.stdout.write(json.dumps(status_payload, indent=2) + "\n")
-            return 0 if status_payload.get("status") == "available" else 1
+            return (
+                0
+                if status_payload.get("status") in {"available", "in_progress"}
+                else 1
+            )
 
         if action == "zero-recovery-preflight":
             prepare = getattr(
