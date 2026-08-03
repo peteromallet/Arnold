@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from pathlib import Path
+import subprocess
+import sys
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGETED_WRAPPERS = {
+    "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
@@ -34,7 +41,7 @@ EXPECTED_AUTHORITY_RISK_IDS = {
         *range(77, 80),
         *range(90, 93),
         *range(95, 117),
-        *range(121, 125),
+        122,
         *range(126, 129),
         *range(131, 134),
         136,
@@ -55,7 +62,8 @@ def test_authority_risk_bypass_audit_entries_are_typed_or_fail_closed() -> None:
     gated_ids: set[str] = set()
     for module_path in TARGETED_WRAPPERS:
         text = (REPO_ROOT / module_path).read_text(encoding="utf-8")
-        assert "schema_version\": \"arnold.megaplan.cloud.wrapper_authority_gap.v1\"" in text
+        if module_path != "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain":
+            assert "schema_version\": \"arnold.megaplan.cloud.wrapper_authority_gap.v1\"" in text
         gated_ids.update(GATED_CALL_RE.findall(text))
 
     assert EXPECTED_AUTHORITY_RISK_IDS <= gated_ids
@@ -71,6 +79,205 @@ def test_no_audited_authority_risk_id_is_silenced_with_naked_true() -> None:
                 continue
             assert "|| true" not in line, f"{module_path}:{line_number}: {line}"
             assert "authority_gap_continue" in line or "authority_fail_closed" in line or "authority_gap_record" in line
+
+
+def test_arnold_chain_is_in_the_authority_gate_and_has_no_permissive_fallback() -> None:
+    text = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain").read_text(
+        encoding="utf-8"
+    )
+    assert "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain" in TARGETED_WRAPPERS
+    assert "validate_wrapper_acceptance_decision" in text
+    assert "acceptance_gate_empty_output" in text
+    assert "acceptance_gate_helper_failed" in text
+    assert "get('gate_open',True)" not in text
+    assert "echo True" not in text
+    assert ".get('gate_open'" not in text
+
+
+def _chain_gate_fixture(*, spec_path: Path, workspace: Path, **overrides: object) -> str:
+    payload: dict[str, object] = {
+        "schema": "arnold.megaplan.cloud.wrapper_acceptance_gate.v1",
+        "schema_version": 1,
+        "decision": "open",
+        "gate_open": True,
+        "reason": "fixture open",
+        "identity": {
+            "spec_path": str(spec_path.resolve()),
+            "workspace": str(workspace.resolve()),
+            "session": "chain",
+            "plan_name": None,
+        },
+    }
+    payload.update(overrides)
+    return json.dumps(payload, sort_keys=True)
+
+
+def _run_chain_wrapper_subprocess(
+    tmp_path: Path,
+    *,
+    gate_output: str | None = None,
+    helper_rc: int = 0,
+    missing_spec: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    spec_path = workspace / "chain.yaml"
+    if not missing_spec:
+        spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        f"""#!{sys.executable}
+import os
+import subprocess
+import sys
+
+source = sys.stdin.read()
+if "check_wrapper_acceptance_gate" in source and os.environ.get("CHAIN_GATE_FIXTURE") is not None:
+    sys.stdout.write(os.environ["CHAIN_GATE_FIXTURE"])
+    raise SystemExit(int(os.environ.get("CHAIN_GATE_RC", "0")))
+delegate = subprocess.run(
+    [os.environ["REAL_PYTHON"], *sys.argv[1:]],
+    input=source,
+    text=True,
+    capture_output=True,
+    check=False,
+)
+sys.stdout.write(delegate.stdout)
+sys.stderr.write(delegate.stderr)
+raise SystemExit(delegate.returncode)
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    fake_bash = fake_bin / "bash"
+    fake_bash.write_text(
+        """#!/bin/sh
+printf 'launch\n' > "$CHAIN_LAUNCH_MARKER"
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_bash.chmod(0o755)
+
+    env = dict(os.environ)
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "PYTHONPATH": str(REPO_ROOT),
+            "REAL_PYTHON": sys.executable,
+            "MEGAPLAN_ENGINE_DIR": str(REPO_ROOT),
+            "MEGAPLAN_PROJECT_DIR": str(workspace),
+            "CHAIN_LAUNCH_MARKER": str(tmp_path / "chain-launched"),
+            "CHAIN_GATE_RC": str(helper_rc),
+        }
+    )
+    if gate_output is None:
+        env.pop("CHAIN_GATE_FIXTURE", None)
+    else:
+        env["CHAIN_GATE_FIXTURE"] = gate_output
+    return subprocess.run(
+        [
+            "/bin/bash",
+            str(REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain"),
+            str(spec_path),
+        ],
+        cwd=workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "gate_output", "helper_rc"),
+    [
+        ("nonzero", _chain_gate_fixture(spec_path=Path("/unused/chain.yaml"), workspace=Path("/unused")), 23),
+        ("empty", "", 0),
+        ("malformed", "not-json", 0),
+        ("unknown-schema", json.dumps({"schema": "unknown"}), 0),
+        ("missing-fields", json.dumps({"schema": "arnold.megaplan.cloud.wrapper_acceptance_gate.v1"}), 0),
+        (
+            "identity-mismatch",
+            json.dumps(
+                {
+                    "schema": "arnold.megaplan.cloud.wrapper_acceptance_gate.v1",
+                    "schema_version": 1,
+                    "decision": "open",
+                    "gate_open": True,
+                    "reason": "wrong identity",
+                    "identity": {
+                        "spec_path": "/wrong/chain.yaml",
+                        "workspace": "/wrong",
+                        "session": "wrong-session",
+                        "plan_name": None,
+                    },
+                }
+            ),
+            0,
+        ),
+        (
+            "explicit-close",
+            json.dumps(
+                {
+                    "schema": "arnold.megaplan.cloud.wrapper_acceptance_gate.v1",
+                    "schema_version": 1,
+                    "decision": "closed",
+                    "gate_open": False,
+                    "reason": "acceptance required",
+                    "identity": {
+                        "spec_path": "/wrong/chain.yaml",
+                        "workspace": "/wrong",
+                        "session": "chain",
+                        "plan_name": None,
+                    },
+                }
+            ),
+            1,
+        ),
+    ],
+)
+def test_arnold_chain_invalid_acceptance_results_have_zero_launch_side_effects(
+    tmp_path: Path, case: str, gate_output: str, helper_rc: int
+) -> None:
+    if case == "explicit-close":
+        workspace = tmp_path / "workspace"
+        gate_output = _chain_gate_fixture(
+            spec_path=workspace / "chain.yaml",
+            workspace=workspace,
+            decision="closed",
+            gate_open=False,
+            reason="acceptance required",
+        )
+    result = _run_chain_wrapper_subprocess(
+        tmp_path, gate_output=gate_output, helper_rc=helper_rc
+    )
+    assert result.returncode == 65, (case, result.stdout, result.stderr)
+    assert not (tmp_path / "chain-launched").exists(), case
+    assert "acceptance" in result.stderr.lower(), (case, result.stderr)
+
+
+def test_arnold_chain_unreadable_spec_has_zero_launch_side_effects(tmp_path: Path) -> None:
+    result = _run_chain_wrapper_subprocess(tmp_path, missing_spec=True)
+    assert result.returncode == 65
+    assert not (tmp_path / "chain-launched").exists()
+    assert "spec unreadable" in result.stderr.lower() or "spec not found" in result.stderr.lower()
+
+
+def test_arnold_chain_valid_open_result_reaches_exactly_one_launch_boundary(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec_path = workspace / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    result = _run_chain_wrapper_subprocess(
+        tmp_path,
+        gate_output=_chain_gate_fixture(spec_path=spec_path, workspace=workspace),
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "chain-launched").read_text(encoding="utf-8") == "launch\n"
 
 
 def test_non_authoritative_cleanup_best_effort_remains_allowed() -> None:

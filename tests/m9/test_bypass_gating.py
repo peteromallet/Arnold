@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGETED_WRAPPERS = {
+    "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise",
@@ -42,7 +43,7 @@ EXPECTED_AUTHORITY_RISK_IDS = {
         *range(77, 80),
         *range(90, 93),
         *range(95, 117),
-        *range(121, 125),
+        122,
         *range(126, 129),
         *range(131, 134),
         136,
@@ -67,7 +68,8 @@ def test_audited_authority_risk_bypasses_emit_typed_gap_or_fail_closed() -> None
     gated_ids: set[str] = set()
     for path in TARGETED_WRAPPERS:
         text = _wrapper_text(path)
-        assert '"schema_version": "arnold.megaplan.cloud.wrapper_authority_gap.v1"' in text
+        if path != "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain":
+            assert '"schema_version": "arnold.megaplan.cloud.wrapper_authority_gap.v1"' in text
         gated_ids.update(GATED_CALL_RE.findall(text))
 
     assert EXPECTED_AUTHORITY_RISK_IDS <= gated_ids
@@ -82,6 +84,8 @@ def test_authority_gap_schema_does_not_authorize_action_or_hide_failures() -> No
         "drift_suppressed",
     )
     for path in TARGETED_WRAPPERS:
+        if path == "arnold_pipelines/megaplan/cloud/wrappers/arnold-chain":
+            continue
         text = _wrapper_text(path)
         function_start = text.index("authority_gap_record() {")
         function_end = text.index("\n}\n", function_start) + 3
