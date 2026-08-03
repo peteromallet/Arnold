@@ -1,7 +1,7 @@
 schema: arnold.megaplan.finite_canary.v1
 canary_id: critique-ledger-safe-v3-canary
-engine_commit: 085188ca0dec1b236e9a6270a72067cf63ed7198
-engine_tree: 29802f1ff491ad953cf594c8629517f91909fc8f
+engine_commit: 083847a87175ce66a0d09b2800e9dbb3978fbc29
+engine_tree: 54cba0da540378f364b1ac21812bf6d1406fb8c5
 brief: .megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md
 north_star: .megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md
 plan_name: critique-ledger-cl2-planning-canary
