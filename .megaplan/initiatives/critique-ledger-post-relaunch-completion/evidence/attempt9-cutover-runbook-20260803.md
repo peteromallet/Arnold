@@ -27,7 +27,7 @@ The recovery boundary is:
 
 This ordering is the integrated launch contract in
 `docs/arnold/critique-attempt9-launch-contract.md`, present in exact release
-candidate `daa2c850645532dffb697182203284c5b965a563`. In
+candidate `b38460e4d3f2605b341fa117dc838c6e51a1d3c8`. In
 particular, resuming the chain from `gated` is forbidden: chain resume must not
 be used to create attempt 9.
 
@@ -40,67 +40,71 @@ custody binding, `finalize.json` publication receipt, phase WBC terminal,
 prompt precedent; rerun one new Finalize occurrence through the fixed
 file-receipt protocol.
 
-## Verified live facts (read-only, 2026-08-03)
+## Verified live checkpoint (2026-08-04 01:17 UTC)
+
+This section supersedes the earlier 18b/31d2/daa2/a5d candidate references for
+all remaining actions. Those identities remain historical evidence only.
 
 - Host: `159.69.51.216`
 - Runner container:
   `782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117`
 - Resident container:
-  `a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`
+  `911d8a74727524e5d118c197c795b6d1fcd485689c615c6d692748d8000decff`
+- Resident epoch: `critique-attempt9-b384-20260804-0115`; status
+  `healthy/discord_ready`, `listener_only=true`, restart policy `no`.
 - Session: `critique-ledger-accountability-v3-r5-20260803`
 - Workspace: `/workspace/critique-ledger-accountability-v3-r5-20260803/Arnold`
 - Spec: `$WORKSPACE/.megaplan/initiatives/critique-ledger/chain.yaml`
 - Plan: `cl2-wbc-backed-ledger-20260803-1357`
 - Chain-state file: `$WORKSPACE/.megaplan/plans/.chains/chain-a5c760402ea2.json`
-- Plan state: `gated`; current milestone index `0`; no completed milestones.
-- Product checkout: HEAD `07dc708074f2b887f86af3484759080713ace636`,
+- Plan state: `gated`; current milestone index `0`; no completed milestones;
+  no active step, no runner, and marker `should_run=false`.
+- Product checkout: HEAD `b9add7e867`,
   milestone branch `megaplan/critique-ledger-accountability-v3-r5/cl2-ledger-replay`.
-- The profile name and Execute coordinator are persisted as
-  `profile=partnered-5-glm`,
-  `finalize=codex:gpt-5.6-sol:high`, and
-  `execute=hermes:zhipu:glm-5.2`, but the existing plan's persisted tier table
-  is from the old registry: tiers 1–2 are DeepSeek flash, tiers 3–6 are
-  DeepSeek pro, and only tiers 7–10 are GLM. Deploying a new profile registry
-  does not rewrite existing plan state; the supported same-profile refresh is
-  therefore a mandatory cutover step.
+- The supported same-profile refresh has completed. It binds selected source
+  `project`, effective digest
+  `2c1dabb0cab708f7131d14221f79e4ba1be8dc6a311546be2318f348d8ab548c`,
+  `profile=partnered-5-glm`, `finalize=codex:gpt-5.6-sol:high`, and every
+  Execute tier 1–10 to direct Zhipu GLM 5.2, Fireworks GLM 5p2, then direct
+  Zhipu GLM 5.2. The previous project overlay's DeepSeek Execute routes are no
+  longer current authority.
 - Attempt 8 exact custody:
   - phase WBC attempt `8fe6ab70-45c0-573e-9a26-32721b06047e`
   - invocation `21d5c8322f2148a5`
   - active-step run `c9cb6a4d-ec3c-4634-a08f-db273f0d96a7`
   - ordinal `8`, phase `finalize`
-  - WBC has exactly one event: sequence 1, `STARTED`.
-- Frozen process identities (container PID / start ticks):
-  - tmux server `151724 / 25944913`; raw cmdline SHA-256
-    `692946e7ea42f486e0bdd084bc9a6b19416c7d126c4f3963f7d48b29e7614039`
-  - tmux pane bash `151725 / 25944914`
-  - chain runner `152041 / 25945230`
-  - Codex node wrapper `160047 / 26116032`
-  - Codex binary `160061 / 26116035`
-  - code-mode host `160240 / 26117045`
-- Old runtime root/revision:
-  `/workspace/runtime-candidates/arnold-18b279f5ef-live` /
-  `18b279f5ef6d2a4db693586a59de8d87d7b45ab5`.
-- A fresh in-memory provenance observation of that runtime is healthy and
-  exactly equals the chain runtime binding:
-  `cb6afb8017532b1dd744e2e24cd3e02cb01f479814d2b4b7548429ebefaed49b`.
-- The r5 marker is legacy: it has no `runtime_binding`, no
-  `editable_source_head`, and no `run_id`; its relaunch command still names
-  the 18b runtime. This is why ordinary runtime-cutover CAS could not be used
-  directly.
+  - WBC is now exactly `STARTED(1) → CANCELLED(2)`; active custody is absent.
+  - The six frozen PID/start-tick identities were retired with exact guards;
+    no r5 tmux or Finalize/Codex process remains.
+- Legacy marker migration completed with migration ID `98569aa853…` and run ID
+  `7692b167-d533-5e76-99b3-098a2a3fd40c`; no marker hand edit was used.
+- Final runtime root:
+  `/workspace/runtime-candidates/arnold-b38460e4d3f2605b341fa117dc838c6e51a1d3c8`.
+- Final runtime commit/tree:
+  `b38460e4d3f2605b341fa117dc838c6e51a1d3c8` /
+  `f0acc45ff8f726d38e67fa665179b65353bac336`.
+- Final isolated interpreter:
+  `/workspace/runtime-venvs/arnold-b38460e4d3f2605b341fa117dc838c6e51a1d3c8/bin/python`.
+- Final runtime identity digest:
+  `21ff19b6bd117b18f85643781b999167c4b8eb882601a5e77d9b3c9858eff476`.
+- Chain and marker both bind that exact identity; marker relaunch is generated
+  for branch `runtime-b38460e4d3`; marker remains non-runnable.
 - Recovered attempt-7 candidate:
   `af6149befd0e0a60700678999adbf10f425afa26f356a545b1e6246269bbe9a5`,
   72,328 bytes, 28 tasks, 28 sense checks, 29 critique-coverage rows, one user
   action; manifest status `RECOVERED_CANDIDATE_NOT_ADOPTED`.
-- Final adversarial gate on exact code
-  `daa2c850645532dffb697182203284c5b965a563` is GO: 530 combined tests, 622
-  prior broad tests, 40 combined resident/notification/profile/control tests,
-  and 17 latest resident-recovery tests passed; modified production Python
-  compiles, donor Ruff and `git diff --check` pass. The fresh-clone resident
-  capability probe remains clean (old code created 61 ignored bytecode paths).
+- Final root-fix gate on exact code `b38460e4d3f2605b341fa117dc838c6e51a1d3c8`
+  is GO for cutover: 261 orchestration/worker WBC tests, 118 combined incident
+  tests, and 118 critical tests in the isolated cloud runtime passed. The
+  candidate adds lifecycle-safe legacy custody migration plus fresh parallel
+  Critique phase/worker WBC and terminal child-manifest binding.
 - Integrated launch contract locks Finalize to a one-shot direct
   phase invocation and maps Execute's coordinator and every complexity tier
   1–10 to GLM-family routes. DeepSeek remains available only outside Execute;
   GPT-5.6 Sol high remains exclusive to Finalize.
+- No attempt 9 exists yet. No Finalize completion, chain resume, Execute start,
+  `/whats-cooking` success, or live notification-dedupe success is claimed by
+  this checkpoint.
 
 ## Preconditions — all must pass
 
@@ -115,8 +119,12 @@ CUTOVER_SPEC=$CUTOVER_WORKSPACE/.megaplan/initiatives/critique-ledger/chain.yaml
 CUTOVER_PLAN=$CUTOVER_WORKSPACE/.megaplan/plans/cl2-wbc-backed-ledger-20260803-1357
 CUTOVER_CHAIN_STATE=$CUTOVER_WORKSPACE/.megaplan/plans/.chains/chain-a5c760402ea2.json
 CUTOVER_MARKER=/workspace/.megaplan/cloud-sessions/$CUTOVER_SESSION.json
-CUTOVER_OLD_ENGINE=/workspace/runtime-candidates/arnold-18b279f5ef-live
-CUTOVER_OLD_RUNTIME_SHA=cb6afb8017532b1dd744e2e24cd3e02cb01f479814d2b4b7548429ebefaed49b
+CUTOVER_ENGINE=/workspace/runtime-candidates/arnold-b38460e4d3f2605b341fa117dc838c6e51a1d3c8
+CUTOVER_PYTHON=/workspace/runtime-venvs/arnold-b38460e4d3f2605b341fa117dc838c6e51a1d3c8/bin/python
+CUTOVER_COMMIT=b38460e4d3f2605b341fa117dc838c6e51a1d3c8
+CUTOVER_TREE=f0acc45ff8f726d38e67fa665179b65353bac336
+CUTOVER_RUNTIME_SHA=21ff19b6bd117b18f85643781b999167c4b8eb882601a5e77d9b3c9858eff476
+CUTOVER_PRODUCT_COMMIT=b9add7e867
 ```
 
 Before mutation, re-read and compare:
@@ -124,22 +132,22 @@ Before mutation, re-read and compare:
 - container IDs and health;
 - the exact attempt/WBC/run/ordinal tuple above;
 - all six PID start ticks and command lines (or prove all are already absent);
-- old runtime provenance still equals `CUTOVER_OLD_RUNTIME_SHA`;
+- chain and marker runtime provenance both equal `CUTOVER_RUNTIME_SHA`;
 - the deployed registry pins Finalize to Sol high and Execute's coordinator
   plus every complexity tier 1–10 to GLM-family routes; separately record the
   old persisted tier table before its supported refresh;
 - recovered candidate, manifest, rollout, and output-receipt hashes still match;
 - no `finalize.json` exists;
 - no second r5 tmux/session/runner exists;
-- the new engine checkout is clean, exact-HEAD, tested, and installed only into
-  an isolated control venv at this point. Do not replace the global old-runtime
-  interpreter until its provenance receipt has been generated and verified.
+- the engine checkout is clean, exact-HEAD, tested, and imported only through
+  `CUTOVER_PYTHON`; do not substitute `.cloud-hot-env`, `PYTHONPATH`, or a
+  global interpreter.
 
 Any mismatch is a fail-closed stop. Do not “repair” a guard by editing state.
 
 ## Cutover sequence
 
-### 1. Quarantine obsolete sessions first
+### 1. Quarantine obsolete sessions first — COMPLETED
 
 The v2, v3, and r4 markers are already durably paused. r2 and r3 were verified
 with `should_run=true` and no pause, so they remain watchdog-relaunchable.
@@ -155,16 +163,21 @@ resume. These durable pauses keep old rows out of active status. After r5
 completes, use the completion-manifest-gated retirement command for formal
 tombstones; do not unpause an old attempt.
 
-### 2. Produce independent old-runtime evidence
+### 2. Produce independent legacy-runtime evidence — COMPLETED
 
 While the global interpreter still imports the 18b runtime, run its
 `cloud.runtime_provenance` with `--expected-root`, `--expected-revision`,
 `--identity-out`, and `--receipt-out` into a cutover evidence directory.
-Verify the identity digest is exactly `CUTOVER_OLD_RUNTIME_SHA` and the receipt
-reports no errors. The migration control process must run from a separate
-new-engine venv, so receipt verification is independent.
+The legacy identity and receipt were independently verified before migration;
+the marker then received its deterministic managed run/runtime identity. This
+evidence is immutable migration input, not a runtime selector for any remaining
+command.
 
-### 3. Recover the resident, then retire frozen attempt 8
+### 3. Recover the resident, then retire frozen attempt 8 — COMPLETED
+
+The commands below are retained as historical procedure only. Do not replay the
+old outage epoch or old resident-container guard. Current authority is the
+verified checkpoint above.
 
 Before changing attempt custody, replace the resident-only listener through the
 supported recovery surface. The existing resident is already running the
@@ -191,8 +204,7 @@ import before either command:
 CUTOVER_CONTROL_SRC=/absolute/path/to/exact-final-Arnold-checkout
 CUTOVER_CONTROL_PYTHON=python3
 CUTOVER_CLOUD_YAML=$CUTOVER_CONTROL_SRC/.megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml
-NEW_RUNTIME=/workspace/runtime-candidates/arnold-$NEW_COMMIT
-test "$(git -C "$CUTOVER_CONTROL_SRC" rev-parse HEAD)" = "$NEW_COMMIT"
+test "$(git -C "$CUTOVER_CONTROL_SRC" rev-parse HEAD)" = "$CUTOVER_COMMIT"
 test -z "$(git -C "$CUTOVER_CONTROL_SRC" status --porcelain)"
 CUTOVER_CONTROL_SRC="$CUTOVER_CONTROL_SRC" PYTHONPATH="$CUTOVER_CONTROL_SRC" \
   "$CUTOVER_CONTROL_PYTHON" -P -c \
@@ -218,8 +230,8 @@ Use
 commands. Never print or copy the resident secret environment.
 
 ```bash
-test -n "$NEW_COMMIT"
-test -n "$NEW_TREE"
+test -n "$CUTOVER_COMMIT"
+test -n "$CUTOVER_TREE"
 test -n "$NEW_EPOCH"
 PYTHONPATH="$CUTOVER_CONTROL_SRC" "$CUTOVER_CONTROL_PYTHON" -P -m \
   arnold_pipelines.megaplan cloud resident-recover \
@@ -228,9 +240,9 @@ PYTHONPATH="$CUTOVER_CONTROL_SRC" "$CUTOVER_CONTROL_PYTHON" -P -m \
   --expected-source-container-id 277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab \
   --expected-source-image-id sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94 \
   --expected-resident-image-id sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20 \
-  --expected-runtime-path "$NEW_RUNTIME" \
-  --expected-runtime-commit "$NEW_COMMIT" \
-  --expected-runtime-tree "$NEW_TREE" \
+  --expected-runtime-path "$CUTOVER_ENGINE" \
+  --expected-runtime-commit "$CUTOVER_COMMIT" \
+  --expected-runtime-tree "$CUTOVER_TREE" \
   --expected-runtime-python-path /root/.pyenv/versions/3.11.11/bin/python3.11 \
   --expected-runtime-python-sha256 2575448bc13e2a87f48b65eeaa6d72de75e250616340b377a8989a80317a0ec5 \
   --health-timeout-seconds 45
@@ -249,19 +261,17 @@ its rows and provider-attempt count across two ordinary unchanged resident
 polls, and require no duplicate attempt for any effect identity. Confirm
 `/whats-cooking` through the ordinary command only after readiness.
 
-If new health fails, call `resident-down` with the new epoch and exact new
-resident ID, then recover under another fresh rollback epoch using old runtime
-`/workspace/runtime-candidates/arnold-31d2e052104a57eb48e782dce8bdf678e6731caf`,
-commit `31d2e052104a57eb48e782dce8bdf678e6731caf`, tree
-`4a6c152c3e898c7bd379f1566ec2f1f11091fd4f`, and the same old resident image.
-Keep r5 frozen; do not continue the cutover.
+If current resident health fails before attempt 9, stop using the exact current
+epoch/container guard and remain fail-closed. Admit any rollback runtime through
+the same independent provenance and resident-recovery protocol; never reuse a
+historical selector merely because it appears in this record.
 
 This finite resident recovery is the explicit selector for `/whats-cooking`
 and Discord during the r5 cutover. The global `.cloud-hot-env` and
 `resident-runtime.env` selectors are not silently treated as updated. Keep
-their watchdog/auditor/supervisor consumers inactive until the follow-up epic
-performs the separate atomic global promotion; r5 itself is bound through its
-chain and marker runtime identities below.
+r5 launch decisions independent of those selectors until the follow-up epic
+performs their separate atomic global promotion and attestation; r5 itself is
+bound through its chain and marker runtime identities below.
 
 After the resident is proven healthy, retire the frozen attempt-8 process
 incarnation.
@@ -297,7 +307,7 @@ chain- and plan-side operator-pause authority and set marker
 `should_run=false`. If pause fails, keep all supervisors stopped and do not
 launch anything.
 
-### 4. Durably cancel attempt 8
+### 4. Durably cancel attempt 8 — COMPLETED
 
 From the exact new engine, invoke:
 
@@ -324,9 +334,9 @@ Postconditions:
 
 This cancellation history is what makes the next Finalize owner ordinal 9.
 
-### 5. Migrate the legacy marker, then cut over runtime custody
+### 5. Migrate the legacy marker, then cut over runtime custody — COMPLETED
 
-Deploy exact candidate `daa2c850645532dffb697182203284c5b965a563`, which
+Deploy exact candidate `b38460e4d3f2605b341fa117dc838c6e51a1d3c8`, which
 contains the marker migration and live-chain-shape correction, but do not touch
 the live marker during deployment. Run the dedicated
 `cloud.legacy_marker_runtime_migration` CLI from the isolated new-engine control
@@ -334,10 +344,10 @@ venv with:
 
 - current marker SHA (re-read after pause);
 - SHA-256 of the marker's exact old relaunch-command string;
-- old runtime root and `CUTOVER_OLD_RUNTIME_SHA`;
+- independently attested legacy runtime root and digest;
 - exact session/workspace/spec/current plan;
 - exact paused chain-state path;
-- independently generated old runtime identity and provenance receipt.
+- independently generated legacy runtime identity and provenance receipt.
 
 The API rejects unpaused, stale, partially bound, retired, mismatched, or
 ambiguous markers. It deterministically derives `run_id` from the marker,
@@ -348,7 +358,8 @@ runtime binding and writes immutable prepared+committed migration evidence.
 Then perform the ordinary two-sided runtime cutover:
 
 1. generate and independently verify identity+receipt for the exact new engine;
-2. `chain runtime-rebind` from `CUTOVER_OLD_RUNTIME_SHA` to the new runtime hash,
+2. `chain runtime-rebind` from the migration-bound legacy digest to
+   `CUTOVER_RUNTIME_SHA`,
    guarded by milestone `cl2-ledger-replay` and current plan name;
 3. `cloud.runtime_cutover` the marker from the same old hash to the same new
    identity, using a launcher-generated relaunch command pinned to the exact
@@ -359,41 +370,54 @@ If either side fails, remain paused. If chain rebind succeeds but marker update
 fails, use the ordinary guarded chain runtime rollback with the old identity
 and receipt; do not resume in a split-brain state.
 
-### 6. Refresh persisted routing, then launch exactly one Finalize while paused
+### 6. Migrate exact legacy custody, then launch one Finalize — IN PROGRESS
 
-Keep the chain runner stopped, both operator-pause authorities present, and the
-r5 marker at `should_run=false`. The plan lifecycle state itself remains
-`gated`; the direct `finalize` phase command accepts `gated` and would reject a
-durable plan lifecycle state of `paused`.
+Routing refresh is complete and its exact source/digest checks passed. The
+operator pause was then cleared through supported `operator_control resume
+--no-start` because the direct phase command correctly rejects a durable
+`paused` lifecycle. This did **not** start a runner: marker `should_run=false`,
+the chain runner is stopped, lifecycle is `gated`, and active step is absent.
+Preserve that non-runnable boundary until Finalize is terminal.
 
-From the runtime-attested exact new engine, first reapply the same profile
-through the ordinary control-routed override:
+First create both create-once legacy-custody sidecars under the final
+interpreter. The expected hashes bind the unchanged historical v1 receipt
+bytes; `legacy_unbound` explicitly does not invent an unavailable producer
+invocation:
 
 ```bash
-python -P -m arnold_pipelines.megaplan override set-profile \
-  --plan cl2-wbc-backed-ledger-20260803-1357 \
-  --profile partnered-5-glm \
-  --reason "refresh persisted routing after attested GLM-only registry cutover"
+"$CUTOVER_PYTHON" -P -m \
+  arnold_pipelines.megaplan.orchestration.critique_custody migrate-legacy \
+  --plan-dir "$CUTOVER_PLAN" \
+  --iteration 1 \
+  --expected-source-sha256 sha256:2429983cf5c74a0dba072153693bdffe3fdeb735feeafafc5f4703fd51b3e37b \
+  --actor operator:critique-attempt9-cutover \
+  --reason "Admit intact pre-v2 iteration-1 critique custody without fabricating unavailable producer provenance"
+
+"$CUTOVER_PYTHON" -P -m \
+  arnold_pipelines.megaplan.orchestration.critique_custody migrate-legacy \
+  --plan-dir "$CUTOVER_PLAN" \
+  --iteration 2 \
+  --expected-source-sha256 sha256:204d893956c435515faa558886c153dae6d75505893ac08827cfcbe6d6abcaf1 \
+  --actor operator:critique-attempt9-cutover \
+  --reason "Admit intact pre-v2 iteration-2 critique custody without fabricating unavailable producer provenance"
 ```
 
-Require a durable `profile_refresh_receipt` with `same_profile_refresh=true`
-and exact before/after routing hashes. Reread state and require:
+Require sidecars `critique_custody_legacy_migration_v1.json` and
+`critique_custody_legacy_migration_v2.json`, exact unchanged source hashes,
+`legacy_unbound` authority, complete artifact/gate/clearance lineage, and no
+attempt-9 WBC row before launch. Regenerated clearance may change under its
+ordinary lifecycle; the migration sidecar must remain create-once and retain
+its migration-time evidence.
 
-- lifecycle remains `gated` and both operator pauses remain active;
-- attempt-8 cancellation history and all phase-WBC bytes are unchanged;
-- `phase_model` keeps Finalize on GPT-5.6 Sol high and Execute on GLM;
-- every persisted `tier_models.execute` entry 1–10 contains only direct Zhipu
-  GLM 5.2 and Fireworks GLM 5p2 routes;
-- the chain-state bytes are unchanged.
-
-Any missing receipt, stale-state CAS failure, custody change, or non-GLM
-Execute tier is a fail-closed stop. Never hand-edit `state.json`.
+Any missing receipt, stale-state CAS failure, custody change, non-GLM Execute
+tier, or pre-existing ordinal 9 is a fail-closed stop. Never hand-edit
+`state.json`, either v1 receipt, or the WBC ledger.
 
 From the runtime-attested exact new engine checkout, with the r5 workspace as
 the current directory, invoke exactly once:
 
 ```bash
-python -P -m arnold_pipelines.megaplan finalize \
+"$CUTOVER_PYTHON" -P -m arnold_pipelines.megaplan finalize \
   --plan cl2-wbc-backed-ledger-20260803-1357
 ```
 
@@ -412,8 +436,9 @@ Before any resume, reread state and the WBC ledger and require:
 
 If the direct command fails, require exactly one terminal attempt-9 stream, no
 attempt 10, no active Finalize owner, and lifecycle state still `gated` (or its
-explicit terminal/manual-review projection). Keep the runner stopped and both
-pause authorities intact. Diagnose before any new operator action.
+explicit terminal/manual-review projection). Keep the runner stopped and
+marker non-runnable. Diagnose before any new operator action; do not create
+attempt 10.
 
 ### 7. Resume the same r5 chain into Execute
 
@@ -421,6 +446,17 @@ Invoke `cloud.operator_control resume` directly from the exact new engine with
 the exact spec/workspace/session/marker and `--no-push`. Do not use
 `cloud resume` (the legacy path selected the wrong `arnold` CLI family), do not
 use `--fresh`, and do not run `init`.
+
+```bash
+"$CUTOVER_PYTHON" -P -m \
+  arnold_pipelines.megaplan.cloud.operator_control resume \
+  --spec "$CUTOVER_SPEC" \
+  --workspace "$CUTOVER_WORKSPACE" \
+  --session "$CUTOVER_SESSION" \
+  --marker "$CUTOVER_MARKER" \
+  --actor operator \
+  --no-push
+```
 
 `--no-push` preserves the existing milestone checkout and its plan artifacts;
 the relaunch command must be the marker's newly attested command. Resume is
@@ -462,10 +498,39 @@ and again after 10–15 minutes:
 The relaunch gate is passed only after criteria 1–7. The recovery is proven
 durable after criteria 8–9 also pass.
 
+## Live completion record — intentionally pending
+
+Do not check an item from model narrative or process presence alone. Attach the
+canonical artifact path, immutable identity, and observation timestamp.
+
+- [ ] **Legacy custody migration:** both sidecars exist; iteration-1 and
+  iteration-2 source receipt hashes remain exact; clearance regeneration and
+  custody validation pass. Evidence: `PENDING`.
+- [ ] **Attempt 9 terminal:** exactly one ordinal-9 Finalize WBC exists and is
+  `STARTED → COMPLETED`; attempt 8 remains cancelled; no ordinal 10 exists;
+  state is `finalized/execute`. Evidence: `PENDING`.
+- [ ] **Same-chain resume:** supported operator resume launched exactly one r5
+  runner from the b384 marker command; no old session became runnable and no
+  earlier phase replayed. Evidence: `PENDING`.
+- [ ] **GLM Execute proof:** first Execute dispatch/provider receipt identifies
+  Zhipu GLM 5.2 or its declared Fireworks GLM 5p2 fallback; no Execute receipt
+  identifies DeepSeek or Codex. Evidence: `PENDING`.
+- [ ] **`/whats-cooking` UX:** ordinary resident command responds within the
+  interaction deadline and reports exactly one current r5 chain using canonical
+  liveness. Evidence: `PENDING`.
+- [ ] **Notification dedupe:** two unchanged ordinary polls plus the 200-effect
+  evaluation show a stable effect identity, at most one provider attempt, no
+  direct fallback, and no old-v2 alert resurrection. Evidence: `PENDING`.
+- [ ] **Global selector follow-up (MP-094):** after Execute is healthy, atomically
+  promote and attest watchdog/auditor/supervisor roots; prove no mixed-runtime
+  service topology remains. Evidence: `PENDING — follow-up epic, not relaunch
+  gate`.
+
 ## Rollback / fail-closed rules
 
-- Before resume, every failure leaves the chain paused and `should_run=false`;
-  never resume from `gated` or use resume to manufacture attempt 9.
+- Before resume, every failure leaves the runner stopped and marker
+  `should_run=false`; never use chain resume from `gated` to manufacture
+  attempt 9.
 - Never restore attempt 8 to STARTED or delete its terminal evidence.
 - Never copy the recovered candidate over `finalize.json` manually.
 - Never run a second driver, `--fresh`, broad workspace cleanup, or global
@@ -476,3 +541,94 @@ durable after criteria 8–9 also pass.
   diagnose its typed receipt, and repair forward. Do not relabel history.
 - Restore any supervisor temporarily stopped for the process cutover only after
   marker/chain runtime identities agree and r5 has a single attested runner.
+
+## Attempt 10 authoritative cutover state — supersedes the relaunch checklist
+
+The preceding Attempt-9 procedure is retained only as an audit trail. Its live
+checklist, including the requirement that no ordinal 10 exist, is superseded.
+Attempt 10 was launched once under the later exact runtime and terminated with
+a typed quota failure. Do not execute the earlier Attempt-9 launch or b384
+resume instructions.
+
+### Admitted engine and resident
+
+The cloud-validated repair train is:
+
+1. `4ab819d7913352f797d8a01a5ea3b00f17e2236f` — exact authenticated response
+   candidate reaches semantic repair; terminal `-o` evidence binds the last
+   assistant message and canonical invocation occurrence, with mismatches
+   failing closed.
+2. `4cf84138de029ca8c2ec654f5a70d58d50cf6b81` — the controlled lifecycle
+   projection may append current bound history without weakening immutable
+   accepted legacy lineage.
+3. `fdbdfb72cb32a1d7c42bc9a0d5f19eba023d5a30` — durable marker stop intent
+   projects `paused` rather than synthetic `running`/`attention`; tmux/process
+   facts remain orthogonal diagnostics.
+
+Exact deployed identity:
+
+- commit `fdbdfb72cb32a1d7c42bc9a0d5f19eba023d5a30`;
+- tree `05a77aa883d06df09d745b01047e64d1f75e8267`;
+- runtime digest
+  `d1f9cd20568f3fe325ea384c7adf7df8d9bba61de651ef95011e51361bf71a7b`;
+- launch-seed `content_sha256`
+  `7cd0f51f2ec028418209bb0511e4c70b3791b0ad2b8c070766f56ef6130f7504`;
+- resident epoch `critique-attempt10-fdb-live-20260804-0149`, container
+  `8be0aa325b119a00f8c62e7e4a4b2e0cb5e499999759cca4384201469f361430`,
+  image
+  `sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20`,
+  health `healthy/discord_ready`, `listener_only=true`.
+
+An isolated runtime venv is launch-authoritative only when created with
+`python -m venv --copies` and the launch seed/receipt attests the copied venv
+interpreter's exact path and digest. Attesting only the base interpreter or a
+symlink-resolved identity is insufficient and must fail closed.
+
+### Immutable Attempt 10 result
+
+- phase-WBC attempt: `646ab9ed-2706-5be8-a249-7b52e49ac102`;
+- ordinal: `10`; invocation: `b437b9ee2a8b4c37`; run:
+  `cl2-wbc-backed-ledger-20260803-1357`; step: `finalize`;
+- worker-WBC attempt: `b0e96460-a8d7-5577-9b5f-4ed080e18c71`;
+- occurrence:
+  `de3040a3c789bdaa92330e08c5f8ade7cbda3136d8015194e02141d4608678ce`;
+- repair-0 receipt:
+  `sha256:6fa1eac08c732ade7116a3fa30160b807cdc3562388de150156a5bcb582051f4`;
+- terminal event: `FAILED`; outcome: `indeterminate`; typed error:
+  `quota_exceeded`.
+
+This is not a completed WBC. Both the cloud and local same-model Sol probes
+hard-failed quota, displaying reset times on Aug 9 at 11:06 AM and 1:06 PM
+respectively; the Codex display supplied no timezone. No alternative authorized
+Sol credential exists. r5 is `gated`, active step is null, marker
+`should_run=false`, and canonical status is `paused`. It must not be resumed or
+redriven by `auto`, chain, watchdog, shell, or operator retry loops.
+
+### Sole authorized forward procedure
+
+1. Replenish or explicitly authorize Sol capacity for the same
+   `codex:gpt-5.6-sol:high` route. Re-probe once; do not switch model,
+   provider, credential, or reasoning level implicitly.
+2. Reattest the exact fdb runtime, launch seed, and `--copies` venv interpreter.
+   Re-read r5 and require `gated`, no active step, `should_run=false`, paused,
+   Attempt 10 terminal `FAILED`, and no ordinal 11.
+3. From that attested interpreter, invoke the direct Finalize phase exactly once
+   against the same plan in the same r5. The invocation must create exactly one
+   fresh ordinal 11 phase/worker occurrence. Do not wrap it in `auto`, chain
+   resume, a shell retry, or a deterministic retry loop.
+4. Before any resume, require ordinal 11 terminal `COMPLETED`, authenticated
+   exact-response receipt, immutable Finalize publication/mutation receipts, no
+   active Finalize owner, lifecycle `finalized`, and `next_step=execute`. A
+   second quota/error outcome leaves r5 paused and authorizes no automatic
+   ordinal 12.
+5. Only then resume this same r5 once through the supported operator path.
+   Require the first Execute dispatch and tiers 1–10 to be GLM-family, never
+   DeepSeek or Codex. Verify `/whats-cooking` reports one current r5 from the
+   fresh local snapshot builder and unchanged polls yield no duplicate Discord
+   provider attempt or obsolete-session resurrection.
+
+The cached `/workspace/.megaplan/status/cloud-status.json` is stale follow-up
+work; it is not the `/whats-cooking` source, which uses a fresh builder. Repair
+and attest cache generation/freshness separately so no other consumer can treat
+stale cache as canonical. Nothing in this section claims ordinal 11, Execute,
+the Critique epic, or the follow-up epic is complete.

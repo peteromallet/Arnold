@@ -107,6 +107,13 @@ rejected, or deferred after parent review.
 | MP-085 | P0 | Exactly-once `DeliveryEffects` exists but production resident constructors do not inject it, leaving autonomous completion/subagent sweeps on the direct Discord path | notification production wiring | fixed-local | integration `6d8e131c4c`; source `662a93f036`; real constructor + 200 polls across restart = one provider attempt; 218 focused/adjacent tests | installed resident restart/no-fallback/no-spam canary |
 | MP-086 | P0 | `partnered-5-glm` has a GLM Execute default but tiers 1–6 override it with DeepSeek, and existing plans retain the old tier table after a registry deploy | profile/routing | fixed-local | integration `6d4314207d`, persisted-refresh `57af2dd119`; tiers 1–10 direct Zhipu GLM 5.2 → Fireworks GLM 5p2 → direct Zhipu; same-profile refresh has before/after routing hashes and preserves gated/cancellation/chain/WBC custody; 12 control-binding tests | execute receipted refresh and installed profile-resolution canary |
 | MP-087 | P0 | Resuming the chain from `gated` permits three identical deterministic Finalize invocations, so attempt-9-only is not enforced by external retry settings | Finalize launch control | fixed-local | integration `6d4314207d`; direct CLI/WBC proof: cancelled ordinal 8 creates exactly one ordinal 9; success→finalized/Execute, failure→gated terminal/no attempt10; 146 adjacent tests | use the proven one-shot command during cutover before chain resume |
+| MP-088 | P0 | Same-named user/project profiles can silently shadow the reviewed built-in registry during a same-profile refresh | profile registry custody | proven-cloud | integration `73b9dba2ea`; receipts bind selected layer, effective digest, and ordered candidate hashes; project profile fixed in product `b9add7e867`; live refresh bound source `project` and digest `2c1dabb0cab708f7131d14221f79e4ba1be8dc6a311546be2318f348d8ab548c` with GLM-only Execute tiers 1–10 | retain legitimate overlays and add an installed source-shadow regression canary |
+| MP-089 | P0 | AgentBox terminal completion bypasses the resident `DeliveryEffects` ledger and can duplicate Discord DMs after restart or ambiguity | notification delivery | fixed-local | integration `a5d4d03738`; stable operation/state occurrence key, persistent owner, no direct fallback; 107 focused tests | installed AgentBox completion/restart canary |
+| MP-090 | P0 | The public phase-WBC cancellation API assumes in-process writer registration, so exact recovery cancellation fails from a fresh operator process | recovery custody | proven-cloud | integration `b2cef1d43f`; controlled writers bootstrap before the guarded append; exact live attempt 8 now `STARTED(1) → CANCELLED(2)` with active custody cleared | retain a fresh-process crash/replay regression canary |
+| MP-091 | P0 | Strict v2 critique producer custody made intact pre-v2 plans impossible to finalize, but the missing historical producer invocation cannot be reconstructed honestly | critique custody migration | fixed-local | integration `e0ad1811a2` plus lifecycle correction `128b8f03ac`; create-once `legacy_unbound` sidecars bind exact v1 receipts, artifacts, gate/clearance lineage and authority limits without rewriting history; migration→clearance lifecycle tests pass | run the exact-SHA migration for live r5 iterations 1 and 2 under runtime `b38460e4d3`; prove original bytes unchanged and Finalize custody roundtrip |
+| MP-092 | P0 | Parallel Critique bypasses the phase worker wrapper, inherits a stale invocation, and same-model fanout units collide because worker-dispatch identity lacks a unit key | critique phase/worker WBC | fixed-local | integration `b38460e4d3`; every parallel Critique owns a fresh phase WBC, stable per-check `dispatch_key`, terminal child manifest, and reducer-to-ledger binding; 261 focused tests and 118 combined incident tests pass | cloud canary on the next Critique phase, including same-model fallback/replay |
+| MP-093 | P1 | Chain-state projection appends repeatedly report a cursor record-count/digest regression while canonical state remains intact | chain event projection | follow-up | observed on r5 pause/resume: `645→640` then `653→649`; mutation correctly continued against intact canonical state | reconcile projection cursor under canonical owner; prove no authority consumer trusts the stale projection |
+| MP-094 | P1 | A session-bound resident can be exactly attested while global watchdog/auditor/supervisor selectors still point at another runtime, creating a split installed topology | runtime release/selectors | follow-up | resident epoch `critique-attempt9-b384-20260804-0115` is healthy and binds exact runtime `b38460e4d3f2605b341fa117dc838c6e51a1d3c8`, tree `f0acc45ff8f726d38e67fa665179b65353bac336`, and identity digest `21ff19b6bd117b18f85643781b999167c4b8eb882601a5e77d9b3c9858eff476`; r5 chain+marker are bound separately | after r5 enters Execute, atomically promote and attest all long-lived global selectors; reject mixed-generation service startup |
 
 ## Rolling disposition log
 
@@ -148,6 +155,12 @@ rejected, or deferred after parent review.
 | 2026-08-03 23:40 | Merged profile and Finalize launch gaps | Accepted MP-086/MP-087 as relaunch blockers. The actual Execute tier resolver overrides the flat GLM route with DeepSeek for tiers 1–6, and whole-chain resume can make three deterministic Finalize calls. The bounded route is GLM-only Execute tiers plus one direct WBC-backed attempt-9 Finalize before chain resume. |
 | 2026-08-03 23:47 | Production notification effect owner | Integrated `6d8e131c4c` (source `662a93f036`). The real resident factory now constructs one persistent effect owner and injects autonomous scheduled/reset/completion/subagent paths; missing owner/adapter fails closed and only explicit interactive replies stay direct. Across 200 polls and restart the provider ran once; 218 tests passed. |
 | 2026-08-03 23:49 | GLM Execute and one-shot attempt 9 | Integrated `6d4314207d` (source `da13155beb`). Every Execute tier is GLM-family; DeepSeek remains critique/gate and Sol high remains Finalize. Direct CLI/WBC tests prove one ordinal-9 invocation with success→Execute or terminal failure→no attempt10; 146 adjacent tests passed. |
+| 2026-08-04 00:46 | Exact cloud cutover reached custody preflight | Obsolete r2/r3 sessions were durably paused; the frozen attempt-8 process incarnation was killed by exact PID/start guards; r5 was paused; attempt 8 was durably cancelled; marker and chain were migrated/rebound to content-addressed runtime `a5d4d03738`; the resident recovered healthy on that exact runtime. No attempt 9 was created. |
+| 2026-08-04 00:48 | Project profile shadow exposed | The new source guard found the project-owned `partnered-5-glm` overlay still routed Execute tiers 1–6 to DeepSeek. The authoritative project profile was updated in product commit `b9add7e867`; the supported same-profile refresh then bound source `project`, digest `2c1dabb0…`, Finalize Sol/high, and GLM-only Execute tiers 1–10. |
+| 2026-08-04 00:50 | Legacy custody compatibility stop | Direct Finalize stopped before WBC/model dispatch because both accepted r5 critique receipts predate producer binding. Independent forensics verified every receipt/artifact/gate hash and proved the missing invocation cannot be reconstructed. MP-091 adds an explicit `legacy_unbound` migration instead of fabricating v2 authority. |
+| 2026-08-04 01:04 | Parallel Critique root-under-root | Forensics proved the current scatter path never establishes a Critique phase occurrence, and its worker-dispatch identity cannot distinguish same-model lenses. MP-092 is now a relaunch gate because later epic milestones would otherwise repeat the custody defect. |
+| 2026-08-04 01:15 | Final root-fix candidate admitted | Integration `b38460e4d3f2605b341fa117dc838c6e51a1d3c8` (tree `f0acc45ff8f726d38e67fa665179b65353bac336`) contains MP-091 lifecycle-safe legacy migration and MP-092 parallel-Critique WBC/manifest binding. Its isolated cloud runtime identity is `21ff19b6bd117b18f85643781b999167c4b8eb882601a5e77d9b3c9858eff476`; 118 critical cloud tests passed. This admits the candidate, not attempt 9 or Execute success. |
+| 2026-08-04 01:17 | Exact resident and r5 runtime custody | Resident epoch `critique-attempt9-b384-20260804-0115` recovered `healthy/discord_ready`, listener-only, on exact `b38460e4d3`; chain and marker were rebound to the same identity while `should_run=false`. Global watchdog/auditor/supervisor selector promotion is deliberately MP-094 follow-up, not silently inferred from the session binding. |
 | 2026-08-03 20:49 | 50-cell Luna audit matrix | Started with five concurrent read-only agents; every completed report will be triaged here before fixer dispatch. |
 
 ## Admission and completion rule
@@ -161,3 +174,74 @@ For each raw report:
 5. Dispatch Luna with one mutation scope and one worktree per non-overlapping item.
 6. Require a commit, focused tests, regression tests, and explicit duplicate-path retirement proof.
 7. Integrate, rerun the combined suite, then promote only after the relevant cloud canary.
+
+## Current cutover authority — Attempt 10 quota stop (2026-08-04)
+
+This section supersedes every still-open Attempt-9 relaunch checklist in this
+ledger and the linked runbook. Attempt 9 is historical. Attempt 10 was created
+and terminated; no checklist that requires “no ordinal 10” or instructs an
+Attempt-9 launch remains executable authority.
+
+The deployed root-repair train is:
+
+- `4ab819d7913352f797d8a01a5ea3b00f17e2236f`: exact Finalize response
+  handling. Semantic repair receives the authenticated full candidate, terminal
+  selection binds the last assistant message to `-o`, and response occurrence
+  identity comes from the canonical invocation. Mismatched terminal evidence
+  fails closed instead of launching another repair loop.
+- `4cf84138de029ca8c2ec654f5a70d58d50cf6b81`: lifecycle projection and
+  immutable lineage are no longer conflated. Current bound lifecycle history
+  may append through its controlled writer while accepted legacy lineage
+  remains immutable.
+- `fdbdfb72cb32a1d7c42bc9a0d5f19eba023d5a30`: canonical stop intent is
+  preserved by status projection. Explicit `should_run=false` or active
+  `operator_pause` renders nonterminal work `paused`, never synthesized
+  `running`/`attention`; process facts remain a separate diagnostic dimension.
+
+Cloud attestation admits exact runtime commit
+`fdbdfb72cb32a1d7c42bc9a0d5f19eba023d5a30`, tree
+`05a77aa883d06df09d745b01047e64d1f75e8267`, runtime-identity digest
+`d1f9cd20568f3fe325ea384c7adf7df8d9bba61de651ef95011e51361bf71a7b`,
+and launch-seed `content_sha256`
+`7cd0f51f2ec028418209bb0511e4c70b3791b0ad2b8c070766f56ef6130f7504`.
+Resident epoch `critique-attempt10-fdb-live-20260804-0149`, container
+`8be0aa325b119a00f8c62e7e4a4b2e0cb5e499999759cca4384201469f361430`,
+and image
+`sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20`
+were validated `healthy/discord_ready`, `listener_only=true`. Every future
+isolated launch must create the venv with `--copies` and attest the copied
+venv interpreter's exact path and digest; a base-interpreter or symlink identity
+is not launch authority.
+
+Attempt 10 is an immutable terminal failure, not a WBC completion:
+
+- phase attempt `646ab9ed-2706-5be8-a249-7b52e49ac102`, ordinal `10`,
+  invocation `b437b9ee2a8b4c37`, run
+  `cl2-wbc-backed-ledger-20260803-1357`, step `finalize`;
+- worker-WBC attempt `b0e96460-a8d7-5577-9b5f-4ed080e18c71`, occurrence
+  `de3040a3c789bdaa92330e08c5f8ade7cbda3136d8015194e02141d4608678ce`,
+  repair-0 receipt
+  `sha256:6fa1eac08c732ade7116a3fa30160b807cdc3562388de150156a5bcb582051f4`;
+- terminal event `FAILED`, outcome `indeterminate`, typed error
+  `quota_exceeded`. Cloud and local Sol probes both hard-failed quota and
+  displayed resets on Aug 9 at 11:06 AM and 1:06 PM respectively (the Codex
+  display did not specify a timezone). No alternative authorized Sol
+  credential exists.
+
+r5 therefore remains `gated`, with no active step, marker `should_run=false`,
+and canonical projected status `paused`. Do not resume it and do not retry it in
+an automatic, shell, watchdog, or chain loop. The only authorized forward path
+is to replenish or explicitly authorize Sol capacity, reattest the same runtime
+and copied interpreter, then issue exactly one direct same-model
+`codex:gpt-5.6-sol:high` Finalize retry in the same r5. It must create exactly
+ordinal 11 with fresh bound IDs. Before any chain resume, require terminal
+`COMPLETED` WBC evidence, exact response/publication receipts, and
+`finalized -> execute`; then prove GLM-only Execute, one current r5 status row,
+and unchanged-poll notification dedupe/no-spam.
+
+The cached `/workspace/.megaplan/status/cloud-status.json` remains a follow-up
+freshness defect. `/whats-cooking` currently uses the fresh local snapshot
+builder, so the stale cache must not be used as canonical command evidence.
+Repair and attest the cache writer/freshness contract separately. This record
+does not claim Finalize, Execute, the Critique epic, or this follow-up epic is
+complete.

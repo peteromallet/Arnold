@@ -33,22 +33,29 @@ rejects their merged journal, and outer chain status remains stale at
 `91708543510`, was red because two initiative documents were outside canonical
 artifact directories. Do not report “no current failure” from a stale observer.
 
-Current cutover state at `2026-08-03T19:40:55Z`: r5 remains intentionally
-paused at CL2 Finalize. Runner PID `152041` and attempt-8 Sol processes
-`160047`, `160061`, and `160240` are stopped with `SIGSTOP`; the installed
-candidate is still `18b279f5e`. Attempt 7 produced a validated 72,328-byte
-candidate, but it was not authoritatively adopted. Do not `SIGCONT` attempt 8
-and do not restart the epic from Prep. Preserve the same session, plan, and
-upstream artifacts; explicitly abort attempt 8 and create immutable attempt 9
-under the exact integrated runtime.
+Current cutover state at `2026-08-04T01:17Z`: r5 remains intentionally stopped
+at CL2 Finalize with marker `should_run=false`; there is no r5 tmux runner and
+no active step. The exact root-fix engine is
+`b38460e4d3f2605b341fa117dc838c6e51a1d3c8`, tree
+`f0acc45ff8f726d38e67fa665179b65353bac336`, isolated runtime
+`/workspace/runtime-candidates/arnold-b38460e4d3f2605b341fa117dc838c6e51a1d3c8`,
+and identity digest
+`21ff19b6bd117b18f85643781b999167c4b8eb882601a5e77d9b3c9858eff476`.
+Both the chain and marker are bound to that exact identity. Product commit
+`b9add7e867` contains the project-owned profile correction; its receipted
+refresh bound source `project`, effective digest
+`2c1dabb0cab708f7131d14221f79e4ba1be8dc6a311546be2318f348d8ab548c`,
+Finalize `codex:gpt-5.6-sol:high`, and GLM-family Execute tiers 1–10. These are
+cutover preconditions, not evidence that attempt 9 or Execute has succeeded.
 
 Attempt-8 custody is exact: phase-WBC attempt
 `8fe6ab70-45c0-573e-9a26-32721b06047e`, invocation
 `21d5c8322f2148a5`, active-step run ID
-`c9cb6a4d-ec3c-4634-a08f-db273f0d96a7`, ordinal `8`. Its durable ledger has a
-single `STARTED` event and no terminal event. The abort must append the matching
-`CANCELLED` terminal event, reread it as durable, and clear active custody only
-with the matching run ID/version. Killing the processes alone is not an abort.
+`c9cb6a4d-ec3c-4634-a08f-db273f0d96a7`, ordinal `8`. Its durable ledger is now
+exactly `STARTED(1) → CANCELLED(2)` and active custody is absent. The original
+process tree was terminated using PID/start-tick guards. Never revive or erase
+that terminal history. Attempt 7's validated 72,328-byte candidate remains
+recovery evidence only; it was not authoritatively adopted.
 
 The evidence-backed operator sequence, exact guards, fail-closed points, and
 attempt-9 canaries are in
@@ -76,34 +83,44 @@ waits for all checked items and one exact integration commit.
 - [x] Add a receipted same-profile refresh so an existing plan's persisted tier
   table is rewritten from the deployed registry without changing lifecycle,
   cancellation, chain, or phase-WBC custody.
-- [x] Prove and use a one-shot direct WBC-backed Finalize invocation for
-  immutable attempt 9 while paused; resume the chain only from `finalized` so
-  the general three-attempt deterministic auto loop cannot create attempt 10.
+- [x] Implement and test a one-shot direct WBC-backed Finalize invocation for
+  immutable attempt 9; the general three-attempt deterministic auto loop cannot
+  create attempt 10 through this path.
 - [x] After repair identity lands, persist the simple-fixer mutation budget and
   effect outcomes by canonical repair occurrence across restart/claim release.
 - [x] Route cloud status/supervisor actions through canonical current-target
   liveness; tmux/`ps` evidence is diagnostic only. Replace the collided SSH
   `arnold status --plan` invocation with the exact runtime-attested Megaplan
   module entrypoint; prove the native Arnold CLI is never selected.
-- [ ] Migrate the legacy r5 marker to managed run/runtime identity through the
+- [x] Migrate the legacy r5 marker to managed run/runtime identity through the
   one-time external-provenance-bound CAS path; never hand-edit or fresh-restart
   the preserved session.
-- [ ] Run combined regression, adversarial stale-writer/replay tests, and real
-  sibling-container/provider canaries against one candidate commit.
-- [ ] Deploy that exact commit to the cloud runtime candidate; verify remote
+- [x] Run focused and combined regression plus adversarial stale-writer/replay
+  tests against exact candidate `b38460e4d3` (261 orchestration/worker tests,
+  118 combined incident tests, and 118 critical cloud tests).
+- [x] Deploy that exact commit to an isolated cloud runtime; verify remote
   source hashes and intended Finalize=GPT-5.6 Sol high, Execute=GLM 5.2 profile.
-- [ ] Explicitly abort attempt 8, launch immutable attempt 9, and adopt or
-  recreate the valid Finalize candidate through the authorized receipt path.
+- [x] Explicitly cancel attempt 8 and prove its exact terminal WBC custody.
+- [ ] Migrate both intact pre-v2 Critique receipts through the create-once
+  `legacy_unbound` path under exact source hashes; do not fabricate producer
+  provenance or rewrite the original receipts.
+- [ ] Launch exactly one immutable attempt 9 and adopt or recreate the valid
+  Finalize candidate through the authorized receipt path. Do not mark this
+  complete until the ordinal-9 WBC is terminal `COMPLETED`.
 - [ ] Prove one Finalize advance, GLM Execute start, one current r5 row in
   `/whats-cooking`, and zero duplicate notifications across unchanged polls.
 
-The resident is separately healthy: epoch `discord-enospc-20260803-r7`,
+The session-bound resident is separately healthy: epoch
+`critique-attempt9-b384-20260804-0115`,
 container
-`a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`,
+`911d8a74727524e5d118c197c795b6d1fcd485689c615c6d692748d8000decff`,
 image
 `sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20`,
-runtime `31d2e052104a57eb48e782dce8bdf678e6731caf`, receipt
-`healthy/discord_ready`.
+runtime `b38460e4d3f2605b341fa117dc838c6e51a1d3c8`, receipt
+`healthy/discord_ready`, `listener_only=true`, restart policy `no`. This proves
+the r5/Discord session selector only. It does **not** promote the global
+watchdog/auditor/supervisor selectors; MP-094 owns their atomic post-Execute
+promotion and mixed-generation startup rejection.
 
 Execute the following as a task board. Items in the same wave may run in
 parallel; a later wave waits for its named dependencies. `VERY HARD` marks
@@ -1219,6 +1236,26 @@ claim cannot discharge an obligation.
 
 ## F2 — admission, model, effect and release closure
 
+### Incident-cutover residuals
+
+- [x] Implement and deploy the MP-092 root fix in exact runtime `b38460e4d3`:
+  every parallel Critique run owns a fresh phase WBC, every fanout lens has a
+  stable distinct `dispatch_key`, and the reducer receipt binds and re-queries
+  the complete terminal child manifest. Retain the later live Critique cloud
+  canary as follow-up evidence; it is not attempt-9 Finalize evidence.
+- [ ] Under the final attested runtime, create the already-implemented MP-091 `legacy_unbound`
+  sidecars for exact r5 receipt iterations 1 and 2, prove original receipt
+  bytes are unchanged, regenerate clearance, and pass the full
+  migrate→clearance→Finalize custody roundtrip before the sole attempt 9.
+- [ ] Reconcile MP-093's chain-state projection cursor regressions without
+  altering canonical chain state. Until then, keep the projection diagnostic
+  only and prove no mutation/status authority consumes it.
+- [ ] MP-094: after r5 resumes into Execute, promote the final runtime selectors
+  for watchdog/auditor/supervisor through their atomic release path; attest the
+  installed root/commit/tree/interpreter for each service and reject mixed-
+  generation startup. Do not infer global promotion from the healthy
+  session-bound resident.
+
 - [ ] Resume and complete T1.1 universal admission from
   `/private/tmp/arnold-critique-recovery-t1-1-admission-20260802` (19 current
   modified/untracked paths at the frozen custody snapshot; paused at 6 pass /
@@ -1316,3 +1353,64 @@ The follow-up epic is incomplete until every checkbox above has an accepted
 manifest or explicit supersession record, the ordinary Critique Ledger work is
 completed and deployed, incident evidence is closed without rewriting history,
 and real 24h/72h/7d durability observations pass.
+
+## Current cutover TODO — supersedes the Attempt-9 launch checklist
+
+Attempt 10 is already terminal. All earlier unchecked instructions to create
+Attempt 9, require that ordinal 10 not exist, or resume from the b384 runtime are
+superseded by the evidence below. Preserve those sections as history only; do
+not execute them.
+
+- [x] Integrate the three final root fixes: exact authenticated response repair
+  and occurrence selection (`4ab819d791`), controlled mutable lifecycle-history
+  projection without mutating immutable legacy lineage
+  (`4cf84138de029ca8c2ec654f5a70d58d50cf6b81`), and canonical
+  `should_run=false`/operator-pause status (`fdbdfb72cb`).
+- [x] Validate the deployed fdb runtime: commit
+  `fdbdfb72cb32a1d7c42bc9a0d5f19eba023d5a30`, tree
+  `05a77aa883d06df09d745b01047e64d1f75e8267`, identity
+  `d1f9cd20568f3fe325ea384c7adf7df8d9bba61de651ef95011e51361bf71a7b`,
+  launch-seed hash
+  `7cd0f51f2ec028418209bb0511e4c70b3791b0ad2b8c070766f56ef6130f7504`,
+  and healthy listener-only resident epoch/container
+  `critique-attempt10-fdb-live-20260804-0149` /
+  `8be0aa325b119a00f8c62e7e4a4b2e0cb5e499999759cca4384201469f361430`.
+- [x] Preserve Attempt 10 as terminal `FAILED`, outcome `indeterminate`, typed
+  `quota_exceeded`: ordinal `10`, phase attempt
+  `646ab9ed-2706-5be8-a249-7b52e49ac102`, invocation
+  `b437b9ee2a8b4c37`, worker attempt
+  `b0e96460-a8d7-5577-9b5f-4ed080e18c71`, occurrence
+  `de3040a3c789bdaa92330e08c5f8ade7cbda3136d8015194e02141d4608678ce`.
+  Do not relabel it completed or reuse its identities.
+- [x] Confirm both authorized cloud and local Sol probes are hard-quota blocked
+  until the displayed Aug 9 reset windows (11:06 AM cloud, 1:06 PM local;
+  display timezone unspecified) and that no alternative authorized Sol
+  credential is available.
+- [ ] Replenish or explicitly authorize capacity for the existing
+  `codex:gpt-5.6-sol:high` Finalize route. Do not substitute a model, provider,
+  credential, or lower reasoning mode without a new owner decision.
+- [ ] Build/reattest the isolated control venv with `python -m venv --copies`.
+  Bind the launch receipt to the copied venv interpreter's exact path and
+  digest as well as runtime commit/tree/identity and launch-seed hash. Reject a
+  symlinked or base-interpreter-only identity.
+- [ ] While the same r5 remains `gated`, `should_run=false`, paused, and has no
+  active step, issue exactly one direct same-model Finalize retry. It must be
+  the sole ordinal `11` occurrence with fresh phase/worker/invocation IDs. Do
+  not use `auto`, chain resume, watchdog recovery, a shell retry, or a new
+  session.
+- [ ] Before resume, require ordinal 11 terminal `COMPLETED`, authenticated
+  exact-response and publication/mutation receipts, no active Finalize owner,
+  lifecycle `finalized`, and next step `execute`. Any other outcome leaves r5
+  paused and requires a new diagnosis; it does not authorize another retry.
+- [ ] Resume this same r5 exactly once through the supported operator path;
+  prove the first Execute dispatch and tiers remain GLM-only, `/whats-cooking`
+  shows one current r5 from its fresh builder, and unchanged polls produce no
+  old-session resurrection or duplicate notification/provider attempt.
+- [ ] Repair the stale cached
+  `/workspace/.megaplan/status/cloud-status.json` writer/freshness contract and
+  prove stale cache cannot masquerade as canonical status. This is follow-up
+  status hygiene while `/whats-cooking` continues to use the fresh local
+  builder; it does not authorize or block the one Finalize retry by itself.
+
+No item above marks Finalize, Execute, the Critique epic, or this follow-up epic
+complete. The epic YAML and its task count remain unchanged.
