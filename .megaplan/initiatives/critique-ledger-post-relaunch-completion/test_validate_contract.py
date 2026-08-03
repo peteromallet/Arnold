@@ -83,6 +83,14 @@ def test_known_failed_attempt_cannot_be_relabelled_accepted() -> None:
         contract._validate_attempt_history(custody)
 
 
+def test_b26_pass_cannot_drift_into_unreviewed_acceptance() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    b26 = custody["prelaunch_attempts"][-1]
+    b26["status"] = "PASSED_EXIT_0_INDEPENDENTLY_ACCEPTED_NOT_LIVE_CANARY"
+    with pytest.raises(contract.ContractError, match="B26 passing smoke binding drift"):
+        contract._validate_attempt_history(custody)
+
+
 def test_pending_operation_cannot_fabricate_terminal_receipt() -> None:
     manifest_path = Path(__file__).with_name("evidence") / "operation-reconciliation-manifest.json"
     manifest = contract._load_json(manifest_path)

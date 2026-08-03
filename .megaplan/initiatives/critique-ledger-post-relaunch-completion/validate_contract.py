@@ -76,7 +76,20 @@ KNOWN_ATTEMPTS = [
     ("B22-smoke", "OFFLINE_STRUCTURAL_SMOKE", "4e2fca8a294eb18526aa88576c0818487730d26c", "a38dbd6a84e1205286f9e65c04996b23116071f2", "/var/lib/arnold-zero-recovery/critique-ledger-b22-offline-smoke.json"),
     ("B23-smoke", "OFFLINE_STRUCTURAL_SMOKE", "7c9256b210cefb998dec57929e41b5a799faf314", "55161ca5def9fb1688ca911d80afd94ba2df7eb4", "/var/lib/arnold-zero-recovery/critique-ledger-b23-offline-smoke.json"),
     ("B24-smoke", "OFFLINE_STRUCTURAL_SMOKE", "a172a7a7556984f76d86625f3d0953d089f45004", "461672f91b169fa961b9839ab51a6647bdd6f0f9", "/var/lib/arnold-zero-recovery/critique-ledger-b24-offline-smoke.json"),
+    ("B25-smoke", "OFFLINE_STRUCTURAL_SMOKE", "117efa9e35307981b16379f9bc8204e5a5ec0695", "13995f708ab68240dfd08fa41430735cb66985b0", "/var/lib/arnold-zero-recovery/critique-ledger-b25-offline-smoke.json"),
 ]
+
+B26_PASS = {
+    "id": "B26-smoke",
+    "commit": "9a8edcf11a488b5dfb47e5c4ef7defb17e3ba6d2",
+    "tree": "1de51fd479e0bcffc8fb9f951cb27982ad9ee036",
+    "path": "/var/lib/arnold-zero-recovery/critique-ledger-b26-offline-smoke.json",
+    "sha256": "cf0967638b2c84097ced4dfc113735bbd66db1a8925d00d7080bdf7242669487",
+    "receipt_digest": "7a656459d4aace827e8b180eb025117b609262311641c15ce495ba87042cf64f",
+    "production_image": "sha256:261642f73da83b4704b33b02b9b1c14f17c56d4cafb633c98cac4f938d6421ed",
+    "derived_image": "sha256:74d24afc0af67ff6ae5de7d40ece647067873168793936f6d5d58e1a4a8742a7",
+    "verifier_receipt_digest": "99c4420ac9440d539753e0a261781f6fc8588f974fa7e2ed07ee86cb2106e373",
+}
 
 OPERATION_IDS = [
     "critique-ledger-zero-byte-bootstrap-20260803-034217z",
@@ -202,13 +215,64 @@ def _validate_prelaunch_gates(custody: dict[str, Any], *, require_live: bool) ->
         raise ContractError("prelaunch gate set/uniqueness drift")
 
 
-def _validate_attempt_history(custody: dict[str, Any]) -> None:
+def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = False) -> None:
     attempts = custody.get("prelaunch_attempts")
-    if not isinstance(attempts, list) or len(attempts) < len(KNOWN_ATTEMPTS):
+    if not isinstance(attempts, list) or len(attempts) != len(KNOWN_ATTEMPTS) + 1:
         raise ContractError("prelaunch attempt history is incomplete")
     expected_fields = {"id", "kind", "candidate", "status", "failure", "remote_receipt"}
     ids: list[str] = []
     for index, attempt in enumerate(attempts):
+        if index == len(KNOWN_ATTEMPTS):
+            if not isinstance(attempt, dict):
+                raise ContractError("B26 passing smoke has an invalid schema")
+            ids.append(attempt.get("id"))
+            review = attempt.get("independent_review")
+            pending_review = review == {"path": None, "sha256": None, "status": "PENDING"}
+            accepted_review = (
+                isinstance(review, dict)
+                and set(review) == {"path", "sha256", "status"}
+                and review.get("status") == "ACCEPTED"
+                and isinstance(review.get("path"), str)
+                and SHA256.fullmatch(str(review.get("sha256"))) is not None
+            )
+            if accepted_review:
+                review_path = _repo_path(review["path"])
+                accepted_review = review_path.is_file() and _sha256(review_path) == review["sha256"]
+            expected_status = (
+                "PASSED_EXIT_0_PENDING_INDEPENDENT_ACCEPTANCE_NOT_LIVE_GATE"
+                if pending_review
+                else "PASSED_EXIT_0_INDEPENDENTLY_ACCEPTED_NOT_LIVE_CANARY"
+            )
+            if (
+                set(attempt) != {
+                    "id", "kind", "candidate", "status", "result", "remote_receipt",
+                    "receipt_digest", "image", "verifier_receipt_digest", "phases",
+                    "privilege_receipt_count", "independent_review",
+                }
+                or attempt.get("id") != B26_PASS["id"]
+                or attempt.get("kind") != "OFFLINE_STRUCTURAL_SMOKE"
+                or attempt.get("candidate") != {"commit": B26_PASS["commit"], "tree": B26_PASS["tree"]}
+                or attempt.get("status") != expected_status
+                or attempt.get("result") != {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"}
+                or attempt.get("remote_receipt") != {
+                    "path": B26_PASS["path"],
+                    "sha256": B26_PASS["sha256"],
+                    "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED",
+                }
+                or attempt.get("receipt_digest") != B26_PASS["receipt_digest"]
+                or attempt.get("image") != {
+                    "production": B26_PASS["production_image"],
+                    "derived": B26_PASS["derived_image"],
+                }
+                or attempt.get("verifier_receipt_digest") != B26_PASS["verifier_receipt_digest"]
+                or attempt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
+                or attempt.get("privilege_receipt_count") != 4
+                or not (pending_review or accepted_review)
+            ):
+                raise ContractError("B26 passing smoke binding drift")
+            if require_live and not accepted_review:
+                raise ContractError("B26 passing smoke lacks independent acceptance")
+            continue
         if not isinstance(attempt, dict) or set(attempt) != expected_fields:
             raise ContractError("prelaunch attempt has an inexact schema")
         attempt_id = attempt.get("id")
@@ -500,16 +564,20 @@ def _validate_supersession(*, require_live: bool) -> None:
     if (
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
+        or attempts.get("passing_successor") != B26_PASS["id"]
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
     accepted = attempts.get("accepted_successor")
     if require_live:
-        if not isinstance(accepted, str) or not accepted:
+        if accepted != B26_PASS["id"]:
             raise ContractError("no strictly later accepted smoke is registered")
         if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
             raise ContractError("strictly later smoke is not accepted")
-    if not require_live and accepted is not None and (not isinstance(accepted, str) or not accepted):
+    elif accepted is None:
+        if attempts.get("status") != "PASS_RECEIPT_PENDING_INDEPENDENT_ACCEPTANCE_AND_LIVE_EVIDENCE":
+            raise ContractError("passing smoke pending disposition drift")
+    elif accepted != B26_PASS["id"] or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")
 
 
@@ -628,7 +696,7 @@ def validate(*, require_live: bool = False) -> None:
     if custody.get("schema") != "arnold.critique_ledger.unfinished_work_custody.v4":
         raise ContractError("custody manifest schema must be v4")
     _validate_obligations(custody)
-    _validate_attempt_history(custody)
+    _validate_attempt_history(custody, require_live=require_live)
     _validate_prelaunch_gates(custody, require_live=require_live)
     _validate_host_control_state_contract(custody)
     reconciliation = custody.get("live_operation_reconciliation")

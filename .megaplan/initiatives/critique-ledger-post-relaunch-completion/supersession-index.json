@@ -23,10 +23,11 @@
       "B8-build", "B9-build", "B10-build", "B10-smoke", "B11-smoke",
       "B12-smoke", "B13-smoke", "B14-smoke", "B15-smoke", "B16-smoke",
       "B17-smoke", "B18-smoke", "B19-smoke", "B20-smoke", "B21-smoke",
-      "B22-smoke", "B23-smoke", "B24-smoke"
+      "B22-smoke", "B23-smoke", "B24-smoke", "B25-smoke"
     ],
+    "passing_successor": "B26-smoke",
     "accepted_successor": null,
-    "status": "HARD_NO_GO_UNTIL_STRICTLY_LATER_INDEPENDENTLY_ACCEPTED_SMOKE",
+    "status": "PASS_RECEIPT_PENDING_INDEPENDENT_ACCEPTANCE_AND_LIVE_EVIDENCE",
     "rule": "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
   },
   "superseded": [

@@ -153,9 +153,32 @@ deliberately pending import; it is not permission to recreate a receipt.
   init/plan/critique/gate but returned `planner_repair_required` at finalize,
   exposing a real product mismatch: the prompt/feasibility contract requires
   task-contract v2 while the capture schema forbids or omits its v2 fields.
-- [ ] Copy and reconcile every available B10-B24 receipt/evidence directory;
-  obtain a strictly later independently accepted smoke. No B8-B24 attempt is
-  current acceptance authority, and no missing build receipt may be synthesized.
+- [ ] Preserve B25 at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b25-offline-smoke.json`.
+  Candidate `117efa9e35307981b16379f9bc8204e5a5ec0695` / tree
+  `13995f708ab68240dfd08fa41430735cb66985b0` finalized every phase, but the
+  final verifier rejected the plan privilege receipt because it still required
+  `/dev/shm` `root_nonwritable` while IPC-none correctly recorded
+  `absent_ipc_none`. It is failed history, not acceptance authority.
+- [ ] Copy and independently review B26 at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b26-offline-smoke.json`.
+  Candidate `9a8edcf11a488b5dfb47e5c4ef7defb17e3ba6d2` / tree
+  `1de51fd479e0bcffc8fb9f951cb27982ad9ee036` passed all five exact phases,
+  exited zero, produced four privilege receipts, and has declared file SHA-256
+  `cf0967638b2c84097ced4dfc113735bbd66db1a8925d00d7080bdf7242669487`,
+  receipt digest `7a656459d4aace827e8b180eb025117b609262311641c15ce495ba87042cf64f`
+  and verifier digest
+  `99c4420ac9440d539753e0a261781f6fc8588f974fa7e2ed07ee86cb2106e373`.
+  Its production image is
+  `sha256:261642f73da83b4704b33b02b9b1c14f17c56d4cafb633c98cac4f938d6421ed`
+  and derived image is
+  `sha256:74d24afc0af67ff6ae5de7d40ece647067873168793936f6d5d58e1a4a8742a7`.
+  This is the strictly later passing smoke candidate, but it is not an accepted
+  live gate, canary, stable-exit proof, or F0 result until independent review
+  and the remaining live evidence pass.
+- [ ] Copy and reconcile every available B10-B26 receipt/evidence directory.
+  No B8-B25 failed attempt is current acceptance authority; B26 remains pending
+  independent acceptance, and no missing receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 
@@ -307,6 +330,19 @@ claim cannot discharge an obligation.
   production authority, release authority, or cloud launch authority.
 - [ ] Complete generalized T1.4 graph repair/retry and T1.6 effect-family
   migration plus the full release evidence matrix.
+- [ ] Align the canonical `FINALIZE_MODEL_OUTPUT_SCHEMA` required set with the
+  persisted finalize schema; prompt, feasibility, capture and stored output
+  must consume one exact task-contract-v2 contract.
+- [ ] Prove non-empty `dependency_reasons` against the real provider output
+  schema, not only the offline fake.
+- [ ] Close the scratch-template `const2` mismatch without weakening the exact
+  finite-worker mutation boundary.
+- [ ] Preserve historical v1 read compatibility while keeping all new writes
+  and validation on the canonical v2 contract.
+- [ ] Qualify document and joke modes against the same finalize/capture schema
+  rather than treating planning mode as universal proof. These five B26-era
+  follow-ups remain under existing F2 release closure and do not add, renumber,
+  or complete any deferred obligation.
 
 ## Preserved but non-authoritative artifacts
 

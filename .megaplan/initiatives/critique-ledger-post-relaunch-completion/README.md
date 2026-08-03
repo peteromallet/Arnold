@@ -69,7 +69,8 @@ or deferred interface may be silently consumed by the canary or dropped by this
 epic.
 
 Machine-readable custody is frozen in [`custody-manifest.json`](custody-manifest.json),
-including immutable B8-B24 failure history and the pending terminal-operation
+including immutable B8-B25 failure history, the B26 passing smoke candidate
+pending independent acceptance, and the pending terminal-operation
 reconciliation contract.
 Conflicting or stale launch instructions are retired by
 [`supersession-index.json`](supersession-index.json). Human prose never
