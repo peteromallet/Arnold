@@ -207,6 +207,7 @@ def _prepare_zero_recovery_schema_input(
             "finite canary schema is not root-owned immutable data",
         )
     fd = os.open(schema_file, os.O_RDONLY | os.O_NOFOLLOW)
+    grant_attempted = False
     try:
         opened = os.fstat(fd)
         if (
@@ -224,6 +225,7 @@ def _prepare_zero_recovery_schema_input(
         digest = hashlib.sha256()
         while chunk := os.read(fd, 1024 * 1024):
             digest.update(chunk)
+        grant_attempted = True
         os.fchmod(fd, 0o644)
         granted = os.fstat(fd)
         if (
@@ -239,6 +241,13 @@ def _prepare_zero_recovery_schema_input(
                 "zero_recovery_privilege_boundary_invalid",
                 "finite canary schema read-only grant did not seal exact identity",
             )
+    except BaseException:
+        if grant_attempted:
+            try:
+                os.fchmod(fd, stat.S_IMODE(schema_stat.st_mode))
+            except OSError:
+                pass
+        raise
     finally:
         os.close(fd)
     return {
@@ -260,6 +269,7 @@ def _restore_zero_recovery_schema_input(
     fd = os.open(schema_file, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         opened = os.fstat(fd)
+        current_mode = stat.S_IMODE(opened.st_mode)
         if (
             (observed.st_dev, observed.st_ino)
             != (grant["st_dev"], grant["st_ino"])
@@ -269,7 +279,7 @@ def _restore_zero_recovery_schema_input(
             or opened.st_nlink != 1
             or opened.st_uid != 0
             or opened.st_gid != 0
-            or stat.S_IMODE(opened.st_mode) != 0o644
+            or current_mode not in {0o644, grant["mode"]}
         ):
             raise CliError(
                 "zero_recovery_privilege_boundary_invalid",
@@ -283,6 +293,8 @@ def _restore_zero_recovery_schema_input(
                 "zero_recovery_privilege_boundary_invalid",
                 "finite canary schema content changed before grant revocation",
             )
+        if current_mode == grant["mode"]:
+            return
         os.fchmod(fd, grant["mode"])
         restored = os.fstat(fd)
         if (
@@ -625,11 +637,7 @@ def _write_zero_recovery_privilege_receipt(
     ).hexdigest()
 
 
-def _finish_zero_recovery_model_runtime(
-    runtime: dict[str, Any] | None, *, output_path: Path
-) -> None:
-    if runtime is None:
-        return
+def _quiesce_zero_recovery_model_uid() -> None:
     killed = subprocess.run(
         ["/usr/bin/pkill", "-KILL", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
         env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
@@ -653,6 +661,19 @@ def _finish_zero_recovery_model_runtime(
             "zero_recovery_privilege_boundary_invalid",
             "finite-model UID retained a process after provider return",
         )
+
+
+def _finish_zero_recovery_model_runtime(
+    runtime: dict[str, Any] | None,
+    *,
+    output_path: Path,
+    on_process_empty: Callable[[], None] | None = None,
+) -> None:
+    if runtime is None:
+        return
+    _quiesce_zero_recovery_model_uid()
+    if on_process_empty is not None:
+        on_process_empty()
     output_stat = os.lstat(output_path)
     if (
         not stat.S_ISREG(output_stat.st_mode)
@@ -1396,10 +1417,14 @@ def _verify_zero_recovery_worker_boundaries(
     plan_before: dict[str, str] | None,
 ) -> None:
     errors: list[str] = []
-    runtime_finished = False
     try:
-        _finish_zero_recovery_model_runtime(runtime, output_path=output_path)
-        runtime_finished = True
+        _finish_zero_recovery_model_runtime(
+            runtime,
+            output_path=output_path,
+            on_process_empty=lambda: _restore_zero_recovery_schema_input(
+                schema_grant
+            ),
+        )
     except BaseException as exc:
         errors.append(f"{type(exc).__name__}:{str(exc)}")
     for check in (
@@ -1410,11 +1435,6 @@ def _verify_zero_recovery_worker_boundaries(
     ):
         try:
             check()
-        except BaseException as exc:
-            errors.append(f"{type(exc).__name__}:{str(exc)}")
-    if runtime_finished:
-        try:
-            _restore_zero_recovery_schema_input(schema_grant)
         except BaseException as exc:
             errors.append(f"{type(exc).__name__}:{str(exc)}")
     if errors:
@@ -4893,54 +4913,64 @@ def _run_codex_step_uncapped(
             output_path=output_path,
             include_cpu_signal=not strict_structured_liveness,
         )
-        schema_grant = _prepare_zero_recovery_schema_input(schema_file)
         worker_plan_before = _zero_recovery_plan_snapshot(
             root, plan_dir, output_path=output_path
         )
         worker_source_before = _zero_recovery_source_identity(root, plan_dir)
-        model_runtime = _prepare_zero_recovery_model_runtime(
-            step=step, plan_dir=plan_dir, output_path=output_path
-        )
+        schema_grant = None
         try:
-            child_env = _codex_child_env(turn_id=f'plan_worker_{state["name"]}')
-            if model_runtime is not None:
-                child_env = _zero_recovery_model_env(
-                    model_runtime, turn_id=f'plan_worker_{state["name"]}'
+            schema_grant = _prepare_zero_recovery_schema_input(schema_file)
+            model_runtime = _prepare_zero_recovery_model_runtime(
+                step=step, plan_dir=plan_dir, output_path=output_path
+            )
+            try:
+                child_env = _codex_child_env(turn_id=f'plan_worker_{state["name"]}')
+                if model_runtime is not None:
+                    child_env = _zero_recovery_model_env(
+                        model_runtime, turn_id=f'plan_worker_{state["name"]}'
+                    )
+                    command = _zero_recovery_model_command(command)
+                result = run_command(
+                    command,
+                    cwd=work_dir,
+                    stdin_text=prompt,
+                    env=child_env,
+                    timeout=timeout_seconds,
+                    activity_callback=(
+                        None
+                        if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+                        else _activity_callback_for_state(state, plan_dir)
+                    ),
+                    activity_guard=liveness.activity_guard,
+                    pre_first_byte_timeout=(
+                        pre_first_byte_s if pre_first_byte_s > 0 else None
+                    ),
+                    idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
+                    progress_liveness_factory=liveness.bind_process,
+                    # Structured non-execute liveness has no grace: a process that is
+                    # merely alive but has no token/event/artifact evidence must
+                    # surface as a retryable worker_stall at the configured bounded
+                    # idle timeout.
+                    progress_liveness_grace_timeout=(
+                        0.0
+                        if strict_structured_liveness
+                        else (codex_idle_s if codex_idle_s > 0 else None)
+                    ),
                 )
-                command = _zero_recovery_model_command(command)
-            result = run_command(
-                command,
-                cwd=work_dir,
-                stdin_text=prompt,
-                env=child_env,
-                timeout=timeout_seconds,
-                activity_callback=(
-                    None
-                    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
-                    else _activity_callback_for_state(state, plan_dir)
-                ),
-                activity_guard=liveness.activity_guard,
-                pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
-                idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
-                progress_liveness_factory=liveness.bind_process,
-                # Structured non-execute liveness has no grace: a process that is
-                # merely alive but has no token/event/artifact evidence must
-                # surface as a retryable worker_stall at the configured bounded
-                # idle timeout.
-                progress_liveness_grace_timeout=(
-                    0.0 if strict_structured_liveness else (codex_idle_s if codex_idle_s > 0 else None)
-                ),
-            )
+            finally:
+                _verify_zero_recovery_worker_boundaries(
+                    root=root,
+                    plan_dir=plan_dir,
+                    output_path=output_path,
+                    runtime=model_runtime,
+                    schema_grant=schema_grant,
+                    source_before=worker_source_before,
+                    plan_before=worker_plan_before,
+                )
         finally:
-            _verify_zero_recovery_worker_boundaries(
-                root=root,
-                plan_dir=plan_dir,
-                output_path=output_path,
-                runtime=model_runtime,
-                schema_grant=schema_grant,
-                source_before=worker_source_before,
-                plan_before=worker_plan_before,
-            )
+            if schema_grant is not None:
+                _quiesce_zero_recovery_model_uid()
+                _restore_zero_recovery_schema_input(schema_grant)
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
     except CliError as error:
