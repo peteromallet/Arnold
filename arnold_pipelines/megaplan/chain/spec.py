@@ -3239,6 +3239,21 @@ _FINITE_CANARY_FENCE_UNITS = [
 
 def _finite_canary_fence_is_valid(fence: Any) -> bool:
     units = fence.get("units") if isinstance(fence, dict) else None
+    marker = fence.get("marker") if isinstance(fence, dict) else None
+    marker_raw = (
+        json.dumps(
+            {
+                "active": True,
+                "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+                "schema": "arnold.cloud.zero_recovery_marker.v2",
+                "scope": "HOST_GLOBAL_PERSISTENT_CONTAINMENT",
+            },
+            sort_keys=True,
+        )
+        + "\n"
+        if isinstance(fence, dict)
+        else ""
+    ).encode()
     return bool(
         isinstance(fence, dict)
         and set(fence) == {
@@ -3252,6 +3267,18 @@ def _finite_canary_fence_is_valid(fence: Any) -> bool:
         and fence.get("transaction_id")
         and isinstance(fence.get("transaction_digest"), str)
         and _SHA256_RE.fullmatch(fence.get("transaction_digest"))
+        and isinstance(marker, dict)
+        and set(marker)
+        == {"path", "sha256", "uid", "gid", "mode", "st_dev", "st_ino"}
+        and marker.get("path") == "/var/lib/arnold-zero-recovery/active.json"
+        and marker.get("sha256") == hashlib.sha256(marker_raw).hexdigest()
+        and marker.get("uid") == 0
+        and marker.get("gid") == 0
+        and marker.get("mode") == 0o600
+        and type(marker.get("st_dev")) is int
+        and type(marker.get("st_ino")) is int
+        and marker.get("st_dev") >= 0
+        and marker.get("st_ino") > 0
         and fence.get("forbidden_sessions") == []
         and fence.get("forbidden_processes") == []
         and fence.get("systemd_jobs") == []
@@ -3260,18 +3287,23 @@ def _finite_canary_fence_is_valid(fence: Any) -> bool:
         == _FINITE_CANARY_FENCE_UNITS
         and all(
             isinstance(item, dict)
-            and set(item) == {"unit", "load_state", "active_state", "unit_file_state", "state"}
+            and set(item) == {
+                "unit", "load_state", "active_state", "unit_file_state",
+                "persistent_mask", "state",
+            }
             and (
                 (
                     item.get("state") == "masked"
                     and item.get("active_state") == "inactive"
                     and item.get("unit_file_state") == "masked"
+                    and item.get("persistent_mask") is True
                 )
                 or (
                     item.get("state") == "absent"
                     and item.get("load_state") == "not-found"
                     and item.get("active_state") == "inactive"
                     and item.get("unit_file_state") in {"", "disabled"}
+                    and item.get("persistent_mask") is False
                 )
             )
             for item in units

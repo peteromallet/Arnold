@@ -472,6 +472,92 @@ failure_stage = "before_intent"
 prune_started = False
 settle_observations = []
 last_systemd_jobs = []
+authority_root = pathlib.Path("/var/lib/arnold-zero-recovery")
+authority_dir_fd = None
+
+def open_authority_directory():
+    created = False
+    try:
+        os.mkdir(authority_root, 0o700)
+        created = True
+    except FileExistsError:
+        pass
+    if created:
+        parent_fd = os.open(
+            authority_root.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            parent = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != 0
+                or parent.st_gid != 0
+            ):
+                raise RuntimeError("authority_parent_identity_invalid")
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    observed = os.lstat(authority_root)
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or stat.S_ISLNK(observed.st_mode)
+        or observed.st_uid != 0
+        or observed.st_gid != 0
+        or stat.S_IMODE(observed.st_mode) != 0o700
+    ):
+        raise RuntimeError("authority_directory_identity_invalid")
+    fd = os.open(
+        authority_root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    opened = os.fstat(fd)
+    if (
+        opened.st_dev != observed.st_dev
+        or opened.st_ino != observed.st_ino
+        or opened.st_uid != 0
+        or opened.st_gid != 0
+        or stat.S_IMODE(opened.st_mode) != 0o700
+    ):
+        os.close(fd)
+        raise RuntimeError("authority_directory_identity_changed")
+    return fd
+
+def authority_filename(suffix):
+    transaction_id = config["transaction_id"]
+    if (
+        not isinstance(transaction_id, str)
+        or not transaction_id
+        or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" for character in transaction_id)
+    ):
+        raise RuntimeError("authority_transaction_id_invalid")
+    return transaction_id + suffix
+
+def write_authority_file(name, raw):
+    fd = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=authority_dir_fd,
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+        ):
+            raise RuntimeError("authority_file_identity_invalid:" + name)
+        with os.fdopen(fd, "wb", closefd=False) as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(fd)
+    os.fsync(authority_dir_fd)
 
 def run(argv, timeout_seconds=None):
     timeout = timeout_seconds
@@ -485,10 +571,19 @@ def show_unit(unit, timeout_seconds=None):
     if result.returncode != 0 or len(values) != 3 or not values[0] or not values[1]:
         raise RuntimeError("unit_observation_unknown:" + unit)
     persistent = pathlib.Path("/etc/systemd/system") / unit
-    persistent_mask = os.path.lexists(persistent) and persistent.is_symlink() and os.readlink(persistent) == "/dev/null"
+    if os.path.lexists(persistent):
+        persistent_identity = os.lstat(persistent)
+        persistent_mask = (
+            stat.S_ISLNK(persistent_identity.st_mode)
+            and persistent_identity.st_uid == 0
+            and persistent_identity.st_gid == 0
+            and os.readlink(persistent) == "/dev/null"
+        )
+    else:
+        persistent_mask = False
     return {"unit": unit, "load_state": values[0], "active_state": values[1], "unit_file_state": values[2], "persistent_mask": persistent_mask}
 
-def settle_units(before_items):
+def settle_units(before_items, require_persistent=False):
     global settle_observations
     deadline = time.monotonic() + 5.0
     reset_units = set()
@@ -509,14 +604,17 @@ def settle_units(before_items):
         pending = False
         for item in current:
             unit = item["unit"]
-            if unit in originally_absent:
+            if unit in originally_absent and not require_persistent:
                 if item["load_state"] != "not-found":
                     raise RuntimeError("unit_appeared_during_settle:" + unit)
                 continue
             if item["load_state"] not in {"loaded", "masked"}:
                 raise RuntimeError("unit_load_state_drift_during_settle:" + unit)
-            if item["unit_file_state"] not in {"masked-runtime", "masked"}:
+            admitted_mask_states = {"masked"} if require_persistent else {"masked-runtime", "masked"}
+            if item["unit_file_state"] not in admitted_mask_states:
                 raise RuntimeError("unit_mask_state_drift_during_settle:" + unit)
+            if require_persistent and item["persistent_mask"] is not True:
+                raise RuntimeError("unit_persistent_mask_missing_during_settle:" + unit)
             active = item["active_state"]
             if active == "inactive":
                 continue
@@ -554,11 +652,62 @@ def require_no_recovery_unit_jobs():
     jobs = run(["systemctl", "list-jobs", "--no-legend", "--no-pager"])
     if jobs.returncode != 0:
         raise RuntimeError("systemd_jobs_observation_unknown")
-    last_systemd_jobs = [line.strip() for line in jobs.stdout.splitlines() if line.strip()]
-    for line in last_systemd_jobs:
-        if any(unit in line.split() for unit in units):
-            raise RuntimeError("recovery_unit_job_queued:" + line)
+    last_systemd_jobs = [
+        line.strip()
+        for line in jobs.stdout.splitlines()
+        if line.strip() and any(unit in line.split() for unit in units)
+    ]
+    if last_systemd_jobs:
+        raise RuntimeError("recovery_unit_job_queued:" + last_systemd_jobs[0])
     return last_systemd_jobs
+
+def install_persistent_masks(before_items):
+    mask_root = pathlib.Path("/etc/systemd/system")
+    for item in before_items:
+        persistent = mask_root / item["unit"]
+        if os.path.lexists(persistent):
+            identity = os.lstat(persistent)
+            if (
+                not stat.S_ISLNK(identity.st_mode)
+                or identity.st_uid != 0
+                or identity.st_gid != 0
+                or os.readlink(persistent) != "/dev/null"
+            ):
+                raise RuntimeError("persistent_mask_path_conflict:" + item["unit"])
+        else:
+            temporary = persistent.with_name(
+                persistent.name + "." + config["transaction_id"] + ".tmp"
+            )
+            os.symlink("/dev/null", temporary)
+            os.replace(temporary, persistent)
+    mask_dir_fd = os.open(
+        mask_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
+    try:
+        mask_root_identity = os.fstat(mask_dir_fd)
+        if (
+            not stat.S_ISDIR(mask_root_identity.st_mode)
+            or mask_root_identity.st_uid != 0
+            or mask_root_identity.st_gid != 0
+        ):
+            raise RuntimeError("persistent_mask_directory_identity_invalid")
+        os.fsync(mask_dir_fd)
+    finally:
+        os.close(mask_dir_fd)
+
+def establish_persistent_fence(before_items):
+    global failure_stage
+    failure_stage = "install_persistent_unit_masks_before_prune"
+    install_persistent_masks(before_items)
+    failure_stage = "daemon_reload_persistent_masks_before_prune"
+    daemon_reload = run(["systemctl", "daemon-reload"])
+    if daemon_reload.returncode != 0:
+        raise RuntimeError("systemd_daemon_reload_failed")
+    failure_stage = "settle_persistent_units_before_prune"
+    persistent_units = settle_units(before_items, require_persistent=True)
+    failure_stage = "verify_no_recovery_unit_jobs_before_prune"
+    jobs = require_no_recovery_unit_jobs()
+    return persistent_units, jobs
 
 def safe_unit_observations():
     observed = []
@@ -570,8 +719,8 @@ def safe_unit_observations():
     return observed
 
 def write_failure_receipt(exc_type, exc):
-    root = pathlib.Path(workspace) / ".megaplan" / "zero-recovery"
-    path = root / (config["transaction_id"] + ".bootstrap-fence-reclaim-failure.json")
+    name = authority_filename(".bootstrap-fence-reclaim-failure.json")
+    path = authority_root / name
     receipt = {
         "schema": "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_failure.v1",
         "status": "failed",
@@ -592,18 +741,10 @@ def write_failure_receipt(exc_type, exc):
     ).hexdigest()
     emitted = dict(receipt)
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(receipt, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        write_authority_file(
+            name,
+            (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+        )
         emitted["durable_receipt_written"] = True
     except Exception as receipt_exc:
         emitted["durable_receipt_written"] = False
@@ -722,14 +863,9 @@ container_pre = observe_container()
 if observe_inventory() != expected_inventory:
     raise RuntimeError("capacity_inventory_changed")
 
-intent_dir = pathlib.Path("/run/lock/arnold-zero-recovery")
-intent_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-intent_path = intent_dir / (config["transaction_id"] + ".intent")
-intent_fd = os.open(intent_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-with os.fdopen(intent_fd, "w", encoding="utf-8") as handle:
-    handle.write(config["transaction_digest"] + "\n")
-    handle.flush()
-    os.fsync(handle.fileno())
+authority_dir_fd = open_authority_directory()
+intent_name = authority_filename(".bootstrap-fence-reclaim.intent")
+write_authority_file(intent_name, (config["transaction_digest"] + "\n").encode())
 sys.excepthook = failure_excepthook
 
 failure_stage = "observe_units_before_fence"
@@ -755,8 +891,9 @@ stopped_units = settle_units(before)
 failure_stage = "observe_container_after_stop"
 container_after_stop = observe_container()
 
-failure_stage = "verify_no_recovery_unit_jobs_before_prune"
-require_no_recovery_unit_jobs()
+persistent_units_before_prune, systemd_jobs_before_prune = (
+    establish_persistent_fence(before)
+)
 
 failure_stage = "verify_no_recovery_sessions_before_prune"
 tmux_before = run(["tmux", "list-sessions", "-F", "#S"])
@@ -787,34 +924,10 @@ if prune.returncode != 0:
     raise RuntimeError("docker_dangling_build_cache_prune_failed")
 container_after_prune = observe_container()
 
-failure_stage = "install_persistent_unit_masks"
-for item in before:
-    if item["load_state"] != "not-found":
-        persistent = pathlib.Path("/etc/systemd/system") / item["unit"]
-        if os.path.lexists(persistent):
-            if not persistent.is_symlink() or os.readlink(persistent) != "/dev/null":
-                raise RuntimeError("persistent_mask_path_conflict:" + item["unit"])
-        else:
-            temporary = persistent.with_name(persistent.name + "." + config["transaction_id"] + ".tmp")
-            os.symlink("/dev/null", temporary)
-            os.replace(temporary, persistent)
-        masked = run(["systemctl", "mask", "--now", "--force", item["unit"]])
-        if masked.returncode != 0:
-            raise RuntimeError("unit_final_mask_failed:" + item["unit"])
-mask_dir_fd = os.open("/etc/systemd/system", os.O_RDONLY | os.O_DIRECTORY)
-try:
-    os.fsync(mask_dir_fd)
-finally:
-    os.close(mask_dir_fd)
-daemon_reload = run(["systemctl", "daemon-reload"])
-if daemon_reload.returncode != 0:
-    raise RuntimeError("systemd_daemon_reload_failed")
-
-after = [show_unit(unit) for unit in units]
+failure_stage = "reverify_persistent_units_after_prune"
+after = settle_units(before, require_persistent=True)
 for item in after:
-    if item["load_state"] == "not-found":
-        item["state"] = "absent"
-    elif item["active_state"] == "inactive" and item["persistent_mask"] is True:
+    if item["active_state"] == "inactive" and item["persistent_mask"] is True:
         item["state"] = "masked"
     else:
         raise RuntimeError("unit_still_available:" + item["unit"])
@@ -840,15 +953,8 @@ for line in ps.stdout.splitlines():
 if forbidden_sessions or forbidden_processes:
     raise RuntimeError("forbidden_recovery_runtime_present")
 
-jobs_result = subprocess.run(
-    ["systemctl", "list-jobs", "--no-legend", "--no-pager"],
-    text=True, capture_output=True, check=False,
-)
-if jobs_result.returncode != 0:
-    raise RuntimeError("systemd_jobs_observation_unknown")
-systemd_jobs = [line.strip() for line in jobs_result.stdout.splitlines() if line.strip()]
-if systemd_jobs:
-    raise RuntimeError("systemd_jobs_present")
+failure_stage = "reverify_no_recovery_unit_jobs_after_prune"
+systemd_jobs = require_no_recovery_unit_jobs()
 
 final_inventory = observe_inventory()
 if final_inventory.get("status") != "available":
@@ -876,6 +982,7 @@ receipt = {
     "reclaimed_bytes_delta": post_free - pre_free,
     "units_before": before,
     "units_after_stop": stopped_units,
+    "units_before_prune": persistent_units_before_prune,
     "units": after,
     "container_pre": container_pre,
     "container_after_stop": container_after_stop,
@@ -883,22 +990,16 @@ receipt = {
     "container": container_after,
     "forbidden_sessions": forbidden_sessions,
     "forbidden_processes": forbidden_processes,
+    "systemd_jobs_before_prune": systemd_jobs_before_prune,
     "systemd_jobs": systemd_jobs,
     "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
 }
-root = pathlib.Path(workspace) / ".megaplan" / "zero-recovery"
-root.mkdir(parents=True, exist_ok=True)
-receipt_path = root / (config["transaction_id"] + ".bootstrap-fence-reclaim-receipt.json")
-receipt_fd = os.open(receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-with os.fdopen(receipt_fd, "w", encoding="utf-8") as handle:
-    handle.write(json.dumps(receipt, sort_keys=True) + "\n")
-    handle.flush()
-    os.fsync(handle.fileno())
-directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-try:
-    os.fsync(directory_fd)
-finally:
-    os.close(directory_fd)
+receipt_name = authority_filename(".bootstrap-fence-reclaim-receipt.json")
+write_authority_file(
+    receipt_name,
+    (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+)
+os.close(authority_dir_fd)
 print(json.dumps(receipt, sort_keys=True))
 """.strip()
 
@@ -936,11 +1037,36 @@ def parse_bootstrap_reclaim_receipt(
         "command_class", "command_argv", "returncode", "pre_inventory_digest", "pre_mount", "post_mount",
         "pre_free_bytes", "pre_free_inodes", "post_free_bytes", "post_free_inodes",
         "reclaimed_bytes_delta", "units_before",
-        "units_after_stop", "units", "container_pre", "container_after_stop", "container_after_prune", "container",
-        "forbidden_sessions", "forbidden_processes", "systemd_jobs",
+        "units_after_stop", "units_before_prune", "units", "container_pre",
+        "container_after_stop", "container_after_prune", "container",
+        "forbidden_sessions", "forbidden_processes",
+        "systemd_jobs_before_prune", "systemd_jobs",
         "observed_at",
     }
     units = payload.get("units") if isinstance(payload, dict) else None
+    units_before_prune = (
+        payload.get("units_before_prune") if isinstance(payload, dict) else None
+    )
+    def persistent_units_valid(value: Any, *, terminal: bool) -> bool:
+        expected_fields = {
+            "unit", "load_state", "active_state", "unit_file_state",
+            "persistent_mask",
+        } | ({"state"} if terminal else set())
+        return bool(
+            isinstance(value, list)
+            and [item.get("unit") for item in value if isinstance(item, dict)]
+            == list(ZERO_RECOVERY_UNITS)
+            and all(
+                isinstance(item, dict)
+                and set(item) == expected_fields
+                and item.get("load_state") in {"loaded", "masked"}
+                and item.get("active_state") == "inactive"
+                and item.get("unit_file_state") == "masked"
+                and item.get("persistent_mask") is True
+                and (not terminal or item.get("state") == "masked")
+                for item in value
+            )
+        )
     if (
         not isinstance(payload, dict)
         or set(payload) != required
@@ -957,9 +1083,8 @@ def parse_bootstrap_reclaim_receipt(
         or payload.get("post_mount") != payload.get("pre_mount")
         or any(type(payload.get(key)) is not int for key in ("pre_free_bytes", "pre_free_inodes", "post_free_bytes", "post_free_inodes", "reclaimed_bytes_delta"))
         or payload.get("reclaimed_bytes_delta") != payload.get("post_free_bytes") - payload.get("pre_free_bytes")
-        or not isinstance(units, list)
-        or [item.get("unit") for item in units if isinstance(item, dict)] != list(ZERO_RECOVERY_UNITS)
-        or any(not isinstance(item, dict) or item.get("state") not in {"absent", "masked"} for item in units)
+        or not persistent_units_valid(units_before_prune, terminal=False)
+        or not persistent_units_valid(units, terminal=True)
         or not isinstance(payload.get("container"), dict)
         or payload.get("container", {}).get("lifecycle") != "stopped"
         or payload.get("container_pre") != payload.get("container")
@@ -967,6 +1092,7 @@ def parse_bootstrap_reclaim_receipt(
         or payload.get("container_after_prune") != payload.get("container")
         or payload.get("forbidden_sessions") != []
         or payload.get("forbidden_processes") != []
+        or payload.get("systemd_jobs_before_prune") != []
         or payload.get("systemd_jobs") != []
         or _parse_time(payload.get("observed_at")) is None
     ):
@@ -1107,26 +1233,366 @@ def parse_preservation_receipt(
 
 
 _FENCE_SCRIPT = r"""
+import hashlib
 import json
 import os
 import pathlib
+import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 workspace, action, config_b64 = sys.argv[1:4]
 config = json.loads(__import__("base64").b64decode(config_b64).decode("utf-8"))
 units = config["units"]
+authority_root = pathlib.Path("/var/lib/arnold-zero-recovery")
+failure_stage = "before_intent"
+marker_published = False
+last_fence_jobs = []
 
-def show_unit(unit):
-    result = subprocess.run(
+def open_authority_directory(create):
+    created = False
+    if create:
+        try:
+            os.mkdir(authority_root, 0o700)
+            created = True
+        except FileExistsError:
+            pass
+    if created:
+        parent_fd = os.open(
+            authority_root.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            parent = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != 0
+                or parent.st_gid != 0
+            ):
+                raise RuntimeError("authority_parent_identity_invalid")
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    try:
+        observed = os.lstat(authority_root)
+    except FileNotFoundError as exc:
+        raise RuntimeError("authority_directory_missing") from exc
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or stat.S_ISLNK(observed.st_mode)
+        or observed.st_uid != 0
+        or observed.st_gid != 0
+        or stat.S_IMODE(observed.st_mode) != 0o700
+    ):
+        raise RuntimeError("authority_directory_identity_invalid")
+    fd = os.open(
+        authority_root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    opened = os.fstat(fd)
+    if (
+        opened.st_dev != observed.st_dev
+        or opened.st_ino != observed.st_ino
+        or opened.st_uid != 0
+        or opened.st_gid != 0
+        or stat.S_IMODE(opened.st_mode) != 0o700
+    ):
+        os.close(fd)
+        raise RuntimeError("authority_directory_identity_changed")
+    return fd
+
+def read_authority_file(directory_fd, name):
+    observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or observed.st_uid != 0
+        or observed.st_gid != 0
+        or stat.S_IMODE(observed.st_mode) != 0o600
+        or observed.st_nlink != 1
+    ):
+        raise RuntimeError("authority_file_identity_invalid:" + name)
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+    try:
+        opened = os.fstat(fd)
+        if (
+            opened.st_dev != observed.st_dev
+            or opened.st_ino != observed.st_ino
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+        ):
+            raise RuntimeError("authority_file_identity_changed:" + name)
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            raw = handle.read()
+    finally:
+        os.close(fd)
+    identity = {
+        "path": str(authority_root / name),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "uid": opened.st_uid,
+        "gid": opened.st_gid,
+        "mode": stat.S_IMODE(opened.st_mode),
+        "st_dev": opened.st_dev,
+        "st_ino": opened.st_ino,
+    }
+    return raw, identity
+
+def write_authority_file(directory_fd, name, raw):
+    fd = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=directory_fd,
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+        ):
+            raise RuntimeError("authority_file_identity_invalid:" + name)
+        with os.fdopen(fd, "wb", closefd=False) as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(fd)
+    os.fsync(directory_fd)
+    return read_authority_file(directory_fd, name)
+
+def strict_object(raw, label):
+    def reject_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise RuntimeError(label + "_duplicate_field")
+            result[key] = value
+        return result
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicates)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(label + "_invalid_json") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(label + "_not_object")
+    return value
+
+def require_expected_marker(raw):
+    expected = {
+        "schema": "arnold.cloud.zero_recovery_marker.v2",
+        "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+        "scope": "HOST_GLOBAL_PERSISTENT_CONTAINMENT",
+        "active": True,
+    }
+    value = strict_object(raw, "existing_zero_recovery_marker")
+    expected_raw = (json.dumps(expected, sort_keys=True) + "\n").encode()
+    if value != expected or raw != expected_raw:
+        raise RuntimeError("existing_zero_recovery_marker_transaction_mismatch")
+    return value
+
+def persist_or_require_exact(directory_fd, name, raw, label):
+    try:
+        return write_authority_file(directory_fd, name, raw)
+    except FileExistsError:
+        existing_raw, identity = read_authority_file(directory_fd, name)
+        if existing_raw != raw:
+            raise RuntimeError(label + "_subject_mismatch")
+        return existing_raw, identity
+
+def run(argv, timeout_seconds=30):
+    return subprocess.run(
+        argv, text=True, capture_output=True, check=False, timeout=timeout_seconds,
+    )
+
+def show_unit(unit, timeout_seconds=30):
+    result = run(
         ["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=UnitFileState", "--value"],
-        text=True, capture_output=True, check=False,
+        timeout_seconds=timeout_seconds,
     )
     values = result.stdout.splitlines()
     if result.returncode != 0 or len(values) != 3 or not values[0] or not values[1] or (values[0] != "not-found" and not values[2]):
         raise RuntimeError("unit_observation_unknown:" + unit)
-    return {"unit": unit, "load_state": values[0], "active_state": values[1], "unit_file_state": values[2]}
+    persistent = pathlib.Path("/etc/systemd/system") / unit
+    if os.path.lexists(persistent):
+        persistent_identity = os.lstat(persistent)
+        persistent_mask = (
+            stat.S_ISLNK(persistent_identity.st_mode)
+            and persistent_identity.st_uid == 0
+            and persistent_identity.st_gid == 0
+            and os.readlink(persistent) == "/dev/null"
+        )
+    else:
+        persistent_mask = False
+    return {"unit": unit, "load_state": values[0], "active_state": values[1], "unit_file_state": values[2], "persistent_mask": persistent_mask}
+
+def settle_units(before_items):
+    deadline = time.monotonic() + 5.0
+    reset_units = set()
+    originally_absent = {
+        item["unit"] for item in before_items if item["load_state"] == "not-found"
+    }
+    while True:
+        current = []
+        for before_item in before_items:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("unit_settle_timeout")
+            try:
+                current.append(
+                    show_unit(
+                        before_item["unit"], timeout_seconds=min(0.5, remaining)
+                    )
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    "unit_settle_observation_timeout:" + before_item["unit"]
+                ) from exc
+        pending = False
+        for item in current:
+            unit = item["unit"]
+            if unit in originally_absent:
+                if (
+                    item["load_state"] != "not-found"
+                    or item["active_state"] != "inactive"
+                    or item["unit_file_state"] not in {"", "disabled"}
+                    or item["persistent_mask"] is not False
+                ):
+                    raise RuntimeError("unit_absence_drift_during_settle:" + unit)
+                continue
+            if (
+                item["load_state"] not in {"loaded", "masked"}
+                or item["unit_file_state"] != "masked"
+                or item["persistent_mask"] is not True
+            ):
+                raise RuntimeError("unit_persistent_mask_drift_during_settle:" + unit)
+            active = item["active_state"]
+            if active == "inactive":
+                continue
+            if active == "failed":
+                if unit in reset_units:
+                    raise RuntimeError("unit_failed_after_reset:" + unit)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("unit_settle_timeout")
+                try:
+                    reset = run(
+                        ["systemctl", "reset-failed", unit],
+                        timeout_seconds=min(1.0, remaining),
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise RuntimeError("unit_reset_failed:" + unit) from exc
+                if reset.returncode != 0:
+                    raise RuntimeError("unit_reset_failed:" + unit)
+                reset_units.add(unit)
+                pending = True
+                continue
+            if active in {"activating", "deactivating"}:
+                pending = True
+                continue
+            raise RuntimeError(
+                "unit_invalid_active_state_during_settle:" + unit + ":" + active
+            )
+        if not pending:
+            return current
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("unit_settle_timeout")
+        time.sleep(min(0.2, remaining))
+
+def observe_recovery_unit_jobs():
+    global last_fence_jobs
+    result = run(
+        ["systemctl", "list-jobs", "--no-legend", "--no-pager"],
+        timeout_seconds=1.0,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("systemd_jobs_observation_unknown")
+    jobs = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip() and any(unit in line.split() for unit in units)
+    ]
+    if jobs:
+        raise RuntimeError("recovery_unit_job_queued:" + jobs[0])
+    last_fence_jobs = jobs
+    return jobs
+
+def safe_fence_unit_observations():
+    observed = []
+    for unit in units:
+        try:
+            observed.append(show_unit(unit, timeout_seconds=0.5))
+        except Exception as exc:
+            observed.append({"unit": unit, "observation_error": str(exc)})
+    return observed
+
+def write_fence_failure_receipt(exc_type, exc):
+    name = (
+        config["transaction_id"] + ".host-zero-recovery-fence-" + action
+        + "-failure.json"
+    )
+    path = authority_root / name
+    receipt = {
+        "schema": "arnold.cloud.zero_recovery_host_fence_failure.v1",
+        "status": "failed",
+        "stage": failure_stage,
+        "action": action,
+        "transaction_id": config["transaction_id"],
+        "transaction_digest": config["transaction_digest"],
+        "marker_published": marker_published,
+        "error_type": exc_type.__name__,
+        "error": str(exc),
+        "units_observed": safe_fence_unit_observations(),
+        "systemd_jobs": last_fence_jobs,
+        "receipt_path": str(path),
+        "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    receipt["receipt_digest"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    emitted = dict(receipt)
+    try:
+        write_authority_file(
+            authority_dir_fd,
+            name,
+            (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+        )
+        emitted["durable_receipt_written"] = True
+    except Exception as receipt_exc:
+        emitted["durable_receipt_written"] = False
+        emitted["durable_receipt_error"] = (
+            type(receipt_exc).__name__ + ":" + str(receipt_exc)
+        )
+    print(json.dumps(emitted, sort_keys=True), file=sys.stderr)
+
+def fence_failure_excepthook(exc_type, exc, traceback):
+    write_fence_failure_receipt(exc_type, exc)
+
+if action not in {"apply", "verify"}:
+    raise RuntimeError("unsupported_fence_action")
+authority_dir_fd = open_authority_directory(action == "apply")
+
+intent = {
+    "schema": "arnold.cloud.zero_recovery_host_fence_intent.v1",
+    "action": action,
+    "transaction_id": config["transaction_id"],
+    "transaction_digest": config["transaction_digest"],
+}
+intent_raw = (json.dumps(intent, sort_keys=True) + "\n").encode()
+intent_name = (
+    config["transaction_id"] + ".host-zero-recovery-fence-" + action + ".intent"
+)
+persist_or_require_exact(
+    authority_dir_fd, intent_name, intent_raw, "existing_fence_intent"
+)
+sys.excepthook = fence_failure_excepthook
+failure_stage = "observe_units_before_fence"
 
 before = [show_unit(unit) for unit in units]
 for item in before:
@@ -1137,44 +1603,73 @@ for item in before:
     else:
         raise RuntimeError("unit_load_state_unknown:" + item["unit"])
 
-root = pathlib.Path(workspace) / ".megaplan" / "zero-recovery"
-marker = root / "active.json"
-receipt_path = root / "host-zero-recovery-fence-receipt.json"
+marker_name = "active.json"
+expected_marker = {
+    "schema": "arnold.cloud.zero_recovery_marker.v2",
+    "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+    "scope": "HOST_GLOBAL_PERSISTENT_CONTAINMENT",
+    "active": True,
+}
+expected_marker_raw = (json.dumps(expected_marker, sort_keys=True) + "\n").encode()
+try:
+    marker_raw, marker_identity = read_authority_file(
+        authority_dir_fd, marker_name
+    )
+except FileNotFoundError:
+    marker_raw = None
+    marker_identity = None
+if marker_raw is not None:
+    require_expected_marker(marker_raw)
+    marker_published = True
+elif action == "verify":
+    raise RuntimeError("zero_recovery_marker_missing")
+
 if action == "apply":
-    root.mkdir(parents=True, exist_ok=True)
-    if marker.exists():
-        existing_marker = json.loads(marker.read_text(encoding="utf-8"))
-        if set(existing_marker) != {"schema", "transaction_id", "transaction_digest", "active"} or existing_marker.get("schema") != "arnold.cloud.zero_recovery_marker.v1" or existing_marker.get("active") is not True:
-            raise RuntimeError("existing_zero_recovery_marker_unknown")
-    else:
-        marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(marker_fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps({
-                "schema": "arnold.cloud.zero_recovery_marker.v1",
-                "transaction_id": config["transaction_id"],
-                "transaction_digest": config["transaction_digest"],
-                "active": True,
-            }, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+    failure_stage = "install_persistent_unit_masks"
     for item in before:
         if item["state"] == "present":
-            result = subprocess.run(["systemctl", "mask", "--now", item["unit"]], text=True, capture_output=True, check=False)
+            result = run(["systemctl", "mask", "--now", item["unit"]])
             if result.returncode != 0:
                 raise RuntimeError("unit_mask_stop_failed:" + item["unit"])
-elif action != "verify":
-    raise RuntimeError("unsupported_fence_action")
+    mask_root_fd = os.open(
+        "/etc/systemd/system",
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    try:
+        mask_root_identity = os.fstat(mask_root_fd)
+        if (
+            not stat.S_ISDIR(mask_root_identity.st_mode)
+            or mask_root_identity.st_uid != 0
+            or mask_root_identity.st_gid != 0
+        ):
+            raise RuntimeError("persistent_mask_directory_identity_invalid")
+        os.fsync(mask_root_fd)
+    finally:
+        os.close(mask_root_fd)
+    failure_stage = "daemon_reload_persistent_unit_masks"
+    daemon_reload = run(["systemctl", "daemon-reload"])
+    if daemon_reload.returncode != 0:
+        raise RuntimeError("systemd_daemon_reload_failed")
 
-after = [show_unit(unit) for unit in units]
+failure_stage = "settle_persistent_units"
+after = settle_units(before)
 for item in after:
     if item["load_state"] == "not-found":
         item["state"] = "absent"
-    elif item["active_state"] == "inactive" and (item["load_state"] == "masked" or item["unit_file_state"] == "masked"):
+    elif (
+        item["active_state"] == "inactive"
+        and item["unit_file_state"] == "masked"
+        and item["persistent_mask"] is True
+    ):
         item["state"] = "masked"
     else:
         raise RuntimeError("unit_still_available:" + item["unit"])
 
-tmux = subprocess.run(["tmux", "list-sessions", "-F", "#S"], text=True, capture_output=True, check=False)
+failure_stage = "verify_no_recovery_unit_jobs"
+systemd_jobs = observe_recovery_unit_jobs()
+
+failure_stage = "verify_no_recovery_sessions"
+tmux = run(["tmux", "list-sessions", "-F", "#S"])
 if tmux.returncode == 0:
     sessions = [line.strip() for line in tmux.stdout.splitlines() if line.strip()]
 elif tmux.returncode == 1 and "no server running" in tmux.stderr.lower():
@@ -1183,7 +1678,8 @@ else:
     raise RuntimeError("tmux_observation_unknown")
 forbidden_sessions = sorted(set(sessions) & set(config["sessions"]))
 
-ps = subprocess.run(["ps", "-eo", "pid=,args="], text=True, capture_output=True, check=False)
+failure_stage = "verify_no_recovery_processes"
+ps = run(["ps", "-eo", "pid=,args="])
 if ps.returncode != 0:
     raise RuntimeError("process_observation_unknown")
 ignored = {os.getpid(), os.getppid()}
@@ -1197,28 +1693,72 @@ for line in ps.stdout.splitlines():
 if forbidden_sessions or forbidden_processes:
     raise RuntimeError("forbidden_recovery_runtime_present")
 
-receipt = {
-    "schema": "arnold.cloud.zero_recovery_host_fence.v1",
-    "status": "passed",
-    "stage": action,
-    "transaction_id": config["transaction_id"],
-    "transaction_digest": config["transaction_digest"],
-    "marker": str(marker),
-    "units": after,
-    "forbidden_sessions": forbidden_sessions,
-    "forbidden_processes": forbidden_processes,
-    "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-}
-receipt_tmp = receipt_path.with_suffix(".json.tmp")
-receipt_tmp.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
-with receipt_tmp.open("rb") as handle:
-    os.fsync(handle.fileno())
-os.replace(receipt_tmp, receipt_path)
-directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-try:
-    os.fsync(directory_fd)
-finally:
-    os.close(directory_fd)
+failure_stage = "publish_global_containment_marker"
+marker_raw, marker_identity = persist_or_require_exact(
+    authority_dir_fd,
+    marker_name,
+    expected_marker_raw,
+    "existing_zero_recovery_marker",
+)
+require_expected_marker(marker_raw)
+marker_published = True
+
+def build_fence_receipt(
+    stage, marker_subject, observed_units, sessions, processes, jobs
+):
+    return {
+        "schema": "arnold.cloud.zero_recovery_host_fence.v1",
+        "status": "passed",
+        "stage": stage,
+        "transaction_id": config["transaction_id"],
+        "transaction_digest": config["transaction_digest"],
+        "marker": marker_subject,
+        "units": observed_units,
+        "forbidden_sessions": sessions,
+        "forbidden_processes": processes,
+        "systemd_jobs": jobs,
+        "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+def persist_or_reuse_fence_receipt(directory_fd, name, receipt):
+    raw = (json.dumps(receipt, sort_keys=True) + "\n").encode()
+    try:
+        write_authority_file(directory_fd, name, raw)
+        return receipt
+    except FileExistsError:
+        existing_raw, _ = read_authority_file(directory_fd, name)
+        existing = strict_object(existing_raw, "existing_fence_receipt")
+        canonical_existing = (json.dumps(existing, sort_keys=True) + "\n").encode()
+        if (
+            existing_raw != canonical_existing
+            or set(existing) != set(receipt)
+            or existing.get("schema") != "arnold.cloud.zero_recovery_host_fence.v1"
+            or existing.get("status") != "passed"
+        ):
+            raise RuntimeError("existing_fence_receipt_noncanonical")
+        existing_subject = dict(existing)
+        current_subject = dict(receipt)
+        existing_subject.pop("observed_at", None)
+        current_subject.pop("observed_at", None)
+        if existing_subject != current_subject:
+            raise RuntimeError("existing_fence_receipt_subject_mismatch")
+        return existing
+
+receipt = build_fence_receipt(
+    action,
+    marker_identity,
+    after,
+    forbidden_sessions,
+    forbidden_processes,
+    systemd_jobs,
+)
+receipt_name = (
+    config["transaction_id"] + ".host-zero-recovery-fence-" + action + ".json"
+)
+receipt = persist_or_reuse_fence_receipt(
+    authority_dir_fd, receipt_name, receipt
+)
+os.close(authority_dir_fd)
 print(json.dumps(receipt, sort_keys=True))
 """.strip()
 
@@ -1231,7 +1771,15 @@ def fence_command(
     path = PurePosixPath(workspace)
     if not path.is_absolute() or ".." in path.parts or workspace == "/":
         raise CliError("invalid_provider_observation_target", "invalid fence workspace")
-    if not isinstance(transaction_id, str) or not transaction_id:
+    if (
+        not isinstance(transaction_id, str)
+        or not transaction_id
+        or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+            for character in transaction_id
+        )
+    ):
         raise CliError("invalid_provider_observation_target", "invalid transaction id")
     if (
         not isinstance(transaction_digest, str)
@@ -1274,18 +1822,46 @@ def parse_fence_receipt(
     if not isinstance(payload, dict) or set(payload) != required:
         raise CliError("zero_recovery_fence_unknown", "fence receipt schema mismatch")
     units = payload.get("units")
+    marker = payload.get("marker")
     unit_names = [item.get("unit") for item in units] if isinstance(units, list) else []
+    marker_raw = (
+        json.dumps(
+            {
+                "active": True,
+                "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+                "schema": "arnold.cloud.zero_recovery_marker.v2",
+                "scope": "HOST_GLOBAL_PERSISTENT_CONTAINMENT",
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
     if (
         payload.get("schema") != FENCE_SCHEMA
         or payload.get("status") != "passed"
         or payload.get("stage") != stage
         or payload.get("transaction_id") != transaction_id
         or payload.get("transaction_digest") != transaction_digest
+        or not isinstance(marker, dict)
+        or set(marker)
+        != {"path", "sha256", "uid", "gid", "mode", "st_dev", "st_ino"}
+        or marker.get("path") != "/var/lib/arnold-zero-recovery/active.json"
+        or marker.get("sha256") != hashlib.sha256(marker_raw).hexdigest()
+        or marker.get("uid") != 0
+        or marker.get("gid") != 0
+        or marker.get("mode") != 0o600
+        or type(marker.get("st_dev")) is not int
+        or type(marker.get("st_ino")) is not int
+        or marker.get("st_dev") < 0
+        or marker.get("st_ino") <= 0
         or unit_names != list(ZERO_RECOVERY_UNITS)
         or any(
             not isinstance(item, dict)
             or set(item)
-            != {"unit", "load_state", "active_state", "unit_file_state", "state"}
+            != {
+                "unit", "load_state", "active_state", "unit_file_state",
+                "persistent_mask", "state",
+            }
             or item.get("state") not in {"absent", "masked"}
             or any(not isinstance(item.get(key), str) or not item.get(key) for key in ("unit", "load_state", "active_state"))
             or not isinstance(item.get("unit_file_state"), str)
@@ -1294,6 +1870,7 @@ def parse_fence_receipt(
                 and (
                     item.get("active_state") != "inactive"
                     or item.get("unit_file_state") != "masked"
+                    or item.get("persistent_mask") is not True
                 )
             )
             or (
@@ -1302,6 +1879,7 @@ def parse_fence_receipt(
                     item.get("load_state") != "not-found"
                     or item.get("active_state") != "inactive"
                     or item.get("unit_file_state") not in {"", "disabled"}
+                    or item.get("persistent_mask") is not False
                 )
             )
             for item in (units or [])

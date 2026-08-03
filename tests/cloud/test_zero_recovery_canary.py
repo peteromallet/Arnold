@@ -254,7 +254,23 @@ def test_bootstrap_remote_program_orders_fence_before_bounded_prune() -> None:
     assert config["command_argv"] == ["docker", "builder", "prune", "-f"]
     assert script.index('"systemctl", "mask", "--runtime", "--now"') < script.index('prune = run(["docker", "builder", "prune", "-f"])')
     assert script.index("stopped_units = settle_units(before)") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
-    assert script.index("require_no_recovery_unit_jobs()") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
+    assert script.index("install_persistent_masks(before_items)") < script.index(
+        'daemon_reload = run(["systemctl", "daemon-reload"])'
+    )
+    assert script.index(
+        'daemon_reload = run(["systemctl", "daemon-reload"])'
+    ) < script.index(
+        "persistent_units = settle_units(before_items, require_persistent=True)"
+    )
+    assert script.index(
+        "persistent_units = settle_units(before_items, require_persistent=True)"
+    ) < script.index("jobs = require_no_recovery_unit_jobs()")
+    assert script.index("os.fsync(mask_dir_fd)") < script.index(
+        "persistent_units_before_prune, systemd_jobs_before_prune = ("
+    )
+    assert script.index(
+        "persistent_units_before_prune, systemd_jobs_before_prune = ("
+    ) < script.index("prune_started = True")
     assert script.index("prune_started = True") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
     assert "bootstrap_fence_reclaim_failure.v1" in script
     assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL" in script
@@ -264,10 +280,10 @@ def test_bootstrap_remote_program_orders_fence_before_bounded_prune() -> None:
         assert forbidden not in script
 
 
-def _remote_bootstrap_function(
-    name: str, namespace: dict[str, object]
+def _remote_script_function(
+    source: str, name: str, namespace: dict[str, object]
 ) -> dict[str, object]:
-    tree = ast.parse(zero_recovery._BOOTSTRAP_RECLAIM_SCRIPT)
+    tree = ast.parse(source)
     function = next(
         node
         for node in tree.body
@@ -275,11 +291,199 @@ def _remote_bootstrap_function(
     )
     compiled = compile(
         ast.Module(body=[function], type_ignores=[]),
-        filename=f"<bootstrap-{name}>",
+        filename=f"<remote-{name}>",
         mode="exec",
     )
     exec(compiled, namespace)
     return namespace
+
+
+def _remote_bootstrap_function(
+    name: str, namespace: dict[str, object]
+) -> dict[str, object]:
+    return _remote_script_function(
+        zero_recovery._BOOTSTRAP_RECLAIM_SCRIPT, name, namespace
+    )
+
+
+def _remote_fence_function(
+    name: str, namespace: dict[str, object]
+) -> dict[str, object]:
+    return _remote_script_function(zero_recovery._FENCE_SCRIPT, name, namespace)
+
+
+@pytest.mark.parametrize("remote", [_remote_bootstrap_function, _remote_fence_function])
+def test_remote_unit_observation_rejects_non_root_persistent_mask(
+    remote: object,
+) -> None:
+    stat_module = __import__("stat")
+
+    class MaskRoot:
+        def __truediv__(self, _unit: str) -> str:
+            return "/etc/systemd/system/unit.service"
+
+    fake_os = SimpleNamespace(
+        path=SimpleNamespace(lexists=lambda _path: True),
+        lstat=lambda _path: SimpleNamespace(
+            st_mode=stat_module.S_IFLNK | 0o777,
+            st_uid=1,
+            st_gid=0,
+        ),
+        readlink=lambda _path: "/dev/null",
+    )
+    namespace = remote(
+        "show_unit",
+        {
+            "run": lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=0,
+                stdout="loaded\ninactive\nmasked\n",
+            ),
+            "pathlib": SimpleNamespace(Path=lambda _path: MaskRoot()),
+            "os": fake_os,
+            "stat": stat_module,
+            "RuntimeError": RuntimeError,
+        },
+    )
+    assert namespace["show_unit"]("unit.service")["persistent_mask"] is False
+
+
+def test_bootstrap_existing_persistent_mask_requires_root_identity() -> None:
+    stat_module = __import__("stat")
+
+    class MaskPath:
+        name = "unit.service"
+
+        def with_name(self, _name: str) -> "MaskPath":
+            return self
+
+    class MaskRoot:
+        def __truediv__(self, _unit: str) -> MaskPath:
+            return MaskPath()
+
+    fake_os = SimpleNamespace(
+        path=SimpleNamespace(lexists=lambda _path: True),
+        lstat=lambda _path: SimpleNamespace(
+            st_mode=stat_module.S_IFLNK | 0o777,
+            st_uid=1,
+            st_gid=0,
+        ),
+        readlink=lambda _path: "/dev/null",
+    )
+    namespace = _remote_bootstrap_function(
+        "install_persistent_masks",
+        {
+            "pathlib": SimpleNamespace(Path=lambda _path: MaskRoot()),
+            "os": fake_os,
+            "stat": stat_module,
+            "config": {"transaction_id": "tx"},
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="persistent_mask_path_conflict"):
+        namespace["install_persistent_masks"]([{"unit": "unit.service"}])
+
+
+def _assignment_target(node: ast.stmt) -> str | None:
+    if (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ):
+        return node.targets[0].id
+    return None
+
+
+def test_bootstrap_top_level_intent_to_unit_observation_executes() -> None:
+    tree = ast.parse(zero_recovery._BOOTSTRAP_RECLAIM_SCRIPT)
+    start = next(
+        index
+        for index, node in enumerate(tree.body)
+        if _assignment_target(node) == "authority_dir_fd"
+        and isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+    )
+    end = next(
+        index
+        for index in range(start + 1, len(tree.body))
+        if _assignment_target(tree.body[index]) == "before"
+    )
+    calls: list[tuple[object, ...]] = []
+    namespace = {
+        "open_authority_directory": lambda: calls.append(("open",)) or 7,
+        "authority_filename": lambda suffix: "tx" + suffix,
+        "write_authority_file": lambda name, raw: calls.append(
+            ("write", name, raw)
+        ),
+        "config": {"transaction_digest": "d" * 64},
+        "sys": SimpleNamespace(excepthook=None),
+        "failure_excepthook": object(),
+        "failure_stage": "",
+        "show_unit": lambda unit: {"unit": unit},
+        "units": ["one", "two"],
+    }
+    exec(
+        compile(
+            ast.Module(body=tree.body[start : end + 1], type_ignores=[]),
+            "<bootstrap-top-level-transition>",
+            "exec",
+        ),
+        namespace,
+    )
+    assert namespace["authority_dir_fd"] == 7
+    assert namespace["before"] == [{"unit": "one"}, {"unit": "two"}]
+    assert calls[0] == ("open",)
+    assert calls[1][0] == "write"
+
+
+def test_fence_top_level_authority_to_unit_observation_executes() -> None:
+    tree = ast.parse(zero_recovery._FENCE_SCRIPT)
+    authority_index = next(
+        index
+        for index, node in enumerate(tree.body)
+        if _assignment_target(node) == "authority_dir_fd"
+        and isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+    )
+    start = authority_index - 1
+    assert isinstance(tree.body[start], ast.If)
+    end = next(
+        index
+        for index in range(authority_index + 1, len(tree.body))
+        if _assignment_target(tree.body[index]) == "before"
+    )
+    calls: list[tuple[object, ...]] = []
+    namespace = {
+        "action": "apply",
+        "RuntimeError": RuntimeError,
+        "open_authority_directory": lambda create: calls.append(
+            ("open", create)
+        ) or 9,
+        "config": {
+            "transaction_id": "tx",
+            "transaction_digest": "d" * 64,
+        },
+        "json": json,
+        "persist_or_require_exact": lambda *args: calls.append(
+            ("persist", *args)
+        ),
+        "sys": SimpleNamespace(excepthook=None),
+        "fence_failure_excepthook": object(),
+        "show_unit": lambda unit: {"unit": unit},
+        "units": ["one", "two"],
+        "failure_stage": "",
+    }
+    exec(
+        compile(
+            ast.Module(body=tree.body[start : end + 1], type_ignores=[]),
+            "<fence-top-level-transition>",
+            "exec",
+        ),
+        namespace,
+    )
+    assert calls[0] == ("open", True)
+    assert calls[1][0] == "persist"
+    assert namespace["authority_dir_fd"] == 9
+    assert namespace["before"] == [{"unit": "one"}, {"unit": "two"}]
 
 
 class _FakeSettleTime:
@@ -424,6 +628,73 @@ def test_bootstrap_queued_recovery_job_cannot_reach_prune() -> None:
     assert not any(argv[:3] == ["docker", "builder", "prune"] for argv in calls)
 
 
+def test_bootstrap_ignores_unrelated_job_and_emits_empty_recovery_jobs() -> None:
+    namespace = _remote_bootstrap_function(
+        "require_no_recovery_unit_jobs",
+        {
+            "run": lambda _argv: SimpleNamespace(
+                returncode=0,
+                stdout="42 unrelated.service start running\n",
+                stderr="",
+            ),
+            "units": ["unit.service"],
+            "last_systemd_jobs": [],
+            "RuntimeError": RuntimeError,
+        },
+    )
+    assert namespace["require_no_recovery_unit_jobs"]() == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["persistent_install", "daemon_reload", "persistent_settle", "queued_job"],
+)
+def test_bootstrap_persistent_fence_failure_cannot_reach_prune(
+    failure: str,
+) -> None:
+    calls: list[list[str]] = []
+
+    def install(_before: list[dict[str, str]]) -> None:
+        if failure == "persistent_install":
+            raise RuntimeError("persistent install failed")
+
+    def run(argv: list[str]) -> SimpleNamespace:
+        calls.append(argv)
+        return SimpleNamespace(
+            returncode=1 if failure == "daemon_reload" else 0,
+            stdout="",
+            stderr="",
+        )
+
+    def settle(
+        _before: list[dict[str, str]], *, require_persistent: bool
+    ) -> list[dict[str, str]]:
+        assert require_persistent is True
+        if failure == "persistent_settle":
+            raise RuntimeError("persistent settle failed")
+        return []
+
+    def jobs() -> list[str]:
+        if failure == "queued_job":
+            raise RuntimeError("recovery_unit_job_queued")
+        return []
+
+    namespace = _remote_bootstrap_function(
+        "establish_persistent_fence",
+        {
+            "failure_stage": "",
+            "install_persistent_masks": install,
+            "run": run,
+            "settle_units": settle,
+            "require_no_recovery_unit_jobs": jobs,
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError):
+        namespace["establish_persistent_fence"]([])
+    assert not any(argv[:3] == ["docker", "builder", "prune"] for argv in calls)
+
+
 def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -438,15 +709,28 @@ def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
         }
         for unit in zero_recovery.ZERO_RECOVERY_UNITS
     ]
+    authority_root = tmp_path / "authority"
+    authority_root.mkdir()
+
+    def write_authority_file(name: str, raw: bytes) -> None:
+        fd = os.open(
+            authority_root / name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+
     namespace = _remote_bootstrap_function(
         "write_failure_receipt",
         {
-            "pathlib": __import__("pathlib"),
-            "workspace": str(tmp_path),
             "config": {
                 "transaction_id": "tx-1",
                 "transaction_digest": "d" * 64,
             },
+            "authority_root": authority_root,
+            "authority_filename": lambda suffix: "tx-1" + suffix,
+            "write_authority_file": write_authority_file,
             "failure_stage": "settle_units_before_prune",
             "prune_started": False,
             "safe_unit_observations": lambda: observations,
@@ -463,8 +747,7 @@ def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
     writer = namespace["write_failure_receipt"]
     writer(RuntimeError, RuntimeError("unit_settle_timeout"))
     path = (
-        tmp_path
-        / ".megaplan/zero-recovery/tx-1.bootstrap-fence-reclaim-failure.json"
+        authority_root / "tx-1.bootstrap-fence-reclaim-failure.json"
     )
     before = path.read_bytes()
     payload = json.loads(before)
@@ -522,6 +805,10 @@ def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
         "reclaimed_bytes_delta": 2,
         "units_before": units,
         "units_after_stop": units,
+        "units_before_prune": [
+            {key: value for key, value in item.items() if key != "state"}
+            for item in units
+        ],
         "units": units,
         "container_pre": container,
         "container_after_stop": container,
@@ -529,6 +816,7 @@ def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
         "container": container,
         "forbidden_sessions": [],
         "forbidden_processes": [],
+        "systemd_jobs_before_prune": [],
         "systemd_jobs": [],
         "observed_at": "2026-08-03T00:00:00Z",
     }
@@ -545,6 +833,373 @@ def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
             transaction_id=transaction_id,
             transaction_digest=transaction_digest,
         )
+
+
+def _fence_settle_namespace(
+    states: list[str], *, reset_returncode: int = 0
+) -> tuple[dict[str, object], list[list[str]], _FakeSettleTime]:
+    remaining = list(states)
+    calls: list[list[str]] = []
+    fake_time = _FakeSettleTime()
+
+    def show_unit(
+        unit: str, timeout_seconds: float = 30
+    ) -> dict[str, object]:
+        assert 0 < timeout_seconds <= 0.5
+        active = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return {
+            "unit": unit,
+            "load_state": "masked",
+            "active_state": active,
+            "unit_file_state": "masked",
+            "persistent_mask": True,
+        }
+
+    def run(
+        argv: list[str], timeout_seconds: float = 30
+    ) -> SimpleNamespace:
+        assert 0 < timeout_seconds <= 1.0
+        calls.append(argv)
+        return SimpleNamespace(returncode=reset_returncode, stdout="", stderr="")
+
+    namespace: dict[str, object] = {
+        "time": fake_time,
+        "show_unit": show_unit,
+        "run": run,
+        "RuntimeError": RuntimeError,
+        "subprocess": subprocess,
+        "set": set,
+        "min": min,
+    }
+    return _remote_fence_function("settle_units", namespace), calls, fake_time
+
+
+def test_fence_unit_settle_resets_failed_then_requires_inactive() -> None:
+    namespace, calls, fake_time = _fence_settle_namespace(["failed", "inactive"])
+    result = namespace["settle_units"](
+        [{"unit": "unit.service", "load_state": "masked"}]
+    )
+    assert result[0]["active_state"] == "inactive"
+    assert calls == [["systemctl", "reset-failed", "unit.service"]]
+    assert fake_time.sleeps == [0.2]
+
+
+def test_fence_unit_settle_polls_deactivating_then_inactive() -> None:
+    namespace, calls, fake_time = _fence_settle_namespace(
+        ["deactivating", "inactive"]
+    )
+    result = namespace["settle_units"](
+        [{"unit": "unit.service", "load_state": "masked"}]
+    )
+    assert result[0]["active_state"] == "inactive"
+    assert calls == []
+    assert fake_time.sleeps == [0.2]
+
+
+def test_fence_unit_settle_timeout_is_finite() -> None:
+    namespace, calls, fake_time = _fence_settle_namespace(["deactivating"])
+    with pytest.raises(RuntimeError, match="unit_settle_timeout"):
+        namespace["settle_units"](
+            [{"unit": "unit.service", "load_state": "masked"}]
+        )
+    assert fake_time.now >= 5.0
+    assert calls == []
+
+
+def test_fence_unit_settle_rejects_active_without_polling() -> None:
+    namespace, calls, fake_time = _fence_settle_namespace(["active"])
+    with pytest.raises(
+        RuntimeError,
+        match="unit_invalid_active_state_during_settle:unit.service:active",
+    ):
+        namespace["settle_units"](
+            [{"unit": "unit.service", "load_state": "masked"}]
+        )
+    assert calls == []
+    assert fake_time.sleeps == []
+
+
+def test_fence_unit_settle_reset_failure_is_fail_closed() -> None:
+    namespace, calls, _ = _fence_settle_namespace(["failed"], reset_returncode=1)
+    with pytest.raises(RuntimeError, match="unit_reset_failed:unit.service"):
+        namespace["settle_units"](
+            [{"unit": "unit.service", "load_state": "masked"}]
+        )
+    assert calls == [["systemctl", "reset-failed", "unit.service"]]
+
+
+def test_fence_rejects_queued_recovery_unit_job() -> None:
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], timeout_seconds: float = 30) -> SimpleNamespace:
+        calls.append(argv)
+        assert timeout_seconds == 1.0
+        return SimpleNamespace(
+            returncode=0,
+            stdout="42 unit.service stop running\n",
+            stderr="",
+        )
+
+    namespace = _remote_fence_function(
+        "observe_recovery_unit_jobs",
+        {
+            "run": run,
+            "units": ["unit.service"],
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="recovery_unit_job_queued"):
+        namespace["observe_recovery_unit_jobs"]()
+    assert calls == [["systemctl", "list-jobs", "--no-legend", "--no-pager"]]
+
+
+def test_fence_real_emitter_and_parser_accept_apply_and_verify_receipts() -> None:
+    transaction_id = "tx-fence"
+    transaction_digest = "a" * 64
+    marker_raw = (
+        json.dumps(
+            {
+                "active": True,
+                "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+                "schema": "arnold.cloud.zero_recovery_marker.v2",
+                "scope": "HOST_GLOBAL_PERSISTENT_CONTAINMENT",
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    marker = {
+        "path": "/var/lib/arnold-zero-recovery/active.json",
+        "sha256": hashlib.sha256(marker_raw).hexdigest(),
+        "uid": 0,
+        "gid": 0,
+        "mode": 0o600,
+        "st_dev": 1,
+        "st_ino": 2,
+    }
+    units = [
+        {
+            "unit": unit,
+            "load_state": "not-found",
+            "active_state": "inactive",
+            "unit_file_state": "disabled",
+            "persistent_mask": False,
+            "state": "absent",
+        }
+        for unit in zero_recovery.ZERO_RECOVERY_UNITS
+    ]
+    namespace = _remote_fence_function(
+        "build_fence_receipt",
+        {
+            "config": {
+                "transaction_id": transaction_id,
+                "transaction_digest": transaction_digest,
+            },
+            "datetime": datetime,
+            "timezone": timezone,
+        },
+    )
+    emitter = namespace["build_fence_receipt"]
+    receipts = {}
+    for action in ("apply", "verify"):
+        emitted = emitter(action, marker, units, [], [], [])
+        receipt = zero_recovery.parse_fence_receipt(
+            stdout=json.dumps(emitted),
+            transaction_id=transaction_id,
+            transaction_digest=transaction_digest,
+            stage=action,
+        )
+        assert receipt["systemd_jobs"] == []
+        assert all(item["state"] == "absent" for item in receipt["units"])
+        receipts[action] = receipt
+    assert _finite_canary_fence_is_valid(receipts["verify"])
+    missing_jobs = dict(receipts["verify"])
+    missing_jobs.pop("systemd_jobs")
+    with pytest.raises(CliError, match="schema mismatch"):
+        zero_recovery.parse_fence_receipt(
+            stdout=json.dumps(missing_jobs),
+            transaction_id=transaction_id,
+            transaction_digest=transaction_digest,
+            stage="verify",
+        )
+
+
+def test_fence_script_orders_settle_and_job_gate_before_receipt() -> None:
+    script = zero_recovery._FENCE_SCRIPT
+    assert "/var/lib/arnold-zero-recovery" in script
+    assert "pathlib.Path(workspace)" not in script
+    assert "os.O_NOFOLLOW" in script
+    assert script.index("after = settle_units(before)") < script.index(
+        "systemd_jobs = observe_recovery_unit_jobs()"
+    )
+    assert script.index("systemd_jobs = observe_recovery_unit_jobs()") < script.index(
+        "receipt = build_fence_receipt("
+    )
+
+
+def test_fence_receipt_reuse_is_idempotent_only_for_same_subject() -> None:
+    existing = {
+        "schema": "arnold.cloud.zero_recovery_host_fence.v1",
+        "status": "passed",
+        "stage": "apply",
+        "observed_at": "2026-08-03T00:00:00Z",
+    }
+
+    def write(*_args: object) -> None:
+        raise FileExistsError("immutable")
+
+    namespace = _remote_fence_function(
+        "persist_or_reuse_fence_receipt",
+        {
+            "json": json,
+            "write_authority_file": write,
+            "read_authority_file": lambda *_args: (
+                (json.dumps(existing, sort_keys=True) + "\n").encode(),
+                {},
+            ),
+            "strict_object": lambda raw, _label: json.loads(raw),
+            "RuntimeError": RuntimeError,
+            "FileExistsError": FileExistsError,
+        },
+    )
+    persist = namespace["persist_or_reuse_fence_receipt"]
+    current = {**existing, "observed_at": "2026-08-03T00:00:01Z"}
+    assert persist(1, "receipt", current) == existing
+    hostile = {**current, "stage": "verify"}
+    with pytest.raises(RuntimeError, match="existing_fence_receipt_subject_mismatch"):
+        persist(1, "receipt", hostile)
+
+
+def test_fence_marker_accepts_only_identical_global_marker_bytes() -> None:
+    transaction_id = "tx-fence"
+    transaction_digest = "a" * 64
+
+    def strict_object(raw: bytes, _label: str) -> dict[str, object]:
+        value = json.loads(raw)
+        assert isinstance(value, dict)
+        return value
+
+    namespace = _remote_fence_function(
+        "require_expected_marker",
+        {
+            "config": {
+                "transaction_id": transaction_id,
+                "transaction_digest": transaction_digest,
+            },
+            "strict_object": strict_object,
+            "json": json,
+            "RuntimeError": RuntimeError,
+        },
+    )
+    require_marker = namespace["require_expected_marker"]
+    exact = (
+        json.dumps(
+            {
+                "active": True,
+                "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+                "schema": "arnold.cloud.zero_recovery_marker.v2",
+                "scope": "HOST_GLOBAL_PERSISTENT_CONTAINMENT",
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    assert require_marker(exact)["profile"] == "ZERO_RECOVERY_NONROOT_FINITE_CANARY"
+    stale = exact.replace(b"HOST_GLOBAL_PERSISTENT_CONTAINMENT", b"STALE_SCOPE")
+    with pytest.raises(
+        RuntimeError, match="existing_zero_recovery_marker_transaction_mismatch"
+    ):
+        require_marker(stale)
+
+
+def test_fence_authority_directory_rejects_symlink_and_wrong_owner(
+    tmp_path: Path,
+) -> None:
+    stat_module = __import__("stat")
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    symlink = tmp_path / "authority-link"
+    symlink.symlink_to(target, target_is_directory=True)
+    symlink_namespace = _remote_fence_function(
+        "open_authority_directory",
+        {
+            "authority_root": symlink,
+            "os": os,
+            "stat": stat_module,
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="authority_directory_identity_invalid"):
+        symlink_namespace["open_authority_directory"](False)
+
+    fake_os = SimpleNamespace(
+        lstat=lambda _path: SimpleNamespace(
+            st_mode=stat_module.S_IFDIR | 0o700,
+            st_uid=1,
+            st_gid=0,
+            st_dev=1,
+            st_ino=2,
+        ),
+        mkdir=lambda *_args: None,
+        O_RDONLY=os.O_RDONLY,
+        O_DIRECTORY=os.O_DIRECTORY,
+        O_NOFOLLOW=os.O_NOFOLLOW,
+        close=lambda _fd: None,
+    )
+    wrong_owner_namespace = _remote_fence_function(
+        "open_authority_directory",
+        {
+            "authority_root": target,
+            "os": fake_os,
+            "stat": stat_module,
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="authority_directory_identity_invalid"):
+        wrong_owner_namespace["open_authority_directory"](False)
+
+
+def test_fence_authority_file_rejects_symlink_and_never_overwrites(
+    tmp_path: Path,
+) -> None:
+    stat_module = __import__("stat")
+    directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        target = tmp_path / "target"
+        target.write_text("target", encoding="utf-8")
+        (tmp_path / "marker").symlink_to(target)
+        reader_namespace = _remote_fence_function(
+            "read_authority_file",
+            {
+                "os": os,
+                "stat": stat_module,
+                "RuntimeError": RuntimeError,
+                "authority_root": tmp_path,
+                "hashlib": hashlib,
+            },
+        )
+        with pytest.raises(RuntimeError, match="authority_file_identity_invalid"):
+            reader_namespace["read_authority_file"](directory_fd, "marker")
+
+        existing = tmp_path / "receipt"
+        existing.write_text("immutable", encoding="utf-8")
+        before = existing.read_bytes()
+        writer_namespace = _remote_fence_function(
+            "write_authority_file",
+            {
+                "os": os,
+                "stat": stat_module,
+                "RuntimeError": RuntimeError,
+                "read_authority_file": lambda *_args: None,
+            },
+        )
+        with pytest.raises(FileExistsError):
+            writer_namespace["write_authority_file"](
+                directory_fd, "receipt", b"replacement"
+            )
+        assert existing.read_bytes() == before
+    finally:
+        os.close(directory_fd)
 
 
 def test_inventory_command_and_parser_reject_scope_or_docker_ambiguity() -> None:
