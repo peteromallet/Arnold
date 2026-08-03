@@ -2395,6 +2395,9 @@ def test_offline_structural_smoke_harness_seeds_dummy_root_auth_and_has_no_netwo
     assert completed.returncode == 0, completed.stderr
     source = harness.read_text(encoding="utf-8")
     assert "--network none" in source
+    assert "--pull=false --network none" in source
+    assert '--build-arg "PRODUCTION_IMAGE=$production_image"' in source
+    assert '--build-arg "PRODUCTION_IMAGE=$production_image_id"' not in source
     assert 'cp -a "$repo_root/." "$workspace_child/Arnold/"' in source
     assert "docker cp" not in source
     assert "/root/.codex/auth.json" in source

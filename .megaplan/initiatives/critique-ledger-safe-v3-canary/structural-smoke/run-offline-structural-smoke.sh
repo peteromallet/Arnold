@@ -211,7 +211,8 @@ source_tree=$(git -C "$repo_root" rev-parse 'HEAD^{tree}' 2>> "$stderr_log")
 production_image_id=$(docker image inspect --format '{{.Id}}' "$production_image" \
   2>> "$stderr_log")
 derived_tag="arnold-zero-recovery-offline-smoke-${source_commit:0:12}"
-docker build --network none --build-arg "PRODUCTION_IMAGE=$production_image_id" \
+docker build --pull=false --network none \
+  --build-arg "PRODUCTION_IMAGE=$production_image" \
   -t "$derived_tag" "$fixture_dir" >> "$stdout_log" 2>> "$stderr_log"
 derived_image_id=$(docker image inspect --format '{{.Id}}' "$derived_tag" \
   2>> "$stderr_log")
