@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan._core.io import _enforce_openai_strict_mode
 from arnold.pipeline import validate_payload_against_schema
 from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
@@ -10,6 +11,8 @@ from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SC
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.schemas.runtime import CRITIQUE_EVALUATOR_CHECK_IDS
 from arnold_pipelines.megaplan.step_contracts import STEP_CONTRACTS
+from arnold_pipelines.megaplan.model_seam import capture_step_output
+from arnold_pipelines.megaplan.workers._impl import STEP_CAPTURE_SCHEMA_FILENAMES
 
 
 def _assert_required_keys_have_properties(schema: Any) -> None:
@@ -89,10 +92,11 @@ def test_all_codex_output_schemas_have_strict_required_properties() -> None:
 def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
     contract = STEP_CONTRACTS["finalize"]
     assert contract.schema_key == "finalize_capture.json"
-    assert contract.capture_schema_key == "finalize_capture.json"
+    assert contract.capture_schema_key == "finalize_model_output.json"
+    assert STEP_CAPTURE_SCHEMA_FILENAMES["finalize"] == "finalize_model_output.json"
 
     schema = _enforce_openai_strict_mode(
-        strict_schema(deepcopy(SCHEMAS[contract.schema_key]))
+        strict_schema(deepcopy(SCHEMAS[contract.capture_schema_key]))
     )
     properties = schema["properties"]
     assert set(schema["required"]) == set(properties)
@@ -105,8 +109,7 @@ def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
         "suite_runs_ndjson_path",
     }.isdisjoint(properties)
     assert "critique_resolution_coverage" in properties
-    assert properties["task_contract_version"]["enum"] == [2]
-    assert properties["validation_jobs"]["maxItems"] == 0
+    assert set(properties) == set(FINALIZE_MODEL_OUTPUT_SCHEMA["properties"])
     task = properties["tasks"]["items"]
     assert {
         "objective",
@@ -124,12 +127,57 @@ def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() 
     contract_schema = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"][
         "critique_resolution_coverage"
     ]
-    capture_schema = SCHEMAS["finalize_capture.json"]["properties"][
+    capture_schema = SCHEMAS["finalize_model_output.json"]["properties"][
         "critique_resolution_coverage"
     ]
 
     assert capture_schema == contract_schema
     _assert_array_schemas_have_items(capture_schema)
+
+
+def test_finalize_model_capture_does_not_require_handler_enrichment_fields() -> None:
+    """A valid worker payload must cross capture before handler enrichment."""
+
+    capture_schema = SCHEMAS[STEP_CONTRACTS["finalize"].capture_schema_key]
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Implement the bounded fix",
+                "status": "pending",
+                "complexity": 3,
+                "complexity_justification": "Touches one response boundary",
+            }
+        ],
+        "sense_checks": [],
+        "watch_items": [],
+        "user_actions": [],
+        "meta_commentary": "Ready for handler validation and enrichment.",
+    }
+
+    assert validate_payload_against_schema(payload, capture_schema).ok
+    captured = capture_step_output(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": "enforced",
+                "worker": "codex",
+                "validation_step": "finalize",
+                "compatibility_validation_step": "finalize",
+                "schema": capture_schema,
+                "capture_schema": capture_schema,
+            },
+        ),
+        payload,
+    )
+    assert captured.legacy_payload == payload
+    task = payload["tasks"][0]
+    assert {
+        "commands_run",
+        "evidence_files",
+        "files_changed",
+        "executor_notes",
+    }.isdisjoint(task)
 
 
 def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:

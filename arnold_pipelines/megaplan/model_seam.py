@@ -24,8 +24,11 @@ working unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import stat
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -206,6 +209,15 @@ def render_compact_review_prompt(
 # --------------------------------------------------------------------------- #
 
 
+LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA = (
+    "arnold.megaplan.local-strict-artifact-handoff.v1"
+)
+LOCAL_STRICT_ARTIFACT_RECEIPT_FIELDS = frozenset(
+    {"schema", "path", "sha256", "bytes"}
+)
+DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES = 16 * 1024 * 1024
+
+
 def capture_step_output(
     invocation: StepInvocation,
     output: Mapping[str, Any] | str,
@@ -384,10 +396,146 @@ def _capture_local_strict_json(
             if output_text.strip():
                 selected = output_text
                 provenance = "output_file_exact_json"
-    return _parse_exact_json_object(selected), (
+    selected_payload = _parse_exact_json_object(selected)
+    if selected_payload.get("schema") == LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA:
+        artifact_payload = _capture_local_strict_artifact(
+            invocation,
+            selected_payload,
+        )
+        return artifact_payload, (
+            "model_step_output",
+            "codex_capture:artifact_handoff",
+        )
+    return selected_payload, (
         "model_step_output",
         f"codex_capture:{provenance}",
     )
+
+
+def _capture_local_strict_artifact(
+    invocation: StepInvocation,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Verify and read an explicitly pre-authorized local-strict artifact.
+
+    The expected path is minted by the dispatcher for one invocation.  The
+    model cannot nominate an arbitrary file, and the candidate never becomes
+    authoritative merely by existing: the ordinary capture schema and phase
+    semantic audits still run before the handler writes canonical artifacts.
+    """
+
+    recovery = invocation.metadata.get("capture_recovery")
+    handoff = recovery.get("artifact_handoff") if isinstance(recovery, Mapping) else None
+    if not isinstance(handoff, Mapping):
+        raise ModelStructuralAuditError(
+            "local-strict artifact receipt was not authorized for this invocation"
+        )
+    if set(receipt) != LOCAL_STRICT_ARTIFACT_RECEIPT_FIELDS:
+        raise ModelStructuralAuditError(
+            "local-strict artifact receipt must contain exactly schema, path, sha256, bytes"
+        )
+    receipt_path = receipt.get("path")
+    receipt_sha = receipt.get("sha256")
+    receipt_bytes = receipt.get("bytes")
+    expected_path_raw = handoff.get("candidate_path")
+    root_raw = handoff.get("root")
+    if not all(isinstance(value, str) and value for value in (receipt_path, expected_path_raw, root_raw)):
+        raise ModelStructuralAuditError("local-strict artifact path binding is invalid")
+    if receipt_path != expected_path_raw:
+        raise ModelStructuralAuditError(
+            "local-strict artifact receipt path does not match the invocation candidate"
+        )
+    if not isinstance(receipt_sha, str) or re.fullmatch(r"[0-9a-f]{64}", receipt_sha) is None:
+        raise ModelStructuralAuditError("local-strict artifact receipt sha256 is invalid")
+    if isinstance(receipt_bytes, bool) or not isinstance(receipt_bytes, int) or receipt_bytes < 0:
+        raise ModelStructuralAuditError("local-strict artifact receipt bytes is invalid")
+    configured_max = handoff.get("max_bytes", DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES)
+    if isinstance(configured_max, bool) or not isinstance(configured_max, int) or configured_max <= 0:
+        raise ModelStructuralAuditError("local-strict artifact maximum size is invalid")
+    if receipt_bytes > configured_max:
+        raise ModelStructuralAuditError("local-strict artifact exceeds the configured size limit")
+
+    root = Path(root_raw)
+    candidate = Path(receipt_path)
+    if not root.is_absolute() or not candidate.is_absolute():
+        raise ModelStructuralAuditError("local-strict artifact paths must be absolute")
+    try:
+        root_resolved = root.resolve(strict=True)
+        candidate_parent_resolved = candidate.parent.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise ModelStructuralAuditError(
+            "local-strict artifact root or parent is unavailable"
+        ) from error
+    if root_resolved != root or candidate_parent_resolved != candidate.parent:
+        raise ModelStructuralAuditError(
+            "local-strict artifact path contains a symlink or non-canonical component"
+        )
+    if candidate.parent != root or root_resolved not in candidate.parents:
+        raise ModelStructuralAuditError(
+            "local-strict artifact path escapes its invocation handoff root"
+        )
+    try:
+        root_stat = os.lstat(root)
+        candidate_stat = os.lstat(candidate)
+    except (FileNotFoundError, OSError) as error:
+        raise ModelStructuralAuditError("local-strict artifact candidate is unavailable") from error
+    if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        raise ModelStructuralAuditError("local-strict artifact root is not a real directory")
+    if (
+        not stat.S_ISREG(candidate_stat.st_mode)
+        or stat.S_ISLNK(candidate_stat.st_mode)
+        or candidate_stat.st_nlink != 1
+    ):
+        raise ModelStructuralAuditError(
+            "local-strict artifact candidate must be one non-symlink regular file"
+        )
+    if candidate_stat.st_size != receipt_bytes:
+        raise ModelStructuralAuditError("local-strict artifact byte count does not match receipt")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(candidate, flags)
+    except OSError as error:
+        raise ModelStructuralAuditError("local-strict artifact candidate could not be opened safely") from error
+    try:
+        opened = os.fstat(fd)
+        if (
+            (opened.st_dev, opened.st_ino) != (candidate_stat.st_dev, candidate_stat.st_ino)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size != receipt_bytes
+        ):
+            raise ModelStructuralAuditError(
+                "local-strict artifact candidate identity changed before read"
+            )
+        chunks: list[bytes] = []
+        remaining = configured_max + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        after = os.fstat(fd)
+        if (
+            (after.st_dev, after.st_ino, after.st_size)
+            != (opened.st_dev, opened.st_ino, opened.st_size)
+        ):
+            raise ModelStructuralAuditError(
+                "local-strict artifact candidate changed during read"
+            )
+    finally:
+        os.close(fd)
+    if len(data) != receipt_bytes or len(data) > configured_max:
+        raise ModelStructuralAuditError("local-strict artifact bounded read did not match receipt")
+    if hashlib.sha256(data).hexdigest() != receipt_sha:
+        raise ModelStructuralAuditError("local-strict artifact digest does not match receipt")
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise ModelStructuralAuditError("local-strict artifact is not UTF-8 JSON") from error
+    return _parse_exact_json_object(text)
 
 
 # --------------------------------------------------------------------------- #

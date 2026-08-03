@@ -88,6 +88,8 @@ from arnold_pipelines.megaplan.prompts import (
 )
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
+    DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES,
+    LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
     ModelBudgetError,
     ModelTier,
     ModelStructuralAuditError,
@@ -113,6 +115,7 @@ from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _bu
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_WORKER_CHANNEL = "codex_cli"
+_LOCAL_STRICT_ARTIFACT_DIRNAME = "local-strict-artifacts"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 _ZERO_RECOVERY_MODEL_PHASES = frozenset(
     {"plan", "critique", "gate", "revise", "finalize"}
@@ -1721,13 +1724,19 @@ def _active_zero_recovery_dispatch(
 # Shared mapping from step name to schema filename, used by both
 # run_claude_step and run_codex_step.
 # Built from the authoritative StepContract registry.
-from arnold_pipelines.megaplan.step_contracts import build_step_schema_filenames
+from arnold_pipelines.megaplan.step_contracts import (
+    build_capture_schema_keys_by_step,
+    build_step_schema_filenames,
+)
 
 STEP_SCHEMA_FILENAMES: dict[str, str] = build_step_schema_filenames()
+STEP_CAPTURE_SCHEMA_FILENAMES: dict[str, str] = build_capture_schema_keys_by_step()
 
 # Derive required keys per step from SCHEMAS so they aren't duplicated.
 _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
-    step: SCHEMAS.get(filename, {}).get("required", [])
+    step: SCHEMAS.get(STEP_CAPTURE_SCHEMA_FILENAMES.get(step, filename), {}).get(
+        "required", []
+    )
     for step, filename in STEP_SCHEMA_FILENAMES.items()
 }
 _RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({
@@ -4910,6 +4919,96 @@ def _codex_provider_contract_error(
     )
 
 
+def _prepare_local_strict_artifact_handoff(
+    plan_dir: Path,
+    *,
+    step: str,
+) -> dict[str, Any]:
+    """Mint one non-reusable candidate path for a local-strict invocation."""
+
+    root = (_project_local_tmp_dir(plan_dir) / _LOCAL_STRICT_ARTIFACT_DIRNAME).absolute()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root_stat = os.lstat(root)
+    if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        raise CliError(
+            "local_response_contract",
+            "local-strict artifact handoff root is not a real directory",
+        )
+    root = root.resolve(strict=True)
+    safe_step = re.sub(r"[^a-zA-Z0-9_.-]", "-", step).strip(".-") or "step"
+    candidate = root / f"{safe_step}-{uuid.uuid4().hex}.candidate.json"
+    if candidate.exists() or candidate.is_symlink():
+        raise CliError(
+            "local_response_contract",
+            "fresh local-strict artifact candidate unexpectedly already exists",
+        )
+    return {
+        "schema": LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
+        "root": str(root),
+        "candidate_path": str(candidate),
+        "max_bytes": DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES,
+    }
+
+
+def _local_response_contract_error(
+    *,
+    step: str,
+    schema: dict[str, Any],
+    reason: str,
+    raw: str,
+    attempts: int = 2,
+) -> CliError:
+    """Return the terminal receipt after this occurrence used its one repair."""
+
+    from arnold_pipelines.megaplan.provider_response import schema_sha256
+
+    occurrence_material = {
+        "phase": step,
+        "canonical_schema_hash": schema_sha256(schema),
+        "failure_class": "local_response_contract",
+    }
+    occurrence_id = hashlib.sha256(
+        json.dumps(occurrence_material, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    material = {
+        **occurrence_material,
+        "reason": reason,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    message = (
+        f"Codex {step} output failed the local response contract after the "
+        "single occurrence-scoped repair; repeating the unchanged phase is forbidden"
+    )
+    return CliError(
+        "local_response_contract",
+        message,
+        extra={
+            "raw_output": raw,
+            "local_response_contract": {
+                "attempts": attempts,
+                "repairs": max(0, attempts - 1),
+                "max_attempts": 2,
+                "exhausted": True,
+                "occurrence_id": occurrence_id,
+                "failure_fingerprint": fingerprint,
+            },
+            "_external_error": {
+                "provider": "codex",
+                "error_kind": "local_response_contract",
+                "message": message,
+                "error_layer": "model_output",
+                "deterministic": True,
+                "nonretryable": True,
+                "failure_fingerprint": fingerprint,
+            },
+        },
+    )
+
+
 def _run_codex_step_uncapped(
     step: str,
     state: PlanState,
@@ -5027,7 +5126,8 @@ def _run_codex_step_uncapped(
         else ModelTier.ENFORCED
     )
     persisted_schema = read_json(schema_file)
-    capture_schema = SCHEMAS.get(codex_schema_name, persisted_schema)
+    capture_schema_name = STEP_CAPTURE_SCHEMA_FILENAMES.get(step, codex_schema_name)
+    capture_schema = SCHEMAS.get(capture_schema_name, persisted_schema)
     # Preserve the consumer's semantic required/optional contract.  Gate is
     # the one established exception: every gate reader already treats its
     # OpenAI-strict projection as canonical (see model_seam audit handling).
@@ -5055,6 +5155,16 @@ def _run_codex_step_uncapped(
         if response_contract is not None
         else None
     )
+    local_strict_handoff: dict[str, Any] | None = None
+    if (
+        response_contract is not None
+        and response_contract.attestation.response_enforcement
+        == ResponseEnforcement.LOCAL_STRICT_JSON.value
+    ):
+        local_strict_handoff = _prepare_local_strict_artifact_handoff(
+            plan_dir,
+            step=step,
+        )
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -5074,9 +5184,21 @@ def _run_codex_step_uncapped(
         and response_contract.attestation.response_enforcement
         == ResponseEnforcement.LOCAL_STRICT_JSON.value
     ):
+        assert local_strict_handoff is not None
+        candidate_path = local_strict_handoff["candidate_path"]
+        candidate_path_json = json.dumps(candidate_path, ensure_ascii=True)
         prompt += (
             "\n\nResponse enforcement: return exactly one JSON object matching "
-            "the supplied canonical schema. Do not use Markdown fences or prose."
+            "the supplied canonical schema. Do not use Markdown fences or prose. "
+            "If the complete object is too large for the final response, use the "
+            "authorized artifact handoff instead: write the complete canonical JSON "
+            f"to exactly {candidate_path!r} via a temporary sibling file followed by "
+            "an atomic rename. Do not write finalize_output.json or any other scratch "
+            "or canonical artifact. Then return only this exact receipt shape: "
+            f"{{\"schema\":\"{LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA}\","
+            f"\"path\":{candidate_path_json},\"sha256\":\"<64 lowercase hex>\","
+            "\"bytes\":<exact byte count>}. The receipt path is fixed and may not "
+            "be substituted."
         )
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
@@ -5178,6 +5300,7 @@ def _run_codex_step_uncapped(
             command.append("--json")
         command.extend(_codex_response_schema_args(transport_schema_file))
 
+    capture_failure: Exception | None = None
     try:
         # Pre-first-byte timeout: codex CLI can hang at startup (auth handshake,
         # default-endpoint connect, etc.) producing zero bytes while megaplan's
@@ -5619,6 +5742,11 @@ def _run_codex_step_uncapped(
                         "plan_dir": str(plan_dir),
                         "output_path": str(output_path),
                         "prefer_output_file": True,
+                        **(
+                            {"artifact_handoff": local_strict_handoff}
+                            if local_strict_handoff is not None
+                            else {}
+                        ),
                     },
                 },
             ),
@@ -5628,10 +5756,12 @@ def _run_codex_step_uncapped(
             step,
             dict(capture_outcome.legacy_payload),
         )
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as error:
+        capture_failure = error
         payload = None
     except ModelStructuralAuditError as error:
-        raise CliError("parse_error", str(error), extra={"raw_output": raw}) from error
+        capture_failure = error
+        payload = None
     if payload is None:
         parse_error = _json_decode_error_for_raw(raw)
         try:
@@ -5641,12 +5771,21 @@ def _run_codex_step_uncapped(
         if parse_error is None:
             parse_error = _json_decode_error_for_raw(output_raw)
         repair_raw = output_raw or raw
-        if (
-            parse_error is not None
-            and not repair_attempted
-            and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
-        ):
-            repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
+        failure_reason = (
+            str(capture_failure)
+            if capture_failure is not None
+            else "model output was not valid canonical JSON"
+        )
+        if not repair_attempted and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+            if parse_error is not None:
+                repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
+            else:
+                repair_prompt = (
+                    "Your previous response failed the canonical local response contract: "
+                    f"{failure_reason}. Re-read the requested schema and return a corrected "
+                    "response. Return only the exact JSON object, or use the explicitly "
+                    "authorized artifact handoff described below for a large object."
+                )
             # _pre_dispatch_budget_check sentinel: budget guard for dispatch
             try:
                 render_step_message(StepInvocation(kind="model", metadata={
@@ -5675,14 +5814,13 @@ def _run_codex_step_uncapped(
                 output_path=output_path,
                 repair_attempted=True,
             )
-        raise CliError(
-            "parse_error",
-            f"Output file {output_path.name} was not valid JSON and no fallback found",
-            extra={
-                "raw_output": repair_raw or raw,
-                "model_output_parse_error": parse_error is not None,
-            },
-        )
+        raise _local_response_contract_error(
+            step=step,
+            schema=schema,
+            reason=failure_reason,
+            raw=repair_raw or raw,
+            attempts=2 if repair_attempted else 1,
+        ) from capture_failure
     raw_session_id = extract_session_id(raw)
     session_id = session.get("id") if persistent and not fresh else None
     if persistent and not session_id:

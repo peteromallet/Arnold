@@ -74,6 +74,7 @@ from arnold_pipelines.megaplan.model_seam import (
 from arnold_pipelines.megaplan.prompts import create_claude_prompt
 from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
 from arnold_pipelines.megaplan.workers._impl import (
+    STEP_CAPTURE_SCHEMA_FILENAMES,
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _activity_callback_for_state,
@@ -2449,7 +2450,7 @@ def run_shannon_step(
     schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
         if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, STEP_SCHEMA_FILENAMES[step])
     )
     schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     schema_text = json.dumps(schema)
