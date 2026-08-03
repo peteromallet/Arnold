@@ -416,12 +416,12 @@ class DiscordOutboundSink(OutboundSink):
             raise RuntimeError("Discord client is not bound")
 
         # Step 13H: route through durable delivery effects when configured.
-        # If the adapter accepts the delivery, we're done. Otherwise fall
-        # through to the direct Discord send path.
         if self._delivery_effects is not None:
-            routed = await self._send_via_delivery_effects(message)
-            if routed:
-                return
+            # A configured effect adapter is the provider boundary. A denied
+            # or unavailable reservation must fail closed; falling through to
+            # the direct Discord call would create a second authority path.
+            await self._send_via_delivery_effects(message)
+            return
 
         target = DiscordDeliveryTarget.from_conversation_key(message.conversation_key)
         channel_target = target
@@ -600,7 +600,12 @@ class DiscordOutboundSink(OutboundSink):
                 channel=DeliveryChannel.RESIDENT,
                 parent_id=getattr(message, 'conversation_key', 'unknown'),
                 target_id=message.idempotency_key or 'unknown',
-                action="send",
+                action=(
+                    "completion_sweep"
+                    if isinstance(message.metadata, dict)
+                    and message.metadata.get("completion_delivery")
+                    else "send"
+                ),
             )
 
             intent = {
@@ -628,17 +633,11 @@ class DiscordOutboundSink(OutboundSink):
                 )
                 return True
 
-            LOGGER.warning(
-                "Delivery effects routing blocked: %s — falling through to direct",
-                outcome.error,
+            raise RuntimeError(
+                f"Delivery effects reservation rejected resident notification: {outcome.error}"
             )
-            return False
         except Exception as exc:
-            LOGGER.warning(
-                "Delivery effects routing unavailable (%s) — falling through to direct",
-                exc,
-            )
-            return False
+            raise RuntimeError("Delivery effects routing unavailable") from exc
 
     async def _queue_terminal_reactions(
         self, message: OutboundMessage, reply_to_message_id: str

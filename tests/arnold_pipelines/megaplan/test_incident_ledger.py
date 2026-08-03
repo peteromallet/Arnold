@@ -83,6 +83,35 @@ def test_incident_ledger_rejects_invalid_events_before_writing(tmp_path: Path) -
     assert not ledger.events_path.exists()
 
 
+def test_authorized_lifecycle_event_requires_current_owner_grant_and_custody(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+
+    with pytest.raises(ValueError, match="Run Authority"):
+        ledger.append_authorized_lifecycle_event(
+            occurrence_id="occ-1",
+            transition="acknowledged",
+            owner="forged-owner",
+            grant_id="forged-grant",
+            custody_epoch=1,
+            run_authority_check=lambda _grant, _owner: False,
+            custody_check=lambda _owner, _epoch, _occurrence: True,
+        )
+    assert not ledger.events_path.exists()
+
+    appended = ledger.append_authorized_lifecycle_event(
+        occurrence_id="occ-1",
+        transition="acknowledged",
+        owner="resident-owner",
+        grant_id="grant-current",
+        custody_epoch=7,
+        run_authority_check=lambda grant, owner: (grant, owner) == ("grant-current", "resident-owner"),
+        custody_check=lambda owner, epoch, occurrence: (owner, epoch, occurrence) == ("resident-owner", 7, "occ-1"),
+    )
+    assert appended["payload"]["type"] == "acknowledged"
+    assert appended["payload"]["run_authority_grant_id"] == "grant-current"
+    assert appended["payload"]["custody_epoch"] == 7
+
+
 def test_incident_ledger_rejects_expanding_decision_before_redaction(
     tmp_path: Path,
 ) -> None:

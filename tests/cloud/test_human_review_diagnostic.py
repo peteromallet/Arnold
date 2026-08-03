@@ -315,7 +315,7 @@ def test_success_launch_inherits_discord_custody_and_is_idempotent(
     assert persisted["completion_delivery"]["discord_message_ids"] == ["reply-111"]
 
 
-def test_launch_failure_is_persisted_and_fallback_delivery_is_deduplicated(
+def test_launch_failure_is_persisted_without_a_sidecar_provider_fallback(
     tmp_path: Path, monkeypatch
 ) -> None:
     project, marker_dir, repair_data_dir, payload_path = _inputs(tmp_path)
@@ -349,31 +349,6 @@ def test_launch_failure_is_persisted_and_fallback_delivery_is_deduplicated(
     assert replay.idempotent_replay is True
     assert calls == 1
 
-    result_path = tmp_path / "fallback-result.json"
-    result_path.write_text(
-        json.dumps(
-            {
-                "ok": True,
-                "channel_id": "34",
-                "message_ids": ["111222333"],
-                "message_count": 1,
-            }
-        ),
-        encoding="utf-8",
-    )
-    diagnostic.record_fallback_delivery(
-        state_path=first.state_path, result_path=result_path
-    )
-    after_delivery = diagnostic.launch_human_review_diagnostic(
-        payload_path=payload_path,
-        marker_dir=marker_dir,
-        repair_data_dir=repair_data_dir,
-        project_dir=project,
-    )
-    assert after_delivery.ok is False
-    assert after_delivery.fallback_delivery_required is False
-    assert after_delivery.idempotent_replay is False
-    assert calls == 2
-    retried_state = json.loads(Path(first.state_path).read_text(encoding="utf-8"))
-    assert retried_state["launch_attempt_count"] == 2
-    assert retried_state["fallback_delivery"]["status"] == "delivered"
+    assert not hasattr(diagnostic, "record_fallback_delivery")
+    persisted = json.loads(Path(first.state_path).read_text(encoding="utf-8"))
+    assert persisted["fallback_delivery"]["status"] == "pending"

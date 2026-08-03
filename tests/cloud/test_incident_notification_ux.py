@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -41,7 +42,6 @@ def _admit_process(root: str, result_path: str) -> None:
             occurrence_id="gate-0123456789abcdef",
             session="same-session",
             state="awaiting_human_verify",
-            owner="watchdog",
             payload=_payload(),
             marker=_marker(),
         )
@@ -69,7 +69,6 @@ def test_two_process_observers_and_200_scans_admit_one_intent(tmp_path: Path) ->
                 occurrence_id="gate-0123456789abcdef",
                 session="same-session",
                 state="awaiting_human_verify",
-                owner="watchdog",
                 payload=_payload(),
                 marker=_marker(),
             )
@@ -128,7 +127,10 @@ def test_missing_provenance_is_terminal_and_never_calls_provider(tmp_path: Path,
     card = json.loads((Path(results[0].state_path).parent / "incident-card.json").read_text(encoding="utf-8"))
     assert card["state"] == "awaiting_human_verify"
     assert card["diagnostic_fixer_result"]["status"] == "provenance_failed"
-    assert card["acknowledgement_resolution_authority"]["authority_state"] == "awaiting_authority"
+    assert card["acknowledgement_resolution_projection"] == {
+        "source": "canonical-incident-ledger",
+        "status": "not_recorded",
+    }
 
 
 def test_thread_race_has_one_stable_occurrence(tmp_path: Path) -> None:
@@ -145,7 +147,6 @@ def test_thread_race_has_one_stable_occurrence(tmp_path: Path) -> None:
                     occurrence_id="gate-0123456789abcdef",
                     session="same-session",
                     state="awaiting_human_verify",
-                    owner="watchdog",
                     payload=_payload(),
                     marker=_marker(),
                 )
@@ -200,7 +201,6 @@ def test_crash_after_atomic_intent_before_projection_replays_without_duplicate(t
             occurrence_id="gate-0123456789abcdef",
             session="same-session",
             state="awaiting_human_verify",
-            owner="watchdog",
             payload=_payload(),
             marker=_marker(),
         )
@@ -211,7 +211,6 @@ def test_crash_after_atomic_intent_before_projection_replays_without_duplicate(t
             occurrence_id="gate-0123456789abcdef",
             session="same-session",
             state="awaiting_human_verify",
-            owner="watchdog",
             payload=_payload(),
             marker=_marker(),
         )
@@ -219,97 +218,109 @@ def test_crash_after_atomic_intent_before_projection_replays_without_duplicate(t
         assert restarted_store.conn.execute("SELECT COUNT(*) FROM outbox_records").fetchone() == (1,)
 
 
-def test_indeterminate_provider_receipt_blocks_redispatch(tmp_path: Path) -> None:
+def test_restart_rebuilds_occurrence_projection_from_committed_event(tmp_path: Path) -> None:
     with IncidentNotificationStore(tmp_path) as store:
         admission = store.admit(
             occurrence_id="gate-0123456789abcdef",
             session="same-session",
             state="awaiting_human_verify",
-            owner="watchdog",
             payload=_payload(),
             marker=_marker(),
         )
-        store.write_card(
-            admission.occurrence_id,
-            {
-                "ambiguity": "NONE",
-                "next_action": "deliver",
-            },
-        )
-        store.record_provider_attempt(
-            intent_id=admission.notification_intent_id,
-            attempt_number=1,
-            request_digest=admission.payload_digest,
-        )
-        assert store.record_provider_receipt(
-            intent_id=admission.notification_intent_id,
-            attempt_number=1,
-            status="INDETERMINATE",
-            receipt={"error": "timeout"},
-        ) == "INDETERMINATE"
-        assert store.dispatch_eligible(admission.notification_intent_id) is False
-        card = json.loads(store.card_path(admission.occurrence_id).read_text(encoding="utf-8"))
-        assert card["ambiguity"] == "INDETERMINATE"
-        assert "do not blindly redispatch" in card["next_action"]
+        store.conn.execute("DELETE FROM incident_occurrences")
+        assert store.conn.execute("SELECT COUNT(*) FROM incident_occurrences").fetchone() == (0,)
 
-
-def test_pending_provider_attempt_is_not_eligible_for_blind_redispatch(tmp_path: Path) -> None:
-    with IncidentNotificationStore(tmp_path) as store:
-        admission = store.admit(
+    with IncidentNotificationStore(tmp_path) as restarted:
+        replay = restarted.admit(
             occurrence_id="gate-0123456789abcdef",
             session="same-session",
             state="awaiting_human_verify",
-            owner="watchdog",
             payload=_payload(),
             marker=_marker(),
         )
-        store.record_provider_attempt(
-            intent_id=admission.notification_intent_id,
-            attempt_number=1,
-            request_digest=admission.payload_digest,
-        )
-        assert store.dispatch_eligible(admission.notification_intent_id) is False
+        assert replay.duplicate is True
+        assert restarted.conn.execute(
+            "SELECT occurrence_id, notification_intent_id FROM incident_occurrences"
+        ).fetchone() == (admission.occurrence_id, admission.notification_intent_id)
 
 
-def test_acknowledge_and_resolve_are_authority_transitions(tmp_path: Path) -> None:
+def test_caller_owner_and_authority_inputs_are_not_admission_api(tmp_path: Path) -> None:
     with IncidentNotificationStore(tmp_path) as store:
-        admission = store.admit(
-            occurrence_id="gate-0123456789abcdef",
-            session="same-session",
-            state="awaiting_human_verify",
-            owner="watchdog",
-            payload=_payload(),
-            marker=_marker(),
-        )
-        store.write_card(
-            admission.occurrence_id,
-            {
-                "acknowledgement_resolution_authority": {
-                    "acknowledged": False,
-                    "resolved": False,
-                }
-            },
-        )
-        acknowledged = store.authority_transition(
-            occurrence_id=admission.occurrence_id,
-            action="acknowledge",
-            authority_id="run-authority:operator-1",
-            actor_id="operator-1",
-        )
-        resolved = store.authority_transition(
-            occurrence_id=admission.occurrence_id,
-            action="resolve",
-            authority_id="run-authority:operator-1",
-            actor_id="operator-1",
-        )
-        assert acknowledged["action"] == "acknowledge"
-        assert resolved["action"] == "resolve"
-        card = json.loads(store.card_path(admission.occurrence_id).read_text(encoding="utf-8"))
-        assert card["acknowledgement_resolution_authority"] == {
-            "acknowledged": True,
-            "resolved": True,
-            "authority_state": "resolved",
+        with pytest.raises(TypeError):
+            store.admit(  # type: ignore[call-arg]
+                occurrence_id="gate-0123456789abcdef",
+                session="same-session",
+                state="awaiting_human_verify",
+                owner="forged-owner",
+                payload=_payload(),
+                marker=_marker(),
+            )
+
+
+def test_legacy_local_authority_and_provider_tables_are_migrated_away(tmp_path: Path) -> None:
+    db_path = tmp_path / ".incident-notifications.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE incident_occurrences (occurrence_id TEXT PRIMARY KEY, diagnostic_attempt_id TEXT NOT NULL, notification_intent_id TEXT NOT NULL UNIQUE, state_version INTEGER NOT NULL, fingerprint TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, authority_state_json TEXT NOT NULL)"
+    )
+    conn.execute("CREATE TABLE notification_provider_attempts (provider_attempt_id TEXT)")
+    conn.execute("CREATE TABLE incident_authority_transitions (transition_id TEXT)")
+    conn.execute(
+        "INSERT INTO incident_occurrences VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("occ-1", "attempt-1", "intent-1", 1, "fingerprint-1", "now", "forged"),
+    )
+    conn.commit()
+    conn.close()
+
+    with IncidentNotificationStore(tmp_path) as store:
+        columns = {
+            str(row[1])
+            for row in store.conn.execute("PRAGMA table_info(incident_occurrences)").fetchall()
         }
+        assert "authority_state_json" not in columns
+        tables = {
+            str(row[0])
+            for row in store.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert "notification_provider_attempts" not in tables
+        assert "incident_authority_transitions" not in tables
+
+
+def test_retired_cloud_intent_cannot_be_used_as_a_provider_authority(tmp_path: Path) -> None:
+    with IncidentNotificationStore(tmp_path) as store:
+        admission = store.admit(
+            occurrence_id="gate-0123456789abcdef",
+            session="same-session",
+            state="awaiting_human_verify",
+            payload=_payload(),
+            marker=_marker(),
+        )
+        intent = store.canonical_intent(admission.notification_intent_id)
+        assert intent["destination"] == "notification:discord.retired"
+        assert intent["payload"]["dispatchable"] is False
+        assert store.conn.execute("SELECT status FROM outbox_records").fetchone() == ("tombstoned",)
+        with pytest.raises(ValueError, match="canonical outbox"):
+            store.canonical_intent("forged-intent")
+
+
+def test_authority_and_provider_mutators_are_retired() -> None:
+    assert not hasattr(IncidentNotificationStore, "authority_transition")
+    assert not hasattr(IncidentNotificationStore, "record_provider_attempt")
+    assert not hasattr(IncidentNotificationStore, "record_provider_receipt")
+    assert not hasattr(IncidentNotificationStore, "dispatch_eligible")
+
+
+def test_production_notification_python_has_no_unbound_provider_api() -> None:
+    production = (
+        Path("arnold_pipelines/megaplan/cloud/incident_notification.py").read_text(encoding="utf-8")
+        + Path("arnold_pipelines/megaplan/cloud/human_review_diagnostic.py").read_text(encoding="utf-8")
+    )
+    assert "def authority_transition" not in production
+    assert "def record_provider_attempt" not in production
+    assert "def record_provider_receipt" not in production
+    assert "DISCORD_DM_BIN" not in production
 
 
 def test_watchdog_source_has_no_provider_fallback() -> None:

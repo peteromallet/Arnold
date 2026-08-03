@@ -103,6 +103,7 @@ class DeliveryOutcome:
     outcome_kind: str
     error: str | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
+    attempt_id: str = ""
 
 
 # ── Resident delivery effects adapter ────────────────────────────────────────
@@ -243,8 +244,20 @@ class DeliveryEffects:
                 grant_ref=grant_ref,
             )
 
+            provider_key = f"resident:{target.channel.value}:{target.action}"
+            idempotency_key = str(
+                intent_payload.get("idempotency_key")
+                or f"resident-delivery:{glek}"
+            )
             try:
-                result = apply_fn(intent_payload)
+                result = self._protocol.dispatch(
+                    aid,
+                    glek,
+                    provider_id=provider_key,
+                    apply_fn=lambda _key, payload: apply_fn(payload),
+                    idempotency_key=idempotency_key,
+                    request_payload=dict(intent_payload),
+                )
             except Exception as exc:
                 self._protocol.accept_outcome(
                     aid, glek, OUTCOME_FAILED,
@@ -257,18 +270,19 @@ class DeliveryEffects:
                     glek=glek,
                     outcome_kind=OUTCOME_FAILED,
                     error=str(exc),
+                    attempt_id=aid,
                 )
 
-            self._protocol.accept_outcome(
-                aid, glek, OUTCOME_COMPLETED,
-                {"result": str(result)[:500]},
-            )
+            evidence = dict(result) if isinstance(result, dict) else {"result": str(result)[:500]}
+            self._protocol.accept_outcome(aid, glek, OUTCOME_COMPLETED, evidence)
             return DeliveryOutcome(
                 ok=True,
                 channel=target.channel.value,
                 action=target.action,
                 glek=glek,
                 outcome_kind=OUTCOME_COMPLETED,
+                evidence=evidence,
+                attempt_id=aid,
             )
 
         except Exception as exc:
@@ -279,6 +293,7 @@ class DeliveryEffects:
                 glek="",
                 outcome_kind=OUTCOME_INDETERMINATE,
                 error=f"Protocol error: {type(exc).__name__}: {exc}",
+                attempt_id=aid,
             )
 
     # ── Consumer-specific helpers ────────────────────────────────────────

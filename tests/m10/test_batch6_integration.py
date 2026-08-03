@@ -644,6 +644,47 @@ class TestDeliveryEffects:
         assert outcome.ok is False
         assert "BLOCKED" in (outcome.error or "")
 
+    def test_stale_run_authority_or_custody_rejects_before_provider(self, tmp_path):
+        from arnold.workflow.effect_protocol import EffectProtocol, EffectProtocolConfig
+        from arnold_pipelines.megaplan.resident.delivery_effects import (
+            DeliveryEffects,
+            DeliveryChannel,
+            DeliveryTarget,
+        )
+        from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+        from arnold.workflow.ledger_outbox import SqliteLedgerOutbox
+
+        store = SqliteAttemptLedgerStore(str(tmp_path / "stale.db"))
+        protocol = EffectProtocol(
+            store,
+            SqliteLedgerOutbox(store),
+            EffectProtocolConfig(
+                run_authority_check=lambda _grant: False,
+                custody_reread_check=lambda _attempt: True,
+            ),
+        )
+        effects = DeliveryEffects(protocol)
+        calls = 0
+
+        def provider(_payload):
+            nonlocal calls
+            calls += 1
+            return {"message_ids": ["must-not-send"]}
+
+        outcome = effects.deliver(
+            target=DeliveryTarget(
+                channel=DeliveryChannel.RESIDENT,
+                parent_id="discord:dm:42",
+                target_id="resident-subagent-completion:run-1",
+                action="completion_sweep",
+            ),
+            intent_payload={"idempotency_key": "resident-subagent-completion:run-1"},
+            apply_fn=provider,
+        )
+
+        assert outcome.ok is False
+        assert calls == 0
+
     def test_delivery_target_key_stability(self):
         from arnold_pipelines.megaplan.resident.delivery_effects import (
             DeliveryChannel,

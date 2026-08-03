@@ -34,6 +34,11 @@ def mock_delivery_effects():
     reservation.global_logical_effect_key = "glek-delivery-001"
     protocol.reserve_and_start.return_value = reservation
 
+    def dispatch(_attempt_id, _glek, *, apply_fn, request_payload, **_kwargs):
+        return apply_fn("test-key", request_payload)
+
+    protocol.dispatch.side_effect = dispatch
+
     effects = DeliveryEffects(protocol, production_enabled=False)
     return effects
 
@@ -85,6 +90,26 @@ def test_different_parents_produce_different_keys():
     t1 = DeliveryTarget(channel=DeliveryChannel.RESIDENT, parent_id="conv-A", target_id="msg-1")
     t2 = DeliveryTarget(channel=DeliveryChannel.RESIDENT, parent_id="conv-B", target_id="msg-1")
     assert t1.target_key != t2.target_key
+
+
+def test_completion_sweep_and_sink_share_one_effect_identity():
+    from arnold_pipelines.megaplan.resident.delivery_effects import DeliveryEffects
+
+    completion_key = DeliveryTarget(
+        channel=DeliveryChannel.RESIDENT,
+        parent_id="discord:dm:42",
+        target_id="resident-subagent-completion:run-1",
+        action="completion_sweep",
+    )
+    sink_key = DeliveryTarget(
+        channel=DeliveryChannel.RESIDENT,
+        parent_id="discord:dm:42",
+        target_id="resident-subagent-completion:run-1",
+        action="completion_sweep",
+    )
+    assert DeliveryEffects._build_effect_identity(completion_key).global_logical_effect_key == (
+        DeliveryEffects._build_effect_identity(sink_key).global_logical_effect_key
+    )
 
 
 # ── Delivery dispatch ─────────────────────────────────────────────────────────

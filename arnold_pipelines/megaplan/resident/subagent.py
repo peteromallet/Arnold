@@ -7161,6 +7161,7 @@ async def sweep_managed_agent_deliveries(
                 continue
         try:
             run_id = manifest.get("run_id") or manifest_path.parent.name
+            effect_routed = False
 
             # Step 13H: route completion sweep delivery through WBC when configured.
             # If delivery_effects is provided directly or via the outbound sink,
@@ -7183,6 +7184,7 @@ async def sweep_managed_agent_deliveries(
                         "run_id": run_id,
                         "result_kind": result_kind,
                         "conversation_key": str(origin.get("conversation_key", "")),
+                        "idempotency_key": f"resident-subagent-completion:{run_id}",
                     }
                     if isinstance(metadata, dict):
                         sweep_intent["metadata"] = dict(metadata)
@@ -7193,24 +7195,32 @@ async def sweep_managed_agent_deliveries(
                         apply_fn=lambda p: {"delivered": True},
                     )
                     if not sweep_outcome.ok:
-                        LOGGER.warning(
-                            "Completion sweep delivery blocked by WBC: %s",
-                            sweep_outcome.error,
+                        raise RuntimeError(
+                            f"Completion sweep delivery blocked by WBC: {sweep_outcome.error}"
                         )
+                    effect_routed = True
+                    effect_message_ids = [
+                        str(value)
+                        for value in sweep_outcome.evidence.get("message_ids", [])
+                        if str(value)
+                    ]
+                    metadata["discord_message_ids"] = effect_message_ids or [
+                        f"effect:{sweep_outcome.glek}"
+                    ]
+                    metadata["delivery_effects_routed"] = True
+                    metadata["delivery_glek"] = sweep_outcome.glek
                 except Exception as delivery_route_exc:
-                    LOGGER.warning(
-                        "Completion sweep delivery routing error: %s",
-                        delivery_route_exc,
-                    )
+                    raise RuntimeError("Completion sweep delivery routing unavailable") from delivery_route_exc
 
-            await outbound.send(
-                OutboundMessage(
-                    conversation_key=str(origin["conversation_key"]),
-                    content=content,
-                    idempotency_key=f"resident-subagent-completion:{run_id}",
-                    metadata=metadata,
+            if not effect_routed:
+                await outbound.send(
+                    OutboundMessage(
+                        conversation_key=str(origin["conversation_key"]),
+                        content=content,
+                        idempotency_key=f"resident-subagent-completion:{run_id}",
+                        metadata=metadata,
+                    )
                 )
-            )
         except Exception as exc:
             evidence = _delivery_error_evidence(exc)
             disposition = _retry_delivery(
