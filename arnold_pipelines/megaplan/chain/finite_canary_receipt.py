@@ -543,7 +543,7 @@ def validate_finite_canary_receipt(
     *,
     label: str,
 ) -> None:
-    """Validate a completion or stable-exit receipt and all bound evidence."""
+    """Validate a finite-canary completion receipt and all bound evidence."""
 
     receipt_path = receipt_path.resolve(strict=False)
     root = root.resolve()
@@ -558,7 +558,28 @@ def validate_finite_canary_receipt(
     if schema == _COMPLETION_SCHEMA:
         _validate_completion(payload, receipt_path, root, label=label, spec_path=spec_path)
         return
-    if schema == _STABLE_EXIT_SCHEMA:
-        _validate_stable_exit(payload, receipt_path, root, label=label, spec_path=spec_path)
-        return
     raise _fail(label, spec_path, f"unsupported finite canary receipt schema: {schema!r}")
+
+
+def validate_stable_exit_receipt(
+    receipt_path: Path,
+    root: Path,
+    spec_path: Path,
+    *,
+    label: str,
+) -> None:
+    """Validate a stable-exit receipt and its stopped/absence/custody proofs."""
+
+    receipt_path = receipt_path.resolve(strict=False)
+    root = root.resolve()
+    try:
+        receipt_path.relative_to(root)
+    except ValueError as exc:
+        raise _fail(label, spec_path, "receipt path escapes the project root") from exc
+    if not receipt_path.is_file():
+        raise _fail(label, spec_path, f"stable-exit receipt missing at {receipt_path}")
+    payload = _strict_json(receipt_path, label=label, spec_path=spec_path)
+    schema = payload.get("schema")
+    if schema != _STABLE_EXIT_SCHEMA:
+        raise _fail(label, spec_path, f"unsupported stable-exit receipt schema: {schema!r}")
+    _validate_stable_exit(payload, receipt_path, root, label=label, spec_path=spec_path)

@@ -10,6 +10,113 @@ Exact worktree/commit/tree/status/diff identities are in
 candidates are governed by `supersession-index.json`. These JSON files are the
 machine-readable authority; the paths and counts below are operator guidance.
 
+## Current handoff and action-oriented execution order
+
+Critique Ledger is durably moving at the handoff observation: cloud session
+`critique-ledger-accountability-v3-r5-20260803`, plan
+`cl2-wbc-backed-ledger-20260803-1357`, product
+`e5e9f2b1c1a7e7779121405fd4801768e1e8a4c2`, fresh `v3-r5` milestone
+branches, isolated image
+`sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d`
+and runtime `82a5a012fa58f44cdc5e9e895f454d86d95b446d`. The selected
+profile is OAuth-backed all-Codex because a direct DeepSeek key was absent.
+Prep succeeded at `2026-08-03T14:04:08Z` after 393,318 ms (artifact SHA-256
+prefix `b8f292c2`), advancing state to `prepped`; tmux remains alive and a
+`gpt-5.6-sol` high worker is active in `plan`, with no current failure. This is
+a durable phase transition, not whole-chain completion.
+
+The resident is separately healthy: epoch `discord-enospc-20260803-r7`,
+container
+`a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`,
+image
+`sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20`,
+runtime `31d2e052104a57eb48e782dce8bdf678e6731caf`, receipt
+`healthy/discord_ready`.
+
+Execute the following as a task board. Items in the same wave may run in
+parallel; a later wave waits for its named dependencies. `VERY HARD` marks
+work expected to need adversarial design/recovery testing, not work that blocks
+supervision of the live Critique run.
+
+### P0 — immediate security and live custody
+
+- [ ] **URGENT — rotate exposed resident credentials.** A diagnostic command
+  accidentally printed the resident environment file in a tool transcript.
+  Rotate every credential contained there, update the admitted secret source,
+  prove the old values are rejected, and restart the resident once through its
+  supported receipted path. Never copy any secret value into evidence or this
+  epic. This can run in parallel with passive Critique supervision.
+- [ ] Supervise r5 without redeploying it: retain periodic exact
+  plan/tmux/process/worker/runtime observations, record every milestone
+  transition, and intervene only on a new evidence-backed failure.
+- [ ] Capture the final r5 completion or terminal-failure receipt and update the
+  custody manifest. Dependency: live r5 reaches a terminal state.
+
+### P1 — launch admission hardening (parallel implementation lanes)
+
+- [ ] **HARD — provider credential admission.** Before dispatch, prove every
+  selected provider credential and auth mechanism is available. If direct
+  DeepSeek is absent, deterministically choose and label the OAuth all-Codex
+  profile; prohibit silent provider/model drift.
+- [ ] **HARD — fresh branch/spec lineage admission.** Require a never-reused
+  generation workspace/session and milestone branches, full immutable source
+  revisions, coherent spec/config lineage, and explicit supersession of stale
+  plans before `--fresh` can mutate.
+- [ ] **VERY HARD — missing/ambiguous chain-owner and no-seed hardening.** A
+  missing, conflicting or ambiguous owner must fail before initialization;
+  seedless and composed-chain paths need hostile composition tests proving no
+  branch/plan can be inherited or attached to the wrong generation.
+- [ ] Make clone/setup a synchronous completion contract: launch may not report
+  success until checkout, credential seed, identity, `gh` auth and remote
+  setup have either completed or emitted one typed terminal failure.
+- [ ] Eliminate duplicate launch-owned environment. One declarative owner sets
+  runtime selectors; reject `.cloud-hot-env`, inherited `PYTHONPATH` or other
+  late overrides that disagree with the pinned runtime.
+- [ ] Enforce the read-only-runtime/writable-CWD invariant. Imported and
+  editable runtime/source remain identical and non-writable while the worker's
+  declared working tree is the sole writable product surface.
+- [ ] **HARD — validate tracked symlink escape.** Admission must inspect tracked
+  links without following them and reject any path that can escape the exact
+  admitted source/workspace, with real Git fixtures and container tests.
+
+### P2 — failure, notification and resident control planes
+
+- [ ] **VERY HARD — durable notification occurrence/state-version dedupe.** A
+  terminal incident owns one durable occurrence plus accepted state version;
+  200 unchanged polls, process restart and host restart produce at most one
+  provider effect. A genuine new version or recovery is a separate transition.
+  Dependency: production occurrence owner/storage contract.
+- [ ] **VERY HARD — provenance-safe generalized fixer.** On a recognized
+  recoverable failure, create at most one mutation-authorized fixer with a
+  durable delegation/launch receipt, exact prior failure/evidence paths and a
+  bounded action budget. Missing provenance emits zero fixer and one terminal
+  diagnostic—not a phantom agent or repeated escalation. Dependency: consumed
+  grant/idempotency owner; may be built in parallel with notification dedupe.
+- [ ] **HARD — reconcile M7 projection cursors.** Make fresh-generation resets
+  either advance or explicitly fork projection history. A cursor mismatch must
+  be repaired from canonical state or become one actionable incident; it must
+  not repeat as a warning on every append.
+- [ ] **HARD — resident pre-fence admission and diagnostics.** Before changing
+  source restart policy, perform every read-only source/image/runtime/secret/
+  capacity check. Emit the exact failed stage and rollback proof; never collapse
+  `secret admission`, `runtime capture`, `image dependency`, `Discord ready`
+  and `rollback` into one generic failure.
+- [ ] Bump the resident receipt schema for `resident_image_id`, keep a defined
+  reader/migration for v1, and validate separate exact source/resident images.
+- [ ] Lock resident and recovery-image dependency versions with hashes; prove
+  `discord.py`, YAML and all listener imports from the built immutable image,
+  not an ephemeral container install.
+
+### P3 — integration and release
+
+- [ ] Join P1/P2 manifests, run cross-pipeline composition, response-loss,
+  restart, replay, ENOSPC and installed-image tests, and independently review
+  the result. Dependencies: all P1 and P2 items.
+- [ ] Execute the ordinary F1/F2 and CL2-CL5 milestone work below, deploy it,
+  and complete the 24h/72h/7d observations. Parallelize only work explicitly
+  separated by accepted manifests; effect-owner and release-authority work
+  remains ordered.
+
 ## Stable canary boundary
 
 - [ ] The v3 handoff records exact deployed commit/tree/image/source identities.
@@ -437,13 +544,153 @@ deliberately pending import; it is not permission to recreate a receipt.
   recommendation classification; that diagnostic is not a live success gate.
   Container prefix `6cb81b` is stopped at exit 143, OOM false, after terminal
   reconciliation. The workspace is sealed root:0700 at inode 1317407 and no
-  notification was sent. Offline, independent, live and stable-exit gates all
-  remain pending.
-- [ ] Complete A40 without launching: truthfully classify B39 as a complete
-  bounded safe-non-PROCEED canary or route its eight blockers into a bounded
-  revise/product prerequisite. F0 is the sole explicit, read-only bridge from
-  the independently accepted A40 decision into follow-up admission; A40/F0 may
-  not promote gates, replay finalize, or fabricate missing identity bytes.
+  notification was sent. Its offline and independent evidence was observed at
+  termination but not accepted; live is terminal-not-accepted and no
+  stable-exit receipt was produced. These are immutable historical facts.
+- [x] Preserve A40 as closed bounded-route authority, not a current decision:
+  initial implementation `a3fe53b67564bbacd7e7d07eea737d675d4d8233` / tree
+  `61205a4b2644548e0c7f3a3acb574fde0e90a611`, validator correction
+  `cfab4da6877971f1517367387bd5584bb76a39e8` / tree
+  `607e6a13b62e2d0b58f80bc6aeb5b4b6d5521282`, and only the exact direct
+  PROCEED or one-revise ITERATE→PROCEED route. A40 cannot promote B39.
+- [x] Preserve the exact attempt-14 candidate and immutable terminal result:
+  implementation `a15e87adea1fa78e90008422f42bc79ae60dff13` / tree
+  `63a75d9333e3fa69c9a039846595d3dd4d3cc4b3`, B44 manifest
+  `006895e8d66812dec5e85d26b32635af21ca21c7` / tree
+  `8d70cc79bc8f5a79a60be282bcc22122109c7f83`, production image
+  `sha256:209a64de1f321b5ec49e8d6e6748187f790099a6fe8a68696352a5488bc7ffa6`,
+  attempt-14 workspace/container, and all four manifest-file hashes. Receipt
+  digest/file SHA are
+  `59f0d1712bbd6f379d921f9662989a7a524b62e8509182041e08ba368e0abe0d` /
+  `23f260ba72c0785401d4749132491beeac1bd2cf7c61cc386c7b29e980ecb3c0`.
+  The exact prefix is `init→plan→critique→gate→revise`; gate `ITERATE` SHA is
+  `415fb3ffac618a196d2822f288d69d9457abd6f121615c1153e34fb7404e6545`.
+  Revise stopped predispatch on blocking `add_human_halt` action `NSA-7`; the
+  old runner recorded ordinal 4 and misclassified the product terminal as
+  generic failure with partial dispatch integrity. Finalize did not run. The
+  container is stopped and workspace root:root:0700 is sealed. No F0 authority
+  follows.
+- [ ] Preserve diagnostic r1-r5 failures, r6 PASS, and the B44 production-smoke
+  PASS exactly as recorded in `custody-manifest.json`. These smoke receipts are
+  prelaunch evidence, not an invented live result.
+- [ ] Complete `custody-v3-to-v4-semantic-migration` across the completion
+  producer, finite-canary validator, distinct stable-exit validator, and
+  fresh-clone reconstruction. Reject v3 with regression tests before launch.
+- [x] Preserve exact A15/B15 attempt-15 terminal infrastructure-failure custody:
+  implementation `8932873ba1c81d398cf42fb9879605d14d50cbb4` / tree
+  `7fdcf11dba38354645290314443c1de3c8b33bbb`, manifest
+  `4f021cb70f3202dd90d599f8d710b626ba27b16b` / tree
+  `3777df403e9ae06cba75cf6fb6ac3b804f808723`, image
+  `sha256:ea1e66940e7445649b083b8d7acc896080526011f9bfc4a9e21b475046e1814a`,
+  exact attempt-15 workspace/container and four manifest-file hashes. Preserve
+  its four root fixes: settled clean commit/tree input; fresh typed revise
+  invocation; `product_revise_blocked` for human and unresolved blockers; and
+  ordinal 4 only after revise dispatch. Receipt digest/file SHA are
+  `59bc8d659ca8ec59baa9da9051fcd7320199e6ffea12a97d3b7018694b266331` /
+  `10eb82a07ca0829b585c4316413b76851665ac9b90ef93e051f94626f91a182a`.
+  It completed `2026-08-03T11:00:12.627961Z` after
+  `init→plan→critique`: Sol plan returned success; Sol critique dispatch returned
+  output, but the code-mode host repeatedly SIGTRAPed/closed stdout and could
+  not inspect/update the template, so critique returned 1 with state `planned`.
+  Gate/revise/finalize did not run. The receipt is failed/failed/partial, product
+  outcome null, dispatch ledger
+  `222abc464f60acf7b14689fcfef4ca8649a7746d80e3d09a600caf89988d7ded`.
+  Container stopped at 143, OOM false, restart zero; workspace is sealed. It is
+  not accepted and creates no F0, retry, or successor authority.
+- [x] Preserve exact B16 attempt-16 terminal infrastructure-recovery custody.
+  Outer status is `available`; receipt schema v3 and status `passed`; source
+  commit/tree are `fb5a394878bc900b189213a3de5dcc40169d8b7b` /
+  `a8f903a94e5029fa50c148df3289186dc4c39caf`. All phases
+  `init→plan→critique→gate→revise→critique→gate` returned zero, dispatch
+  integrity is complete and failure is null. Both gate attempts returned
+  `ITERATE`; terminal state and outcome kind are `product_gate_not_proceed`,
+  recommendation `ITERATE`, gate attempt 2. Receipt digest/file SHA are
+  `3a9925dbfcc0c901905db0265b48c062f051b16bdbb31b9f873c5e086eac08c0` /
+  `1b4e1d013f444b3f3f2c3af1bb4938002e730f727a0be39834a2ca235fa592ba`;
+  state SHA is
+  `4ef979066dfb3c822625de21ec52e95c7d25a42f185ea01970865d4b4116e525`;
+  final gate SHA is
+  `b8d6dcf366b04bde245890e1cb224c191f202101cb53dbb3fa59ca721c05d546`.
+  Exact container
+  `0552d39f4589239cb0b8e10b68b12c8ebab3a0e2fde6284049e1e466f0896ba6`
+  is stopped at exit 143, OOM false, restart zero; stop is reconciled and the
+  workspace sealed. Classify infrastructure recovery as PASSED, but never call
+  this product PROCEED, finalized or a durable epic launch.
+- [ ] Resolve both attempt-16 ITERATE gate result action sets before any later
+  PROCEED claim. This product hardening belongs to F2 and is
+  `DEFERRED_POST_RELAUNCH_NONBLOCKING`; it does not block separately authorized
+  relaunch.
+- [x] Resolve the v3 full-SHA bootstrap pin. The abbreviated initiative
+  revision `0bb0c0b74e` was rejected before init as
+  `intended_initiative_revision_unpinned`; the retry used full revision
+  `0bb0c0b74e6b1913d39b51f33559b2f5127f1886` and `cloud chain` returned zero.
+- [x] Preserve and contain the rejected v3 runtime-binding retry. It was alive,
+  advanced beyond init and initialized `cl2-wbc-backed-ledger-20260803-1313`,
+  but its execution binding split the editable root/revision
+  (`/workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4`,
+  `a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4`) from the actual import
+  root/source revision
+  (`/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4`,
+  `c7bcb06af536acfe759c1b31a785afc19afe92d4`). The operator redeployed the
+  same isolated collector to stop it. It is not a durable launch and the
+  initialized plan must not be resumed or reused.
+- [ ] **Pre-F0 launch blocker — fix hot-environment runtime ordering and prove a
+  fresh matched-runtime retry.** The post-launch stability observation must
+  prove `editable_root == import_root == configured pinned runtime root` and
+  `editable_revision == source_revision == configured pinned runtime revision`,
+  as well as exit zero, session alive and advancement past init. This is a T6.2
+  precursor and does not add, renumber, discharge or accelerate any deferred
+  F1/F2 obligation.
+- [x] Preserve the read-only storage root-cause inventory. Post-run free bytes
+  1,484,693,504 are below hard floor 1,611,661,312 by 126,967,808 bytes. The
+  preserved production predecessor writable snapshot/container is approximately
+  389.927 GB; `/tmp` is approximately 388.813 GB and contains exactly 1,156,578
+  progress-auditor recursion copies totaling 387,889,659,906 logical bytes as
+  roughly 395,629-byte `arnold-repair-loop.*` files. The installed-source
+  trampoline preceded the snapshot guard; the snapshot execed source; source
+  saw an active-path mismatch and created another snapshot; and the later
+  cleanup trap was overwritten. Record this recursion as the confirmed cause of
+  disk exhaustion and resident crash and likely—not exclusively proven—cause of
+  attempt-15 code-host instability.
+- [x] Preserve the separate notification and reclaim evidence. The
+  notification/watchdog path, not the progress auditor, re-emitted the same
+  terminal `manual_review` incident without durable incident-key dedupe. A
+  separate diagnostic-fixer launch failed provenance validation. Receipted safe
+  reclaim from predecessor container
+  `277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab`
+  deleted all 1,156,578 copies and 387,889,659,906 logical bytes, left zero,
+  restored 390,136,713,216 free bytes, and preserved predecessor and workspace.
+- [ ] Add bounded repair temp lifecycle (F1, nonblocking for relaunch).
+  Acceptance: every temp file has a
+  bounded lifetime; the installed-source trampoline checks the snapshot guard
+  before exec; and non-overwritten `finally` cleanup covers success, failure,
+  timeout, signal and cancellation.
+- [ ] Add repair-loop singleton and durable attempt cap (F1, nonblocking for relaunch). Acceptance: one owner
+  per subject and a durable cap prevent unbounded redispatch or temp creation.
+- [ ] Add disk budget and reserved headroom (F1, nonblocking for relaunch). Acceptance: repair and resident
+  paths preserve capacity above the hard floor.
+- [ ] Add the pre-model/tool capacity trip (F1, nonblocking for relaunch). Acceptance: every phase fails closed
+  before dispatch below the reserved threshold.
+- [ ] Add receipted workspace-preserving safe reclaim (F1, nonblocking for relaunch). Acceptance: reclaim is
+  bounded and proves every historical and active workspace byte-preserved.
+- [ ] Add a resident-only recovery surface (F1, nonblocking for relaunch). Acceptance: resident recovery has
+  no general repair-loop, notification, or canary-retry authority.
+- [ ] Close the independent `/whats-cooking` availability incident in F1.
+  At 11:42 Europe/Berlin the Discord resident was offline after the production
+  container exited on ENOSPC; restarts failed before Discord connect and no
+  resident event existed. The handler defers before status collection, so this
+  is not acknowledgement ordering. Attempt 14 began 27 minutes later without a
+  Discord token or resident; do not claim that the canary caused the outage.
+- [ ] Add resident-liveness supervision. Acceptance: an injected resident exit
+  is detected and recovered by one bounded safe restart with durable receipts.
+- [ ] Add capacity-triggered safe recovery. Acceptance: ENOSPC blocks restart
+  loops, performs bounded reclaim, and permits restart only after accepted
+  capacity proof.
+- [ ] Add interaction-availability monitoring. Acceptance: a synthetic Discord
+  interaction detects defer/response unavailability independently of status
+  collection.
+- [ ] Add one deduplicated outage alert. Acceptance: exactly one alert per outage
+  epoch across restart retries, plus a separate recovery transition.
 - [ ] Preserve the bounded retirement of the temporary clean B38 diagnostic
   checkout: O_EXCL intent/receipt digest prefixes `2568` / `533399`, exact B38
   commit/tree, size 128,547,498 bytes, and free-space transition
@@ -456,13 +703,18 @@ deliberately pending import; it is not permission to recreate a receipt.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B39 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B44 and A15/B15 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
   offline history, B27-B30 are terminal failed-live history, B31-B34 are
   diagnostic/rejected history, B35 is passing production-smoke history with
   terminal attempt-9 history, B38 has passing diagnostic/production smoke but
-  terminal failed live attempt 12, and B39 has terminal safely stopped
-  non-PROCEED attempt 13 pending A40 classification and every acceptance gate.
+  terminal failed live attempt 12, B39 is terminal safely stopped non-PROCEED
+  attempt-13 history, A40 is closed, B44 attempt 14 is immutable terminal
+  failed/misclassified history, A15/B15 attempt 15 is terminal infrastructure
+  failure, and B16 attempt 16 is terminal infrastructure-recovery PASSED with a
+  bounded second-ITERATE product non-PROCEED outcome. Attempt 16 is neither an
+  infrastructure failure nor a durable epic launch. Its F1/F2 follow-up tasks
+  do not block relaunch; future execution still requires fresh authority.
   No missing receipt may be synthesized.
 
 ## Exact deferred-obligation contract

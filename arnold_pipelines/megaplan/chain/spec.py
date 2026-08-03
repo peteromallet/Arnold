@@ -414,10 +414,11 @@ class LaunchPreconditionSpec:
             "chain_completed",
             "finite_canary_receipt",
             "git_tracked",
+            "stable_exit_receipt",
         }:
             raise CliError(
                 "invalid_spec",
-                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, `finite_canary_receipt`, or `git_tracked`; got {kind!r}",
+                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, `finite_canary_receipt`, `git_tracked`, or `stable_exit_receipt`; got {kind!r}",
             )
         chain = value.get("chain")
         path = value.get("path")
@@ -449,30 +450,30 @@ class LaunchPreconditionSpec:
                 require_manifest=require_manifest,
             )
 
-        if kind == "finite_canary_receipt":
+        if kind in {"finite_canary_receipt", "stable_exit_receipt"}:
             if chain is not None or value.get("text") is not None:
                 raise CliError(
                     "invalid_spec",
-                    f"launch_preconditions[{index}] finite_canary_receipt does not support `chain` or `text`",
+                    f"launch_preconditions[{index}] {kind} does not support `chain` or `text`",
                 )
             if not isinstance(path, str) or not path.strip():
                 raise CliError("invalid_spec", f"launch_preconditions[{index}].path is required")
             check = value.get("check")
-            if check not in (None, "finite_canary_receipt"):
+            if check not in (None, kind):
                 raise CliError(
                     "invalid_spec",
-                    f"launch_preconditions[{index}] finite_canary_receipt does not support check {check!r}",
+                    f"launch_preconditions[{index}] {kind} does not support check {check!r}",
                 )
             if "require_manifest" in value:
                 raise CliError(
                     "invalid_spec",
-                    f"launch_preconditions[{index}] finite_canary_receipt does not support `require_manifest`",
+                    f"launch_preconditions[{index}] {kind} does not support `require_manifest`",
                 )
             return cls(
                 name=name.strip(),
                 kind=kind,
                 path=path.strip(),
-                check="finite_canary_receipt",
+                check=kind,
             )
 
         if kind == "git_tracked":
@@ -3029,6 +3030,21 @@ def validate_launch_preconditions(spec: ChainSpec, root: Path, spec_path: Path) 
             )
 
             validate_finite_canary_receipt(
+                target,
+                root,
+                spec_path,
+                label=label,
+            )
+            continue
+        if precondition.kind == "stable_exit_receipt":
+            if precondition.path is None:
+                raise CliError("invalid_spec", f"{label} missing receipt path")
+            target = _resolve_launch_precondition_path(precondition.path, root)
+            from arnold_pipelines.megaplan.chain.finite_canary_receipt import (
+                validate_stable_exit_receipt,
+            )
+
+            validate_stable_exit_receipt(
                 target,
                 root,
                 spec_path,

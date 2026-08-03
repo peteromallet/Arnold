@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -728,7 +729,7 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
     lineage = custody.get("current_canary_lineage")
     if not isinstance(lineage, dict) or set(lineage) != {
         "schema", "status", "publication_gate", "generations",
-        "pending_decision",
+        "closed_decision",
         "official_reclaim_v2", "live_attempt_12", "capacity_disposition",
         "temporary_b38_diagnostic_checkout_retirement",
         "unresolved_operation_reconciliation",
@@ -750,9 +751,9 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
         ),
     ]
     if (
-        lineage.get("schema") != "arnold.critique_ledger.current_canary_lineage.v1"
+        lineage.get("schema") != "arnold.critique_ledger.current_canary_lineage.v2"
         or lineage.get("status")
-        != "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_PENDING_ALL_ACCEPTANCE_GATES_PENDING"
+        != "B39_ATTEMPT_13_IMMUTABLE_TERMINAL_SAFE_NONPROCEED_A40_CLOSED_B44_ATTEMPT_14_TERMINAL_FAILED_MISCLASSIFIED_A15_B15_ATTEMPT_15_TERMINAL_INFRASTRUCTURE_FAILURE_B16_ATTEMPT_16_INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED"
         or lineage.get("publication_gate") != {
             "generation": "A36/B36",
             "status": "TERMINAL_NO_GO",
@@ -822,18 +823,36 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
             "reconciliation": "TERMINAL_RECONCILED",
         }
         or b39.get("gates") != {
-            "offline": "PENDING", "independent": "PENDING",
-            "live": "PENDING", "stable_exit": "PENDING",
+            "offline": "OBSERVED_AT_TERMINATION_NOT_ACCEPTED",
+            "independent": "OBSERVED_AT_TERMINATION_NOT_ACCEPTED",
+            "live": "TERMINAL_NOT_ACCEPTED",
+            "stable_exit": "NOT_PRODUCED_TERMINAL_NONPROCEED",
         }
-        or lineage.get("pending_decision") != {
+        or lineage.get("closed_decision") != {
             "id": "A40",
-            "status": "PENDING_NO_AUTHORITY_EXPANSION",
-            "task": "TRUTHFULLY_CLASSIFY_SAFE_NONPROCEED_VS_BOUNDED_REVISE_OR_PRODUCT_PREREQUISITE",
-            "f0_bridge": "REQUIRED_EXPLICIT_HANDOFF_ADMISSION",
-            "constraints": [
-                "NO_LAUNCH", "NO_GATE_PROMOTION", "NO_FINALIZE_REPLAY",
-                "NO_RECEIPT_FABRICATION",
+            "status": "CLOSED_BOUNDED_TWO_ROUTE_RETRY_AUTHORIZED",
+            "initial_implementation": {
+                "commit": "a3fe53b67564bbacd7e7d07eea737d675d4d8233",
+                "tree": "61205a4b2644548e0c7f3a3acb574fde0e90a611",
+            },
+            "validator_correction": {
+                "commit": "cfab4da6877971f1517367387bd5584bb76a39e8",
+                "tree": "607e6a13b62e2d0b58f80bc6aeb5b4b6d5521282",
+            },
+            "root_causes": [
+                "STATIC_V2_ADMISSION", "LEGACY_STATUS_AND_PRIVILEGE_COMPATIBILITY",
+                "ITERATION_DRIFT_ENFORCEMENT", "VERSIONED_GATE_CUSTODY",
             ],
+            "authority": {
+                "routes": [
+                    ["init", "plan", "critique", "gate", "finalize"],
+                    ["init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize"],
+                ],
+                "max_revise_cycles": 1,
+                "max_gate_attempts": 2,
+                "finalize_requires": "PROCEED",
+            },
+            "f0_bridge": "PASS_BRANCH_ONLY_AFTER_EXACT_COMPLETION_AND_STABLE_EXIT_RECEIPTS",
         }
         or not isinstance(reclaim, dict)
         or reclaim.get("status") != "PASSED"
@@ -871,9 +890,640 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
             "rule": "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS",
         }
     ):
-        raise ContractError("A37-B39 current canary evidence drift")
-    if require_live:
-        raise ContractError("A40 decision and B39 offline, independent, live, and stable-exit gates are pending")
+        raise ContractError("immutable B39 history or closed A40 decision drift")
+def _validate_attempt_14_prelaunch(custody: dict[str, Any]) -> None:
+    attempt = custody.get("attempt_14_prelaunch")
+    if not isinstance(attempt, dict):
+        raise ContractError("attempt 14 prelaunch custody is missing")
+    exact_outcome = {
+        "status": "TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED",
+        "run_receipt": {
+            "receipt_digest": "59f0d1712bbd6f379d921f9662989a7a524b62e8509182041e08ba368e0abe0d",
+            "file_sha256": "23f260ba72c0785401d4749132491beeac1bd2cf7c61cc386c7b29e980ecb3c0",
+        },
+        "phases": ["init", "plan", "critique", "gate", "revise"],
+        "gate": {
+            "attempt": 1,
+            "recommendation": "ITERATE",
+            "state": "critiqued",
+            "sha256": "415fb3ffac618a196d2822f288d69d9457abd6f121615c1153e34fb7404e6545",
+        },
+        "revise": {
+            "returncode": 1,
+            "state": "critiqued",
+            "plan_iteration": 2,
+            "recorded_dispatch_ordinal": 4,
+            "worker_dispatched": False,
+            "blocking_action": {
+                "id": "NSA-7",
+                "action_type": "add_human_halt",
+                "severity": "blocking",
+                "question_id": "runtime-source-identity",
+            },
+        },
+        "runner": {
+            "terminal_state": "failed",
+            "failure": "RuntimeError:nonzero_returncode:1",
+            "dispatch_integrity": "partial",
+            "product_outcome": None,
+            "classification": "MISCLASSIFIED_PRODUCT_TERMINAL_AS_INFRASTRUCTURE_FAILURE",
+        },
+        "finalize": {"run": False},
+        "container": {
+            "id": "3c1ff85aea2ad1600f5e5d301e410815ce86fef9067ccab24bf7128e14f3e3af",
+            "stopped": True,
+            "exit_code": 143,
+            "oom_killed": False,
+            "restart_count": 0,
+        },
+        "workspace": {
+            "sealed": True,
+            "inode": 1324286,
+            "owner": "root",
+            "group": "root",
+            "mode": "0700",
+        },
+        "acceptance": "IMMUTABLE_HISTORY_NO_F0_AUTHORITY",
+    }
+    if (
+        attempt.get("schema") != "arnold.critique_ledger.attempt_14_prelaunch.v1"
+        or attempt.get("status") != "B44_EXACT_CANDIDATE_ATTEMPT_14_TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED"
+        or attempt.get("implementation") != {
+            "commit": "a15e87adea1fa78e90008422f42bc79ae60dff13",
+            "tree": "63a75d9333e3fa69c9a039846595d3dd4d3cc4b3",
+        }
+        or attempt.get("launch_manifest") != {
+            "id": "B44",
+            "commit": "006895e8d66812dec5e85d26b32635af21ca21c7",
+            "tree": "8d70cc79bc8f5a79a60be282bcc22122109c7f83",
+            "file_sha256": {
+                "canary.yaml": "f61ed133dbe4299d01c4ab4753fdac3e20a26f509d16a916aac968d46a68e821",
+                "cloud.yaml": "daa5224ba663c4f63e9234afcea32d58155370ffade073a08de1059231cf7b23",
+                "proof-map.json": "62ea3c987f9aa688df5ed488f92b5ca94424a986c0d094008fc067fc0fb0ba1c",
+                "traceability.json": "e190876881ae83f05ff8c052eda8c612f5a167e9b957059a70fb44425809c3cf",
+            },
+        }
+        or attempt.get("production_image_id") != "sha256:209a64de1f321b5ec49e8d6e6748187f790099a6fe8a68696352a5488bc7ffa6"
+        or attempt.get("execution_identity") != {
+            "attempt": 14,
+            "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-14-20260803",
+            "container": "megaplan-cloud-agent-finite-canary-14",
+        }
+        or attempt.get("outcome") != exact_outcome
+    ):
+        raise ContractError("attempt 14 B44 identity or immutable outcome drift")
+    policy = {
+        "routes": [
+            ["init", "plan", "critique", "gate", "finalize"],
+            ["init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize"],
+        ],
+        "max_revise_cycles": 1,
+        "max_gate_attempts": 2,
+        "finalize_requires": "PROCEED",
+    }
+    if attempt.get("policy") != policy:
+        raise ContractError("attempt 14 bounded policy drift")
+    rows = attempt.get("diagnostic_smokes")
+    expected = [
+        ("r1", "8c066722813cf5a9c3d9841ae5e117eeba1abe03967d62e8dfcf5ba0d4681b8b", "9b948d3c57bca531bcdbe39eec321a8a5322b7170c95f9cde3a978749e740ea5", "FAILED_EXIT_1"),
+        ("r2", "9937b77ae1b2ee2d9457ecd838fe7306974b747dc366d173ca9aa07e35785437", "91a3409f6caa6a540685a57908a7045dffbd6a27283a0987ab8bce167d30df8d", "FAILED_EXIT_1"),
+        ("r3", "ec92967021d8bbedb88eb9207dfabfa6fbd5ec1fd7024b0eff786575594bfcab", "aa38e64cec0751d2262f1b4895bdb07874061b0dc8729b495981a864a484ad78", "FAILED_EXIT_1"),
+        ("r4", "30b0326db26be4e07a369f3f160eafede47d0154e29b4cfcfd7c24645e5b9ef2", "c1702e7d4b703dd25b526e1675eeefea14a820ac18795f56e994eac68184c546", "FAILED_EXIT_1"),
+        ("r5", "dcf0bde1ba2964429d6d9b548c6dc9308774d4aca4ecf74afc9348514ace8a22", "0133f70e870b9120182c32f90630377efdb7c08d7e8991b654ca36250d83c843", "FAILED_EXIT_1"),
+        ("r6", "33d50d935ff7fd5563dc955c8e225af5af11d3986a8e526a5209ba791900970c", "630882727cd432ff8dfa3638e3153a7e7c3db685ce91e5d10f816367f74c7f08", "PASSED_EXIT_0_REVISED_ROUTE_8_PHASES_7_PRIVILEGE_RECEIPTS"),
+    ]
+    if not isinstance(rows, list) or [
+        (row.get("id"), row.get("file_sha256"), row.get("receipt_digest"), row.get("status"))
+        for row in rows if isinstance(row, dict)
+    ] != expected:
+        raise ContractError("diagnostic r1-r6 custody drift")
+    source_bindings = [
+        ("r1", "ecec2410c20ccb400cf2063ae91c0b383f3c2395", "99e433be5481cfe9b7edd47546e5dadfbda763c0", "/var/lib/arnold-zero-recovery/critique-ledger-b40-diagnostic-offline-smoke.json"),
+        ("r2", "ecec2410c20ccb400cf2063ae91c0b383f3c2395", "99e433be5481cfe9b7edd47546e5dadfbda763c0", "/var/lib/arnold-zero-recovery/critique-ledger-b40-diagnostic-offline-smoke-r2.json"),
+        ("r3", "be0c3f14fce049ee30d0845d2b64354c1d3f8063", "d0ac3d27c6aa0a086fe9ddd280dd9ea17ab28c09", "/var/lib/arnold-zero-recovery/critique-ledger-b41-diagnostic-offline-smoke-r3.json"),
+        ("r4", "edfc5a5a7bc5743c0d3a8115b320429a79c1f812", "77286b9b537edd2cc374e8a96c66d1dfbeb29909", "/var/lib/arnold-zero-recovery/critique-ledger-b42-diagnostic-offline-smoke-r4.json"),
+        ("r5", "d2551caedaa4e784345c6c771bd2e148c417fc59", "882488f85fbf0fc5f8ff8a3b531e1ca460467ad2", "/var/lib/arnold-zero-recovery/critique-ledger-b43-diagnostic-offline-smoke-r5.json"),
+        ("r6", "006895e8d66812dec5e85d26b32635af21ca21c7", "8d70cc79bc8f5a79a60be282bcc22122109c7f83", "/var/lib/arnold-zero-recovery/critique-ledger-b44-diagnostic-offline-smoke-r6.json"),
+    ]
+    if [(row["id"], row["source_commit"], row["source_tree"], row["path"]) for row in rows] != source_bindings:
+        raise ContractError("diagnostic r1-r6 source binding drift")
+    verifier_receipts = [
+        ("r2", "50489c2d2146a72eb16e08a63d7629b0e4e2d27924eeb9aa436cae4e81b0c305", "9fe4e8b971402ac2819852ceb6df098905a521a0228c51bf8ea3a79447a19388"),
+        ("r3", "631e6020a25c65caef189eef604e8af855954b8ed9105853756223d9becaa3ab", "df5658abf81342191c44b8435c7d061ee5d7ff57c4e17280dbbeda5dd6f1cb26"),
+        ("r4", "77e1cc8454d3b51b36c6f39aead573ce5c1b56c939884066af8ca36e74c5453f", "57d946804ae69656d0f93e9cd96b3e19737f3f82b4852cebb3641a019d519187"),
+        ("r5", "791b3942723346ffb2df146d6412f7e63b99fb729bf637525d022b0307d53dee", "4b4fb2545c5fee54c4b5d738f03483edc7446fc1442c5c75e97e3091b31973f5"),
+    ]
+    if [(row["id"], row["verifier_run_receipt_file_sha256"], row["verifier_run_receipt_digest"]) for row in rows[1:5]] != verifier_receipts:
+        raise ContractError("diagnostic r2-r5 verifier receipt drift")
+    if rows[5].get("verifier_run_receipt_file_sha256") != "d85831ced32d04f5c9dcc0f83b47836919188385e1ee154c534275eb7356461d":
+        raise ContractError("diagnostic r6 verifier run receipt drift")
+    smoke = attempt.get("production_smoke")
+    if not isinstance(smoke, dict) or smoke != {
+        "path": "/var/lib/arnold-zero-recovery/critique-ledger-b44-production-offline-smoke.json",
+        "file_sha256": "68574193e948de6e88a1e31dabb000a922133db9f2013357e474ab4d396ab03b",
+        "receipt_digest": "9480c5b95db9848668bfc9331611648619110360535e303ba4a341cf243a9b6e",
+        "image_id": "sha256:209a64de1f321b5ec49e8d6e6748187f790099a6fe8a68696352a5488bc7ffa6",
+        "derived_image_id": "sha256:7a9b4c1dc68a34a8890b9ebbf0b898e4bee08fdfa2e2aa16f570d5cd19bbb9bc",
+        "verifier_receipt_digest": "c2ea7d29b7d9c0bdbc67039bb6e1ee0a13d1628d38d167fa72cecf09b22cd40b",
+        "verifier_run_receipt_file_sha256": "2742dcc332b86d1b398ca3a7d9dc4b0c860b225a0f439946f9e606f78d1054ae",
+        "status": "PASSED_EXIT_0_REVISED_ROUTE_8_PHASES_7_PRIVILEGE_RECEIPTS",
+    }:
+        raise ContractError("B44 production smoke custody drift")
+
+
+def _validate_attempt_15_prelaunch(custody: dict[str, Any]) -> None:
+    attempt = custody.get("attempt_15_prelaunch")
+    if not isinstance(attempt, dict):
+        raise ContractError("attempt 15 prelaunch custody is missing")
+    if attempt != {
+        "schema": "arnold.critique_ledger.attempt_15_prelaunch.v1",
+        "status": "A15_B15_ATTEMPT_15_TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+        "implementation": {
+            "id": "A15",
+            "commit": "8932873ba1c81d398cf42fb9879605d14d50cbb4",
+            "tree": "7fdcf11dba38354645290314443c1de3c8b33bbb",
+        },
+        "launch_manifest": {
+            "id": "B15",
+            "commit": "4f021cb70f3202dd90d599f8d710b626ba27b16b",
+            "tree": "3777df403e9ae06cba75cf6fb6ac3b804f808723",
+            "file_sha256": {
+                "canary.yaml": "f692b74aaabbce83746d009925bfa86a997b10c117f12370749fd1785291a316",
+                "cloud.yaml": "13600d258f3718a160ff6d5373c32cc9d439242a41a7c5adb8a9c7944b527fed",
+                "proof-map.json": "8d2ce59ef494bf6a027edfe1da751b16a3b541b64738aeb29e4ee8d44058bca2",
+                "traceability.json": "c891718f4444a244fa3afe5d129659e9c6b4a50a7fcbc5f78380e0ed0753a61b",
+            },
+        },
+        "production_image_id": "sha256:ea1e66940e7445649b083b8d7acc896080526011f9bfc4a9e21b475046e1814a",
+        "execution_identity": {
+            "attempt": 15,
+            "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-15-20260803",
+            "container": "megaplan-cloud-agent-finite-canary-15",
+        },
+        "root_fixes": [
+            "CLEAN_COMMITTED_SOURCE_COMMIT_AND_TREE_SETTLED_FOR_FINALIZE_DIRECT_EXECUTE_BATCH_EXECUTE_AND_HANDOFF",
+            "TYPED_REVISE_PHASE_RESULT_WITH_FRESH_INVOCATION_IDENTITY",
+            "PRODUCT_REVISE_BLOCKED_CLASSIFICATION_FOR_HUMAN_HALT_AND_UNRESOLVED_BLOCKING",
+            "EXACT_REVISE_DISPATCH_ORDINAL_4_VALIDATION_ONLY_WHEN_REVISE_WORKER_DISPATCHED",
+        ],
+        "terminal_observation": {
+            "completed_at": "2026-08-03T11:00:12.627961Z",
+            "container_id": "6f80cd29f7ba13c50bbc4b77bbaea6df7f7ceaf261b0972571984bfba840f6f2",
+            "container_state": "exited",
+            "container_exit_code": 143,
+            "container_oom_killed": False,
+            "container_restart_count": 0,
+            "workspace_inode": 1680645,
+            "workspace_owner": "root",
+            "workspace_group": "root",
+            "workspace_mode": "0700",
+            "workspace_sealed": True,
+        },
+        "outcome": {
+            "status": "TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+            "run_receipt": {
+                "receipt_digest": "59bc8d659ca8ec59baa9da9051fcd7320199e6ffea12a97d3b7018694b266331",
+                "file_sha256": "10eb82a07ca0829b585c4316413b76851665ac9b90ef93e051f94626f91a182a",
+            },
+            "completed_at": "2026-08-03T11:00:12.627961Z",
+            "phases": ["init", "plan", "critique"],
+            "plan": {
+                "model": "codex:gpt-5.6-sol:high",
+                "dispatch_ordinal": 1,
+                "returncode": 0,
+                "state": "planned",
+                "worker_result": "returned",
+            },
+            "critique": {
+                "model": "codex:gpt-5.6-sol:high",
+                "dispatch_ordinal": 2,
+                "worker_dispatch": "RETURNED_NORMALLY_WITH_WORKER_OUTPUT",
+                "code_mode_host": "REPEATED_SIGTRAP_AND_CLOSED_STDOUT",
+                "effect": "COULD_NOT_INSPECT_OR_UPDATE_TEMPLATE",
+                "returncode": 1,
+                "state": "planned",
+            },
+            "not_run": ["gate", "revise", "finalize"],
+            "runner": {
+                "status": "failed",
+                "terminal_state": "failed",
+                "failure": "RuntimeError:nonzero_returncode:1",
+                "failure_phase": "critique",
+                "dispatch_integrity": "partial",
+                "dispatch_ledger_sha256": "222abc464f60acf7b14689fcfef4ca8649a7746d80e3d09a600caf89988d7ded",
+                "product_outcome": None,
+            },
+            "acceptance": "INFRASTRUCTURE_FAILURE_NO_F0_AUTHORITY",
+            "retry": "ONLY_AFTER_CAPACITY_ROOT_CLEANUP_AND_NEW_EXPLICIT_AUTHORITY",
+        },
+    }:
+        raise ContractError("attempt 15 A15/B15 identity or immutable infrastructure outcome drift")
+
+
+def _validate_attempt_16_terminal(custody: dict[str, Any]) -> None:
+    attempt = custody.get("attempt_16_terminal")
+    if attempt != {
+        "schema": "arnold.critique_ledger.attempt_16_terminal.v1",
+        "status": "INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED_NOT_DURABLE_EPIC_LAUNCH",
+        "source": {
+            "id": "B16",
+            "commit": "fb5a394878bc900b189213a3de5dcc40169d8b7b",
+            "tree": "a8f903a94e5029fa50c148df3289186dc4c39caf",
+        },
+        "outer_status": "available",
+        "run_receipt": {
+            "schema": "arnold.megaplan.finite_canary_run_receipt.v3",
+            "status": "passed",
+            "terminal_state": "product_gate_not_proceed",
+            "product_outcome": {
+                "kind": "product_gate_not_proceed",
+                "recommendation": "ITERATE",
+                "gate_attempt": 2,
+            },
+            "phases": ["init", "plan", "critique", "gate", "revise", "critique", "gate"],
+            "phase_returncodes": [0, 0, 0, 0, 0, 0, 0],
+            "dispatch_integrity": "complete",
+            "failure": None,
+            "gate_attempts": [
+                {"attempt": 1, "recommendation": "ITERATE"},
+                {
+                    "attempt": 2,
+                    "recommendation": "ITERATE",
+                    "gate_sha256": "b8d6dcf366b04bde245890e1cb224c191f202101cb53dbb3fa59ca721c05d546",
+                },
+            ],
+            "receipt_digest": "3a9925dbfcc0c901905db0265b48c062f051b16bdbb31b9f873c5e086eac08c0",
+            "file_sha256": "1b4e1d013f444b3f3f2c3af1bb4938002e730f727a0be39834a2ca235fa592ba",
+            "state_sha256": "4ef979066dfb3c822625de21ec52e95c7d25a42f185ea01970865d4b4116e525",
+        },
+        "terminal_observation": {
+            "container_id": "0552d39f4589239cb0b8e10b68b12c8ebab3a0e2fde6284049e1e466f0896ba6",
+            "container_state": "stopped",
+            "container_exit_code": 143,
+            "container_oom_killed": False,
+            "container_restart_count": 0,
+            "reconciled_stop": True,
+            "workspace_sealed": True,
+        },
+        "classification": {
+            "infrastructure_recovery_proof": "PASSED",
+            "product_decision": "BOUNDED_SECOND_ITERATE_NOT_PROCEED",
+            "infrastructure_failure": False,
+            "durable_epic_launch": False,
+            "relaunch_disposition": "REMAINING_PRODUCT_AND_SYSTEMIC_HARDENING_DEFERRED_TO_FOLLOW_UP_NONBLOCKING",
+        },
+        "follow_up_tasks": [
+            {
+                "id": "attempt-16-product-gate-iterate-hardening",
+                "owner_milestone": "f2-admission-model-effect-release-closure",
+                "status": "DEFERRED_POST_RELAUNCH_NONBLOCKING",
+                "acceptance": "PRESERVE_BOTH_ITERATE_GATE_RESULTS_AND_RESOLVE_THEIR_PRODUCT_ACTIONS_BEFORE_ANY_FUTURE_PROCEED_CLAIM",
+            },
+            {
+                "id": "attempt-16-broader-systemic-hardening",
+                "owner_milestone": "f1-owner-storage-recovery-hardening",
+                "status": "DEFERRED_POST_RELAUNCH_NONBLOCKING",
+                "acceptance": "COMPLETE_THE_EXISTING_STORAGE_RESIDENT_NOTIFICATION_AND_RECOVERY_TASKS_WITHOUT_RECLASSIFYING_ATTEMPT_16_OR_BLOCKING_RELAUNCH",
+            },
+        ],
+    }:
+        raise ContractError("attempt 16 exact terminal infrastructure-recovery proof drift")
+
+
+def _validate_v3_relaunch_precursor(custody: dict[str, Any]) -> None:
+    precursor = custody.get("v3_relaunch_precursor")
+    if precursor != {
+        "schema": "arnold.critique_ledger.v3_relaunch_precursor.v1",
+        "status": "CONTAINED_ACTIVE_RUNTIME_BINDING_BLOCKER_NOT_DURABLE_LAUNCH",
+        "identity": {
+            "session": "critique-ledger-accountability-v3-20260803",
+            "workspace": "/workspace/critique-ledger-accountability-v3-20260803/Arnold",
+            "spec": "/workspace/critique-ledger-accountability-v3-20260803/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+            "initiative_revision": "0bb0c0b74e6b1913d39b51f33559b2f5127f1886",
+            "isolated_runtime_revision": "a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+        },
+        "bootstrap_pin": {
+            "status": "RESOLVED_BY_FULL_SHA_REPIN_AND_FRESH_RETRY",
+            "rejected_value": "0bb0c0b74e",
+            "rejected_reason": "intended_initiative_revision_unpinned",
+            "rejected_before_init": True,
+            "accepted_value": "0bb0c0b74e6b1913d39b51f33559b2f5127f1886",
+            "retry_cloud_chain_exit_code": 0,
+            "retry_session_alive": True,
+            "retry_advanced_past_init": True,
+            "retry_plan": "cl2-wbc-backed-ledger-20260803-1313",
+            "retry_plan_state": "initialized",
+        },
+        "runtime_binding_observation": {
+            "editable_root": "/workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+            "editable_revision": "a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+            "import_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "source_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "classification": "HARD_NO_GO_SPLIT_RUNTIME_TUPLE",
+            "cause": "CLOUD_HOT_ENV_ORDERING_OVERRODE_THE_VERIFIED_PINNED_RUNTIME_IMPORT_SOURCE_AFTER_EDITABLE_BINDING",
+            "trusted_execution": False,
+        },
+        "containment": {
+            "action": "REDEPLOY_SAME_ISOLATED_COLLECTOR_TO_STOP_UNTRUSTED_RUN",
+            "result": "SUCCEEDED",
+            "durable_epic_launch": False,
+            "resume_or_reuse_authority": "NONE",
+        },
+        "durable_relaunch_acceptance": {
+            "requires": [
+                "FULL_40_HEX_INITIATIVE_REVISION_PIN",
+                "CLOUD_CHAIN_EXIT_ZERO",
+                "SESSION_ALIVE",
+                "ADVANCED_PAST_INIT",
+                "EDITABLE_ROOT_EQUALS_IMPORT_ROOT",
+                "EDITABLE_REVISION_EQUALS_SOURCE_REVISION",
+                "IMPORT_ROOT_EQUALS_CONFIGURED_PINNED_RUNTIME_ROOT",
+                "SOURCE_REVISION_EQUALS_CONFIGURED_PINNED_RUNTIME_REVISION",
+                "POST_LAUNCH_STABILITY_OBSERVATION_PASSES",
+            ],
+            "forbids": [
+                "SUCCESS_FROM_EXIT_CODE_ALONE",
+                "SUCCESS_FROM_ALIVE_OR_ADVANCED_ALONE",
+                "SPLIT_EDITABLE_AND_IMPORT_RUNTIME_TUPLE",
+                "REUSE_OF_THE_INITIALIZED_UNTRUSTED_PLAN",
+            ],
+            "current_result": "NOT_ACCEPTED_RELAUNCH_BLOCKED_PENDING_FRESH_MATCHED_RUNTIME_RETRY",
+        },
+        "evidence": [
+            {
+                "operator_local_path": "/private/tmp/critique-v3-launch2.out",
+                "sha256": "417e90bb0e0acc1e7379631e546ae35a22c2575f2aacec59d4407ee539895670",
+                "proves": "SHORT_PIN_REJECTED_BEFORE_INIT",
+            },
+            {
+                "operator_local_path": "/private/tmp/critique-v3-launch3.out",
+                "sha256": "16fe3246fd9adcc502be38b8291216db0b1d1530eacfa5dc019cd5971340adc9",
+                "proves": "FULL_SHA_RETRY_EXIT_ZERO_ALIVE_AND_ADVANCED",
+            },
+            {
+                "operator_local_path": "/private/tmp/critique-v3-status-after.json",
+                "sha256": "96959af534d7ed4aaab8e07edffd10531a262ef8550fa1282d1568bcf323d1b9",
+                "proves": "INITIALIZED_PLAN_AND_SPLIT_RUNTIME_TUPLE",
+            },
+            {
+                "operator_local_path": "/private/tmp/critique-v3-redeploy-stop.json",
+                "sha256": "146c86dfd7039a67cc28e666348d5274722d5dc9e711755587a2cf9721c95613",
+                "proves": "CONTAINMENT_REDEPLOY_SUCCEEDED",
+            },
+        ],
+        "ownership": {
+            "phase": "T6.2_PRE_F0_DURABLE_RELAUNCH_PRECURSOR",
+            "f1_f2_deferred_obligations_changed": False,
+            "rule": "FIX_AND_PROVE_A_FRESH_MATCHED_RUNTIME_RETRY_BEFORE_F0_ADMISSION",
+        },
+    }:
+        raise ContractError("v3 relaunch precursor or matched-runtime acceptance drift")
+
+
+def _validate_attempt_14_outcome_and_runtime_contract(custody: dict[str, Any]) -> None:
+    tasks = custody.get("prelaunch_contract_tasks")
+    if tasks != [{
+        "id": "custody-v3-to-v4-semantic-migration",
+        "status": "REQUIRED_BEFORE_FOLLOW_UP_LAUNCH",
+        "source_schema": "arnold.critique_ledger.unfinished_work_custody.v3",
+        "target_schema": "arnold.critique_ledger.unfinished_work_custody.v4",
+        "scope": ["completion_receipt_producer", "finite_canary_receipt_validator", "stable_exit_receipt_validator", "fresh_clone_reconstruction"],
+        "acceptance": "ALL_PRODUCERS_AND_VALIDATORS_BIND_V4_AND_REJECT_V3_WITH_REGRESSION_TESTS",
+        "completion_evidence": None,
+    }]:
+        raise ContractError("custody v3-to-v4 migration task drift")
+    outcome = custody.get("attempt_14_outcome_contract")
+    if (
+        not isinstance(outcome, dict)
+        or outcome.get("status") != "TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED"
+        or outcome.get("actual_branch") != "terminal_nonproceed"
+    ):
+        raise ContractError("attempt 14 immutable outcome contract drift")
+    passed = outcome.get("pass")
+    terminal = outcome.get("terminal_nonproceed")
+    if (
+        not isinstance(passed, dict)
+        or passed.get("f0_disposition") != "ELIGIBLE_AFTER_INDEPENDENT_CONTENT_ADDRESSED_VERIFICATION"
+        or passed.get("requires") != ["FINALIZED", "EXACT_B44_SOURCE_TREE_IMAGE", "SUCCESSOR_STOPPED", "RUNTIME_ABSENCE", "STABLE_EXIT_RECEIPT", "PUSHED_CUSTODY", "FRESH_CLONE_RECONSTRUCTION"]
+        or not isinstance(terminal, dict)
+        or terminal.get("receipt") != "DISTINCT_TERMINAL_NONPROCEED_EXIT_AND_CUSTODY_RECEIPT"
+        or terminal.get("later_attempt") != "ATTEMPT_15_HAS_NEW_EXPLICIT_A15_B15_AUTHORITY"
+        or "F0_AUTHORITY" not in terminal.get("forbids", [])
+    ):
+        raise ContractError("attempt 14 PASS versus terminal non-PROCEED branch drift")
+    successor = custody.get("attempt_15_outcome_contract")
+    if successor != {
+        "status": "TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+        "actual_branch": "infrastructure_failure",
+        "infrastructure_failure": {
+            "requires": [
+                "EXACT_EXECUTED_PREFIX", "EXACT_RECEIPT", "TERMINAL_STOP",
+                "SEALED_WORKSPACE", "CAPACITY_ROOT_CAUSE_CUSTODY",
+            ],
+            "forbids": [
+                "SUCCESS_COMPLETION_RECEIPT", "FINALIZED",
+                "STABLE_EXIT_ACCEPTANCE", "ACCEPTED_SUCCESSOR",
+                "RUNNABLE_REF", "F0_AUTHORITY", "RETRY_AUTHORITY",
+            ],
+            "retry": "ONLY_AFTER_CAPACITY_ROOT_CLEANUP_AND_NEW_EXPLICIT_AUTHORITY",
+            "successor_authority": "NONE",
+        },
+    }:
+        raise ContractError("attempt 15 infrastructure failure contract drift")
+    recovery = custody.get("attempt_16_outcome_contract")
+    if recovery != {
+        "status": "INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED",
+        "actual_branch": "product_gate_not_proceed",
+        "requires": [
+            "EXACT_V3_RECEIPT", "SEVEN_ZERO_RETURN_PHASES",
+            "TWO_ITERATE_GATE_ATTEMPTS", "COMPLETE_DISPATCH_INTEGRITY",
+            "RECONCILED_TERMINAL_STOP", "SEALED_WORKSPACE",
+        ],
+        "forbids": [
+            "INFRASTRUCTURE_FAILURE_CLASSIFICATION", "PRODUCT_PROCEED_CLAIM",
+            "FINALIZED_CLAIM", "DURABLE_EPIC_LAUNCH_CLAIM",
+        ],
+        "relaunch": "NOT_BLOCKED_BY_DEFERRED_PRODUCT_OR_BROADER_SYSTEMIC_HARDENING",
+        "future_execution": "REQUIRES_FRESH_EXPLICIT_AUTHORITY",
+    }:
+        raise ContractError("attempt 16 product non-PROCEED outcome contract drift")
+    runtime = custody.get("validator_runtime_binding")
+    if runtime != {
+        "required_command": "PYTHONPATH=. python .megaplan/initiatives/critique-ledger-post-relaunch-completion/validate_contract.py",
+        "repository_root": ".",
+        "imported_module": "arnold_pipelines.megaplan.chain.spec",
+        "expected_relative_path": "arnold_pipelines/megaplan/chain/spec.py",
+        "foreign_worktree_import": "HARD_NO_GO",
+    }:
+        raise ContractError("validator runtime binding drift")
+    imported = Path(load_spec.__code__.co_filename).resolve()
+    expected_import = (ROOT / runtime["expected_relative_path"]).resolve()
+    if Path.cwd().resolve() != ROOT or os.environ.get("PYTHONPATH") != "." or imported != expected_import:
+        raise ContractError("validator must run from this repository with PYTHONPATH=.; foreign import root rejected")
+    availability = custody.get("resident_availability_follow_up")
+    if not isinstance(availability, dict) or availability.get("observation") != {
+        "interaction": "/whats-cooking",
+        "observed_local_time": "2026-08-03T11:42:00+02:00",
+        "failure": "DISCORD_RESIDENT_OFFLINE",
+        "production_container": "EXITED_ENOSPC",
+        "restart_attempts": "FAILED_BEFORE_DISCORD_CONNECT",
+        "resident_event_at_observation": False,
+        "handler_ordering": "INTERACTION_DEFER_PRECEDES_STATUS_COLLECTION",
+        "ack_ordering_ruled_out": True,
+        "attempt_14_started_minutes_later": 27,
+        "attempt_14_discord_token_present": False,
+        "attempt_14_resident_present": False,
+        "causal_attribution_to_canary": "NOT_ESTABLISHED_AND_MUST_NOT_BE_CLAIMED",
+    }:
+        raise ContractError("resident availability incident fact drift")
+    tasks = availability.get("tasks")
+    expected_tasks = [
+        (
+            "resident-liveness-supervision",
+            "INJECTED_RESIDENT_EXIT_IS_DETECTED_AND_RECOVERED_THROUGH_ONE_BOUNDED_SAFE_RESTART_WITH_RECEIPTS",
+        ),
+        (
+            "capacity-triggered-safe-recovery",
+            "ENOSPC_BLOCKS_RESTART_LOOP_PERFORMS_BOUNDED_RECLAIM_AND_RESTARTS_ONLY_AFTER_ACCEPTED_CAPACITY_PROOF",
+        ),
+        (
+            "interaction-availability-monitoring",
+            "SYNTHETIC_DISCORD_INTERACTION_DETECTS_DEFER_OR_RESPONSE_UNAVAILABILITY_INDEPENDENTLY_OF_STATUS_COLLECTION",
+        ),
+        (
+            "deduplicated-outage-alert",
+            "DURABLE_INCIDENT_KEY_DEDUPE_EMITS_EXACTLY_ONE_TERMINAL_MANUAL_REVIEW_ALERT_PER_INCIDENT_ACROSS_WATCHDOG_RETRIES_WITH_A_SEPARATE_RECOVERY_TRANSITION",
+        ),
+    ]
+    if (
+        availability.get("schema") != "arnold.critique_ledger.resident_availability_follow_up.v1"
+        or not isinstance(tasks, list)
+        or [
+            (row.get("id"), row.get("acceptance"))
+            for row in tasks
+            if isinstance(row, dict)
+        ] != expected_tasks
+        or any(row.get("owner_milestone") != "f1-owner-storage-recovery-hardening" for row in tasks)
+    ):
+        raise ContractError("resident availability follow-up task drift")
+
+
+def _validate_storage_root_cause_follow_up(custody: dict[str, Any]) -> None:
+    storage = custody.get("storage_root_cause_follow_up")
+    if not isinstance(storage, dict):
+        raise ContractError("storage root-cause follow-up missing")
+    if (
+        storage.get("schema") != "arnold.critique_ledger.storage_root_cause_follow_up.v1"
+        or storage.get("status") != "MAJOR_ROOT_CAUSE_CONFIRMED_RETRY_BLOCKED"
+        or storage.get("post_attempt_15_capacity") != {
+            "free_bytes": 1484693504,
+            "hard_floor_bytes": 1611661312,
+            "shortfall_bytes": 126967808,
+            "admission": "FAILED_BELOW_HARD_FLOOR",
+        }
+        or storage.get("read_only_inventory") != {
+            "subject": "PRESERVED_PRODUCTION_PREDECESSOR_WRITABLE_SNAPSHOT_AND_CONTAINER",
+            "total_size_approx_gb": "389.927",
+            "tmp_size_approx_gb": "388.813",
+            "tmp_pattern": "arnold-repair-loop.*",
+            "typical_file_size_bytes": 395629,
+            "progress_auditor_recursive_copy_count": 1156578,
+            "progress_auditor_recursive_logical_bytes": 387889659906,
+            "mutation_performed": False,
+        }
+        or storage.get("root_cause") != {
+            "finding": "PROGRESS_AUDITOR_INSTALLED_SOURCE_SNAPSHOT_RECURSION",
+            "mechanism": [
+                "INSTALLED_SOURCE_TRAMPOLINE_PRECEDES_SNAPSHOT_GUARD",
+                "SNAPSHOT_EXECS_SOURCE",
+                "SOURCE_SEES_ACTIVE_PATH_MISMATCH_AND_CREATES_ANOTHER_SNAPSHOT",
+                "LATER_CLEANUP_TRAP_IS_OVERWRITTEN",
+            ],
+            "consequences": [
+                "HOST_ENOSPC", "DISCORD_RESIDENT_OUTAGE",
+                "LIKELY_ATTEMPT_15_CODE_MODE_HOST_INSTABILITY",
+            ],
+            "certainty": {
+                "auditor_recursion_to_disk_exhaustion_and_resident_crash": "CONFIRMED",
+                "auditor_recursion_to_attempt_15_sigtrap_closed_stdout": "LIKELY_NOT_PROVEN_EXCLUSIVE",
+            },
+        }
+        or storage.get("notification_watchdog_incident") != {
+            "finding": "TERMINAL_MANUAL_REVIEW_INCIDENT_REEMITTED_WITHOUT_DURABLE_INCIDENT_KEY_DEDUPE",
+            "owner": "NOTIFICATION_WATCHDOG_PATH",
+            "repeated_discord_messages": True,
+            "progress_auditor_sent_messages": False,
+        }
+        or storage.get("diagnostic_fixer") != {
+            "launch": "FAILED",
+            "failure": "PROVENANCE_VALIDATION_FAILED",
+            "independent_of_notification_reemission": True,
+        }
+        or storage.get("safe_reclaim_receipt") != {
+            "container_id": "277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab",
+            "deleted_count": 1156578,
+            "deleted_logical_bytes": 387889659906,
+            "remaining_count": 0,
+            "free_bytes_after": 390136713216,
+            "predecessor_preserved": True,
+            "workspace_preserved": True,
+        }
+        or storage.get("retry_gate") != {
+            "status": "INFRASTRUCTURE_RECOVERY_PROVEN_REMAINING_HARDENING_NONBLOCKING",
+            "satisfied": [
+                "RECEIPTED_SAFE_RECLAIM_PRESERVING_ALL_WORKSPACES",
+                "FREE_BYTES_AT_OR_ABOVE_RESERVED_HARD_FLOOR",
+                "FRESH_EXPLICIT_ATTEMPT_16_AUTHORITY",
+                "ATTEMPT_16_INFRASTRUCTURE_RECOVERY_PROOF_PASSED",
+            ],
+            "deferred_nonblocking_follow_up": [
+                "PRODUCT_GATE_ITERATE_HARDENING",
+                "BROADER_STORAGE_RESIDENT_NOTIFICATION_AND_RECOVERY_HARDENING",
+            ],
+        }
+    ):
+        raise ContractError("attempt 15 capacity or storage root-cause custody drift")
+    tasks = storage.get("permanent_tasks")
+    expected_tasks = [
+        (
+            "bounded-repair-temp-lifecycle",
+            "INSTALLED_SOURCE_TRAMPOLINE_CHECKS_THE_SNAPSHOT_GUARD_BEFORE_EXEC_AND_EVERY_SNAPSHOT_HAS_FINALLY_CLEANUP_ON_SUCCESS_FAILURE_TIMEOUT_SIGNAL_AND_CANCELLATION_WITH_NO_OVERWRITTEN_TRAP",
+        ),
+        (
+            "repair-loop-singleton-attempt-cap",
+            "ONE_REPAIR_LOOP_OWNER_PER_SUBJECT_AND_A_DURABLE_ATTEMPT_CAP_PREVENT_UNBOUNDED_REDISPATCH_OR_TEMP_CREATION",
+        ),
+        (
+            "disk-budget-reserved-headroom",
+            "REPAIR_AND_RESIDENT_PATHS_ENFORCE_A_DISK_BUDGET_AND_PRESERVE_RESERVED_HEADROOM_ABOVE_THE_HARD_FLOOR",
+        ),
+        (
+            "pre-model-tool-capacity-trip",
+            "EVERY_MODEL_OR_TOOL_PHASE_TRIPS_FAIL_CLOSED_BEFORE_DISPATCH_WHEN_CAPACITY_IS_BELOW_THE_RESERVED_THRESHOLD",
+        ),
+        (
+            "receipted-workspace-preserving-safe-reclaim",
+            "SAFE_RECLAIM_IS_BOUNDED_RECEIPTED_AND_PROVES_ALL_HISTORICAL_AND_ACTIVE_WORKSPACES_ARE_PRESERVED_BYTE_FOR_BYTE",
+        ),
+        (
+            "resident-only-recovery-surface",
+            "RESIDENT_RECOVERY_USES_A_DEDICATED_BOUNDED_SURFACE_WITH_NO_GENERAL_REPAIR_LOOP_NOTIFICATION_OR_CANARY_RETRY_AUTHORITY",
+        ),
+    ]
+    if (
+        not isinstance(tasks, list)
+        or [
+            (task.get("id"), task.get("acceptance"))
+            for task in tasks
+            if isinstance(task, dict)
+        ] != expected_tasks
+        or any(
+            task.get("owner_milestone") != "f1-owner-storage-recovery-hardening"
+            for task in tasks
+            if isinstance(task, dict)
+        )
+    ):
+        raise ContractError("storage root-cause permanent task drift")
 
 
 def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
@@ -1222,9 +1872,116 @@ def _validate_host_control_state_contract(custody: dict[str, Any]) -> None:
 
 
 def _validate_route(route: dict[str, Any]) -> None:
+    if (
+        route.get("schema") != "arnold.critique_ledger.finite_canary_operational_route.v2"
+        or route.get("launch_rule")
+        != "Every binding is conjunctive and fail-closed; the base route alone has no launch authority. Exit zero, alive and advanced are insufficient unless the editable/import roots and revisions match the configured pinned runtime in a post-launch stability observation."
+    ):
+        raise ContractError("route schema or matched-runtime launch rule drift")
     bindings = route.get("additional_bindings")
     if not isinstance(bindings, dict):
         raise ContractError("route additional_bindings missing")
+    custody_binding = bindings.get("custody_contract")
+    if (
+        not isinstance(custody_binding, dict)
+        or custody_binding.get("required_sections") != [
+            "prelaunch_release_gates", "trusted_host_control_state_contract",
+            "capacity_cut.prelaunch", "isolation_receipt_contract",
+            "model_evidence_contract", "operational_substrates", "deferred_obligations",
+            "attempt_14_prelaunch", "prelaunch_contract_tasks",
+            "attempt_14_outcome_contract", "attempt_15_prelaunch",
+            "attempt_15_outcome_contract", "attempt_16_terminal",
+            "attempt_16_outcome_contract", "v3_relaunch_precursor",
+            "validator_runtime_binding",
+            "resident_availability_follow_up", "storage_root_cause_follow_up",
+        ]
+    ):
+        raise ContractError("route custody binding drift")
+    if bindings.get("exact_attempt_14_candidate") != {
+        "implementation_commit": "a15e87adea1fa78e90008422f42bc79ae60dff13",
+        "implementation_tree": "63a75d9333e3fa69c9a039846595d3dd4d3cc4b3",
+        "manifest_commit": "006895e8d66812dec5e85d26b32635af21ca21c7",
+        "manifest_tree": "8d70cc79bc8f5a79a60be282bcc22122109c7f83",
+        "production_image_id": "sha256:209a64de1f321b5ec49e8d6e6748187f790099a6fe8a68696352a5488bc7ffa6",
+        "outcome": "TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED",
+        "run_receipt_digest": "59f0d1712bbd6f379d921f9662989a7a524b62e8509182041e08ba368e0abe0d",
+        "run_receipt_file_sha256": "23f260ba72c0785401d4749132491beeac1bd2cf7c61cc386c7b29e980ecb3c0",
+    }:
+        raise ContractError("route B44 candidate drift")
+    if bindings.get("exact_attempt_15_candidate") != {
+        "implementation_commit": "8932873ba1c81d398cf42fb9879605d14d50cbb4",
+        "implementation_tree": "7fdcf11dba38354645290314443c1de3c8b33bbb",
+        "manifest_commit": "4f021cb70f3202dd90d599f8d710b626ba27b16b",
+        "manifest_tree": "3777df403e9ae06cba75cf6fb6ac3b804f808723",
+        "production_image_id": "sha256:ea1e66940e7445649b083b8d7acc896080526011f9bfc4a9e21b475046e1814a",
+        "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-15-20260803",
+        "container": "megaplan-cloud-agent-finite-canary-15",
+        "outcome": "TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+        "run_receipt_digest": "59bc8d659ca8ec59baa9da9051fcd7320199e6ffea12a97d3b7018694b266331",
+        "run_receipt_file_sha256": "10eb82a07ca0829b585c4316413b76851665ac9b90ef93e051f94626f91a182a",
+        "successor_authority": "NONE",
+    }:
+        raise ContractError("route A15/B15 candidate drift")
+    if bindings.get("exact_attempt_16_candidate") != {
+        "source_id": "B16",
+        "source_commit": "fb5a394878bc900b189213a3de5dcc40169d8b7b",
+        "source_tree": "a8f903a94e5029fa50c148df3289186dc4c39caf",
+        "outer_status": "available",
+        "receipt_schema": "arnold.megaplan.finite_canary_run_receipt.v3",
+        "receipt_status": "passed",
+        "terminal_state": "product_gate_not_proceed",
+        "receipt_digest": "3a9925dbfcc0c901905db0265b48c062f051b16bdbb31b9f873c5e086eac08c0",
+        "receipt_file_sha256": "1b4e1d013f444b3f3f2c3af1bb4938002e730f727a0be39834a2ca235fa592ba",
+        "state_sha256": "4ef979066dfb3c822625de21ec52e95c7d25a42f185ea01970865d4b4116e525",
+        "final_gate_sha256": "b8d6dcf366b04bde245890e1cb224c191f202101cb53dbb3fa59ca721c05d546",
+        "outcome": "INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED",
+        "durable_epic_launch": False,
+    }:
+        raise ContractError("route B16 attempt-16 candidate drift")
+    if bindings.get("custody_schema_migration") != {
+        "task": "custody-v3-to-v4-semantic-migration",
+        "status": "REQUIRED_BEFORE_FOLLOW_UP_LAUNCH",
+        "source": "arnold.critique_ledger.unfinished_work_custody.v3",
+        "target": "arnold.critique_ledger.unfinished_work_custody.v4",
+    }:
+        raise ContractError("route custody migration drift")
+    if bindings.get("result_branch") != {
+        "attempt_14": "TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED",
+        "attempt_15": "TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+        "attempt_16": "INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED",
+        "durable_epic_launch": "NOT_PRODUCED",
+        "relaunch": "NOT_BLOCKED_BY_DEFERRED_PRODUCT_OR_BROADER_SYSTEMIC_HARDENING",
+        "future_execution": "REQUIRES_FRESH_EXPLICIT_AUTHORITY",
+    }:
+        raise ContractError("route terminal outcomes or successor authority drift")
+    if bindings.get("durable_v3_relaunch_acceptance") != {
+        "current_status": "BLOCKED_AFTER_CONTAINED_SPLIT_RUNTIME_RETRY",
+        "bootstrap_pin_status": "FULL_SHA_REPIN_RESOLVED",
+        "initiative_revision": "0bb0c0b74e6b1913d39b51f33559b2f5127f1886",
+        "configured_runtime_root": "/workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+        "configured_runtime_revision": "a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+        "requires": [
+            "FULL_40_HEX_INITIATIVE_REVISION_PIN",
+            "CLOUD_CHAIN_EXIT_ZERO",
+            "SESSION_ALIVE",
+            "ADVANCED_PAST_INIT",
+            "EDITABLE_ROOT_EQUALS_IMPORT_ROOT",
+            "EDITABLE_REVISION_EQUALS_SOURCE_REVISION",
+            "IMPORT_ROOT_EQUALS_CONFIGURED_PINNED_RUNTIME_ROOT",
+            "SOURCE_REVISION_EQUALS_CONFIGURED_PINNED_RUNTIME_REVISION",
+            "POST_LAUNCH_STABILITY_OBSERVATION_PASSES",
+        ],
+        "observed_rejected_runtime": {
+            "editable_root": "/workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+            "editable_revision": "a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+            "import_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+            "source_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+        },
+        "rejected_plan": "cl2-wbc-backed-ledger-20260803-1313",
+        "rejected_plan_reuse": "FORBIDDEN",
+        "next_attempt": "FRESH_RETRY_AFTER_HOT_ENV_ORDERING_FIX_AND_PRELAUNCH_TUPLE_PROOF",
+    }:
+        raise ContractError("route durable v3 relaunch runtime-binding acceptance drift")
     for name in ("trusted_host_control_state", "bounded_fence_reclaim", "stable_exit"):
         value = bindings.get(name)
         if not isinstance(value, dict) or value.get("status") != "PRELAUNCH_REQUIRED":
@@ -1260,7 +2017,7 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
     stable_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json"
     expected_preconditions = [
         ("finite_canary_receipt", completion_path, None),
-        ("finite_canary_receipt", stable_path, None),
+        ("stable_exit_receipt", stable_path, None),
         ("git_tracked", ".megaplan/initiatives/critique-ledger-safe-v3-canary", None),
         ("git_tracked", ".megaplan/initiatives/critique-ledger-post-relaunch-completion", None),
     ]
@@ -1298,6 +2055,10 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         "evidence/critique-ledger-recovery/T6.2/handoff-admission/completion-manifest.json"
     ]:
         raise ContractError("F0 proof map drift")
+    if "evidence/critique-ledger-recovery/T0.3/resident-availability/completion-manifest.json" not in proof_map.get(
+        "f1-owner-storage-recovery-hardening", []
+    ):
+        raise ContractError("resident availability proof map drift")
     if proof_map.get("finite-canary-stable-exit") != STABLE_EXIT_PROOFS:
         raise ContractError("stable-exit proof map drift")
     if proof_map.get("finite-canary-prelaunch-history") != [
@@ -1326,23 +2087,28 @@ def _validate_supersession(*, require_live: bool) -> None:
     if (
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
-        or attempts.get("passing_successor") != "B38-production-acceptance-smoke"
+        or attempts.get("passing_successor") != "B44-production-acceptance-smoke"
         or attempts.get("pending_successor") is not None
+        or attempts.get("terminal_failed_misclassified") != "B44-live-attempt-14"
+        or attempts.get("terminal_infrastructure_failure") != "B15-live-attempt-15"
+        or attempts.get("terminal_infrastructure_recovery_product_nonproceed")
+        != "B16-live-attempt-16"
+        or attempts.get("infrastructure_recovery_proof") != "PASSED"
+        or attempts.get("durable_epic_launch") != "NOT_PRODUCED"
+        or attempts.get("relaunch_disposition")
+        != "NOT_BLOCKED_BY_DEFERRED_PRODUCT_OR_BROADER_SYSTEMIC_HARDENING"
+        or attempts.get("future_execution_authority")
+        != "FRESH_EXPLICIT_AUTHORITY_REQUIRED"
         or attempts.get("terminal_safe_nonproceed") != "B39-live-attempt-13"
-        or attempts.get("pending_decision") != "A40"
+        or attempts.get("closed_decision") != "A40"
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
     accepted = attempts.get("accepted_successor")
-    if require_live:
-        if accepted != "B38-production-acceptance-smoke":
-            raise ContractError("latest passing smoke is not independently accepted")
-        if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
-            raise ContractError("strictly later smoke is not accepted")
-    elif accepted == B26_PASS["id"]:
-        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_AND_ALL_ACCEPTANCE_GATES_PENDING":
-            raise ContractError("latest passing smoke pending disposition drift")
-    elif accepted != "B38-production-acceptance-smoke" or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
+    if accepted == B26_PASS["id"]:
+        if attempts.get("status") != "B39_TERMINAL_SAFE_NONPROCEED_A40_CLOSED_B44_ATTEMPT_14_TERMINAL_FAILED_MISCLASSIFIED_A15_B15_ATTEMPT_15_TERMINAL_INFRASTRUCTURE_FAILURE_B16_ATTEMPT_16_INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED":
+            raise ContractError("latest terminal failure disposition drift")
+    elif accepted != "B44-production-acceptance-smoke" or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")
 
 
@@ -1464,6 +2230,12 @@ def validate(*, require_live: bool = False) -> None:
     _validate_attempt_history(custody, require_live=require_live)
     _validate_schema_access_recovery_history(custody, require_live=require_live)
     _validate_current_canary_lineage(custody, require_live=require_live)
+    _validate_attempt_14_prelaunch(custody)
+    _validate_attempt_15_prelaunch(custody)
+    _validate_attempt_16_terminal(custody)
+    _validate_v3_relaunch_precursor(custody)
+    _validate_attempt_14_outcome_and_runtime_contract(custody)
+    _validate_storage_root_cause_follow_up(custody)
     _validate_live_deploy_attempts(custody)
     _validate_live_canary_attempts(custody)
     _validate_prelaunch_gates(custody, require_live=require_live)

@@ -17,6 +17,18 @@ gate and publication.
 Add provider/server-attested backend-model identity and close the evidence
 vocabulary across requested CLI model, sealed CLI-local turn context,
 server-attested execution model and billing model.
+Make cloud-chain launch admission deterministic across all pipelines: verify
+provider credentials before dispatch; require fresh branch/spec/workspace/
+session lineage; reject seedless missing or ambiguous chain ownership; wait for
+clone/setup completion; prohibit duplicate launch-owned environment selectors;
+keep the pinned runtime read-only with a distinct writable working directory;
+and reject tracked symlinks that escape the admitted source. Cover these rules
+with composed-chain and no-seed hostile tests.
+Consume both immutable attempt-16 `ITERATE` gate results as product-hardening
+inputs. Resolve their action sets before any future PROCEED claim, while keeping
+that work `DEFERRED_POST_RELAUNCH_NONBLOCKING`: attempt 16 already proves
+infrastructure recovery, but is not itself PROCEED, finalized or a durable epic
+launch.
 
 ## Locked decisions
 
@@ -35,6 +47,12 @@ server-attested execution model and billing model.
   dynamic fallback or caller-minted authority.
 - Offline evidence is not deploy authority. Release acceptance binds the exact
   integrated and installed generation.
+- Launch acknowledgement follows synchronous clone/setup completion. Provider,
+  product/spec lineage, chain owner, runtime/CWD and tracked-link admission all
+  fail before plan initialization and emit one typed terminal result.
+- Attempt 16 remains terminal `product_gate_not_proceed` after gate attempt 2.
+  Its two ITERATE results may guide product hardening but may never be rewritten
+  as PROCEED; this F2 work does not block separately authorized relaunch.
 
 ## Open questions
 
@@ -55,11 +73,20 @@ No broad production authority until F1 and F2 completion manifests both exist.
   identity separation, freshness and replay binding. Missing or contradictory
   attestation fails closed as `UNKNOWN`; no client rollout is labelled
   `provider_observed`.
+- Missing direct-provider credentials deterministically choose an explicitly
+  labelled admitted fallback profile or fail; no selected profile retains a
+  provider/model claim that did not run.
+- Fresh-generation and no-seed composition tests prove no plan, milestone
+  branch, workspace or owner can leak across generations; runtime imports
+  remain exact/read-only and tracked symlinks cannot escape admission.
 - T2.6 zero-debt decision and the exact T3.6 release-authority receipt are
   accepted; the two administrative ticket closures remain explicitly pending
   for F7.
 - The frozen T6.2 replay is consumed as immutable input without modifying or
   claiming T8.3 completion.
+- Both attempt-16 gate action sets are preserved and resolved before any later
+  PROCEED claim, with evidence that their deferred resolution did not alter the
+  attempt-16 receipt or become a relaunch prerequisite.
 
 ## Touchpoints
 

@@ -2,9 +2,9 @@
   "schema": "arnold.critique_ledger.supersession_index.v2",
   "current_operational_route": {
     "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json",
-    "sha256": "b7bd81ddf77642f5dc220b2977e5ee07865484189f6c9f97758105f6e3396478",
+    "sha256": "189b289d4b5d556b1ab65c344220bd4e7fec2b2526a53227c1767912e1ff9a21",
     "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
-    "reason": "composes the post-T1.5 shortest route with mandatory mount, privilege, resource, effect, honest model-evidence, trusted host control-state, bounded reclaim/fence, stable-exit custody, typed substrate and exact deferred-obligation bindings"
+    "reason": "composes the post-T1.5 shortest route with mandatory mount, privilege, resource, effect, honest model-evidence, trusted host control-state, bounded reclaim/fence, stable-exit custody, typed substrate, matched editable/import runtime identity and exact deferred-obligation bindings"
   },
   "operation_supersession": [
     {
@@ -25,12 +25,19 @@
       "B17-smoke", "B18-smoke", "B19-smoke", "B20-smoke", "B21-smoke",
       "B22-smoke", "B23-smoke", "B24-smoke", "B25-smoke"
     ],
-    "passing_successor": "B38-production-acceptance-smoke",
+    "passing_successor": "B44-production-acceptance-smoke",
     "pending_successor": null,
+    "terminal_failed_misclassified": "B44-live-attempt-14",
+    "terminal_infrastructure_failure": "B15-live-attempt-15",
+    "terminal_infrastructure_recovery_product_nonproceed": "B16-live-attempt-16",
+    "infrastructure_recovery_proof": "PASSED",
+    "durable_epic_launch": "NOT_PRODUCED",
+    "relaunch_disposition": "NOT_BLOCKED_BY_DEFERRED_PRODUCT_OR_BROADER_SYSTEMIC_HARDENING",
+    "future_execution_authority": "FRESH_EXPLICIT_AUTHORITY_REQUIRED",
     "terminal_safe_nonproceed": "B39-live-attempt-13",
-    "pending_decision": "A40",
+    "closed_decision": "A40",
     "accepted_successor": "B26-smoke",
-    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_AND_ALL_ACCEPTANCE_GATES_PENDING",
+    "status": "B39_TERMINAL_SAFE_NONPROCEED_A40_CLOSED_B44_ATTEMPT_14_TERMINAL_FAILED_MISCLASSIFIED_A15_B15_ATTEMPT_15_TERMINAL_INFRASTRUCTURE_FAILURE_B16_ATTEMPT_16_INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED",
     "rule": "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
   },
   "superseded": [

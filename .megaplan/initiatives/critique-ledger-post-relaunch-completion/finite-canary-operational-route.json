@@ -16,8 +16,98 @@
         "isolation_receipt_contract",
         "model_evidence_contract",
         "operational_substrates",
-        "deferred_obligations"
+        "deferred_obligations",
+        "attempt_14_prelaunch",
+        "prelaunch_contract_tasks",
+        "attempt_14_outcome_contract",
+        "attempt_15_prelaunch",
+        "attempt_15_outcome_contract",
+        "attempt_16_terminal",
+        "attempt_16_outcome_contract",
+        "v3_relaunch_precursor",
+        "validator_runtime_binding",
+        "resident_availability_follow_up",
+        "storage_root_cause_follow_up"
       ]
+    },
+    "exact_attempt_14_candidate": {
+      "implementation_commit": "a15e87adea1fa78e90008422f42bc79ae60dff13",
+      "implementation_tree": "63a75d9333e3fa69c9a039846595d3dd4d3cc4b3",
+      "manifest_commit": "006895e8d66812dec5e85d26b32635af21ca21c7",
+      "manifest_tree": "8d70cc79bc8f5a79a60be282bcc22122109c7f83",
+      "production_image_id": "sha256:209a64de1f321b5ec49e8d6e6748187f790099a6fe8a68696352a5488bc7ffa6",
+      "outcome": "TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED",
+      "run_receipt_digest": "59f0d1712bbd6f379d921f9662989a7a524b62e8509182041e08ba368e0abe0d",
+      "run_receipt_file_sha256": "23f260ba72c0785401d4749132491beeac1bd2cf7c61cc386c7b29e980ecb3c0"
+    },
+    "exact_attempt_15_candidate": {
+      "implementation_commit": "8932873ba1c81d398cf42fb9879605d14d50cbb4",
+      "implementation_tree": "7fdcf11dba38354645290314443c1de3c8b33bbb",
+      "manifest_commit": "4f021cb70f3202dd90d599f8d710b626ba27b16b",
+      "manifest_tree": "3777df403e9ae06cba75cf6fb6ac3b804f808723",
+      "production_image_id": "sha256:ea1e66940e7445649b083b8d7acc896080526011f9bfc4a9e21b475046e1814a",
+      "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-15-20260803",
+      "container": "megaplan-cloud-agent-finite-canary-15",
+      "outcome": "TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+      "run_receipt_digest": "59bc8d659ca8ec59baa9da9051fcd7320199e6ffea12a97d3b7018694b266331",
+      "run_receipt_file_sha256": "10eb82a07ca0829b585c4316413b76851665ac9b90ef93e051f94626f91a182a",
+      "successor_authority": "NONE"
+    },
+    "exact_attempt_16_candidate": {
+      "source_id": "B16",
+      "source_commit": "fb5a394878bc900b189213a3de5dcc40169d8b7b",
+      "source_tree": "a8f903a94e5029fa50c148df3289186dc4c39caf",
+      "outer_status": "available",
+      "receipt_schema": "arnold.megaplan.finite_canary_run_receipt.v3",
+      "receipt_status": "passed",
+      "terminal_state": "product_gate_not_proceed",
+      "receipt_digest": "3a9925dbfcc0c901905db0265b48c062f051b16bdbb31b9f873c5e086eac08c0",
+      "receipt_file_sha256": "1b4e1d013f444b3f3f2c3af1bb4938002e730f727a0be39834a2ca235fa592ba",
+      "state_sha256": "4ef979066dfb3c822625de21ec52e95c7d25a42f185ea01970865d4b4116e525",
+      "final_gate_sha256": "b8d6dcf366b04bde245890e1cb224c191f202101cb53dbb3fa59ca721c05d546",
+      "outcome": "INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED",
+      "durable_epic_launch": false
+    },
+    "custody_schema_migration": {
+      "task": "custody-v3-to-v4-semantic-migration",
+      "status": "REQUIRED_BEFORE_FOLLOW_UP_LAUNCH",
+      "source": "arnold.critique_ledger.unfinished_work_custody.v3",
+      "target": "arnold.critique_ledger.unfinished_work_custody.v4"
+    },
+    "result_branch": {
+      "attempt_14": "TERMINAL_FAILED_MISCLASSIFIED_NOT_ACCEPTED",
+      "attempt_15": "TERMINAL_INFRASTRUCTURE_FAILURE_NOT_ACCEPTED",
+      "attempt_16": "INFRASTRUCTURE_RECOVERY_PASSED_PRODUCT_GATE_NOT_PROCEED",
+      "durable_epic_launch": "NOT_PRODUCED",
+      "relaunch": "NOT_BLOCKED_BY_DEFERRED_PRODUCT_OR_BROADER_SYSTEMIC_HARDENING",
+      "future_execution": "REQUIRES_FRESH_EXPLICIT_AUTHORITY"
+    },
+    "durable_v3_relaunch_acceptance": {
+      "current_status": "BLOCKED_AFTER_CONTAINED_SPLIT_RUNTIME_RETRY",
+      "bootstrap_pin_status": "FULL_SHA_REPIN_RESOLVED",
+      "initiative_revision": "0bb0c0b74e6b1913d39b51f33559b2f5127f1886",
+      "configured_runtime_root": "/workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+      "configured_runtime_revision": "a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+      "requires": [
+        "FULL_40_HEX_INITIATIVE_REVISION_PIN",
+        "CLOUD_CHAIN_EXIT_ZERO",
+        "SESSION_ALIVE",
+        "ADVANCED_PAST_INIT",
+        "EDITABLE_ROOT_EQUALS_IMPORT_ROOT",
+        "EDITABLE_REVISION_EQUALS_SOURCE_REVISION",
+        "IMPORT_ROOT_EQUALS_CONFIGURED_PINNED_RUNTIME_ROOT",
+        "SOURCE_REVISION_EQUALS_CONFIGURED_PINNED_RUNTIME_REVISION",
+        "POST_LAUNCH_STABILITY_OBSERVATION_PASSES"
+      ],
+      "observed_rejected_runtime": {
+        "editable_root": "/workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+        "editable_revision": "a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4",
+        "import_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+        "source_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4"
+      },
+      "rejected_plan": "cl2-wbc-backed-ledger-20260803-1313",
+      "rejected_plan_reuse": "FORBIDDEN",
+      "next_attempt": "FRESH_RETRY_AFTER_HOT_ENV_ORDERING_FIX_AND_PRELAUNCH_TUPLE_PROOF"
     },
     "model_boundary": {
       "trusted_runner_uid": 0,
@@ -118,5 +208,5 @@
     "does_not_claim": ["cryptographic_backend_identity", "provider_observed", "billing_model_identity"],
     "provider_server_attestation": "DEFERRED_TO_F2"
   },
-  "launch_rule": "Every binding is conjunctive and fail-closed; the base route alone has no launch authority."
+  "launch_rule": "Every binding is conjunctive and fail-closed; the base route alone has no launch authority. Exit zero, alive and advanced are insufficient unless the editable/import roots and revisions match the configured pinned runtime in a post-launch stability observation."
 }

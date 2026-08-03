@@ -23,7 +23,7 @@ def test_chain_parses_through_installed_schema() -> None:
     assert parsed.milestones[1].depends_on == ["f0-finite-canary-handoff-admission"]
     assert [item.kind for item in parsed.launch_preconditions] == [
         "finite_canary_receipt",
-        "finite_canary_receipt",
+        "stable_exit_receipt",
         "git_tracked",
         "git_tracked",
     ]
@@ -64,25 +64,144 @@ def test_global_marker_cannot_be_made_transaction_bound() -> None:
         contract._validate_host_control_state_contract(custody)
 
 
-def test_current_b39_lineage_cannot_promote_pending_live_gate() -> None:
+def test_immutable_b39_lineage_cannot_promote_terminal_live_gate() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["current_canary_lineage"]["generations"][2]["gates"]["live"] = "ACCEPTED"
-    with pytest.raises(contract.ContractError, match="current canary evidence drift"):
+    with pytest.raises(contract.ContractError, match="immutable B39 history"):
         contract._validate_current_canary_lineage(custody, require_live=False)
 
 
-def test_current_b39_lineage_preserves_a40_pending_nonproceed() -> None:
+def test_immutable_b39_lineage_preserves_closed_a40_nonproceed_history() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     lineage = custody["current_canary_lineage"]
-    lineage["pending_decision"]["status"] = "ACCEPTED"
-    with pytest.raises(contract.ContractError, match="current canary evidence drift"):
+    lineage["closed_decision"]["status"] = "PENDING"
+    with pytest.raises(contract.ContractError, match="closed A40 decision drift"):
         contract._validate_current_canary_lineage(custody, require_live=False)
 
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     attempt = custody["current_canary_lineage"]["generations"][2]["live_attempt_13"]
     attempt["gate"]["recommendation"] = "PROCEED"
-    with pytest.raises(contract.ContractError, match="current canary evidence drift"):
+    with pytest.raises(contract.ContractError, match="immutable B39 history"):
         contract._validate_current_canary_lineage(custody, require_live=False)
+
+
+def test_attempt_14_immutable_outcome_cannot_be_rewritten() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["attempt_14_prelaunch"]["outcome"] = {"status": "PASSED", "receipt": "forged.json"}
+    with pytest.raises(contract.ContractError, match="immutable outcome drift"):
+        contract._validate_attempt_14_prelaunch(custody)
+
+
+def test_attempt_15_infrastructure_outcome_and_exact_identity_cannot_be_rewritten() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["attempt_15_prelaunch"]["outcome"] = {
+        "status": "PASSED",
+        "receipt": "forged.json",
+    }
+    with pytest.raises(contract.ContractError, match="immutable infrastructure outcome drift"):
+        contract._validate_attempt_15_prelaunch(custody)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["attempt_15_prelaunch"]["root_fixes"].pop()
+    with pytest.raises(contract.ContractError, match="immutable infrastructure outcome drift"):
+        contract._validate_attempt_15_prelaunch(custody)
+
+
+def test_attempt_15_infrastructure_failure_cannot_gain_retry_authority() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    failure = custody["attempt_15_outcome_contract"]["infrastructure_failure"]
+    failure["successor_authority"] = "RETRY"
+    with pytest.raises(contract.ContractError, match="infrastructure failure contract drift"):
+        contract._validate_attempt_14_outcome_and_runtime_contract(custody)
+
+
+def test_attempt_16_infrastructure_recovery_receipt_cannot_be_reclassified() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    attempt = custody["attempt_16_terminal"]
+    attempt["classification"]["infrastructure_failure"] = True
+    with pytest.raises(contract.ContractError, match="infrastructure-recovery proof drift"):
+        contract._validate_attempt_16_terminal(custody)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    receipt = custody["attempt_16_terminal"]["run_receipt"]
+    receipt["gate_attempts"][1]["recommendation"] = "PROCEED"
+    with pytest.raises(contract.ContractError, match="infrastructure-recovery proof drift"):
+        contract._validate_attempt_16_terminal(custody)
+
+
+def test_attempt_16_product_nonproceed_cannot_claim_durable_launch() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    contract_row = custody["attempt_16_outcome_contract"]
+    contract_row["forbids"].remove("DURABLE_EPIC_LAUNCH_CLAIM")
+    with pytest.raises(contract.ContractError, match="product non-PROCEED outcome contract drift"):
+        contract._validate_attempt_14_outcome_and_runtime_contract(custody)
+
+
+def test_v3_relaunch_requires_one_matched_runtime_tuple_after_launch() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    precursor = custody["v3_relaunch_precursor"]
+    precursor["durable_relaunch_acceptance"]["requires"].remove(
+        "EDITABLE_ROOT_EQUALS_IMPORT_ROOT"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="v3 relaunch precursor or matched-runtime acceptance drift",
+    ):
+        contract._validate_v3_relaunch_precursor(custody)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    precursor = custody["v3_relaunch_precursor"]
+    precursor["containment"]["durable_epic_launch"] = True
+    with pytest.raises(
+        contract.ContractError,
+        match="v3 relaunch precursor or matched-runtime acceptance drift",
+    ):
+        contract._validate_v3_relaunch_precursor(custody)
+
+
+def test_storage_root_cause_and_permanent_tasks_cannot_drift() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["storage_root_cause_follow_up"]["post_attempt_15_capacity"]["free_bytes"] += 1
+    with pytest.raises(contract.ContractError, match="capacity or storage root-cause"):
+        contract._validate_storage_root_cause_follow_up(custody)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    incident = custody["storage_root_cause_follow_up"]["notification_watchdog_incident"]
+    incident["progress_auditor_sent_messages"] = True
+    with pytest.raises(contract.ContractError, match="capacity or storage root-cause"):
+        contract._validate_storage_root_cause_follow_up(custody)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["storage_root_cause_follow_up"]["safe_reclaim_receipt"]["remaining_count"] = 1
+    with pytest.raises(contract.ContractError, match="capacity or storage root-cause"):
+        contract._validate_storage_root_cause_follow_up(custody)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["storage_root_cause_follow_up"]["permanent_tasks"].pop()
+    with pytest.raises(contract.ContractError, match="permanent task drift"):
+        contract._validate_storage_root_cause_follow_up(custody)
+
+
+def test_terminal_manual_review_alert_dedupe_contract_cannot_drift() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    tasks = custody["resident_availability_follow_up"]["tasks"]
+    tasks[-1]["acceptance"] = "NON_DURABLE_REEMISSION_ALLOWED"
+    with pytest.raises(contract.ContractError, match="resident availability follow-up task drift"):
+        contract._validate_attempt_14_outcome_and_runtime_contract(custody)
+
+
+def test_terminal_nonproceed_cannot_gain_f0_authority() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["attempt_14_outcome_contract"]["terminal_nonproceed"]["forbids"].remove("F0_AUTHORITY")
+    with pytest.raises(contract.ContractError, match="PASS versus terminal non-PROCEED"):
+        contract._validate_attempt_14_outcome_and_runtime_contract(custody)
+
+
+def test_resident_outage_cannot_be_attributed_to_attempt_14() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["resident_availability_follow_up"]["observation"]["causal_attribution_to_canary"] = "CAUSED"
+    with pytest.raises(contract.ContractError, match="resident availability incident fact drift"):
+        contract._validate_attempt_14_outcome_and_runtime_contract(custody)
 
 
 def test_failure_evidence_cannot_claim_pre_intent_host_durability() -> None:

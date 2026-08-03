@@ -130,6 +130,39 @@ def test_finite_canary_receipt_missing_fails_closed(tmp_path: Path) -> None:
         validate_paths(spec, tmp_path, spec_path=spec_path)
 
 
+def test_stable_exit_receipt_precondition_parses_and_rejects_weakening() -> None:
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "stable exit",
+                    "kind": "stable_exit_receipt",
+                    "path": "stable-exit-receipt.json",
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    parsed = spec.launch_preconditions[0]
+    assert parsed.kind == "stable_exit_receipt"
+    assert parsed.check == "stable_exit_receipt"
+
+    with pytest.raises(CliError, match="stable_exit_receipt"):
+        ChainSpec.from_dict(
+            {
+                "launch_preconditions": [
+                    {
+                        "name": "stable exit",
+                        "kind": "stable_exit_receipt",
+                        "path": "stable-exit-receipt.json",
+                        "check": "exists",
+                    }
+                ],
+                "milestones": [],
+            }
+        )
+
+
 def _stable_exit_fixture(tmp_path: Path) -> tuple[ChainSpec, Path, Path]:
     _git(tmp_path, "init")
     spec_path = _write_chain(tmp_path, "milestones: []\n")
@@ -207,7 +240,7 @@ def _stable_exit_fixture(tmp_path: Path) -> tuple[ChainSpec, Path, Path]:
             "launch_preconditions": [
                 {
                     "name": "stable exit",
-                    "kind": "finite_canary_receipt",
+                    "kind": "stable_exit_receipt",
                     "path": receipt_path.name,
                 }
             ],
@@ -236,6 +269,24 @@ def test_stable_exit_receipt_rejects_duplicate_json_fields(tmp_path: Path) -> No
         encoding="utf-8",
     )
     with pytest.raises(CliError, match="duplicate JSON field"):
+        validate_paths(spec, tmp_path, spec_path=spec_path)
+
+
+def test_completion_validator_rejects_stable_exit_schema(tmp_path: Path) -> None:
+    _, spec_path, receipt_path = _stable_exit_fixture(tmp_path)
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "finite canary completion",
+                    "kind": "finite_canary_receipt",
+                    "path": receipt_path.name,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    with pytest.raises(CliError, match="unsupported finite canary receipt schema"):
         validate_paths(spec, tmp_path, spec_path=spec_path)
 
 

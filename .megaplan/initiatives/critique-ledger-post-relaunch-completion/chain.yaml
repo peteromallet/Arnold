@@ -11,7 +11,7 @@ launch_preconditions:
     kind: finite_canary_receipt
     path: .megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json
   - name: post-canary stable exit and remote custody independently verified
-    kind: finite_canary_receipt
+    kind: stable_exit_receipt
     path: .megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json
   - name: complete finite-canary input and evidence is committed and clean
     kind: git_tracked
@@ -29,7 +29,7 @@ milestones:
     depth: high
     with_prep: true
     prep_clarify: false
-    notes: Difficulty 3/5. Sole read-only bridge from the independently accepted A40 disposition into exact finite-canary, stable-exit, operation-reconciliation and fresh-clone admission; cannot launch/revise/finalize and completes no F1-F8 obligation.
+    notes: Difficulty 3/5. Sole read-only bridge from closed A40, immutable terminal failed/misclassified attempt-14 history, terminal infrastructure-failed attempt-15 history, and B16 attempt-16's validated infrastructure-recovery/product-non-PROCEED receipt into completion, stable-exit, operation-reconciliation and fresh-clone admission. Attempt 16 is not an infrastructure failure, PROCEED, finalized result or durable epic launch. Its remaining product and broader systemic hardening is deferred to F2/F1 and does not block a separately authorized relaunch. The contained v3 full-SHA retry also remains unaccepted until a fresh post-launch stability read proves editable/import roots and revisions equal the configured pinned runtime; its initialized plan cannot be reused. F0 still requires exact completion and stable-exit evidence, cannot launch/revise/finalize, and completes no F1-F8 obligation.
   - label: f1-owner-storage-recovery-hardening
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f1-owner-storage-recovery-hardening.md
     branch: epic/critique-ledger-v3/f1-owner-storage-recovery-hardening

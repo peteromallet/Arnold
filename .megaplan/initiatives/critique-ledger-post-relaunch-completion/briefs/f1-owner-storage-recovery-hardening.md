@@ -23,6 +23,46 @@ writable block on that same full filesystem. The generalized solution requires
 off-host monotonic operation consumption, a reboot-persistent provider fence,
 an immutable preinstalled helper, `/run` same-boot staging, durable post-reclaim
 sealing, ambiguity-safe reconciliation, and a supported strict receipt reader.
+Also close the newly observed control-plane gaps: durable occurrence/state-
+version notification dedupe; one provenance-safe bounded generalized fixer;
+M7 projection-cursor reconciliation; resident read-only admission before its
+source fence; stage-specific recovery diagnostics; a versioned receipt schema
+that includes a separate `resident_image_id`; and hash-locked recovery-image
+dependencies. Rotate every resident credential exposed when a diagnostic
+command printed the environment file; retain no secret value in evidence.
+Close the independent 11:42 Europe/Berlin `/whats-cooking` availability gap:
+the Discord resident was offline after the production container exited on
+ENOSPC, and restart attempts failed before Discord connect. The handler already
+defers before status collection, so this is not acknowledgement ordering.
+Attempt 14 began 27 minutes later without a Discord token or resident; no causal
+link to the canary is established or may be claimed.
+Close the major storage root cause confirmed after attempt 15. The preserved
+production predecessor writable snapshot/container is approximately 389.927 GB,
+with `/tmp` approximately 388.813 GB. Exactly 1,156,578 progress-auditor
+recursion copies consumed 387,889,659,906 logical bytes as roughly 395,629-byte
+`arnold-repair-loop.*` files. The installed-source trampoline preceded the
+snapshot guard; the snapshot execed source; source saw an active-path mismatch
+and created another snapshot; and the later cleanup trap was overwritten.
+Post-run free space was 1,484,693,504 bytes, below the 1,611,661,312-byte hard
+floor. This recursion drove ENOSPC and the resident crash and likely—but not
+exclusively proven—contributed to attempt-15 code-host SIGTRAP/closed-stdout.
+
+The notification/watchdog path independently re-emitted the same terminal
+`manual_review` incident without durable incident-key dedupe; the progress
+auditor did not send the repeated Discord messages. A separate diagnostic-fixer
+launch failed provenance validation. The completed safe-reclaim receipt binds
+predecessor container
+`277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab`,
+1,156,578 deleted copies, 387,889,659,906 deleted logical bytes, zero remaining,
+390,136,713,216 free bytes afterward, and preserved predecessor/workspace.
+
+Attempt 16 subsequently passed the infrastructure recovery path: seven rc0
+phases, complete dispatch integrity, null failure, reconciled stopped container
+and sealed workspace. Its terminal state is product `product_gate_not_proceed`
+after the bounded second `ITERATE`, so it is neither an infrastructure failure
+nor a durable epic launch. The systemic tasks below remain required F1 work but
+are `DEFERRED_POST_RELAUNCH_NONBLOCKING`; they must not be used to deny a
+separately authorized relaunch or to rewrite attempt 16's exact classification.
 
 ## Locked decisions
 
@@ -58,6 +98,29 @@ sealing, ambiguity-safe reconciliation, and a supported strict receipt reader.
   idempotent-looking: a later replay can delete newly-created cache. Client loss
   or reboot after dispatch therefore consumes the operation and yields typed
   ambiguity until independently reconciled; it never authorizes redispatch.
+- Resident recovery is bounded, receipted, and capacity-gated. Restart retries
+  cannot create an unbounded loop or duplicate an outage alert.
+- Resident recovery performs all read-only admission before changing source
+  restart policy, binds separate exact source and resident image IDs, and
+  reports the exact failing stage with rollback proof.
+- A generalized fixer is real only after durable delegation provenance and
+  launch receipt exist. Missing provenance emits no mutation and no repeat
+  escalation.
+- The installed-source trampoline checks the snapshot guard before exec. Every
+  repair snapshot has bounded lifetime and non-overwritten `finally`/trap
+  cleanup across success, failure, timeout, signal and cancellation.
+- Repair loops are singleton per subject and enforce a durable attempt cap.
+- Repair/resident paths have a disk budget and preserve reserved headroom; every
+  model/tool phase trips fail-closed before dispatch below the threshold.
+- Safe reclaim is bounded and receipted and proves historical and active
+  workspaces byte-preserved. Resident recovery uses a dedicated surface with no
+  general repair-loop, notification or canary-retry authority.
+- Notification/watchdog delivery uses durable incident-key dedupe: exactly one
+  terminal `manual_review` alert per incident across retries, with a separate
+  recovery transition. Diagnostic-fixer provenance failure remains separate.
+- Attempt 16's infrastructure-recovery PASS is immutable input evidence. F1
+  neither converts its product ITERATE into PROCEED nor makes this broader
+  systemic generalization a relaunch prerequisite.
 
 ## Open questions
 
@@ -84,6 +147,18 @@ receipts.
 ## Done criteria
 
 - Storage reserve/capacity and crash/ENOSPC behavior are proven platform-wide.
+- Installed-source/snapshot recursion regression tests prove the guard runs
+  before trampoline exec and no cleanup trap is overwritten. Temp-file failure
+  injection proves zero leaked `arnold-repair-loop.*` files after success,
+  failure, timeout, signal and cancellation; concurrency proves singleton
+  ownership and the durable attempt cap.
+- Disk-budget tests prove reserved headroom, pre-model/tool capacity trip, and a
+  bounded receipted reclaim that preserves every historical and active workspace.
+- Resident-only recovery tests prove it cannot reach the general repair loop,
+  notification sender, or finite-canary retry surface.
+- Notification/watchdog tests prove durable incident-key dedupe emits exactly
+  one terminal `manual_review` alert per incident across retries and a distinct
+  recovery transition; no test attributes those messages to progress auditing.
 - At exactly zero free bytes, client loss and reboot at every boundary prove one
   admitted reclaim dispatch maximum, zero legacy notification effects, durable
   post-reclaim sealing, and supported recovery of host authority evidence.
@@ -109,6 +184,19 @@ receipts.
   as deployment evidence.
 - Restart and 200 unchanged polls emit at most one occurrence/version-keyed
   notification effect; missing provenance emits zero.
+- An injected resident exit is detected and recovered through one bounded safe
+  restart with receipts. ENOSPC blocks restart until a bounded reclaim and
+  accepted capacity proof complete.
+- Synthetic Discord interaction monitoring detects defer/response
+  unavailability independently of status collection, and exactly one outage
+  alert is emitted per outage epoch across restart retries, followed by a
+  separate recovery transition.
+- M7 projection history is reconciled or explicitly forked for a fresh
+  generation; cursor mismatch cannot become an indefinitely repeated warning.
+- Resident receipt v2 migration and compatibility tests bind
+  `resident_image_id`; built-image import tests use hash-locked dependencies.
+- All resident credentials exposed in the diagnostic transcript are rotated,
+  old values are rejected, and no evidence artifact contains a value.
 - Independent completion manifest at
   `evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json`
   binds exact commits, migrations and receipts. It cannot supersede or imply
@@ -118,7 +206,8 @@ receipts.
 
 `arnold.storage`, recovery/simple-fixer topology, notification custody, release
 and launch owners, capacity controls, installed wrappers and evidence for
-T0.3's platform-hardening subtask, T1.5/T1.7-T1.10/T4.6.
+T0.3's platform-hardening subtask, repair-loop temp creation/cleanup, model/tool
+phase admission, resident-only recovery, T1.5/T1.7-T1.10/T4.6.
 
 ## Anti-scope
 
