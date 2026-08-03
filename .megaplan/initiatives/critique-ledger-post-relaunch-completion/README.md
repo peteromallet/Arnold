@@ -24,6 +24,10 @@ entire T1/T2/T3/T4/T5 portfolio blocks the finite canary is superseded. See
 
 Do not launch this chain until its content-addressed T6.2 handoff exists and all
 launch preconditions pass through the installed authority boundary.
+The parseable launch preconditions establish file/tracking presence only; F0
+performs the strict semantic handoff admission before any F1 work. F0 completes
+none of F1-F8. Incident operators must follow [`RUNBOOK.md`](RUNBOOK.md); generic
+cloud deploy/chain/supervision routes are forbidden for this recovery.
 
 ## Operational-relaunch recut handoff — 2026-08-02
 
@@ -64,7 +68,9 @@ The complete inventory of preserved and unfinished work is
 or deferred interface may be silently consumed by the canary or dropped by this
 epic.
 
-Machine-readable custody is frozen in [`custody-manifest.json`](custody-manifest.json).
+Machine-readable custody is frozen in [`custody-manifest.json`](custody-manifest.json),
+including immutable B8-B20 failure history and the pending terminal-operation
+reconciliation contract.
 Conflicting or stale launch instructions are retired by
 [`supersession-index.json`](supersession-index.json). Human prose never
 overrides those typed dispositions.

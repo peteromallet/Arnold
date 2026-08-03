@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from arnold_pipelines.megaplan.chain.spec import load_spec
+
 
 INITIATIVE = Path(__file__).resolve().parent
 ROOT = INITIATIVE.parents[2]
@@ -55,6 +57,36 @@ STABLE_EXIT_PROOFS = [
     ".megaplan/initiatives/critique-ledger-safe-v3-canary/fresh-clone-reconstruction-receipt.json",
 ]
 
+KNOWN_ATTEMPTS = [
+    ("B8-build", "IMAGE_BUILD", "c0e5e745d796d01deb962129f834978127f3adc0", "0dc3d1e8c5d58ae5d09aa676148efadeb2f78ce8", None),
+    ("B9-build", "IMAGE_BUILD", "cd120d8c585c078418583ba5142c966ac5554a12", "025d719eb1318a2ff1f52673b79ef0014be7a1b2", None),
+    ("B10-build", "IMAGE_BUILD", "04178bf31748aa746a36e7e736c0ee38d441b666", "7c67c7c63dc8d065a2f63663cba73e4566ed4c0e", None),
+    ("B10-smoke", "OFFLINE_STRUCTURAL_SMOKE", "04178bf31748aa746a36e7e736c0ee38d441b666", "7c67c7c63dc8d065a2f63663cba73e4566ed4c0e", "/var/lib/arnold-zero-recovery/critique-ledger-b10-offline-smoke.json"),
+    ("B11-smoke", "OFFLINE_STRUCTURAL_SMOKE", "d610d1420a9851f2d3c0be27cf1cada5413b4f0f", "1e9153d8ceda3834dc1f7b658322c7afbe16e05b", "/var/lib/arnold-zero-recovery/critique-ledger-b11-offline-smoke.json"),
+    ("B12-smoke", "OFFLINE_STRUCTURAL_SMOKE", "cc5cd5b3c435d1694a574eb23c8ec3ead52d70a2", "5494ba3a87b3f1522ac3639f5f00c1f08402f696", "/var/lib/arnold-zero-recovery/critique-ledger-b12-offline-smoke.json"),
+    ("B13-smoke", "OFFLINE_STRUCTURAL_SMOKE", "63f8c0ae02e951361bab81949bec661f101a2f7e", "49afa570cb237185f91ef88782165d74a8c5f95c", "/var/lib/arnold-zero-recovery/critique-ledger-b13-offline-smoke.json"),
+    ("B14-smoke", "OFFLINE_STRUCTURAL_SMOKE", "38a7608ff435d08ce7a16d0e632f08a5c29a1f2e", "17f5cbcf0cc281f7d5969848b64425b58ce16682", "/var/lib/arnold-zero-recovery/critique-ledger-b14-offline-smoke.json"),
+    ("B15-smoke", "OFFLINE_STRUCTURAL_SMOKE", "4fbe51cdd7b04053bafccc5dba5d3fac0dd436aa", "f7869b70e2bdce0b06c37b6726b113280e85e78d", "/var/lib/arnold-zero-recovery/critique-ledger-b15-offline-smoke.json"),
+    ("B16-smoke", "OFFLINE_STRUCTURAL_SMOKE", "05c874c875a9e81d2015c1bcce8746cbba540299", "6f332c32e17f3e9e1c99d3acdc168adb5c691d24", "/var/lib/arnold-zero-recovery/critique-ledger-b16-offline-smoke.json"),
+    ("B17-smoke", "OFFLINE_STRUCTURAL_SMOKE", "dbb98ff2596063b4632b3e9d392b882a5808b7ec", "5115448b5da9ae95899f21f911d154ab9d1a97d0", "/var/lib/arnold-zero-recovery/critique-ledger-b17-offline-smoke.json"),
+    ("B18-smoke", "OFFLINE_STRUCTURAL_SMOKE", "e1d26430b54d3121fa545a677eb6a5189fbb248e", "75bd6a645cfb49d267e4d985f88881beeda94b7b", "/var/lib/arnold-zero-recovery/critique-ledger-b18-offline-smoke.json"),
+    ("B19-smoke", "OFFLINE_STRUCTURAL_SMOKE", "301abcae4187931eac4f97efdd4fac0120b068d9", "f743e9ecddccdaf95b0546960018630771f9468f", "/var/lib/arnold-zero-recovery/critique-ledger-b19-offline-smoke.json"),
+    ("B20-smoke", "OFFLINE_STRUCTURAL_SMOKE", "be3ca786094013c3a0350b6860bbb042b63b1cc2", "602e5311d76d1163069834da9186e5380168c005", "/var/lib/arnold-zero-recovery/critique-ledger-b20-offline-smoke.json"),
+]
+
+OPERATION_IDS = [
+    "critique-ledger-zero-byte-bootstrap-20260803-034217z",
+    "critique-ledger-capacity-reserve-remediation-20260803-0349z",
+    "critique-ledger-capacity-reserve-fallback-20260803-0350z",
+    "critique-ledger-failed-build-capacity-reset-20260803-0400z",
+    "critique-ledger-failed-build-capacity-reset-corrected-20260803-0404z",
+]
+
+OPERATION_SUPERSESSION = {
+    "critique-ledger-capacity-reserve-fallback-20260803-0350z": "critique-ledger-capacity-reserve-remediation-20260803-0349z",
+    "critique-ledger-failed-build-capacity-reset-corrected-20260803-0404z": "critique-ledger-failed-build-capacity-reset-20260803-0400z",
+}
+
 
 class ContractError(RuntimeError):
     pass
@@ -81,6 +113,15 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _repo_path(value: str) -> Path:
+    path = (ROOT / value).resolve()
+    try:
+        path.relative_to(ROOT.resolve())
+    except ValueError as exc:
+        raise ContractError(f"evidence path escapes repository: {value}") from exc
+    return path
 
 
 def _validate_obligations(custody: dict[str, Any]) -> None:
@@ -147,10 +188,171 @@ def _validate_prelaunch_gates(custody: dict[str, Any], *, require_live: bool) ->
             or not SHA256.fullmatch(str(evidence.get("sha256")))
         ):
             raise ContractError(f"accepted gate lacks exact evidence: {gate_id}")
+        else:
+            evidence_path = _repo_path(evidence["path"])
+            if not evidence_path.is_file() or _sha256(evidence_path) != evidence["sha256"]:
+                raise ContractError(f"accepted gate evidence hash mismatch: {gate_id}")
         if require_live and gate.get("status") != "ACCEPTED":
             raise ContractError(f"live gate is not accepted: {gate_id}")
     if set(ids) != PRELAUNCH_GATES or len(ids) != len(set(ids)):
         raise ContractError("prelaunch gate set/uniqueness drift")
+
+
+def _validate_attempt_history(custody: dict[str, Any]) -> None:
+    attempts = custody.get("prelaunch_attempts")
+    if not isinstance(attempts, list) or len(attempts) < len(KNOWN_ATTEMPTS):
+        raise ContractError("prelaunch attempt history is incomplete")
+    expected_fields = {"id", "kind", "candidate", "status", "failure", "remote_receipt"}
+    ids: list[str] = []
+    for index, attempt in enumerate(attempts):
+        if not isinstance(attempt, dict) or set(attempt) != expected_fields:
+            raise ContractError("prelaunch attempt has an inexact schema")
+        attempt_id = attempt.get("id")
+        ids.append(attempt_id)
+        candidate = attempt.get("candidate")
+        receipt = attempt.get("remote_receipt")
+        if (
+            not isinstance(attempt_id, str)
+            or not isinstance(candidate, dict)
+            or set(candidate) != {"commit", "tree"}
+            or not all(re.fullmatch(r"[0-9a-f]{40}", str(candidate.get(key))) for key in ("commit", "tree"))
+            or not isinstance(attempt.get("failure"), str)
+            or not attempt.get("failure")
+            or not isinstance(receipt, dict)
+            or set(receipt) != {"path", "sha256", "status"}
+        ):
+            raise ContractError(f"invalid prelaunch attempt: {attempt_id!r}")
+        if index < len(KNOWN_ATTEMPTS):
+            expected_id, kind, commit, tree, remote_path = KNOWN_ATTEMPTS[index]
+            expected_status = (
+                "FAILED_ATTEMPT_THEN_LATER_REBUILD_SUCCEEDED_NOT_SMOKE_ACCEPTED"
+                if expected_id == "B10-build"
+                else "FAILED_NOT_ACCEPTED"
+            )
+            if (
+                attempt_id != expected_id
+                or attempt.get("kind") != kind
+                or candidate != {"commit": commit, "tree": tree}
+                or receipt.get("path") != remote_path
+                or attempt.get("status") != expected_status
+            ):
+                raise ContractError(f"known attempt history drift: {expected_id}")
+        if receipt.get("sha256") is None:
+            if receipt.get("status") not in {"REMOTE_COPY_REQUIRED", "REMOTE_PATH_NOT_RECORDED_IN_LOCAL_AUTHORITY"}:
+                raise ContractError(f"pending receipt has invalid disposition: {attempt_id}")
+        elif not SHA256.fullmatch(str(receipt.get("sha256"))):
+            raise ContractError(f"attempt receipt has invalid hash: {attempt_id}")
+    if len(ids) != len(set(ids)):
+        raise ContractError("prelaunch attempt IDs are not unique")
+
+
+def _validate_operation_reconciliation(*, require_live: bool) -> None:
+    manifest_path = INITIATIVE / "evidence/operation-reconciliation-manifest.json"
+    manifest = _load_json(manifest_path)
+    if set(manifest) != {"schema", "status", "authority_rule", "independent_review", "operations"}:
+        raise ContractError("operation reconciliation manifest has an inexact schema")
+    if (
+        manifest.get("schema") != "arnold.critique_ledger.operation_reconciliation_manifest.v1"
+        or manifest.get("authority_rule") != "INTENTS_ARE_IMMUTABLE; EFFECTIVE_STATUS_IS_APPEND_ONLY; AMBIGUITY_IS_TERMINAL_NO_REDISPATCH"
+    ):
+        raise ContractError("operation reconciliation authority drift")
+    review = manifest.get("independent_review")
+    if not isinstance(review, dict) or set(review) != {"path", "sha256", "status"}:
+        raise ContractError("operation reconciliation review schema drift")
+    if review.get("status") == "PENDING":
+        if review != {"path": None, "sha256": None, "status": "PENDING"}:
+            raise ContractError("pending operation review fabricates evidence")
+    elif (
+        review.get("status") != "ACCEPTED"
+        or not isinstance(review.get("path"), str)
+        or not SHA256.fullmatch(str(review.get("sha256")))
+    ):
+        raise ContractError("operation reconciliation review is invalid")
+    else:
+        review_path = _repo_path(review["path"])
+        if not review_path.is_file() or _sha256(review_path) != review["sha256"]:
+            raise ContractError("operation reconciliation review hash mismatch")
+    operations = manifest.get("operations")
+    if not isinstance(operations, list) or len(operations) != len(OPERATION_IDS):
+        raise ContractError("operation reconciliation has an inexact operation count")
+    seen: list[str] = []
+    edges: dict[str, str] = {}
+    for row in operations:
+        if not isinstance(row, dict) or set(row) != {
+            "operation_id", "intent", "supersedes", "maximum_dispatches_by_effect",
+            "terminal", "effective_status",
+        }:
+            raise ContractError("operation reconciliation row has an inexact schema")
+        operation_id = row.get("operation_id")
+        seen.append(operation_id)
+        intent = row.get("intent")
+        terminal = row.get("terminal")
+        maxima = row.get("maximum_dispatches_by_effect")
+        if (
+            not isinstance(intent, dict)
+            or set(intent) != {"path", "sha256", "authority_commit"}
+            or not SHA256.fullmatch(str(intent.get("sha256")))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(intent.get("authority_commit")))
+            or not isinstance(maxima, list)
+            or not maxima
+            or any(value != 1 for value in maxima)
+            or not isinstance(terminal, dict)
+            or set(terminal) != {"path", "sha256", "status", "dispatch_counts"}
+        ):
+            raise ContractError(f"invalid operation reconciliation row: {operation_id!r}")
+        intent_path = _repo_path(str(intent.get("path")))
+        intent_payload = _load_json(intent_path)
+        effects = intent_payload.get("admitted_effects_in_order")
+        if effects is None:
+            effects = [intent_payload.get("admitted_effect")]
+        expected_supersedes = intent_payload.get("supersedes_failed_operation")
+        if (
+            intent_payload.get("operation_id") != operation_id
+            or intent_payload.get("status") != "AUTHORIZED_PENDING_SINGLE_DISPATCH"
+            or _sha256(intent_path) != intent.get("sha256")
+            or not isinstance(effects, list)
+            or len(effects) != len(maxima)
+            or any(not isinstance(effect, dict) or effect.get("maximum_dispatches") != 1 for effect in effects)
+            or row.get("supersedes") != expected_supersedes
+        ):
+            raise ContractError(f"operation intent binding drift: {operation_id}")
+        if expected_supersedes is not None:
+            edges[operation_id] = expected_supersedes
+        if row.get("effective_status") == "PENDING_RECONCILIATION":
+            if terminal != {"path": None, "sha256": None, "status": "PENDING_RECONCILIATION", "dispatch_counts": None}:
+                raise ContractError(f"pending operation fabricates terminal evidence: {operation_id}")
+        else:
+            counts = terminal.get("dispatch_counts")
+            if (
+                row.get("effective_status") not in {"COMPLETED", "FAILED_NO_EFFECT", "AMBIGUOUS_CONSUMED_NO_REDISPATCH"}
+                or terminal.get("status") != row.get("effective_status")
+                or not isinstance(counts, list)
+                or len(counts) != len(maxima)
+                or any(not isinstance(count, int) or count < 0 or count > limit for count, limit in zip(counts, maxima))
+                or not isinstance(terminal.get("path"), str)
+                or not SHA256.fullmatch(str(terminal.get("sha256")))
+            ):
+                raise ContractError(f"invalid terminal operation outcome: {operation_id}")
+            terminal_path = _repo_path(terminal["path"])
+            if not terminal_path.is_file() or _sha256(terminal_path) != terminal["sha256"]:
+                raise ContractError(f"terminal operation receipt hash mismatch: {operation_id}")
+    if seen != OPERATION_IDS or len(seen) != len(set(seen)) or edges != OPERATION_SUPERSESSION:
+        raise ContractError("operation set/order/supersession drift")
+    for start in edges:
+        visited: set[str] = set()
+        current = start
+        while current in edges:
+            if current in visited:
+                raise ContractError("operation supersession cycle")
+            visited.add(current)
+            current = edges[current]
+    if require_live:
+        if manifest.get("status") != "ACCEPTED" or review.get("status") != "ACCEPTED":
+            raise ContractError("operation reconciliation is not independently accepted")
+        if any(row.get("effective_status") == "PENDING_RECONCILIATION" for row in operations):
+            raise ContractError("operation reconciliation still has pending outcomes")
+    elif manifest.get("status") not in {"PENDING_REMOTE_RECEIPT_IMPORT_AND_INDEPENDENT_RECONCILIATION", "ACCEPTED"}:
+        raise ContractError("invalid operation reconciliation status")
 
 
 def _validate_host_control_state_contract(custody: dict[str, Any]) -> None:
@@ -224,15 +426,101 @@ def _validate_route(route: dict[str, Any]) -> None:
 
 
 def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, Any]) -> None:
+    completion_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json"
     stable_path = ".megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json"
-    matches = [
-        item for item in chain.get("launch_preconditions", [])
-        if isinstance(item, dict) and item.get("path") == stable_path
+    expected_preconditions = [
+        ("artifact", completion_path, {"kind": "exists"}),
+        ("artifact", stable_path, {"kind": "exists"}),
+        ("git_tracked", ".megaplan/initiatives/critique-ledger-safe-v3-canary", None),
+        ("git_tracked", ".megaplan/initiatives/critique-ledger-post-relaunch-completion", None),
     ]
-    if len(matches) != 1 or matches[0].get("kind") != "artifact" or matches[0].get("check") != {"kind": "exists"}:
-        raise ContractError("chain lacks the fail-closed stable-exit artifact precondition")
+    preconditions = chain.get("launch_preconditions")
+    if not isinstance(preconditions, list) or len(preconditions) != len(expected_preconditions):
+        raise ContractError("chain launch precondition count drift")
+    for row, (kind, path, check) in zip(preconditions, expected_preconditions):
+        if (
+            not isinstance(row, dict)
+            or row.get("kind") != kind
+            or row.get("path") != path
+            or row.get("check") != check
+        ):
+            raise ContractError("chain launch precondition drift")
+    milestones = chain.get("milestones")
+    expected_labels = [
+        "f0-finite-canary-handoff-admission",
+        "f1-owner-storage-recovery-hardening",
+        "f2-admission-model-effect-release-closure",
+        "f3-cl2-real-work-and-publication",
+        "f4-cl3-cl5-epic-completion",
+        "f5-product-release-and-deploy",
+        "f6-production-acceptance",
+        "f7-evidence-and-incident-closeout",
+        "f8-seven-day-durability",
+    ]
+    if not isinstance(milestones, list) or [row.get("label") for row in milestones if isinstance(row, dict)] != expected_labels:
+        raise ContractError("chain milestone order/set drift")
+    if milestones[0].get("depends_on") not in (None, []) or milestones[1].get("depends_on") != [expected_labels[0]]:
+        raise ContractError("F0/F1 dependency boundary drift")
+    for index in range(2, len(milestones)):
+        if milestones[index].get("depends_on") != [expected_labels[index - 1]]:
+            raise ContractError("follow-up milestone dependency drift")
+    if proof_map.get("f0-finite-canary-handoff-admission") != [
+        "evidence/critique-ledger-recovery/T6.2/handoff-admission/completion-manifest.json"
+    ]:
+        raise ContractError("F0 proof map drift")
     if proof_map.get("finite-canary-stable-exit") != STABLE_EXIT_PROOFS:
         raise ContractError("stable-exit proof map drift")
+    if proof_map.get("finite-canary-prelaunch-history") != [
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/operation-reconciliation-manifest.json",
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/custody-manifest.json",
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/UNFINISHED_WORK.md",
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/RUNBOOK.md",
+    ]:
+        raise ContractError("prelaunch history proof map drift")
+
+
+def _validate_supersession(*, require_live: bool) -> None:
+    index = _load_json(INITIATIVE / "supersession-index.json")
+    if index.get("schema") != "arnold.critique_ledger.supersession_index.v2":
+        raise ContractError("supersession index schema drift")
+    operation_rows = index.get("operation_supersession")
+    if not isinstance(operation_rows, list) or [
+        (row.get("operation_id"), row.get("superseded_by")) for row in operation_rows if isinstance(row, dict)
+    ] != [
+        ("critique-ledger-capacity-reserve-remediation-20260803-0349z", "critique-ledger-capacity-reserve-fallback-20260803-0350z"),
+        ("critique-ledger-failed-build-capacity-reset-20260803-0400z", "critique-ledger-failed-build-capacity-reset-corrected-20260803-0404z"),
+    ]:
+        raise ContractError("operation supersession index drift")
+    attempts = index.get("prelaunch_attempt_supersession")
+    known_ids = [row[0] for row in KNOWN_ATTEMPTS]
+    if (
+        not isinstance(attempts, dict)
+        or attempts.get("ordered_rejected_attempts") != known_ids
+        or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
+    ):
+        raise ContractError("attempt supersession index drift")
+    accepted = attempts.get("accepted_successor")
+    if require_live:
+        if not isinstance(accepted, str) or not accepted:
+            raise ContractError("no strictly later accepted smoke is registered")
+        if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
+            raise ContractError("strictly later smoke is not accepted")
+    if not require_live and accepted is not None and (not isinstance(accepted, str) or not accepted):
+        raise ContractError("invalid accepted smoke successor")
+
+
+def _validate_runbook() -> None:
+    runbook = (INITIATIVE / "RUNBOOK.md").read_text(encoding="utf-8")
+    required = [
+        "do not use ordinary `cloud deploy`, `cloud chain`,",
+        "`cloud supervise`",
+        "Never redispatch",
+        "Hard NO-GO default",
+        "F0 may write only its admission manifest",
+        "generic command is not a fallback",
+    ]
+    if any(text not in runbook for text in required):
+        raise ContractError("incident runbook lost a fail-closed route rule")
 
 
 def _validate_readme(route_path: Path) -> None:
@@ -316,22 +604,68 @@ def _validate_stable_exit_receipt(*, require_live: bool) -> None:
         or not payload.get("observed_at")
     ):
         raise ContractError("stable-exit receipt failed strict verification")
+    if require_live:
+        digest_paths = {
+            "built_image_smoke": STABLE_EXIT_PROOFS[0],
+            "prelaunch_receipts_manifest": STABLE_EXIT_PROOFS[1],
+            "conformance": STABLE_EXIT_PROOFS[2],
+            "completion": STABLE_EXIT_PROOFS[3],
+            "terminal_stop": ".megaplan/initiatives/critique-ledger-safe-v3-canary/terminal-stop-receipt.json",
+            "fresh_clone_reconstruction": STABLE_EXIT_PROOFS[5],
+        }
+        for name, relative in digest_paths.items():
+            proof_path = _repo_path(relative)
+            if not proof_path.is_file() or _sha256(proof_path) != digests[name]:
+                raise ContractError(f"stable-exit proof digest mismatch: {name}")
 
 
 def validate(*, require_live: bool = False) -> None:
     custody = _load_json(INITIATIVE / "custody-manifest.json")
-    if custody.get("schema") != "arnold.critique_ledger.unfinished_work_custody.v3":
-        raise ContractError("custody manifest schema must be v3")
+    if custody.get("schema") != "arnold.critique_ledger.unfinished_work_custody.v4":
+        raise ContractError("custody manifest schema must be v4")
     _validate_obligations(custody)
+    _validate_attempt_history(custody)
     _validate_prelaunch_gates(custody, require_live=require_live)
     _validate_host_control_state_contract(custody)
+    reconciliation = custody.get("live_operation_reconciliation")
+    if reconciliation != {
+        "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/operation-reconciliation-manifest.json",
+        "sha256": "9cf695c56250738f3dd67cc269aa220449b6636c7c6ee990ce79f1a8dd29c23b",
+        "status": "PENDING_REMOTE_RECEIPT_IMPORT_AND_INDEPENDENT_RECONCILIATION",
+        "launch_disposition": "HARD_NO_GO",
+        "immutable_intent_count": 5,
+        "rule": "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS",
+    }:
+        if not (
+            isinstance(reconciliation, dict)
+            and set(reconciliation) == {"path", "sha256", "status", "launch_disposition", "immutable_intent_count", "rule"}
+            and reconciliation.get("path") == ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/operation-reconciliation-manifest.json"
+            and reconciliation.get("status") == "ACCEPTED"
+            and reconciliation.get("launch_disposition") == "ADMITTED_BY_F0"
+            and reconciliation.get("immutable_intent_count") == 5
+            and reconciliation.get("rule") == "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS"
+            and SHA256.fullmatch(str(reconciliation.get("sha256")))
+            and _sha256(INITIATIVE / "evidence/operation-reconciliation-manifest.json")
+            == reconciliation.get("sha256")
+        ):
+            raise ContractError("custody operation reconciliation pointer drift")
+    if _sha256(INITIATIVE / "evidence/operation-reconciliation-manifest.json") != reconciliation.get("sha256"):
+        raise ContractError("custody operation reconciliation hash mismatch")
+    _validate_operation_reconciliation(require_live=require_live)
     route_path = INITIATIVE / "finite-canary-operational-route.json"
     _validate_route(_load_json(route_path))
     proof_map = _load_json(INITIATIVE / "proof-map.json")
-    chain = yaml.safe_load((INITIATIVE / "chain.yaml").read_text(encoding="utf-8"))
+    chain_path = INITIATIVE / "chain.yaml"
+    chain = yaml.safe_load(chain_path.read_text(encoding="utf-8"))
     if not isinstance(chain, dict):
         raise ContractError("chain.yaml must contain a mapping")
+    try:
+        load_spec(chain_path)
+    except Exception as exc:
+        raise ContractError(f"installed chain parser rejected chain.yaml: {exc}") from exc
     _validate_chain_and_proof_map(chain, proof_map)
+    _validate_supersession(require_live=require_live)
+    _validate_runbook()
     _validate_readme(route_path)
     _validate_stable_exit_receipt(require_live=require_live)
 

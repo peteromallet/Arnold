@@ -1,4 +1,7 @@
 {
+  "f0-finite-canary-handoff-admission": [
+    "evidence/critique-ledger-recovery/T6.2/handoff-admission/completion-manifest.json"
+  ],
   "f1-owner-storage-recovery-hardening": [
     "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
     "evidence/critique-ledger-recovery/T1.5/completion-manifest.json",
@@ -55,5 +58,11 @@
     ".megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json",
     ".megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json",
     ".megaplan/initiatives/critique-ledger-safe-v3-canary/fresh-clone-reconstruction-receipt.json"
+  ],
+  "finite-canary-prelaunch-history": [
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/operation-reconciliation-manifest.json",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/custody-manifest.json",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/UNFINISHED_WORK.md",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/RUNBOOK.md"
   ]
 }

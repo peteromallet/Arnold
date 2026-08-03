@@ -1,0 +1,68 @@
+{
+  "schema": "arnold.critique_ledger.operation_reconciliation_manifest.v1",
+  "status": "PENDING_REMOTE_RECEIPT_IMPORT_AND_INDEPENDENT_RECONCILIATION",
+  "authority_rule": "INTENTS_ARE_IMMUTABLE; EFFECTIVE_STATUS_IS_APPEND_ONLY; AMBIGUITY_IS_TERMINAL_NO_REDISPATCH",
+  "independent_review": {"path": null, "sha256": null, "status": "PENDING"},
+  "operations": [
+    {
+      "operation_id": "critique-ledger-zero-byte-bootstrap-20260803-034217z",
+      "intent": {
+        "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/zero-byte-bootstrap-operation-intent-20260803.json",
+        "sha256": "76016717aeaec89ac9ecfc512444900f5721108483afcdc461c18d4ffaa5fe7d",
+        "authority_commit": "c277028f7ba7d4968e2df9988d7303929e1e37e6"
+      },
+      "supersedes": null,
+      "maximum_dispatches_by_effect": [1],
+      "terminal": {"path": null, "sha256": null, "status": "PENDING_RECONCILIATION", "dispatch_counts": null},
+      "effective_status": "PENDING_RECONCILIATION"
+    },
+    {
+      "operation_id": "critique-ledger-capacity-reserve-remediation-20260803-0349z",
+      "intent": {
+        "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/capacity-reserve-remediation-intent-20260803.json",
+        "sha256": "d2e530e3cfa53faa7fcfec10d57664eb57ec5f478eb799c2bad4a78393679a3b",
+        "authority_commit": "9f6cf24a47728d6a7ce2e75fcf642e9d9d66e22f"
+      },
+      "supersedes": null,
+      "maximum_dispatches_by_effect": [1, 1],
+      "terminal": {"path": null, "sha256": null, "status": "PENDING_RECONCILIATION", "dispatch_counts": null},
+      "effective_status": "PENDING_RECONCILIATION"
+    },
+    {
+      "operation_id": "critique-ledger-capacity-reserve-fallback-20260803-0350z",
+      "intent": {
+        "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/capacity-reserve-remediation-fallback-intent-20260803.json",
+        "sha256": "34ceb338f22198724a9f9f6196af15a9fef4470d466492f589b7867ac4143e0f",
+        "authority_commit": "a77f7a7505b686e71ca60f7c4e0aae24141078aa"
+      },
+      "supersedes": "critique-ledger-capacity-reserve-remediation-20260803-0349z",
+      "maximum_dispatches_by_effect": [1, 1],
+      "terminal": {"path": null, "sha256": null, "status": "PENDING_RECONCILIATION", "dispatch_counts": null},
+      "effective_status": "PENDING_RECONCILIATION"
+    },
+    {
+      "operation_id": "critique-ledger-failed-build-capacity-reset-20260803-0400z",
+      "intent": {
+        "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/failed-build-capacity-reset-intent-20260803.json",
+        "sha256": "f8f4ed4f024bc6e7c973c87b6f3627e0697686de679ee9904ac12794e730390f",
+        "authority_commit": "b3fa03fbc5d64645b7e51cb4a05bcd5c98251133"
+      },
+      "supersedes": null,
+      "maximum_dispatches_by_effect": [1, 1, 1, 1],
+      "terminal": {"path": null, "sha256": null, "status": "PENDING_RECONCILIATION", "dispatch_counts": null},
+      "effective_status": "PENDING_RECONCILIATION"
+    },
+    {
+      "operation_id": "critique-ledger-failed-build-capacity-reset-corrected-20260803-0404z",
+      "intent": {
+        "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/failed-build-capacity-reset-corrected-intent-20260803.json",
+        "sha256": "a53f478f606ca7ddb3a88f5777c48ccfd37d015e96ded006ae26dcfb99fbc567",
+        "authority_commit": "862a264bf7ea1c8ec82e3f773f161c371e393ea8"
+      },
+      "supersedes": "critique-ledger-failed-build-capacity-reset-20260803-0400z",
+      "maximum_dispatches_by_effect": [1, 1, 1, 1],
+      "terminal": {"path": null, "sha256": null, "status": "PENDING_RECONCILIATION", "dispatch_counts": null},
+      "effective_status": "PENDING_RECONCILIATION"
+    }
+  ]
+}

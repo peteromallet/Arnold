@@ -1,7 +1,7 @@
 {
-  "schema": "arnold.critique_ledger.unfinished_work_custody.v3",
+  "schema": "arnold.critique_ledger.unfinished_work_custody.v4",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T02:40:21Z",
+  "contract_updated_at": "2026-08-03T05:01:58Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -24,6 +24,128 @@
       "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/zero-recovery-cl2-canary-launch-design-review.md",
       "sha256": "7a962e6241bece0e81cff350a225b188fd9568ca01d1d1d2908a9f99fef20d77",
       "status": "SUPERSEDED_PRE_PRIVILEGE_REVIEW_DESIGN_EVIDENCE_ONLY"
+    }
+  ],
+  "live_operation_reconciliation": {
+    "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/operation-reconciliation-manifest.json",
+    "sha256": "9cf695c56250738f3dd67cc269aa220449b6636c7c6ee990ce79f1a8dd29c23b",
+    "status": "PENDING_REMOTE_RECEIPT_IMPORT_AND_INDEPENDENT_RECONCILIATION",
+    "launch_disposition": "HARD_NO_GO",
+    "immutable_intent_count": 5,
+    "rule": "DO_NOT_REWRITE_INTENTS_OR_REDISPATCH_AMBIGUOUS_OPERATIONS"
+  },
+  "prelaunch_attempts": [
+    {
+      "id": "B8-build",
+      "kind": "IMAGE_BUILD",
+      "candidate": {"commit": "c0e5e745d796d01deb962129f834978127f3adc0", "tree": "0dc3d1e8c5d58ae5d09aa676148efadeb2f78ce8"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "groupadd/useradd unavailable because the minimal image did not install passwd",
+      "remote_receipt": {"path": null, "sha256": null, "status": "REMOTE_PATH_NOT_RECORDED_IN_LOCAL_AUTHORITY"}
+    },
+    {
+      "id": "B9-build",
+      "kind": "IMAGE_BUILD",
+      "candidate": {"commit": "cd120d8c585c078418583ba5142c966ac5554a12", "tree": "025d719eb1318a2ff1f52673b79ef0014be7a1b2"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "passwd was installed but restricted PATH omitted /usr/sbin for groupadd/useradd",
+      "remote_receipt": {"path": null, "sha256": null, "status": "REMOTE_PATH_NOT_RECORDED_IN_LOCAL_AUTHORITY"}
+    },
+    {
+      "id": "B10-build",
+      "kind": "IMAGE_BUILD",
+      "candidate": {"commit": "04178bf31748aa746a36e7e736c0ee38d441b666", "tree": "7c67c7c63dc8d065a2f63663cba73e4566ed4c0e"},
+      "status": "FAILED_ATTEMPT_THEN_LATER_REBUILD_SUCCEEDED_NOT_SMOKE_ACCEPTED",
+      "failure": "Dockerfile completed but final image unpack hit ENOSPC while writing the Claude CLI layer",
+      "remote_receipt": {"path": null, "sha256": null, "status": "REMOTE_PATH_NOT_RECORDED_IN_LOCAL_AUTHORITY"}
+    },
+    {
+      "id": "B10-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "04178bf31748aa746a36e7e736c0ee38d441b666", "tree": "7c67c7c63dc8d065a2f63663cba73e4566ed4c0e"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "harness passed a local sha256 image ID to FROM, causing an offline registry pull attempt",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b10-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B11-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "d610d1420a9851f2d3c0be27cf1cada5413b4f0f", "tree": "1e9153d8ceda3834dc1f7b658322c7afbe16e05b"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "finite run failed with ModuleNotFoundError for yaml; inspect also exposed capability normalization and inherited-port drift",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b11-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B12-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "cc5cd5b3c435d1694a574eb23c8ec3ead52d70a2", "tree": "5494ba3a87b3f1522ac3639f5f00c1f08402f696"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "image and confinement checks passed but init failed; the smoke did not preserve phase-level diagnostic stderr",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b12-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B13-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "63f8c0ae02e951361bab81949bec661f101a2f7e", "tree": "49afa570cb237185f91ef88782165d74a8c5f95c"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "init returned nonzero; retained phase receipt still lacked bounded stdout/stderr diagnostic tails",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b13-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B14-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "38a7608ff435d08ce7a16d0e632f08a5c29a1f2e", "tree": "17f5cbcf0cc281f7d5969848b64425b58ce16682"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "init imported resident provenance and failed with ModuleNotFoundError for httpx",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b14-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B15-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "4fbe51cdd7b04053bafccc5dba5d3fac0dd436aa", "tree": "f7869b70e2bdce0b06c37b6726b113280e85e78d"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "plan failed because IPC isolation made /dev/shm absent and the boundary required lstat of it",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b15-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B16-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "05c874c875a9e81d2015c1bcce8746cbba540299", "tree": "6f332c32e17f3e9e1c99d3acdc168adb5c691d24"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "plan could not create phase-local home/.codex under /run after the premature UID handoff",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b16-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B17-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "dbb98ff2596063b4632b3e9d392b882a5808b7ec", "tree": "5115448b5da9ae95899f21f911d154ab9d1a97d0"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "plan hit Operation not permitted while fchmod(0600) copied private runtime state after UID transfer",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b17-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B18-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "e1d26430b54d3121fa545a677eb6a5189fbb248e", "tree": "75bd6a645cfb49d267e4d985f88881beeda94b7b"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "repository-integrity boundary rejected forbidden untracked directory .megaplan/worker_tmp",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b18-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B19-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "301abcae4187931eac4f97efdd4fac0120b068d9", "tree": "f743e9ecddccdaf95b0546960018630771f9468f"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "repository-integrity boundary rejected the streaming stdin tempfile below .megaplan/worker_tmp",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b19-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B20-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "be3ca786094013c3a0350b6860bbb042b63b1cc2", "tree": "602e5311d76d1163069834da9186e5380168c005"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "init passed but plan failed because /usr/bin/env could not resolve python3 in the admitted model runtime PATH",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b20-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
     }
   ],
   "prelaunch_release_gates": [

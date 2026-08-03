@@ -17,6 +17,13 @@ def test_static_follow_up_contract_is_exact() -> None:
     contract.validate()
 
 
+def test_chain_parses_through_installed_schema() -> None:
+    parsed = contract.load_spec(Path(__file__).with_name("chain.yaml"))
+    assert parsed.milestones[0].label == "f0-finite-canary-handoff-admission"
+    assert parsed.milestones[1].depends_on == ["f0-finite-canary-handoff-admission"]
+    assert {item.kind for item in parsed.launch_preconditions} == {"exists", "git_tracked"}
+
+
 def test_deferred_obligation_drift_is_rejected() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["deferred_obligations"][0]["required_claim_id"] = "forged"
@@ -67,3 +74,35 @@ def test_invented_global_marker_schema_is_rejected() -> None:
     marker["schema"] = "arnold.cloud.zero_recovery_global_containment_marker.v2"
     with pytest.raises(contract.ContractError, match="global containment marker"):
         contract._validate_host_control_state_contract(custody)
+
+
+def test_known_failed_attempt_cannot_be_relabelled_accepted() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["prelaunch_attempts"][4]["status"] = "ACCEPTED"
+    with pytest.raises(contract.ContractError, match="known attempt history drift"):
+        contract._validate_attempt_history(custody)
+
+
+def test_pending_operation_cannot_fabricate_terminal_receipt() -> None:
+    manifest_path = Path(__file__).with_name("evidence") / "operation-reconciliation-manifest.json"
+    manifest = contract._load_json(manifest_path)
+    row = manifest["operations"][0]
+    row["terminal"] = {
+        "path": "forged.json",
+        "sha256": "a" * 64,
+        "status": "PENDING_RECONCILIATION",
+        "dispatch_counts": None,
+    }
+    original_loader = contract._load_json
+
+    def load_with_mutation(path: Path):
+        if path == manifest_path:
+            return manifest
+        return original_loader(path)
+
+    contract._load_json = load_with_mutation
+    try:
+        with pytest.raises(contract.ContractError, match="fabricates terminal evidence"):
+            contract._validate_operation_reconciliation(require_live=False)
+    finally:
+        contract._load_json = original_loader

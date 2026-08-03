@@ -16,8 +16,8 @@ machine-readable authority; the paths and counts below are operator guidance.
 - [ ] A real `.megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml`,
   content-addressed conformance validator/traceability/proof map, successful
   independent conformance receipt, and typed `completion-receipt.json` exist
-  and bind the exact handoff artifacts required by the follow-up
-  `finite_canary_receipt` gate. No normal-chain `done` state may be fabricated:
+  and bind the exact handoff artifacts required by the supported artifact
+  preconditions and strict F0 handoff-admission milestone. No normal-chain `done` state may be fabricated:
   the accepted finite boundary is `finalized` before execute/review.
 - [ ] The poisoned v2 generation is fenced and cannot resume or notify.
 - [ ] Automatic fixer effects are `DISABLED_FAIL_CLOSED` unless an independently
@@ -95,6 +95,58 @@ machine-readable authority; the paths and counts below are operator guidance.
   tags, and runnable integration ref preserve every accepted, rejected and
   dirty-snapshot identity; a fresh clone recomputes every hash and passes the
   same handoff checks.
+- [ ] F0 independently admits the exact finite-canary/stable-exit handoff and
+  writes its content-addressed completion manifest. F0 is an evidence gate
+  only: it completes none of F1-F8 and discharges zero deferred obligations.
+
+## Failed prelaunch attempt history — immutable, not accepted
+
+The machine-readable identities and remote copy dispositions are in
+`custody-manifest.json#prelaunch_attempts`. Remote smoke evidence must be copied
+byte-for-byte through the supported reader from the paths below. A null hash is
+deliberately pending import; it is not permission to recreate a receipt.
+
+- [ ] **B8 build** `c0e5e745d796d01deb962129f834978127f3adc0` /
+  `0dc3d1e8c5d58ae5d09aa676148efadeb2f78ce8` failed because the minimal image
+  lacked the `passwd` package providing `groupadd`/`useradd`.
+- [ ] **B9 build** `cd120d8c585c078418583ba5142c966ac5554a12` /
+  `025d719eb1318a2ff1f52673b79ef0014be7a1b2` installed `passwd` but the
+  restricted runtime `PATH` omitted `/usr/sbin`.
+- [ ] **B10 build attempt** `04178bf31748aa746a36e7e736c0ee38d441b666` /
+  `7c67c7c63dc8d065a2f63663cba73e4566ed4c0e` completed the Dockerfile but
+  final image unpack hit ENOSPC in the Claude CLI layer. A later rebuild of the
+  same candidate succeeded after a separately authorized capacity reset; that
+  does not erase this failure or constitute smoke/canary acceptance.
+- [ ] Preserve B10 smoke at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b10-offline-smoke.json`: the
+  harness used a local `sha256:` image ID as `FROM` and attempted an offline
+  registry pull.
+- [ ] Preserve B11 smoke at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b11-offline-smoke.json`:
+  candidate `d610d1420a9851f2d3c0be27cf1cada5413b4f0f` / tree
+  `1e9153d8ceda3834dc1f7b658322c7afbe16e05b` failed on missing `yaml`; its
+  inspect evidence also exposed capability normalization and inherited-port
+  drift.
+- [ ] Preserve B12 and B13 at their corresponding
+  `/var/lib/arnold-zero-recovery/critique-ledger-b12-offline-smoke.json` and
+  `...b13-offline-smoke.json` paths. B12 (`cc5cd5b...` / `5494ba3...`) passed
+  image/confinement checks but lost the init diagnostic; B13 (`63f8c0ae...` /
+  `49afa570...`) retained a failed init phase receipt but still lacked bounded
+  diagnostic tails. These are evidence-path failures as well as failed smokes.
+- [ ] Preserve B14-B17 at the same immutable path pattern. B14
+  (`38a7608f...` / `17f5cbcf...`) failed on missing `httpx`; B15
+  (`4fbe51cd...` / `f7869b70...`) on absent `/dev/shm` under IPC isolation; B16
+  (`05c874c8...` / `6f332c32...`) on permission creating phase-local
+  `home/.codex`; and B17 (`dbb98ff2...` / `5115448b...`) on `fchmod(0600)`
+  after premature UID transfer.
+- [ ] Preserve B18-B20 at the same immutable path pattern. B18
+  (`e1d26430...` / `75bd6a64...`) rejected untracked `.megaplan/worker_tmp`;
+  B19 (`301abcae...` / `f743e9ec...`) rejected its streaming stdin tempfile;
+  and B20 (`be3ca786...` / `602e5311...`) passed init but failed plan because
+  `/usr/bin/env` could not resolve `python3` in the admitted model runtime PATH.
+- [ ] Copy and reconcile every available B10-B20 receipt/evidence directory;
+  obtain a strictly later independently accepted smoke. No B8-B20 attempt is
+  current acceptance authority, and no missing build receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 
@@ -161,8 +213,9 @@ claim cannot discharge an obligation.
   `evidence/capacity-reserve-remediation-fallback-intent-20260803.json` and may
   delete only descendants of the canonical pip-cache directory while
   preserving that directory inode.
-- [ ] Preserve the two failed real image-build receipts (`groupadd` resolution,
-  then final-layer ENOSPC) and the exact failed-build reset authority at
+- [ ] Preserve the three failed real image-build attempts (B8 missing account
+  tooling, B9 restricted-PATH account-tool resolution, and B10 final-layer
+  ENOSPC) and the exact failed-build reset authority at
   `evidence/failed-build-capacity-reset-intent-20260803.json`. The reset may
   prune only build cache, images referenced by no container, npm-cache
   descendants, and reduce root reserve from 1 GiB to 512 MiB. It must preserve
