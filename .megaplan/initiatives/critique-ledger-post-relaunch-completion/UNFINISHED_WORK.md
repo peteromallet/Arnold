@@ -68,6 +68,9 @@ waits for all checked items and one exact integration commit.
   one locked, expected-hash/version, field-allowlisted CAS writer.
 - [x] Retire notification adapter-to-direct-send fallbacks and the legacy repair
   loop Discord sender; ambiguous provider outcomes are `INDETERMINATE`.
+- [ ] Inject one durable `DeliveryEffects` owner from the real production
+  resident bootstrap into every autonomous completion/subagent sweep; prove
+  interactive replies are the only intentional direct Discord path.
 - [x] After repair identity lands, persist the simple-fixer mutation budget and
   effect outcomes by canonical repair occurrence across restart/claim release.
 - [x] Route cloud status/supervisor actions through canonical current-target
