@@ -746,6 +746,17 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert "workflow-manifest-runtime" not in text
 
 
+def test_watchdog_allows_scoped_invocations_to_bypass_shared_hot_env() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert (
+        'WATCHDOG_HOT_ENV="${ARNOLD_CLOUD_HOT_ENV:-/workspace/.cloud-hot-env}"'
+        in text
+    )
+    assert 'if [[ -f "$WATCHDOG_HOT_ENV" ]]; then' in text
+    assert '. "$WATCHDOG_HOT_ENV"' in text
+
+
 def test_watchdog_sync_does_not_broadly_commit_source_drift() -> None:
     text = _wrapper("arnold-watchdog")
     start = text.index("sync_editable_source_branch() {")
