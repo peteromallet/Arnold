@@ -249,19 +249,56 @@ deliberately pending import; it is not permission to recreate a receipt.
   `sha256:c1dcccbd0381bb8d578c14b9a0edfcbb24eddf9d70c537f1063a9e065feba878`,
   and derived image is
   `sha256:5677ed0b6a888be55ce4aaf1cedbfc57d3037f1e55b6ca1e8e19067029f99476`.
-  Offline pass does not satisfy independent or live gates.
-- [ ] Run B28 only as a fresh supported live attempt in workspace
+  Sol acceptance remains unrecorded; its later terminal failed-live receipt
+  does not retroactively satisfy the independent gate.
+- [ ] Import B28 live attempt 2's already-terminal/reconciled receipt. Its
+  declared file SHA-256 is
+  `1f39fc0bc54958b127016b08a0778dece85f2900e30defbd40dfc39d6de00dad`
+  and digest is
+  `2f682fe966d45dfc71527284259cea98e34876d79ac49797603261f5aee102cf`;
+  no local path was supplied. It made exactly one plan-start dispatch, then
+  failed with terminal state `failed`. Exact reported primary raw evidence is
+  `finite-model runtime contains a forbidden or linked object: /run/.../home/.codex/tmp/arg0/codex-arg0ZLod2y/codex-execve-wrapper mode=0o120000 nlink=1`.
+  Real Codex created this temporary arg0 wrapper symlink, which the offline fake
+  did not model, followed by the same two output ownership cascades.
+- [ ] Preserve B28 containment: container
+  `megaplan-cloud-agent-finite-canary-2`, ID prefix `84a022`, stopped exit 137,
+  OOM false and `reconciled_stop` true. Attempt-2 workspace
   `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-2-20260803`
-  and container `megaplan-cloud-agent-finite-canary-2`; preserve B27 attempt 1.
-- [ ] Import the outstanding failed-fence, B27 live and future B28 live receipt
-  bytes; no missing receipt may be synthesized. B27's outcome is already
-  terminal/reconciled, while B28 live execution remains pending.
+  is sealed root:0700 and preserved.
+- [ ] Preserve A29 at `dcebf3749a1b25d2c4aac23223e5bc99280dd432` /
+  tree `b849184abf77d10491a40e252fa2587112ad72ab`. It accounts symlink target
+  bytes without resolving the link, unlinks the link itself only after finite
+  UID process emptiness, leaves the external target untouched, and continues
+  to reject FIFOs, block/character devices and hardlinks. Its recorded suite
+  result is 172 passed and 1 skipped.
+- [ ] Copy and obtain Sol's independent acceptance for B29 at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b29-offline-smoke.json`.
+  Launch `234dab1d37ff3dd9363f4e381cf0f4556d34d966` / tree
+  `ab078643d37e74a4a6ff173dfd9904cfa3c2b3e0` passed all five exact phases
+  with four privilege receipts. File SHA-256 is
+  `2b32f71a5cf20bf3ef14774f47d3cd6aa0ed1bf2d836df6d1863478c6323e70b`,
+  receipt digest is
+  `3877c42171d7d7a96935631d6202dd2ccdf4a4943515d57f3e77b60fa6c6092b`,
+  verifier digest is
+  `f785eca5a73c1809ed7f8151e724082dc7da9e6f7b359137e2c2e99dfcca03f9`,
+  production image is
+  `sha256:ddec86ad159adc1c464a7373292ab3ee7bd0cb08555418167f619096d81ef64e`,
+  and derived image is
+  `sha256:231c9ff9bfdcd1a1b54b305ca8c74ab7df63067b4501e4c33923cb6a4bc319fe`.
+  Independent and live gates remain pending.
+- [ ] Run B29 only as a fresh supported live attempt in workspace
+  `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-3-20260803`
+  and container `megaplan-cloud-agent-finite-canary-3`; preserve B27/B28.
+- [ ] Import the outstanding failed-fence, B27 live, B28 live and future B29
+  live receipt bytes; no missing receipt may be synthesized. B27/B28 outcomes
+  are already terminal/reconciled, while B29 live execution remains pending.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B28 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B29 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
-  offline history, B27 is terminal failed-live history, B28 is the latest
+  offline history, B27/B28 are terminal failed-live history, B29 is the latest
   passing offline candidate pending Sol acceptance and live execution, and no
   missing receipt may be synthesized.
 
