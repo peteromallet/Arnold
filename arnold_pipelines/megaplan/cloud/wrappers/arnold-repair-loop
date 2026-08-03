@@ -29,7 +29,34 @@ if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
   exec bash "$repair_loop_snapshot" "$@"
 fi
 ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
-trap 'rm -f -- "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH"' EXIT
+
+cleanup_repair_loop_snapshot() {
+  rm -f -- "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH"
+}
+
+# Cleanup grows in stages as the wrapper acquires progressively stronger
+# custody.  Keep one trap for the invocation lifetime so later custody cleanup
+# cannot silently discard immutable-snapshot cleanup.
+repair_loop_exit_cleanup() {
+  if declare -F shutdown_repair_loop >/dev/null 2>&1; then
+    shutdown_repair_loop
+  elif declare -F release_early_repair_pid_claim >/dev/null 2>&1; then
+    release_early_repair_pid_claim
+  fi
+  cleanup_repair_loop_snapshot
+}
+
+repair_loop_signal_exit() {
+  local signal_name="$1"
+  local exit_status="$2"
+  trap - "$signal_name"
+  exit "$exit_status"
+}
+
+trap 'repair_loop_exit_cleanup' EXIT
+trap 'repair_loop_signal_exit HUP 129' HUP
+trap 'repair_loop_signal_exit INT 130' INT
+trap 'repair_loop_signal_exit TERM 143' TERM
 
 if [[ $# -lt 3 ]]; then
   echo "usage: arnold-repair-loop <session> <workspace> <remote-spec>" >&2
@@ -64,10 +91,6 @@ release_early_repair_pid_claim() {
     fi
   fi
 }
-trap 'release_early_repair_pid_claim' EXIT
-trap 'release_early_repair_pid_claim; exit 129' HUP
-trap 'release_early_repair_pid_claim; exit 130' INT
-trap 'release_early_repair_pid_claim; exit 143' TERM
 
 # Process custody must precede interpreter attestation and Python imports.
 # The durable repair lock below upgrades this cheap claim before any mutation.
@@ -719,11 +742,6 @@ shutdown_repair_loop() {
   release_active_repair_claim
   release_repair_lock
 }
-
-trap 'shutdown_repair_loop' EXIT
-trap 'shutdown_repair_loop; exit 129' HUP
-trap 'shutdown_repair_loop; exit 130' INT
-trap 'shutdown_repair_loop; exit 143' TERM
 
 acquire_repair_lock() {
   local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""

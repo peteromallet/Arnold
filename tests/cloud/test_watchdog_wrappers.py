@@ -142,7 +142,10 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
     assert "mktemp" in text
     assert "bash -n" in text
     assert f"export {prefix}_SNAPSHOT_ACTIVE=1" in text
-    assert f'{prefix}_SNAPSHOT_PATH="${{BASH_SOURCE[0]:-$0}}"' in text
+    if wrapper_name == "arnold-progress-auditor":
+        assert f'{prefix}_SNAPSHOT_PATH="$progress_auditor_current"' in text
+    else:
+        assert f'{prefix}_SNAPSHOT_PATH="${{BASH_SOURCE[0]:-$0}}"' in text
     if wrapper_name == "arnold-watchdog":
         # Watchdog execs the checked snapshot immediately, then derives the
         # cleanup path from BASH_SOURCE inside that immutable child.
@@ -153,7 +156,17 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
         # envelope and verify that the child really runs from that path.
         assert f'"${{{prefix}_SNAPSHOT_PATH:-}}"' in text
         assert f'export {prefix}_SNAPSHOT_PATH="$' in text
-    assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
+    if wrapper_name == "arnold-progress-auditor":
+        assert f'register_progress_auditor_cleanup "${prefix}_SNAPSHOT_PATH"' in text
+        assert "trap 'cleanup_progress_auditor' EXIT" in text
+    elif wrapper_name == "arnold-repair-loop":
+        assert f'rm -f -- "${prefix}_SNAPSHOT_PATH"' in text
+        assert text.count("trap 'repair_loop_exit_cleanup' EXIT") == 1
+        assert "shutdown_repair_loop" in text[text.index("repair_loop_exit_cleanup() {") :]
+        assert "trap 'release_early_repair_pid_claim" not in text
+        assert "trap 'shutdown_repair_loop" not in text
+    else:
+        assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
     assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' not in text
 
 
