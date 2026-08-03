@@ -1,0 +1,46 @@
+{
+  "schema": "arnold.cloud.zero_byte_bootstrap_operation_intent.v1",
+  "status": "AUTHORIZED_PENDING_SINGLE_DISPATCH",
+  "operation_id": "critique-ledger-zero-byte-bootstrap-20260803-034217z",
+  "issued_at": "2026-08-03T03:42:17Z",
+  "authority": {
+    "basis": "user-authorized bounded Critique Ledger cloud recovery and relaunch",
+    "follow_up_branch": "epic/critique-ledger-post-relaunch-completion-20260802",
+    "follow_up_parent_commit": "1519ea7a04c35a3b7148f7b19b8f79db6695c832",
+    "launch_candidate_commit": "c0e5e745d796d01deb962129f834978127f3adc0"
+  },
+  "target": {
+    "host": "159.69.51.216",
+    "predecessor_container": "megaplan-cloud-agent",
+    "predecessor_container_id": "277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab",
+    "predecessor_image_id": "sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94",
+    "workspace_bind_source": "/opt/megaplan-cloud/workspace",
+    "workspace_bind_destination": "/workspace"
+  },
+  "admitted_effect": {
+    "argv": [
+      "docker",
+      "builder",
+      "prune",
+      "-f"
+    ],
+    "maximum_dispatches": 1,
+    "excluded": [
+      "containers",
+      "images",
+      "volumes",
+      "workspace",
+      "deploy_directory",
+      "host_cache_directory"
+    ]
+  },
+  "containment_preconditions": {
+    "persistent_disable_before_prune": true,
+    "runtime_mask_before_prune": true,
+    "no_recovery_jobs_sessions_or_processes": true,
+    "predecessor_identity_reverified": true,
+    "zero_free_bytes_reverified": true
+  },
+  "ambiguity_policy": "NO_REDISPATCH; reconcile from this intent, provider WBC, boot identity, capacity, Docker cache state, unit state, and any durable host receipt",
+  "terminal_seal_required": "persistent masks plus durable O_EXCL host receipt and post-reclaim capacity evidence"
+}

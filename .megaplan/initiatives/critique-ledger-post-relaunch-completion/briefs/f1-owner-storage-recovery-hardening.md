@@ -17,6 +17,12 @@ generalization; and preparation of T4.6 without rewriting evidence.
 Generalize the finite Codex UID/capability/resource boundary into a reusable
 cross-pipeline worker profile and build a physically minimal image that omits
 dormant recovery/notification code and credentials.
+Close the zero-byte authority bootstrap deadlock found live on 2026-08-03:
+durable local intent creation cannot be a prerequisite for reclaiming the first
+writable block on that same full filesystem. The generalized solution requires
+off-host monotonic operation consumption, a reboot-persistent provider fence,
+an immutable preinstalled helper, `/run` same-boot staging, durable post-reclaim
+sealing, ambiguity-safe reconciliation, and a supported strict receipt reader.
 
 ## Locked decisions
 
@@ -48,6 +54,10 @@ dormant recovery/notification code and credentials.
 - The privilege launcher has installed conformance for supported kernels and
   container runtimes, including capability, setpriv, tmp/proc/signal and
   resource-limit hostile matrices.
+- A cache prune is not assumed replay-safe merely because its argv is
+  idempotent-looking: a later replay can delete newly-created cache. Client loss
+  or reboot after dispatch therefore consumes the operation and yields typed
+  ambiguity until independently reconciled; it never authorizes redispatch.
 
 ## Open questions
 
@@ -74,6 +84,9 @@ receipts.
 ## Done criteria
 
 - Storage reserve/capacity and crash/ENOSPC behavior are proven platform-wide.
+- At exactly zero free bytes, client loss and reboot at every boundary prove one
+  admitted reclaim dispatch maximum, zero legacy notification effects, durable
+  post-reclaim sealing, and supported recovery of host authority evidence.
 - Required owners use accepted transactional storage or an independently proven
   equivalent.
 - Full recovery topology inventory has zero live unowned mutation path and the

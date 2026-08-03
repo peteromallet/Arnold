@@ -122,6 +122,29 @@ claim cannot discharge an obligation.
 
 ## F1 — owner, storage and recovery root fixes
 
+- [ ] **VERY HARD — zero-byte recovery authority.** Productize the emergency
+  bootstrap exposed on 2026-08-03: when the authority filesystem has exactly
+  zero writable bytes, the current safe route cannot create
+  `/var/lib/arnold-zero-recovery` and therefore cannot reach its only admitted
+  reclaim. Add an independently controlled off-host monotonic consumed-grant,
+  a provider/reboot-persistent activation fence, an already-installed immutable
+  helper, same-boot `/run` tmpfs stage receipts, immediate durable receipt
+  migration, and reconciliation that never redispatches an ambiguous prune.
+  Add a strict supported CLI reader for bootstrap/fence authority receipts so a
+  lost client session never requires an internal provider command. Test client
+  loss and reboot at every boundary, `/run` failure, concurrent BuildKit drift,
+  partial persistent masking, insufficient reclaim, WBC rollback/corruption,
+  and notification-provider zero-call assertions. This is owned by
+  `F1.platform_capacity_storage_hardening`; it does not add or renumber a
+  deferred obligation.
+- [ ] Preserve and independently review the one-time live bootstrap evidence:
+  the normal transaction `5ec3ee3ddb8948e3bccea8faeb41a051` failed
+  `before_intent` with `prune_started=false` because creating the durable
+  authority root returned `ENOSPC`. The separately committed operation intent
+  at `evidence/zero-byte-bootstrap-operation-intent-20260803.json` permits at
+  most one exact `docker builder prune -f` dispatch and makes ambiguity a
+  terminal no-redispatch state. Replace this checkbox only with exact WBC,
+  host receipt, capacity, containment and independent-review evidence.
 - [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
   reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
   corruption and crash behavior; define safe lifecycle retention and broad
