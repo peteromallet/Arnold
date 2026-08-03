@@ -8,10 +8,16 @@ and this incident becomes a permanent fail-closed regression gate.
 Success is evidence, not status prose:
 
 - each model attempt carries exact authenticated raw-byte custody;
+- each epic seals its intended provider/profile/phase map before launch, and
+  every child proves it loaded the exact remotely read-back bound bytes before
+  making a provider call;
 - failed, unknown or unverifiable work never projects as clean success;
 - every external effect has one WBC occurrence and exact replay semantics;
 - one eligible failure creates at most one repair occurrence and one genuine
   decision notification;
+- provider-policy or execution-binding drift is contained, rolled back and
+  relaunched once automatically; a person is notified only after bounded repair
+  fails, is unsafe or exhausts;
 - v3 advances from authoritative predecessor completion manifests;
 - product deployment is content-addressed, independently verified and safely
   reversible;

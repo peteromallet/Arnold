@@ -21,6 +21,13 @@ def test_chain_parses_through_installed_schema() -> None:
     parsed = contract.load_spec(Path(__file__).with_name("chain.yaml"))
     assert parsed.milestones[0].label == "f0-finite-canary-handoff-admission"
     assert parsed.milestones[1].depends_on == ["f0-finite-canary-handoff-admission"]
+    assert parsed.milestones[3].label == "f2a-launch-profile-artifact-drift-containment"
+    assert parsed.milestones[3].depends_on == [
+        "f2-admission-model-effect-release-closure"
+    ]
+    assert parsed.milestones[4].depends_on == [
+        "f2a-launch-profile-artifact-drift-containment"
+    ]
     assert [item.kind for item in parsed.launch_preconditions] == [
         "chain_completed",
         "git_tracked",
@@ -56,6 +63,68 @@ def test_r5_phantom_launch_cannot_be_promoted_to_a_real_managed_run() -> None:
         match="r5 phantom repair-attempt evidence drift",
     ):
         contract._validate_r5_repair_control_incident(incident)
+
+
+def _provider_policy_fixture() -> tuple[dict, dict]:
+    root = Path(__file__).parent
+    policy = contract._load_json(
+        root / "provider-policy-execution-binding-contract.json"
+    )
+    chain = contract.yaml.safe_load((root / "chain.yaml").read_text(encoding="utf-8"))
+    return policy, chain
+
+
+def test_f2a_refuses_unexpected_all_codex_substitution() -> None:
+    policy, chain = _provider_policy_fixture()
+    policy["intended_epic_map"]["milestones"][0]["profile"] = "all-codex"
+    with pytest.raises(
+        contract.ContractError,
+        match="intended milestone profile/provider map drift",
+    ):
+        contract._validate_provider_policy_binding_contract(policy, chain)
+
+
+def test_f2a_committed_phase_map_must_match_current_resolver() -> None:
+    policy, chain = _provider_policy_fixture()
+    policy["intended_epic_map"]["resolved_phase_maps"][
+        "partnered-5-codex-high-direct"
+    ]["critique"] = "codex:gpt-5.6-sol:high"
+    with pytest.raises(
+        contract.ContractError,
+        match="committed phase map differs from current resolver",
+    ):
+        contract._validate_provider_policy_binding_contract(policy, chain)
+
+
+def test_f2a_remote_readback_must_precede_binding_and_spawn() -> None:
+    policy, chain = _provider_policy_fixture()
+    order = policy["launch_contract"]["order"]
+    order[3], order[5] = order[5], order[3]
+    with pytest.raises(
+        contract.ContractError,
+        match="remote-byte launch binding drift",
+    ):
+        contract._validate_provider_policy_binding_contract(policy, chain)
+
+
+def test_f2a_successful_repair_cannot_notify() -> None:
+    policy, chain = _provider_policy_fixture()
+    policy["notification_contract"]["successful_automatic_repair_notifications"] = 1
+    with pytest.raises(
+        contract.ContractError,
+        match="failure-only notification drift",
+    ):
+        contract._validate_provider_policy_binding_contract(policy, chain)
+
+
+def test_f2a_cannot_be_reduced_to_a_megaplan_only_contract() -> None:
+    policy, chain = _provider_policy_fixture()
+    policy["reuse_contract"]["forbidden_architecture"] = "MEGAPLAN_ONLY_ALLOWED"
+    with pytest.raises(
+        contract.ContractError,
+        match="neutral authority/provenance reuse drift",
+    ):
+        contract._validate_provider_policy_binding_contract(policy, chain)
 
 
 def test_pending_prelaunch_evidence_cannot_be_fabricated() -> None:

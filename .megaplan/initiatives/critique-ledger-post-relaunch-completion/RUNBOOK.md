@@ -74,9 +74,13 @@ ambiguous, reconcile and stop; do not redispatch.
    writable working directory separate from read-only runtime/source; tracked
    symlinks cannot escape the admitted source; and no duplicate launch-owned
    environment selector can override the declared runtime.
-4. Choose the profile from admitted credentials. If the direct DeepSeek key is
-   absent, select the declared OAuth-backed all-Codex profile and record the
-   change; never silently retain DeepSeek labels or claim DeepSeek execution.
+4. Resolve the entire milestone provider/profile/phase map and compare it to
+   the approved immutable policy. Credentials prove the intended map is
+   runnable; they do not choose a replacement. If direct DeepSeek or another
+   intended capability is absent, stop before spawn. Selecting all-Codex or any
+   other alternative requires an explicit reviewed new policy version/digest;
+   never substitute it implicitly or retain labels for a provider that cannot
+   run.
 5. From the exact runtime checkout, perform the supported fresh launch. Replace
    the variables below only with the newly committed product/runtime paths; do
    not add hidden environment selectors or credentials on argv:
@@ -89,16 +93,21 @@ ambiguous, reconcile and stop; do not redispatch.
      "$PRODUCT_CHECKOUT/.megaplan/initiatives/critique-ledger/chain.yaml"
    ```
 
-6. Treat command return as launch acknowledgement only. After the setup
-   completion contract settles, verify the exact tmux/process exists, the plan
-   advances beyond initialization, and
+6. Treat command return as launch acknowledgement only. After F2A is installed,
+   require canonical upload, exact remote-byte readback, durable execution
+   binding and child loaded-byte/map attestation before the first provider call.
+   After the setup completion contract settles, verify the exact tmux/process
+   exists, the plan advances beyond initialization, and
    `editable_root == import_root == configured runtime root` plus
    `editable_revision == source_revision == configured runtime revision`.
    Verify the active worker/profile matches the admitted provider route and no
    terminal failure has appeared.
 7. Observe again after the initial worker boundary. Only then record the new
-   generation as durably moving. A failed admission gets one evidence-rich
-   terminal result, not a retry loop or repeated user notification.
+   generation as durably moving. Policy/binding drift fences new dispatch,
+   terminates the bound wrong-profile process tree, rolls back to the last
+   approved still-admissible binding and relaunches once under the durable F2A
+   key. A successful repair sends no incident notification; only unsafe, failed
+   or exhausted bounded repair sends one deduplicated notification.
 
 Use `megaplan introspect` first for routine observation. If it returns an event
 checkpoint/incarnation error, do not infer that the worker failed and do not

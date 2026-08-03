@@ -27,8 +27,9 @@ Do not launch this chain until the live r5 predecessor has no active plan, all
 CL2-CL5 milestones have accepted completion records, its current `chain.yaml`
 hash matches the state, and its content-addressed completion manifest passes
 the installed `chain_completed` precondition. F0 reconciles that handoff and
-completes none of F1-F8. Incident operators must follow [`RUNBOOK.md`](RUNBOOK.md); generic
-cloud deploy/chain/supervision routes are forbidden for this recovery.
+completes none of F1-F8 or F2A. Incident operators must follow
+[`RUNBOOK.md`](RUNBOOK.md); generic cloud deploy/chain/supervision routes are
+forbidden for this recovery.
 
 ## Current operational handoff — 2026-08-03
 
@@ -84,6 +85,21 @@ against this exact fixture. F1 retains the platform-wide truth firewall,
 supported stale-claim/goal settlement, phase-bound repair authority,
 current-error signature discipline, per-check reconstruction, canonical
 observe-only full report and durable version-keyed status publication.
+
+Today's relaunch also proved a separate cross-pipeline launch invariant was
+missing: declared profile/vendor intent, fully resolved phase routing, uploaded
+bytes and the process that actually ran were not one sealed object. The new
+**F2A — VERY HARD (5/5)** milestone closes that gap after F1/F2 primitives and
+before F3 ordinary product work. Its committed policy map refuses unexpected
+all-Codex or any other substitution before spawn, binds execution only after
+exact remote-byte readback, contains wrong-profile workers, rolls back and
+relaunches once idempotently, and notifies only if bounded automatic repair
+fails. The contract is pipeline-neutral and requires registry-closed tests for
+every production Arnold pipeline and launcher; it is not a Critique/Megaplan-
+only patch. See
+[`provider-policy-execution-binding-contract.json`](provider-policy-execution-binding-contract.json)
+and
+[`briefs/f2a-launch-profile-artifact-drift-containment.md`](briefs/f2a-launch-profile-artifact-drift-containment.md).
 
 Discord resident availability is separately restored. Recovery epoch
 `discord-enospc-20260803-r7` created healthy container

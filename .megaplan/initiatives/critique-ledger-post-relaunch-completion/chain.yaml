@@ -52,6 +52,18 @@ milestones:
     depends_on:
       - f1-owner-storage-recovery-hardening
     notes: Difficulty 5/5; VERY HARD. Generalizes the Stage-A scoped controls platform-wide and closes zero-debt release qualification before authority expansion.
+  - label: f2a-launch-profile-artifact-drift-containment
+    idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f2a-launch-profile-artifact-drift-containment.md
+    branch: epic/critique-ledger-v3/f2a-launch-profile-artifact-drift-containment
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_clarify: false
+    depends_on:
+      - f2-admission-model-effect-release-closure
+    notes: Difficulty 5/5; VERY HARD. Cross-pipeline seal from immutable intended provider/phase policy through exact remote execution bytes, drift containment, one bounded repair and failure-only notification. F1 owner/recovery and F2 admission/model primitives are hard dependencies; F3 ordinary product work cannot start before its completion manifest.
   - label: f3-cl2-real-work-and-publication
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/m1-cl2-ordinary-completion.md
     branch: epic/critique-ledger-v3/f3-cl2-real-work-and-publication
@@ -62,7 +74,7 @@ milestones:
     with_prep: true
     prep_clarify: false
     depends_on:
-      - f2-admission-model-effect-release-closure
+      - f2a-launch-profile-artifact-drift-containment
     notes: Difficulty 5/5; VERY HARD. Completes remaining T6.3 evidence plus T6.4-T6.5 after deferred hardening manifests join.
   - label: f4-cl3-cl5-epic-completion
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/m2-cl3-cl5-epic-completion.md

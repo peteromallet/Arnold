@@ -14,6 +14,12 @@ from typing import Any
 import yaml
 
 from arnold_pipelines.megaplan.chain.spec import load_spec, validate_launch_preconditions
+from arnold_pipelines.megaplan.profiles import load_profiles, resolve_profile
+from arnold_pipelines.megaplan.profiles.policy import (
+    apply_deepseek_provider_rewrite,
+    apply_depth_rewrite,
+    apply_vendor_rewrite,
+)
 
 
 INITIATIVE = Path(__file__).resolve().parent
@@ -23,6 +29,7 @@ R5_REPAIR_CONTROL_EVIDENCE = (
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
     "evidence/r5-cl2-repair-control-incident-20260803.json"
 )
+PROVIDER_POLICY_BINDING_CONTRACT = "provider-policy-execution-binding-contract.json"
 
 OBLIGATIONS = {
     "F1.platform_capacity_storage_hardening": "f1-owner-storage-recovery-hardening",
@@ -2042,6 +2049,7 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         "f0-finite-canary-handoff-admission",
         "f1-owner-storage-recovery-hardening",
         "f2-admission-model-effect-release-closure",
+        "f2a-launch-profile-artifact-drift-containment",
         "f3-cl2-real-work-and-publication",
         "f4-cl3-cl5-epic-completion",
         "f5-product-release-and-deploy",
@@ -2065,6 +2073,13 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         raise ContractError("resident availability proof map drift")
     if R5_REPAIR_CONTROL_EVIDENCE not in f1_proofs:
         raise ContractError("r5 repair-control incident proof map drift")
+    if proof_map.get("f2a-launch-profile-artifact-drift-containment") != [
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        "provider-policy-execution-binding-contract.json",
+        "evidence/critique-ledger-recovery/F2A/"
+        "provider-policy-execution-binding/completion-manifest.json",
+    ]:
+        raise ContractError("F2A provider-policy/binding proof map drift")
     if proof_map.get("finite-canary-stable-exit") != STABLE_EXIT_PROOFS:
         raise ContractError("stable-exit proof map drift")
     if proof_map.get("finite-canary-prelaunch-history") != [
@@ -2129,6 +2144,172 @@ def _validate_r5_repair_control_incident(incident: dict[str, Any]) -> None:
         or follow_up.get("milestone") != "f1-owner-storage-recovery-hardening"
     ):
         raise ContractError("r5 immediate/deferred repair custody drift")
+
+
+def _validate_provider_policy_binding_contract(
+    policy: dict[str, Any], chain: dict[str, Any]
+) -> None:
+    if (
+        policy.get("schema")
+        != "arnold.cross_pipeline.provider_policy_execution_binding.v1"
+        or policy.get("status") != "NORMATIVE_DESIGN_TARGET_NOT_RUNTIME_PROOF"
+        or policy.get("owner_milestone")
+        != "f2a-launch-profile-artifact-drift-containment"
+        or policy.get("scope")
+        != "ALL_REGISTERED_PRODUCTION_PIPELINES_AND_CHAIN_LAUNCHERS"
+        or policy.get("difficulty") != "5/5 VERY HARD"
+        or policy.get("dependencies")
+        != [
+            "f1-owner-storage-recovery-hardening",
+            "f2-admission-model-effect-release-closure",
+        ]
+        or policy.get("blocks") != ["f3-cl2-real-work-and-publication"]
+    ):
+        raise ContractError("F2A provider-policy/binding identity drift")
+
+    reuse = policy.get("reuse_contract")
+    if (
+        not isinstance(reuse, dict)
+        or reuse.get("forbidden_architecture")
+        != "NEW_MEGAPLAN_ONLY_AUTHORITY_PROVENANCE_BINDING_OR_WATCHDOG_PROTOCOL"
+        or reuse.get("broader_missing_seam")
+        != "NO_NEUTRAL_TYPED_CONTRACT_CURRENTLY_JOINS_WORKFLOW_IDENTITY_RESOLVED_PROVIDER_POLICY_EXACT_REMOTE_READBACK_BYTES_CHILD_LOADED_BYTES_AND_REPAIR_CUSTODY"
+        or reuse.get("broader_missing_test")
+        != "NO_REGISTRY_CLOSED_CONFORMANCE_TEST_PROVES_EVERY_PRODUCTION_PIPELINE_AND_LAUNCHER_USES_THAT_JOINED_CONTRACT"
+        or len(reuse.get("required_neutral_authorities") or []) != 5
+        or len(reuse.get("extract_not_duplicate") or []) != 2
+    ):
+        raise ContractError("F2A neutral authority/provenance reuse drift")
+
+    intent = policy.get("intended_epic_map")
+    intended = intent.get("milestones") if isinstance(intent, dict) else None
+    chain_milestones = chain.get("milestones")
+    if not isinstance(intended, list) or not isinstance(chain_milestones, list):
+        raise ContractError("F2A intended milestone map missing")
+    exact_chain_map = [
+        {
+            "label": row.get("label"),
+            "profile": row.get("profile"),
+            "vendor": row.get("vendor"),
+            "depth": row.get("depth"),
+        }
+        for row in chain_milestones
+        if isinstance(row, dict)
+    ]
+    exact_intended_map = [
+        {
+            "label": row.get("label"),
+            "profile": row.get("profile"),
+            "vendor": row.get("vendor"),
+            "depth": row.get("depth"),
+        }
+        for row in intended
+        if isinstance(row, dict)
+    ]
+    if exact_intended_map != exact_chain_map:
+        raise ContractError("F2A intended milestone profile/provider map drift")
+    resolutions = intent.get("resolved_phase_maps")
+    if (
+        intent.get("unexpected_substitution") != "TYPED_POLICY_DRIFT_NO_SPAWN"
+        or intent.get("all_codex_rule")
+        != "ALLOWED_ONLY_WHEN_THE_EXACT_APPROVED_MILESTONE_MAP_NAMES_AN_ALL_CODEX_PROFILE_AND_RESOLVES_TO_IT"
+        or not isinstance(resolutions, dict)
+        or set(resolutions)
+        != {
+            "partnered-3-codex-high-direct",
+            "partnered-3-codex-medium-direct",
+            "partnered-4-codex-high-direct",
+            "partnered-5-codex-high-direct",
+        }
+        or any(row.get("resolution") not in resolutions for row in intended)
+        or any(row.get("profile") == "all-codex" for row in intended)
+    ):
+        raise ContractError("F2A resolved provider-policy map drift")
+    profile_inputs = {
+        row["resolution"]: (row["profile"], row["vendor"], row["depth"])
+        for row in intended
+    }
+    try:
+        available_profiles = load_profiles(project_dir=ROOT)
+        actually_resolved = {}
+        for resolution_id, (profile_name, vendor, depth) in profile_inputs.items():
+            phase_map = resolve_profile(profile_name, available_profiles)
+            phase_map = apply_vendor_rewrite(phase_map, vendor)
+            phase_map = apply_depth_rewrite(phase_map, depth)
+            actually_resolved[resolution_id] = apply_deepseek_provider_rewrite(
+                phase_map, "direct"
+            )
+    except Exception as exc:
+        raise ContractError(f"F2A profile resolver failed closed: {exc}") from exc
+    if actually_resolved != resolutions:
+        raise ContractError("F2A committed phase map differs from current resolver")
+
+    preflight = policy.get("preflight_contract")
+    launch = policy.get("launch_contract")
+    watchdog = policy.get("watchdog_contract")
+    notification = policy.get("notification_contract")
+    tests = policy.get("all_pipeline_test_contract")
+    if (
+        not isinstance(preflight, dict)
+        or preflight.get("order")
+        != [
+            "LOAD_INTENT",
+            "RESOLVE_EVERY_MILESTONE",
+            "COMPARE_EXACT_MAP",
+            "CHECK_CREDENTIAL_CAPABILITIES",
+            "SEAL_POLICY_DIGEST",
+        ]
+        or "SILENT_ALL_CODEX_SUBSTITUTION" not in preflight.get("forbidden", [])
+    ):
+        raise ContractError("F2A preflight order/refusal drift")
+    if (
+        not isinstance(launch, dict)
+        or launch.get("order")
+        != [
+            "CANONICALIZE_BUNDLE",
+            "UPLOAD_CONTENT_ADDRESSED_TEMP",
+            "FSYNC_AND_ATOMIC_PUBLISH",
+            "READ_BACK_EXACT_REMOTE_BYTES",
+            "VERIFY_SIZE_AND_SHA256",
+            "PERSIST_EXECUTION_BINDING",
+            "SPAWN_FROM_BOUND_REMOTE_OBJECT",
+            "CHILD_REVERIFY_BEFORE_PROVIDER_CALL",
+        ]
+        or launch.get("spawn_gate")
+        != "NO_PROCESS_SPAWN_BEFORE_DURABLE_REMOTE_READBACK_BINDING"
+        or launch.get("provider_gate")
+        != "NO_PROVIDER_CALL_BEFORE_CHILD_ATTESTS_LOADED_BYTES_AND_RESOLVED_MAP"
+    ):
+        raise ContractError("F2A remote-byte launch binding drift")
+    if (
+        not isinstance(watchdog, dict)
+        or watchdog.get("relaunch_limit") != 1
+        or watchdog.get("relaunch_key_fields")
+        != ["occurrence_id", "intended_map_digest", "remote_bundle_digest"]
+        or watchdog.get("rollback")
+        != "LAST_APPROVED_STILL_ADMISSIBLE_PROFILE_MAP_AND_REMOTE_BINDING_ONLY"
+        or "TARGET_CGROUP_AND_PID_START_IDENTITY"
+        not in watchdog.get("containment_order", [])
+    ):
+        raise ContractError("F2A bounded watchdog repair drift")
+    if (
+        not isinstance(notification, dict)
+        or notification.get("notify_on_initial_detection") is not False
+        or notification.get("successful_automatic_repair_notifications") != 0
+        or notification.get("failed_bounded_repair_notifications") != 1
+        or notification.get("notify_after")
+        != "CONTAINMENT_OR_ROLLBACK_OR_SINGLE_RELAUNCH_FAILS_IS_UNSAFE_OR_EXHAUSTS"
+    ):
+        raise ContractError("F2A failure-only notification drift")
+    if (
+        not isinstance(tests, dict)
+        or tests.get("coverage")
+        != "REGISTRY_CLOSED_EVERY_PRODUCTION_PIPELINE_CHAIN_AND_LAUNCH_ENTRYPOINT"
+        or tests.get("surfaces") != ["SOURCE", "WHEEL", "INSTALLED", "CLOUD"]
+        or "ZERO_UNREGISTERED_PRODUCTION_LAUNCHERS"
+        not in tests.get("required_assertions", [])
+    ):
+        raise ContractError("F2A all-pipeline conformance drift")
 
 
 def _validate_supersession(*, require_live: bool) -> None:
@@ -2351,6 +2532,9 @@ def validate(*, require_live: bool = False) -> None:
     chain = yaml.safe_load(chain_path.read_text(encoding="utf-8"))
     if not isinstance(chain, dict):
         raise ContractError("chain.yaml must contain a mapping")
+    _validate_provider_policy_binding_contract(
+        _load_json(INITIATIVE / PROVIDER_POLICY_BINDING_CONTRACT), chain
+    )
     try:
         parsed_chain = load_spec(chain_path)
     except Exception as exc:

@@ -25,6 +25,10 @@
     "evidence/critique-ledger-recovery/T3.5/completion-manifest.json",
     "evidence/critique-ledger-recovery/T3.6/release-authority/completion-manifest.json"
   ],
+  "f2a-launch-profile-artifact-drift-containment": [
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/provider-policy-execution-binding-contract.json",
+    "evidence/critique-ledger-recovery/F2A/provider-policy-execution-binding/completion-manifest.json"
+  ],
   "f3-cl2-real-work-and-publication": [
     "evidence/critique-ledger-recovery/T6.3/completion-manifest.json",
     "evidence/critique-ledger-recovery/T6.4/completion-manifest.json",

@@ -148,10 +148,24 @@ deferred obligations.
 
 ### P1 — launch admission hardening (parallel implementation lanes)
 
+- [ ] **VERY HARD — F2A provider-policy/execution-binding seal.** After F1
+  owner/recovery and F2 admission/model primitives, execute the dedicated
+  `f2a-launch-profile-artifact-drift-containment` milestone before F3. Freeze
+  the exact epic-level intended profile/provider/phase map; compare the fully
+  resolved map before spawn and refuse unexpected all-Codex or any other
+  substitution. Canonicalize/upload first, read back exact remote bytes, then
+  persist the execution binding and spawn. Deterministically contain and kill
+  wrong-profile workers by cgroup plus process-start identity, roll back to the
+  last approved still-admissible map/binding, and relaunch once under a durable
+  idempotency key. Notify only when bounded repair fails, is unsafe or exhausts.
+  Registry-closed source/wheel/installed/cloud tests cover every production
+  pipeline and launcher, not only Megaplan. Contract:
+  `provider-policy-execution-binding-contract.json`.
 - [ ] **HARD — provider credential admission.** Before dispatch, prove every
-  selected provider credential and auth mechanism is available. If direct
-  DeepSeek is absent, deterministically choose and label the OAuth all-Codex
-  profile; prohibit silent provider/model drift.
+  selected provider credential and auth mechanism is available. A missing
+  selected credential is typed no-spawn; it never silently authorizes an
+  all-Codex, all-Claude or other replacement map. A different profile requires
+  an explicit reviewed new policy version and digest.
 - [ ] **HARD — fresh branch/spec lineage admission.** Require a never-reused
   generation workspace/session and milestone branches, full immutable source
   revisions, coherent spec/config lineage, and explicit supersession of stale
@@ -236,7 +250,7 @@ deferred obligations.
   restart, replay, event-incarnation/checkpoint, observer-convergence, ENOSPC
   and installed-image tests, and independently review the result. Dependencies:
   all P1 and P2 items.
-- [ ] Execute the ordinary F1/F2 and CL2-CL5 milestone work below, deploy it,
+- [ ] Execute the ordinary F1/F2/F2A and CL2-CL5 milestone work below, deploy it,
   and complete the 24h/72h/7d observations. Parallelize only work explicitly
   separated by accepted manifests; effect-owner and release-authority work
   remains ordered.
@@ -1010,6 +1024,15 @@ claim cannot discharge an obligation.
   rather than treating planning mode as universal proof. These five B26-era
   follow-ups remain under existing F2 release closure and do not add, renumber,
   or complete any deferred obligation.
+
+## F2A — cross-pipeline provider-policy and execution-binding containment
+
+- [ ] Execute the dedicated F2A brief and produce its independent completion
+  manifest before F3. F2A consumes F1/F2 primitives but adds or renumbers none
+  of the fifteen deferred obligation IDs. Its proof must join the registry,
+  intended/resolved phase maps, exact remote and loaded byte digests, runtime
+  attestation, drift/repair ledger, notification effects and the all-pipeline
+  source/wheel/installed/cloud hostile matrix.
 
 ## Preserved but non-authoritative artifacts
 
