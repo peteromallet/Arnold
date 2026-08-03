@@ -98,14 +98,9 @@ mkdir -p "$(dirname "$REPAIR_PID_FILE")"
 early_existing_pid=""
 if [[ -r "$REPAIR_PID_FILE" ]]; then
   read -r early_existing_pid < "$REPAIR_PID_FILE" || early_existing_pid=""
-  if [[ ! "$early_existing_pid" =~ ^[0-9]+$ ]] \
-    || ! kill -0 "$early_existing_pid" 2>/dev/null; then
-    echo "[repair-loop] stale repair pidfile detected; reclaiming session=$SESSION stale_pid=${early_existing_pid:-unknown} pidfile=$REPAIR_PID_FILE" >&2
-    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
-  else
-    echo "[repair-loop] another repair loop is already active; exiting session=$SESSION owner_pid=$early_existing_pid pidfile=$REPAIR_PID_FILE" >&2
-    exit 75
-  fi
+  # A bare PID from the shared volume is neither live nor dead evidence across
+  # container PID namespaces.  Preserve this legacy projection and let the
+  # namespace-bound durable lock below decide admission.
 fi
 if [[ ! -e "$REPAIR_PID_FILE" ]] \
   && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
@@ -750,14 +745,10 @@ acquire_repair_lock() {
   # Establish cheap process custody before importing the heavier durable-lock
   # machinery.  The EXIT/TERM traps above release this provisional claim if the
   # durable lock later reports a competing owner.
-  if [[ -r "$REPAIR_PID_FILE" ]]; then
-    read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
-    if [[ -n "$existing_pid" ]] && ! kill -0 "$existing_pid" 2>/dev/null; then
-      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
-      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
-      existing_pid=""
-    fi
-  fi
+  # The pidfile is a legacy projection, not cross-container liveness
+  # authority.  A local ``kill -0`` miss may mean the owner lives in another
+  # PID namespace, so never delete it on that evidence.  The namespace-bound
+  # durable repair lock below is the admission authority.
   if [[ ! -e "$REPAIR_PID_FILE" ]] \
     && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
     REPAIR_PID_FILE_OWNED=1
@@ -807,8 +798,8 @@ EOF
   if [[ -z "$stale_lock_json" ]]; then
     stale_lock_json='{}'
   fi
-  if [[ "$lock_status" == "busy" ]]; then
-    log "another repair loop is already active; exiting session=$SESSION owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
+  if [[ "$lock_status" == "busy" || "$lock_status" == "unknown" ]]; then
+    log "another repair loop owns or may own the repair; exiting session=$SESSION lock_status=$lock_status owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
     return 1
   fi
   if [[ "$lock_status" == "acquired" ]]; then
@@ -841,7 +832,11 @@ import json
 import os
 import sys
 
-from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+from arnold_pipelines.megaplan.cloud.repair_lock import (
+    acquire_repair_lock,
+    inspect_repair_lock,
+    release_repair_lock,
+)
 
 lock_dir, session, pid_text, workspace, *command_parts = sys.argv[1:]
 
@@ -852,15 +847,23 @@ def is_pid_live(pid: int) -> bool:
         return False
     return True
 
-release_repair_lock(lock_dir)
-result = acquire_repair_lock(
+inspection = inspect_repair_lock(lock_dir, is_pid_live=is_pid_live)
+result = inspection
+owner = inspection.owner if isinstance(inspection.owner, dict) else None
+owner_pid = owner.get("pid") if isinstance(owner, dict) else None
+if inspection.status == "stale" and release_repair_lock(
     lock_dir,
-    session=session,
-    pid=int(pid_text),
-    command=" ".join(command_parts),
-    cwd=workspace,
-    is_pid_live=is_pid_live,
-)
+    owner=owner,
+    expected_pid=owner_pid if isinstance(owner_pid, int) else None,
+):
+    result = acquire_repair_lock(
+        lock_dir,
+        session=session,
+        pid=int(pid_text),
+        command=" ".join(command_parts),
+        cwd=workspace,
+        is_pid_live=is_pid_live,
+    )
 owner_pid = ""
 if isinstance(result.owner, dict):
     owner_pid = str(result.owner.get("pid") or "")
@@ -881,8 +884,8 @@ EOF
     if [[ -z "$stale_lock_json" ]]; then
       stale_lock_json='{}'
     fi
-    if [[ "$lock_status" == "busy" ]]; then
-      log "another repair loop is already active after stale lock recovery; exiting session=$SESSION owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
+    if [[ "$lock_status" != "acquired" ]]; then
+      log "repair lock was not safely reclaimable; exiting session=$SESSION lock_status=${lock_status:-unknown} owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
       return 1
     fi
     if [[ "$lock_status" == "acquired" ]]; then
@@ -892,45 +895,10 @@ EOF
   fi
   if [[ "$REPAIR_PID_FILE_OWNED" == "1" ]]; then
     log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
-    return 0
+  else
+    log "legacy pidfile left untouched; namespace-bound durable lock owns admission session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
   fi
-  while true; do
-    if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
-      REPAIR_PID_FILE_OWNED=1
-      log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
-      return 0
-    fi
-    if [[ -r "$REPAIR_PID_FILE" ]]; then
-      read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
-    else
-      existing_pid=""
-    fi
-    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] \
-      && kill -0 "$existing_pid" 2>/dev/null \
-      && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
-      if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
-        release_repair_lock
-      fi
-      log "another repair loop is already active; exiting session=$SESSION owner_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
-      return 1
-    fi
-    if [[ -z "$existing_pid" ]]; then
-      if live_pid="$(find_live_repair_loop_for_session "$SESSION" 2>/dev/null)"; then
-        if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
-          release_repair_lock
-        fi
-        log "another repair loop is already active; exiting session=$SESSION owner_pid=$live_pid pidfile=$REPAIR_PID_FILE"
-        return 1
-      fi
-    fi
-    if [[ -n "$existing_pid" ]]; then
-      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
-    else
-      log "empty repair pidfile detected; reclaiming session=$SESSION pidfile=$REPAIR_PID_FILE"
-    fi
-    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
-    sleep 0.05
-  done
+  return 0
 }
 
 safe_name() {
@@ -968,9 +936,15 @@ remaining_repair_budget_secs() {
 
 require_repair_lock_held() {
   local current_pid=""
-  if [[ "$REPAIR_LOCK_DIR_OWNED" != "1" || "$REPAIR_PID_FILE_OWNED" != "1" ]]; then
+  if [[ "$REPAIR_LOCK_DIR_OWNED" != "1" ]]; then
     log "repair lock invariant violated; mutation attempted without held lock session=$SESSION"
     exit 75
+  fi
+  if [[ "$REPAIR_PID_FILE_OWNED" != "1" ]]; then
+    # Legacy pidfiles are a non-authoritative projection and may belong to an
+    # unobservable container namespace.  The namespace-bound durable lock is
+    # sufficient mutation custody.
+    return 0
   fi
   if [[ -r "$REPAIR_PID_FILE" ]]; then
     read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""

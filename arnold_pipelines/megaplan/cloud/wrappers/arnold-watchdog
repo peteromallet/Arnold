@@ -5326,6 +5326,10 @@ result = repair_requests.claim_active_repair_request(
     extra={"workspace": workspace, "remote_spec": remote_spec},
 )
 if result.status == "stale":
+    reasons = set((result.evidence or {}).get("stale_evidence", {}).get("reasons", []))
+    if not reasons.intersection({"owner_pid_not_live", "owner_process_mismatch"}):
+        print(result.status)
+        raise SystemExit(0)
     owner = result.owner if isinstance(result.owner, dict) else {}
     owner_pid = owner.get("pid")
     if not isinstance(owner_pid, int):

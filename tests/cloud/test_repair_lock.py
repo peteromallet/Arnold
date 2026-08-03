@@ -4,15 +4,12 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_lock
 from arnold_pipelines.megaplan.custody.contracts import (
     CustodyLease,
-    CustodyTargetKey,
-    RepairOccurrenceKey,
     build_custody_target_key,
     build_repair_occurrence_key,
 )
@@ -116,7 +113,7 @@ def test_acquire_repair_lock_claims_owner_metadata_and_reports_busy_without_muta
     assert first.acquired
     owner_path = repair_lock.owner_metadata_path(lock_dir)
     owner_before = json.loads(owner_path.read_text(encoding="utf-8"))
-    assert owner_before == {
+    expected_owner = {
         "session": "demo-session",
         "target_id": "target-1",
         "pid": 111,
@@ -127,6 +124,9 @@ def test_acquire_repair_lock_claims_owner_metadata_and_reports_busy_without_muta
         "hostname": "worker-a",
         "boot_id": "boot-1",
     }
+    assert {key: owner_before[key] for key in expected_owner} == expected_owner
+    assert owner_before["pid_namespace"]
+    assert "process_start_ticks" in owner_before
 
     second = repair_lock.acquire_repair_lock(
         lock_dir,
@@ -186,7 +186,7 @@ def test_repair_lock_records_and_checks_exact_repair_identity(tmp_path: Path) ->
         is_pid_live=lambda pid: pid == 111,
     )
 
-    assert mismatched.stale
+    assert mismatched.busy
     assert mismatched.stale_evidence is not None
     assert "repair_identity_mismatch" in mismatched.stale_evidence["reasons"]
 
@@ -231,7 +231,7 @@ def test_repair_lock_treats_missing_owner_identity_as_stale_mismatch(tmp_path: P
         is_pid_live=lambda pid: pid == 333,
     )
 
-    assert result.stale
+    assert result.unknown
     assert result.stale_evidence is not None
     assert "repair_identity_mismatch" in result.stale_evidence["reasons"]
     assert result.stale_evidence["observed_repair_identity_key"] == ""
@@ -268,10 +268,10 @@ def test_acquire_repair_lock_reports_stale_evidence_without_deleting_lock(tmp_pa
         is_pid_live=lambda pid: False,
     )
 
-    assert result.stale
+    assert result.unknown
     assert result.owner["pid"] == 333
     assert result.stale_evidence is not None
-    assert "owner_pid_not_live" in result.stale_evidence["reasons"]
+    assert "owner_pid_liveness_unknown" in result.stale_evidence["reasons"]
     assert "timeout_expired" in result.stale_evidence["reasons"]
     assert owner_path.read_text(encoding="utf-8") == snapshot
     assert lock_dir.exists()
@@ -368,9 +368,9 @@ def test_acquire_repair_lock_uses_default_pid_liveness_probe(tmp_path: Path) -> 
         pid=444,
     )
 
-    assert result.stale
+    assert result.unknown
     assert result.stale_evidence is not None
-    assert "owner_pid_not_live" in result.stale_evidence["reasons"]
+    assert "owner_pid_liveness_unknown" in result.stale_evidence["reasons"]
 
 
 def test_release_repair_lock_refuses_mismatched_owner(tmp_path: Path) -> None:
@@ -429,10 +429,10 @@ class TestPidLivenessIsNotAuthority:
             is_pid_live=lambda pid: False,
         )
 
-        # Stale detection works — but this is evidence, not authority.
-        assert result.stale
+        # An unbound legacy PID miss is UNKNOWN, never reclaim authority.
+        assert result.unknown
         assert result.stale_evidence is not None
-        assert "owner_pid_not_live" in result.stale_evidence["reasons"]
+        assert "owner_pid_liveness_unknown" in result.stale_evidence["reasons"]
         # The lock is NOT released just because it's stale.
         assert lock_dir.exists()
 
@@ -648,7 +648,12 @@ class TestRenewRequiresLeaseAuthority:
         assert "renewed_at" in persisted
 
         # Cleanup using updated owner from the renew result.
-        assert repair_lock.release_repair_lock(lock_dir, owner=result.owner)
+        assert repair_lock.release_repair_lock(
+            lock_dir,
+            owner=result.owner,
+            lease_store=store,
+            lease_id="lease-001",
+        )
         assert not lock_dir.exists()
 
     def test_renew_refuses_without_lease_store_ownership(self, tmp_path: Path) -> None:
@@ -835,7 +840,12 @@ class TestRenewRequiresLeaseAuthority:
         assert lock_dir.exists()
 
         # Cleanup.
-        assert repair_lock.release_repair_lock(lock_dir, owner=result.owner)
+        assert repair_lock.release_repair_lock(
+            lock_dir,
+            owner=result.owner,
+            lease_store=store,
+            lease_id="lease-001",
+        )
         assert not lock_dir.exists()
 
 
@@ -1019,7 +1029,7 @@ class TestAdmissionProjectionUnchanged:
             is_pid_live=lambda pid: False,
         )
 
-        assert result.stale
+        assert result.unknown
         # Stale evidence is projection — it's not released.
         assert lock_dir.exists()
 

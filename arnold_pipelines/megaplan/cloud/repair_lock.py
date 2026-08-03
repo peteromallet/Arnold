@@ -35,8 +35,15 @@ from typing import Any, Callable, Iterator, Literal, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json
 
-RepairLockStatus = Literal["missing", "acquired", "busy", "stale", "unauthorized"]
-PidLivenessProbe = Callable[[int], bool]
+RepairLockStatus = Literal[
+    "missing",
+    "acquired",
+    "busy",
+    "stale",
+    "unknown",
+    "unauthorized",
+]
+PidLivenessProbe = Callable[[int], bool | None]
 
 
 @dataclass(frozen=True)
@@ -57,6 +64,10 @@ class RepairLockResult:
     @property
     def stale(self) -> bool:
         return self.status == "stale"
+
+    @property
+    def unknown(self) -> bool:
+        return self.status == "unknown"
 
     @property
     def unauthorized(self) -> bool:
@@ -91,10 +102,11 @@ def build_owner_metadata(
     process-birth identity reported by :func:`process_birth_identity`.
     """
 
+    owner_pid = os.getpid() if pid is None else int(pid)
     metadata: dict[str, Any] = {
         "session": session,
         "target_id": target_id,
-        "pid": os.getpid() if pid is None else int(pid),
+        "pid": owner_pid,
         "command": _default_command() if command is None else command,
         "started_at": _utc_now() if started_at is None else started_at,
         "cwd": os.getcwd() if cwd is None else cwd,
@@ -124,7 +136,20 @@ def build_owner_metadata(
     metadata["boot_id"] = boot_id or ""
     if extra:
         metadata.update(dict(extra))
+    # Reserved owner-incarnation fields are computed last so additive caller
+    # metadata cannot spoof the release fence.
+    metadata.update(process_owner_identity(owner_pid))
     return metadata
+
+
+def process_owner_identity(pid: int) -> dict[str, Any]:
+    """Return the namespace/process-birth fence for one locally visible PID."""
+
+    return {
+        "pid": int(pid),
+        "pid_namespace": _pid_namespace(int(pid)) or _pid_namespace(os.getpid()),
+        "process_start_ticks": _process_start_ticks(int(pid)),
+    }
 
 
 def inspect_repair_lock(
@@ -160,6 +185,8 @@ def inspect_repair_lock(
 
     owner: dict[str, Any] | None = owner_payload if isinstance(owner_payload, dict) else None
     pid_probe = is_pid_live or _default_is_pid_live
+    pid_liveness_unknown = False
+    owner_pid_liveness: bool | None = None
     expected_identity_key = ""
     if expected_repair_identity is not None:
         from arnold_pipelines.megaplan.cloud import repair_requests
@@ -168,6 +195,7 @@ def inspect_repair_lock(
             expected_repair_identity
         )
     if owner is None:
+        pid_liveness_unknown = True
         if owner_path.exists():
             evidence["reasons"].append("owner_metadata_invalid")
         else:
@@ -176,7 +204,11 @@ def inspect_repair_lock(
         evidence["owner"] = owner
         pid = owner.get("pid")
         if isinstance(pid, int):
-            if not pid_probe(pid):
+            owner_pid_liveness = _owner_pid_liveness(owner, pid_probe)
+            if owner_pid_liveness is None:
+                pid_liveness_unknown = True
+                evidence["reasons"].append("owner_pid_liveness_unknown")
+            elif not owner_pid_liveness:
                 evidence["reasons"].append("owner_pid_not_live")
             elif (
                 Path(f"/proc/{pid}").exists()
@@ -187,6 +219,7 @@ def inspect_repair_lock(
                 if observed_command:
                     evidence["observed_command"] = observed_command
         else:
+            pid_liveness_unknown = True
             evidence["reasons"].append("owner_pid_missing")
 
         timeout_seconds = owner.get("timeout_seconds")
@@ -214,6 +247,28 @@ def inspect_repair_lock(
                 evidence["observed_repair_identity_key"] = (
                     observed_identity_key
                 )
+
+    # Projection-only hints such as age or identity mismatch cannot authorize a
+    # stale reclaim when the owner's process cannot be observed in this PID
+    # namespace.  UNKNOWN must fail closed and preserve the existing owner.
+    if pid_liveness_unknown:
+        return RepairLockResult(
+            status="unknown",
+            lock_dir=lock_path,
+            owner=owner,
+            stale_evidence=evidence,
+        )
+
+    # A live, incarnation-matched owner remains the owner.  Expired wall-clock
+    # metadata and a caller's different expected identity are diagnostics, not
+    # authority to create a concurrent repair.
+    if owner_pid_liveness is True and evidence["reasons"]:
+        return RepairLockResult(
+            status="busy",
+            lock_dir=lock_path,
+            owner=owner,
+            stale_evidence=evidence,
+        )
 
     if evidence["reasons"]:
         return RepairLockResult(
@@ -301,8 +356,8 @@ def release_repair_lock(
     When *lease_store* and *lease_id* are both provided the release is
     **authoritative**: the lease store must confirm current ownership by
     the same host and PID that appear in the lock's owner metadata.
-    Without a lease store the release is a best-effort admission cleanup
-    only — it does not confer repair authority.
+    Without a lease store the release is a best-effort, same-PID-namespace
+    admission cleanup only.  Foreign or legacy-unbound owners fail closed.
 
     Returns ``True`` if the lock was released, ``False`` otherwise.
     """
@@ -323,10 +378,20 @@ def release_repair_lock(
         if current_owner is None or current_owner.get("pid") != expected_pid:
             return False
 
+    owner_namespace = str((current_owner or {}).get("pid_namespace") or "")
+    observer_namespace = _pid_namespace(os.getpid())
+    same_pid_namespace = bool(
+        owner_namespace and observer_namespace and owner_namespace == observer_namespace
+    )
+
     # ── Lease-store authority check (M7) ──────────────────────────────
     if lease_store is not None and lease_id:
         if not _validate_lease_authority_inner(lease_store, lease_id, current_owner):
             return False
+    elif not same_pid_namespace:
+        # Exact owner JSON is a race fence, not an authority capability: every
+        # observer of the shared filesystem can read and replay it.
+        return False
 
     if owner_path.exists():
         owner_path.unlink()
@@ -436,7 +501,7 @@ def renew_repair_lock(
     if inspection.status == "missing":
         return inspection
 
-    if inspection.status != "busy" and inspection.status != "stale":
+    if inspection.status not in {"busy", "stale", "unknown"}:
         return inspection
 
     if inspection.owner is None:
@@ -559,6 +624,55 @@ def _default_is_pid_live(pid: int) -> bool:
     return True
 
 
+def _pid_namespace(pid: int) -> str:
+    if pid <= 0:
+        return ""
+    try:
+        return os.readlink(f"/proc/{pid}/ns/pid")
+    except OSError:
+        # Non-Linux development/test hosts have one host PID namespace.  This
+        # fallback is intentionally unavailable for arbitrary target PIDs; the
+        # caller may bind an unobservable target to its own current namespace.
+        if pid == os.getpid():
+            return f"host:{_default_hostname()}"
+        return ""
+
+
+def _process_start_ticks(pid: int) -> str:
+    if pid <= 0:
+        return ""
+    try:
+        suffix = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(") ", 1)[1]
+        # proc(5): field 22 is process start time; suffix starts at field 3.
+        return suffix.split()[19]
+    except (OSError, IndexError):
+        return ""
+
+
+def _owner_pid_liveness(
+    owner: Mapping[str, Any],
+    probe: PidLivenessProbe,
+) -> bool | None:
+    pid = owner.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    owner_namespace = str(owner.get("pid_namespace") or "")
+    observer_namespace = _pid_namespace(os.getpid())
+    if not owner_namespace or not observer_namespace or owner_namespace != observer_namespace:
+        return None
+    observed = probe(pid)
+    if observed is not True:
+        return observed
+    expected_start = str(owner.get("process_start_ticks") or "")
+    if expected_start:
+        observed_start = _process_start_ticks(pid)
+        if not observed_start:
+            return None
+        if observed_start != expected_start:
+            return False
+    return True
+
+
 def _pid_matches_expected_repair_loop(owner: Mapping[str, Any], pid: int) -> bool:
     session = str(owner.get("session") or "").strip()
     owner_command = str(owner.get("command") or "").strip()
@@ -665,6 +779,7 @@ __all__ = [
     "inspect_repair_lock",
     "occurrence_scoped_lock_dir",
     "owner_metadata_path",
+    "process_owner_identity",
     "release_repair_lock",
     "renew_repair_lock",
     "repair_lock",
