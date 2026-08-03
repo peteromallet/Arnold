@@ -4349,11 +4349,38 @@ def drive(
             message = latest_failure.get("message")
             if isinstance(message, str) and message.strip():
                 return message.strip()
+        # The phase subprocess is the authority for the failure that just
+        # happened.  ``prior_failure`` is captured only so we can retain useful
+        # context when a crashing subprocess emits no diagnostics at all.  If
+        # it outranks current stderr/stdout, distinct failures are assigned the
+        # first failure's signature and can be falsely latched as deterministic.
+        current_stderr = _filtered_failure_stderr(stderr)
+        if current_stderr:
+            try:
+                current_payload = json.loads(current_stderr)
+            except (TypeError, ValueError):
+                current_payload = None
+            if isinstance(current_payload, dict):
+                details = current_payload.get("details")
+                message = current_payload.get("message")
+                if (
+                    isinstance(details, dict)
+                    and details.get("raw_output") == "parallel"
+                    and isinstance(message, str)
+                    and message.strip()
+                ):
+                    return (
+                        f"{message.strip()} [parallel critique aggregate; "
+                        "inspect critique_check_* artifacts]"
+                    )
+        current_detail = (current_stderr or stdout.strip()[-400:]).strip()
+        if current_detail:
+            return current_detail
         if isinstance(prior_failure, Mapping) and prior_failure.get("phase") == next_step:
             message = prior_failure.get("message")
             if isinstance(message, str) and message.strip():
                 return message.strip()
-        return (_filtered_failure_stderr(stderr) or stdout.strip()[-400:]).strip()
+        return ""
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         before_phase_result = _phase_result_signature(plan_dir)

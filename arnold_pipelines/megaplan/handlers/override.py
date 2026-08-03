@@ -1416,7 +1416,18 @@ def _override_recover_blocked(
             },
         )
     phase_repair_evidence: dict[str, str] | None = None
-    if phase_result is None:
+    deterministic_phase_repair_required = bool(
+        isinstance(latest_failure, dict)
+        and latest_failure.get("kind") == "deterministic_phase_failure"
+        and resume_cursor.get("retry_strategy") == "repair_phase_contract"
+    )
+    if deterministic_phase_repair_required:
+        # A deterministic phase failure is recorded specifically because the
+        # current phase did not emit a usable phase_result.  A plan directory
+        # can still contain phase_result.json from an earlier successful phase
+        # or attempt (the r5 incident retained `revise` while `critique`
+        # failed).  That stale artifact must not bypass the commit- and
+        # failure-fingerprint-bound repair gate.
         phase_repair_evidence = validated_deterministic_phase_repair(
             root,
             state,
@@ -1424,14 +1435,16 @@ def _override_recover_blocked(
             getattr(args, "repair_commit", None),
             getattr(args, "failure_fingerprint", None),
         )
-        if phase_repair_evidence is None:
-            raise CliError(
-                "missing_phase_result",
-                "recover-blocked requires phase_result.json with current blocker details",
-                extra={"resume_cursor": resume_cursor},
-            )
+        if phase_repair_evidence is None:  # defensive: predicate above is exact
+            raise CliError("missing_phase_result", "deterministic repair evidence is missing")
         blocker_details: list[dict[str, Any]] = []
         blocker_ids: list[str] = []
+    elif phase_result is None:
+        raise CliError(
+            "missing_phase_result",
+            "recover-blocked requires phase_result.json with current blocker details",
+            extra={"resume_cursor": resume_cursor},
+        )
     else:
         evaluation = evaluate_blocker_recovery(
             finalize_data,
@@ -1442,7 +1455,7 @@ def _override_recover_blocked(
         )
         blocker_details = command_blocker_details(evaluation)
         blocker_ids = [blocker.blocker_id for blocker in evaluation.blockers]
-    if phase_result is not None and not evaluation.can_continue:
+    if not deterministic_phase_repair_required and phase_result is not None and not evaluation.can_continue:
         unresolved_blockers = [
             blocker
             for blocker in blocker_details
