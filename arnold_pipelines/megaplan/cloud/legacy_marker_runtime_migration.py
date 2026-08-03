@@ -103,10 +103,18 @@ def _bound_chain_identity(
         )
     binding = metadata.get("execution_binding")
     binding = binding if isinstance(binding, Mapping) else {}
-    if binding.get("spec_path") != remote_spec:
+    launched_identity = binding.get("launched_identity")
+    launched_identity = (
+        launched_identity if isinstance(launched_identity, Mapping) else {}
+    )
+    if (
+        metadata.get("chain_spec_path") != remote_spec
+        or launched_identity.get("spec_path") != remote_spec
+    ):
         raise CliError(
             "runtime_marker_migration_chain_mismatch",
-            "legacy marker migration remote spec disagrees with chain binding",
+            "legacy marker migration remote spec disagrees with canonical chain "
+            "and launched execution bindings",
         )
     runtime = binding.get("runtime_binding")
     runtime = runtime if isinstance(runtime, Mapping) else {}
