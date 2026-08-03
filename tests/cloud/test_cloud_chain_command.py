@@ -760,7 +760,10 @@ def test_bootstrap_launch_command_writes_plan_marker_and_relaunch_command() -> N
     assert '"run_kind": "plan"' in command
     assert '"plan_name": "per-workflow-window-chat-cloud-20260628"' in command
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in command
-    assert "arnold init --project-dir /workspace/vibecomfy-per-workflow-window-chat-20260628" in command
+    assert (
+        "python3 -P -m arnold_pipelines.megaplan init --project-dir "
+        "/workspace/vibecomfy-per-workflow-window-chat-20260628"
+    ) in command
     assert "--name per-workflow-window-chat-cloud-20260628" in command
 
 

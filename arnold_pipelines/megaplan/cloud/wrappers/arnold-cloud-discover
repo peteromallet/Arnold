@@ -126,11 +126,23 @@ def _skip_session(session: str) -> bool:
     )
 
 
-def _plan_relaunch_command(plan_name: str, workspace: str) -> str:
+def _managed_route(session: str, run_kind: str) -> str:
+    queue_root = marker_dir.parent / "repair-queue"
+    return (
+        "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; "
+        f"export ARNOLD_REPAIR_QUEUE_ROOT={shlex.quote(str(queue_root))}; "
+        f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(str(marker_dir))}; "
+        f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}; "
+        f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(run_kind)}; "
+    )
+
+
+def _plan_relaunch_command(plan_name: str, workspace: str, session: str) -> str:
     log_path = f"{workspace}/.megaplan/cloud-logs/{plan_name}.log"
     return (
         "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; "
-        f"cd {shlex.quote(src_dir)} && "
+        + _managed_route(session, "plan")
+        + f"cd {shlex.quote(src_dir)} && "
         f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(src_dir)}:${{PYTHONPATH:-}} "
         "MEGAPLAN_TRUSTED_CONTAINER=1 "
         f"python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(plan_name)} "
@@ -142,7 +154,8 @@ def _chain_relaunch_command(remote_spec: str, workspace: str, session: str) -> s
     log_relative = ".megaplan/cloud-chain.log" if session == "megaplan-chain" else f".megaplan/cloud-chain-{session}.log"
     return (
         "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; "
-        f"cd {shlex.quote(src_dir)} && "
+        + _managed_route(session, "chain")
+        + f"cd {shlex.quote(src_dir)} && "
         f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(src_dir)}:${{PYTHONPATH:-}} "
         "MEGAPLAN_TRUSTED_CONTAINER=1 "
         f"python3 -P -m arnold_pipelines.megaplan chain start --spec {shlex.quote(remote_spec)} "
@@ -195,7 +208,7 @@ def _classify(session: str, workspace: str, commands: list[str]) -> dict[str, st
             "run_kind": "plan",
             "plan_name": plan_name,
             "remote_spec": remote_spec,
-            "relaunch_command": _plan_relaunch_command(plan_name, workspace),
+            "relaunch_command": _plan_relaunch_command(plan_name, workspace, session),
         }
 
     if remote_spec is None:

@@ -34,6 +34,7 @@ def _marker(marker_dir: Path, session: str) -> None:
                 "workspace": "/workspace/demo",
                 "remote_spec": "/workspace/demo/chain.yaml",
                 "run_kind": "chain",
+                "run_id": "run-demo",
                 "identity_digest": "sha256:test",
                 "started_at": "2026-08-03T00:00:00Z",
             }
@@ -136,11 +137,13 @@ def test_runner_replacement_lease_fences_old_active_step(
     monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(tmp_path))
     old_binding = current_runner_lease_binding()
     assert old_binding is not None
+    first.close()
     replacement = LivenessLeasePublisher(session, marker_dir=tmp_path, target_pid=os.getpid())
     replacement.publish_once()
-    # A superseded publisher may still race one final renewal.  The monotonic
-    # fence sidecar must keep that stale write from resurrecting its runner.
-    first.publish_once()
+    # A closed superseded publisher cannot race a final renewal; the monotonic
+    # fence still proves that the old active-step binding was replaced.
+    with pytest.raises(RuntimeError, match="cannot be resurrected"):
+        first.publish_once()
 
     observed = observe_active_step_worker(_foreign_active(old_binding))
 

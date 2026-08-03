@@ -4021,7 +4021,7 @@ default_plan_relaunch_command() {
   local plan_name="$1"
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && PLAN_AUTO_CMD='\''PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1'\'' && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && PLAN_AUTO_CMD='\''PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1'\'' && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
 import json
 import sys
 from pathlib import Path
@@ -4150,7 +4150,8 @@ default_chain_relaunch_command() {
   runtime_src="$workspace/.megaplan/runtime/editable-engine"
   repair_marker_dir="${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
   repair_queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${repair_marker_dir%/*}/repair-queue}"
-  printf 'export ARNOLD_REPAIR_QUEUE_ROOT=%q
+  printf 'unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START
+export ARNOLD_REPAIR_QUEUE_ROOT=%q
 export ARNOLD_REPAIR_MARKER_DIR=%q
 export ARNOLD_REPAIR_SESSION=%q
 export ARNOLD_REPAIR_RUN_KIND=%q
@@ -4198,7 +4199,7 @@ else
   export MEGAPLAN_RUNTIME_SRC="$SRC"
 fi
 echo "[megaplan-refresh] done"
-true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd %q && PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
     "$repair_queue_root" "$repair_marker_dir" "$session" "chain" \
     "$SRC_DIR" "$repo" "$SYNC_BRANCH" "$runtime_src" "$workspace/$log_relative" "$workspace" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
@@ -9050,6 +9051,11 @@ PY
 #!/usr/bin/env bash
 set -euo pipefail
 cd $(printf '%q' "$workspace")
+unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START
+export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$REPAIR_QUEUE_DIR}")
+export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
+export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
+export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
 export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
 export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
 export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")

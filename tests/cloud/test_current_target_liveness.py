@@ -30,6 +30,7 @@ def _marker(tmp_path: Path, **extra: object) -> dict[str, object]:
         "run_kind": "chain",
         "identity_digest": "launch-1",
         "started_at": "2026-08-03T18:00:00Z",
+        "run_id": "run-1",
         **extra,
     }
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -153,6 +154,7 @@ def test_fresh_owner_lease_establishes_live_across_namespace(tmp_path: Path) -> 
         "demo", marker_dir=tmp_path, target_pid=os.getpid()
     )
     publisher.publish_once()
+    marker = json.loads((tmp_path / "demo.json").read_text(encoding="utf-8"))
 
     observed = observe_current_target_liveness(
         marker,

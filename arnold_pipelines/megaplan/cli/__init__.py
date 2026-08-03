@@ -3458,7 +3458,7 @@ def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
     return kept_prefix + ["execute", *moved_flags, *argv[execute_index + 1 :]]
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     argv = _normalize_execute_compat_argv(list(argv))
@@ -3747,6 +3747,23 @@ def main(argv: list[str] | None = None) -> int:
                 getattr(args, "command", ""), error, args.progress_emitter
             )
         return error_response(error, root=root)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run one CLI process under the canonical managed-run lease lifecycle.
+
+    Ordinary local invocations have no managed session environment and this
+    context is a no-op. Cloud launchers provide that environment exactly once;
+    child phase processes inherit the owner fence and cannot create competing
+    publishers.
+    """
+
+    from arnold_pipelines.megaplan.cloud.liveness_lease import (
+        managed_runner_lifecycle,
+    )
+
+    with managed_runner_lifecycle():
+        return _main(argv)
 
 
 if __name__ == "__main__":
