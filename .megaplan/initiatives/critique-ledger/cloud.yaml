@@ -8,7 +8,7 @@ repo:
 extra_repos:
   - url: https://github.com/peteromallet/Arnold.git
     branch: fix/isolated-chain-runner-20260803
-    workspace: /workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4
+    workspace: /workspace/runtime-candidates/arnold-d9dfab4c80835829ec1e1218f0e1f9c84071482e
 
 agents:
   default: codex
@@ -26,7 +26,7 @@ megaplan:
   ref: fix/isolated-chain-runner-20260803
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4
+  src_path: /workspace/runtime-candidates/arnold-d9dfab4c80835829ec1e1218f0e1f9c84071482e
 
 resources:
   volume: agent-volume
