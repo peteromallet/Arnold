@@ -626,7 +626,9 @@ def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_resu
         "repair_commit": head,
         "workspace_head": head,
         "failure_fingerprint": failure_fingerprint,
-        "authority": "explicit_repair_commit_bound_to_target_head",
+        "repair_scope": "target_workspace",
+        "repair_root": str(tmp_path),
+        "authority": "explicit_repair_commit_bound_to_target_workspace",
     }
     persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert persisted["current_state"] == "gated"

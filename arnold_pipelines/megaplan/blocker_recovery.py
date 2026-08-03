@@ -132,6 +132,11 @@ def validated_deterministic_phase_repair(
 
         repair_scope = "engine_runtime"
         repair_root = megaplan_engine_root()
+    repair_head_label = (
+        "engine runtime HEAD"
+        if repair_scope == "engine_runtime"
+        else "target workspace HEAD"
+    )
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -144,14 +149,15 @@ def validated_deterministic_phase_repair(
     except (OSError, subprocess.TimeoutExpired) as error:
         raise CliError(
             "phase_repair_head_unavailable",
-            "deterministic phase recovery could not verify the repaired source HEAD",
+            f"deterministic phase recovery could not verify the {repair_head_label}",
             extra={"repair_root": str(repair_root), "error": str(error)},
         ) from error
     current_head = result.stdout.strip().lower() if result.returncode == 0 else ""
     if current_head != commit:
         raise CliError(
             "phase_repair_commit_mismatch",
-            "deterministic phase recovery repair commit does not match the repaired source HEAD",
+            "deterministic phase recovery repair commit does not match the "
+            f"{repair_head_label}",
             extra={
                 "repair_root": str(repair_root),
                 "repair_scope": repair_scope,
