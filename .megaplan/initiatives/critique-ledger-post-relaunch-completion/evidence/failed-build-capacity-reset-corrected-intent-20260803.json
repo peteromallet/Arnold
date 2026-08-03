@@ -1,0 +1,37 @@
+{
+  "schema": "arnold.cloud.failed_build_capacity_reset_intent.v1",
+  "status": "AUTHORIZED_PENDING_SINGLE_DISPATCH",
+  "operation_id": "critique-ledger-failed-build-capacity-reset-corrected-20260803-0404z",
+  "supersedes_failed_operation": "critique-ledger-failed-build-capacity-reset-20260803-0400z",
+  "supersession_reason": "pre-effect validation used overall provider cache projection as npm-subdirectory size; durable failure recorded dispatch=[]",
+  "authority": {
+    "basis": "user-authorized bounded Critique Ledger cloud recovery and relaunch",
+    "launch_candidate_commit": "04178bf31748aa746a36e7e736c0ee38d441b666",
+    "prior_capacity_authority_commit": "b3fa03fbc5"
+  },
+  "observed": {
+    "available_bytes": 404635648,
+    "free_including_root_reserve_bytes": 1495154688,
+    "reclaimable_build_cache": "6.669GB",
+    "reclaimable_unused_images": "1.788GB",
+    "npm_cache_bytes": 839090176,
+    "pip_cache_bytes": 4096,
+    "reserved_blocks": 262144,
+    "block_size": 4096
+  },
+  "admitted_effects_in_order": [
+    {"argv": ["docker", "builder", "prune", "-f"], "maximum_dispatches": 1},
+    {"argv": ["docker", "image", "prune", "-a", "-f"], "maximum_dispatches": 1, "scope": "images referenced by no container only"},
+    {"argv": ["find", "/opt/megaplan-cloud/cache/npm", "-depth", "-mindepth", "1", "-delete"], "maximum_dispatches": 1},
+    {"argv": ["tune2fs", "-r", "131072", "/dev/sda1"], "maximum_dispatches": 1}
+  ],
+  "preserved": [
+    "megaplan-cloud-agent container and its referenced image",
+    "/opt/megaplan-cloud/workspace",
+    "/opt/megaplan-cloud/deploy",
+    "/opt/megaplan-cloud/cache/pip directory",
+    "Docker volumes",
+    "/var/lib/arnold-zero-recovery"
+  ],
+  "ambiguity_policy": "NO BLIND REDISPATCH; reconcile each ordered effect and durable receipt"
+}

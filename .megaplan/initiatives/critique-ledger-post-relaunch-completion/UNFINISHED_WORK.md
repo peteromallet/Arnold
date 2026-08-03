@@ -169,6 +169,10 @@ claim cannot discharge an obligation.
   the predecessor container and referenced image, workspace, deploy directory,
   volumes, trusted host receipts and archived unit definitions. Platform T0.3
   owns eliminating this repeated build/cache pressure permanently.
+  The first reset intent failed before dispatch because it bound the provider's
+  overall cache projection as the npm-subdirectory size. Its `dispatch=[]`
+  receipt is preserved; the corrected exact observation/authority is
+  `evidence/failed-build-capacity-reset-corrected-intent-20260803.json`.
 - [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
   reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
   corruption and crash behavior; define safe lifecycle retention and broad
