@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any, ClassVar, Literal, Mapping
@@ -210,7 +211,17 @@ def process_birth_identity() -> dict[str, str]:
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
         identity["boot_id"] = boot_id
     except Exception:
-        identity["boot_id"] = ""
+        try:
+            boot = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", "1"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.strip()
+            identity["boot_id"] = f"host-process-1:{boot}" if boot else ""
+        except Exception:
+            identity["boot_id"] = ""
     return identity
 
 

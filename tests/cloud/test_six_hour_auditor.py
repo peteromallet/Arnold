@@ -17,7 +17,9 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
 )
 from arnold_pipelines.megaplan.cloud.incident_bridge import IncidentStoreWriter
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
+from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.simple_fixer import FORBIDDEN_AUTHORITY_SOURCES
+from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
 
 
 def _event(**overrides: object) -> dict[str, object]:
@@ -379,22 +381,9 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
         queue_root=queue_root,
     )
 
-    assert result is not None and result["status"] == "queued"
-    request = result["request"]
-    assert request["queue_dir"] == str(queue_root)
-    assert request["workspace"] == str(workspace)
-    assert request["target"]["workspace"] == str(workspace)
-    assert request["target"]["deterministic_superfixer_evidence"] == evidence
-    assert request["problem_signature"]["failure_kind"] == "stale_l1_l2_cycle"
-    assert request["problem_signature"]["blocked_task_id"] == "l3-escalation:fixture:attempt:1"
-    assert request["target"]["root_cause_identity"] == "l3-escalation:fixture"
-    assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["7473fa42"]
-    assert request["target"]["retry_budget"] == evidence["retry_budget"]
-    assert request["target"]["retry_strategy"] == "deep_superfixer_repair"
-    assert request["target"]["dispatch_intent"] == "deep_superfixer_repair"
-    assert request["target"]["retry_ordinal"] == 1
-    assert request["target"]["route"]["requested_difficulty"] == 9
-    assert request["target"]["repair_context_digest"] == "c" * 64
+    assert result is not None
+    assert result["status"] == "zero_authority_rejected"
+    assert not list((queue_root / "requests").glob("*.json"))
     assert not (workspace / ".megaplan" / "repair-queue").exists()
 
 
@@ -463,54 +452,44 @@ def test_auditor_enqueue_uses_canonical_occurrence_identity(
             "run_authority_grant_id": "grant-grant-1",
         },
     }
+    identity = repair_requests.build_normalized_repair_identity(
+        target=CustodyTargetKey(
+            environment="prod",
+            session="demo-session-complete",
+            chain="demo-chain",
+            plan_revision="rev-1",
+            phase="phase-A",
+            task="task-42",
+            attempt="3",
+            normalized_failure_kind="stale_l1_l2_cycle",
+            blocker_or_phase_result_hash="blocker-hash-001",
+            fence="runner-fence:7",
+        ),
+        run_id="run-audit-1",
+        run_revision="rev-1",
+        run_incarnation_id="run-incarnation-audit-1",
+        coordinator_attempt_id="coordinator-audit-1",
+        fence_token=7,
+        wbc_attempt_reference="wbc-audit-1",
+        run_authority_grant_id="grant-grant-1",
+        lease_id="lease-99",
+        custody_epoch=7,
+    )
+    assert identity is not None
+    complete_item["repair_identity"] = identity
 
     result = enqueue_audit_repair_request(complete_item, queue_root=queue_root)
     assert result is not None
     assert result["status"] == "queued"
     request = result["request"]
 
-    # The target carries the canonical occurrence identity block.
-    oid = request["target"]["occurrence_identity"]
-    assert oid["occurrence_fingerprint"]  # canonical fingerprint is set
-    assert oid["session"] == "demo-session-complete"
-    assert oid["environment"] == "prod"
-    assert oid["chain"] == "demo-chain"
-    assert oid["plan_revision"] == "rev-1"
-    assert oid["phase"] == "phase-A"
-    assert oid["task"] == "task-42"
-    assert oid["attempt"] == "3"
-    assert oid["normalized_failure_kind"] == "stale_l1_l2_cycle"
-    assert oid["blocker_or_phase_result_hash"] == "blocker-hash-001"
-    assert oid["fence"] == "fence-token-abc"
-    assert oid["coordinator_fence_token"] == "fence-token-abc"
-    assert oid["run_authority_grant_id"] == "grant-grant-1"
-    assert oid["lease_id"] == "lease-99"
-    assert oid["custody_epoch"] == "epoch-7"
-    assert oid["root_cause_identity"] == "l3-escalation:occurrence-test"
-    assert oid["retry_ordinal"] == 1
-    assert oid["forbidden_authority_source"] == ""  # complete → no forbidden source
-    assert oid["queue_authoritative"] is False
-    assert oid["evidence_cursor_digest"].startswith("sha256:")
-    assert oid["terminal_receipt_expectations"] == [
-        "five_minute",
-        "one_hour",
-        "next_three_hour",
-    ]
-
-    # The repair_identity block carries the normalized F01 tuple + custody.
     ri = request["repair_identity"]
-    assert ri["session"] == "demo-session-complete"
-    assert ri["fence"] == "fence-token-abc"
-    assert ri["coordinator_fence_token"] == "fence-token-abc"
+    assert ri == identity
+    assert ri["occurrence"]["target"]["session"] == "demo-session-complete"
+    assert ri["occurrence"]["fence_token"] == 7
     assert ri["lease_id"] == "lease-99"
-    assert ri["custody_epoch"] == "epoch-7"
+    assert ri["custody_epoch"] == 7
     assert ri["run_authority_grant_id"] == "grant-grant-1"
-    assert ri["evidence_cursor_digest"].startswith("sha256:")
-    assert ri["terminal_receipt_expectations"] == [
-        "five_minute",
-        "one_hour",
-        "next_three_hour",
-    ]
 
     # ── Partial F01 tuple → forbidden authority source recorded ───────
     queue_root2 = tmp_path / "workspace2" / ".megaplan" / "repair-queue"
@@ -526,17 +505,8 @@ def test_auditor_enqueue_uses_canonical_occurrence_identity(
 
     result2 = enqueue_audit_repair_request(partial_item, queue_root=queue_root2)
     assert result2 is not None
-    assert result2["status"] == "queued"
-    request2 = result2["request"]
-
-    oid2 = request2["target"]["occurrence_identity"]
-    assert oid2["occurrence_fingerprint"] == ""  # partial → no fingerprint
-    assert oid2["forbidden_authority_source"] in FORBIDDEN_AUTHORITY_SOURCES
-    assert oid2["queue_authoritative"] is False
-    # The partial identity is still enqueued (reconciliation backstop) but
-    # the forbidden source is recorded so no authority is minted from it.
-    assert oid2["root_cause_identity"] == "l3-escalation:occurrence-test"
-    assert oid2["retry_ordinal"] == 1
+    assert result2["status"] == "zero_authority_rejected"
+    assert not list((queue_root2 / "requests").glob("*.json"))
 
 
 def test_audit_incident_emits_layer_findings_without_mutating_state() -> None:

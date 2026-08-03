@@ -470,6 +470,7 @@ def run_isolated_relaunch(
         caller_kind="operator_trigger",
         caller_id=request_id,
         target=occurrence.target,
+        repair_identity=occurrence.repair_identity,
     )
 
     def mutate(_occurrence: SimpleFixerOccurrence) -> str:

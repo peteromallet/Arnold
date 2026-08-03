@@ -39,9 +39,7 @@ from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
     emit_zero_authority_rejection,
 )
 from arnold_pipelines.megaplan.custody.contracts import (
-    CustodyTargetKey,
-    F01_REPAIR_OCCURRENCE_FIELDS,
-    build_custody_target_key,
+    normalize_custody_target_key,
 )
 
 # ── M7 shadow validator import (enforcement always disabled) ────────────────
@@ -170,42 +168,6 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any], *, exclusive: boo
             os.unlink(temporary)
         except FileNotFoundError:
             pass
-
-
-def _build_manual_trigger_occurrence_target(
-    *,
-    session: str,
-    plan: str,
-    workspace: str,
-    remote_spec: str,
-    run_kind: str,
-    expected_history_index: int,
-    expected_artifact_hash: str,
-    failure_kind: str,
-    phase_or_step: str,
-    blocked_task_id: str,
-) -> CustodyTargetKey | None:
-    """Build a :class:`CustodyTargetKey` from the manual trigger context.
-
-    Returns ``None`` when the exact F01 tuple cannot be satisfied — this is
-    the boundary at which ``manual_repair_trigger_rejected`` is emitted.
-    Authority is never derived from labels, liveness, WBC receipts, or
-    rebuildable projections.
-    """
-    fields: dict[str, str] = {}
-    for name in F01_REPAIR_OCCURRENCE_FIELDS:
-        fields[name] = ""
-    fields["environment"] = (workspace or "manual-trigger").strip()
-    fields["session"] = (session or "").strip()
-    fields["chain"] = (remote_spec or plan or "").strip()
-    fields["plan_revision"] = (plan or "").strip()
-    fields["phase"] = (phase_or_step or "").strip()
-    fields["task"] = (blocked_task_id or "").strip()
-    fields["attempt"] = str(expected_history_index).strip()
-    fields["normalized_failure_kind"] = (failure_kind or "terminal_blocked").strip()
-    fields["blocker_or_phase_result_hash"] = (expected_artifact_hash or "").strip()
-    fields["fence"] = str(expected_history_index).strip()
-    return build_custody_target_key(**fields)
 
 
 # ── M7 shadow validator helper (T15) ────────────────────────────────────────
@@ -398,10 +360,23 @@ def trigger_once(
         "blocked_task_id": _blocked_task_id(metadata) or f"phase:{phase_or_step}",
     }
     root_cause_hint = _text(failure.get("message")) or "plan entered a blocked terminal state"
+    normalized_repair_identity = repair_requests.derive_repair_identity(
+        session=session,
+        problem_signature=problem_signature,
+        plan_state=state,
+        current_target=target,
+    )
+    if normalized_repair_identity is None:
+        raise ManualRepairTriggerError(
+            "manual repair trigger requires an explicitly persisted current "
+            "repair identity; legacy failure evidence is read-only until "
+            "custody is reacquired"
+        )
     request_id = repair_requests.request_id_for(
         session=session,
         problem_signature=problem_signature,
         root_cause_hint=root_cause_hint,
+        repair_identity=normalized_repair_identity,
     )
     receipt_id = _receipt_id(
         session=session,
@@ -446,7 +421,7 @@ def trigger_once(
         }
         if configured_profile:
             repair_target["configured_profile"] = configured_profile
-        queued = repair_requests.enqueue_repair_request(
+        queued = repair_requests.enqueue_occurrence_bound_repair_request(
             queue_root=queue_root,
             marker_dir=marker_dir,
             session=session,
@@ -456,6 +431,7 @@ def trigger_once(
             target=repair_target,
             problem_signature=problem_signature,
             root_cause_hint=root_cause_hint,
+            occurrence_identity=normalized_repair_identity,
         )
         queued_request = _mapping(queued.get("request"))
         if _text(queued_request.get("request_id")) != request_id:
@@ -474,17 +450,11 @@ def trigger_once(
         receipt["m7_shadow_validation"] = m7_shadow
 
         # ── Build delegation and delegate to simple_fixer ──────────────────
-        occurrence_target = _build_manual_trigger_occurrence_target(
-            session=session,
-            plan=plan,
-            workspace=str(workspace),
-            remote_spec=remote_spec,
-            run_kind=run_kind,
-            expected_history_index=expected_history_index,
-            expected_artifact_hash=artifact_hash,
-            failure_kind=problem_signature["failure_kind"],
-            phase_or_step=phase_or_step,
-            blocked_task_id=problem_signature["blocked_task_id"],
+        normalized_occurrence = _mapping(
+            normalized_repair_identity.get("occurrence")
+        )
+        occurrence_target = normalize_custody_target_key(
+            _mapping(normalized_occurrence.get("target"))
         )
 
         if occurrence_target is None:
@@ -519,13 +489,14 @@ def trigger_once(
             caller_kind="operator_trigger",
             caller_id=request_id,
             target=occurrence_target,
+            repair_identity=normalized_repair_identity,
         )
 
         # The mutation action for the simple_fixer is the trigger
         # dispatch itself — it records the queued request and advances
         # the occurrence state.
         def _trigger_mutation(occ: SimpleFixerOccurrence) -> str:
-            return occ.occurrence_fingerprint
+            return occ.occurrence_fingerprint + ":manual-trigger-dispatched"
 
         delegation_result = delegate_to_simple_fixer(
             delegation,

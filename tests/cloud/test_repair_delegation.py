@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.simple_fixer import (
     SimpleFixerOccurrence,
     guard_no_child_agent,
@@ -48,10 +49,24 @@ def _target(**overrides) -> CustodyTargetKey:
 
 
 def _delegation(caller_kind="wrapper", caller_id="wrapper-1", **target_overrides):
+    target = _target(**target_overrides)
+    identity = repair_requests.build_normalized_repair_identity(
+        target=target,
+        run_id="demo",
+        run_revision="sha256:plan-rev-1",
+        run_incarnation_id="run-incarnation-1",
+        coordinator_attempt_id="coordinator:1",
+        fence_token=7,
+        wbc_attempt_reference="wbc:1",
+        run_authority_grant_id="grant-1",
+        lease_id="lease-1",
+        custody_epoch=1,
+    )
     return rd.RepairDelegation(
         caller_kind=caller_kind,
         caller_id=caller_id,
-        target=_target(**target_overrides),
+        target=target,
+        repair_identity=identity,
     )
 
 
@@ -101,10 +116,11 @@ def test_delegation_requires_exact_f01_tuple():
         )
         is None
     )
-    # A mapping with the full F01 tuple is accepted.
+    # A mapping with only F01 remains a read-only diagnostic delegation.
     built = rd.build_repair_delegation("wrapper", "w1", _DEFAULT_TARGET)
     assert isinstance(built, rd.RepairDelegation)
-    assert built.occurrence.occurrence_fingerprint == fp
+    assert built.repair_identity is None
+    assert built.occurrence.occurrence_fingerprint != fp
 
 
 def test_delegation_requires_valid_caller_kind_and_id():

@@ -2260,6 +2260,85 @@ def _record_lifecycle_failure(
                 reason="unreadable",
             )
             current_state = STATE_BLOCKED
+    queue_root, marker_dir, repair_session, repair_run_kind = (
+        _lifecycle_repair_request_route(plan_dir)
+    )
+    metadata_payload = dict(metadata or {})
+    try:
+        from arnold_pipelines.megaplan._core.phase_runtime import (
+            current_runner_lease_binding,
+        )
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            build_owned_lifecycle_repair_identity,
+            normalize_repair_identity,
+        )
+
+        persisted_identity = normalize_repair_identity(
+            metadata_payload.get("repair_identity")
+        )
+        if persisted_identity is None:
+            state_before = _read_state_data(plan_dir) or {}
+            active_step = state_before.get("active_step")
+            active = active_step if isinstance(active_step, Mapping) else {}
+            state_meta = state_before.get("meta")
+            state_meta = state_meta if isinstance(state_meta, Mapping) else {}
+            coordinator_attempt_id = str(
+                state_meta.get("current_invocation_id") or ""
+            ).strip()
+            revision = str(state_before.get("plan_revision") or "").strip()
+            if not revision:
+                revision = "sha256:" + hashlib.sha256(
+                    json.dumps(
+                        state_before,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8")
+                ).hexdigest()
+            blocked_task = _lifecycle_blocked_task_id(metadata_payload)
+            if not blocked_task:
+                blocked_task = f"phase:{phase}" if phase else "phase:driver"
+            blocker_payload = {
+                "kind": kind,
+                "message": message,
+                "current_state": current_state,
+                "phase": phase,
+                "suggested_action": suggested_action,
+                "metadata": metadata_payload,
+            }
+            blocker_digest = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    blocker_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            persisted_identity = build_owned_lifecycle_repair_identity(
+                environment=str(_workspace_path_for_plan_dir(plan_dir)),
+                session=repair_session,
+                chain=_derive_chain_path(plan_dir, metadata_payload),
+                plan_revision=revision,
+                phase=str(phase or "driver"),
+                task=blocked_task,
+                attempt=str(active.get("attempt") or ""),
+                normalized_failure_kind=kind,
+                blocker_or_phase_result_hash=blocker_digest,
+                active_step=active,
+                live_runner_lease=current_runner_lease_binding(),
+                coordinator_attempt_id=coordinator_attempt_id,
+            )
+        if persisted_identity is not None:
+            metadata_payload["repair_identity"] = persisted_identity
+            metadata_payload["repair_identity_provenance"] = {
+                "authority_source": "plan_state_lifecycle_failure_owner",
+                "positive_source_reread": True,
+            }
+    except (OSError, TypeError, ValueError):
+        # The queue boundary remains fail-closed below.  Failure recording must
+        # not be lost merely because exact repair authority is unavailable.
+        pass
+
     failure_details: dict[str, Any] | None = None
     try:
         failure_details = PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
@@ -2270,13 +2349,10 @@ def _record_lifecycle_failure(
             resume_cursor=resume_cursor,
             last_artifact=last_artifact,
             suggested_action=suggested_action,
-            metadata=metadata,
+            metadata=metadata_payload,
         )
     except (OSError, RuntimeError, ValueError):
         return
-    queue_root, marker_dir, repair_session, repair_run_kind = (
-        _lifecycle_repair_request_route(plan_dir)
-    )
     _enqueue_lifecycle_failure_request(
         plan_dir=plan_dir,
         queue_root=queue_root,
@@ -2288,7 +2364,7 @@ def _record_lifecycle_failure(
         current_state=current_state,
         phase=phase,
         suggested_action=suggested_action,
-        metadata=metadata,
+        metadata=metadata_payload,
         retry_strategy=str((resume_cursor or {}).get("retry_strategy") or ""),
     )
     if progress_emitter is not None and failure_details is not None:
@@ -2317,16 +2393,13 @@ def _enqueue_lifecycle_failure_request(
         from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
         from arnold_pipelines.megaplan.cloud.repair_requests import (
             enqueue_occurrence_bound_repair_request,
+            normalize_repair_identity,
         )
 
         if not repair_request_queue_enabled():
             return
         workspace_path = _workspace_path_for_plan_dir(plan_dir)
 
-        # ── Step 39 (T25): Build exact occurrence identity for lifecycle
-        # failure enqueue.  The F01 tuple binds this request to the
-        # exact repair occurrence so downstream recovery joins can
-        # identify the same tuple.
         session_id = session or plan_dir.name
         # Phase-contract failures are durable repair subjects even when the
         # phase does not own a task-shaped executor record.  Allocate that
@@ -2337,25 +2410,15 @@ def _enqueue_lifecycle_failure_request(
         if not blocked_task and phase:
             blocked_task = f"phase:{phase}"
 
-        # Derive a best-effort fence token from the plan directory's
-        # modification signature.  When a real coordinator fence token
-        # is available (from Run Authority), callers should pass it
-        # through the ``_record_lifecycle_failure`` metadata.
-        fence_token = _derive_fence_token(plan_dir)
-        plan_revision = _derive_plan_revision(plan_dir)
-
-        occurrence_identity = {
-            "environment": str(workspace_path),
-            "session": session_id,
-            "chain": _derive_chain_path(plan_dir, metadata),
-            "plan_revision": plan_revision,
-            "phase": phase or "",
-            "task": blocked_task,
-            "attempt": _derive_attempt_from_metadata(metadata),
-            "normalized_failure_kind": kind,
-            "blocker_or_phase_result_hash": _derive_blocker_hash(plan_dir, metadata),
-            "fence": fence_token,
-        }
+        # Failure labels and file mtimes cannot mint repair authority.  The
+        # coordinator must persist the complete run/custody identity in the
+        # lifecycle metadata; otherwise enqueue fails closed and reacquisition
+        # is explicit.
+        occurrence_identity = normalize_repair_identity(
+            (metadata or {}).get("repair_identity")
+            if isinstance(metadata, dict)
+            else None
+        )
 
         enqueue_occurrence_bound_repair_request(
             queue_root=queue_root,
@@ -2485,41 +2548,6 @@ def _lifecycle_blocked_task_id(metadata: dict[str, Any] | None) -> str:
     return ""
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Step 39 (T25) — Occurrence identity derivation helpers for lifecycle enqueue
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def _derive_fence_token(plan_dir: Path) -> str:
-    """Derive a best-effort fence token from plan directory modification time.
-
-    When a real coordinator fence token is available from Run Authority,
-    callers should pass it through the ``_record_lifecycle_failure`` metadata
-    field ``fence_token`` instead of relying on this derivation.
-    """
-    try:
-        stat = plan_dir.stat()
-        return f"fence:{stat.st_mtime_ns}:{stat.st_size}"
-    except OSError:
-        return "fence:unknown"
-
-
-def _derive_plan_revision(plan_dir: Path) -> str:
-    """Derive a plan revision from the plan's state or finalize file."""
-    for candidate in ("state.json", "finalize.json", "phase_result.json"):
-        try:
-            data = json.loads((plan_dir / candidate).read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                rev = data.get("plan_revision") or data.get("revision") or ""
-                if rev:
-                    return str(rev).strip()
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            continue
-    # Fallback: hash the plan directory name as a stable revision pointer.
-    digest = hashlib.sha256(plan_dir.name.encode("utf-8")).hexdigest()[:16]
-    return f"sha256:{digest}"
-
-
 def _derive_chain_path(plan_dir: Path, metadata: dict[str, Any] | None) -> str:
     """Derive the chain spec path from metadata or environment."""
     if isinstance(metadata, dict):
@@ -2534,37 +2562,6 @@ def _derive_chain_path(plan_dir: Path, metadata: dict[str, Any] | None) -> str:
     # still the stable execution identity.  Preserve that identity instead of
     # emitting a partial F01 tuple that the custody boundary must reject.
     return str(plan_dir)
-
-
-def _derive_attempt_from_metadata(metadata: dict[str, Any] | None) -> str:
-    """Derive the attempt number from metadata."""
-    if isinstance(metadata, dict):
-        for key in ("attempt", "attempt_number", "run_attempt"):
-            value = metadata.get(key)
-            if value is not None:
-                return str(value).strip()
-    return "1"
-
-
-def _derive_blocker_hash(
-    plan_dir: Path, metadata: dict[str, Any] | None
-) -> str:
-    """Derive a blocker hash from plan state or metadata."""
-    if isinstance(metadata, dict):
-        for key in ("blocker_hash", "blocker_or_phase_result_hash", "phase_result_hash"):
-            value = metadata.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    # Fallback: hash from phase_result.json if present.
-    try:
-        data = json.loads((plan_dir / "phase_result.json").read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
-            digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-            return f"sha256:{digest}"
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        pass
-    return "sha256:unknown"
 
 
 def _derive_evidence_cursor_digest(plan_dir: Path) -> str:

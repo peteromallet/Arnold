@@ -87,6 +87,7 @@ class RepairDelegation(Contract):
     caller_kind: str
     caller_id: str
     target: CustodyTargetKey
+    repair_identity: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.caller_kind not in CALLER_KINDS:
@@ -110,20 +111,38 @@ class RepairDelegation(Contract):
                     "derived from a label, liveness signal, WBC receipt, "
                     "or rebuildable projection"
                 )
+        if self.repair_identity is not None:
+            from arnold_pipelines.megaplan.cloud.repair_requests import (
+                normalize_repair_identity,
+            )
+
+            normalized = normalize_repair_identity(self.repair_identity)
+            if normalized is None:
+                raise ContractError("delegation repair identity is not current")
+            occurrence = normalized.get("occurrence")
+            if not isinstance(occurrence, Mapping) or occurrence.get("target") != self.target.to_dict():
+                raise ContractError("delegation target disagrees with repair identity")
+            object.__setattr__(self, "repair_identity", normalized)
 
     @property
     def occurrence(self) -> SimpleFixerOccurrence:
         """The exact occurrence identity this delegation targets."""
-        return SimpleFixerOccurrence(target=self.target)
+        return SimpleFixerOccurrence(
+            target=self.target,
+            repair_identity=self.repair_identity,
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "contract_type": self.contract_type,
             "schema_version": self.schema_version,
             "caller_kind": self.caller_kind,
             "caller_id": self.caller_id,
             "target": dict(self.target.to_dict()),
         }
+        if self.repair_identity is not None:
+            result["repair_identity"] = dict(self.repair_identity)
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -188,14 +207,26 @@ def build_repair_delegation(
         return None
     if isinstance(target, CustodyTargetKey):
         key = target
+        repair_identity = None
     elif isinstance(target, Mapping):
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            normalize_repair_identity,
+        )
         from arnold_pipelines.megaplan.custody.contracts import (
             build_custody_target_key,
+            normalize_custody_target_key,
         )
 
-        key = build_custody_target_key(
-            **{name: target.get(name, "") for name in F01_REPAIR_OCCURRENCE_FIELDS}
-        )
+        repair_identity = normalize_repair_identity(target)
+        if repair_identity is not None:
+            occurrence = repair_identity.get("occurrence")
+            key = normalize_custody_target_key(
+                occurrence.get("target") if isinstance(occurrence, Mapping) else None
+            )
+        else:
+            key = build_custody_target_key(
+                **{name: target.get(name, "") for name in F01_REPAIR_OCCURRENCE_FIELDS}
+            )
     else:
         return None
     if key is None:
@@ -205,6 +236,7 @@ def build_repair_delegation(
             caller_kind=caller_kind,
             caller_id=caller_id,
             target=key,
+            repair_identity=repair_identity,
         )
     except ContractError:
         return None
@@ -247,6 +279,17 @@ def delegate_to_simple_fixer(
         return RepairDelegationResult(
             outcome="invalid_caller",
             evidence={"reason": "delegation must be a RepairDelegation instance"},
+        )
+    if delegation.repair_identity is None:
+        return RepairDelegationResult(
+            outcome="zero_authority_rejected",
+            delegation=delegation,
+            evidence={
+                "reason": (
+                    "delegation requires the current normalized repair identity; "
+                    "legacy F01-only delegation is diagnostic only"
+                )
+            },
         )
 
     # Gate: no child agent at the delegation layer.

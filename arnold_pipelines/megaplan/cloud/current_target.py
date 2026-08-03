@@ -450,6 +450,10 @@ def resolve_current_target(
                 "boundary_evidence": "must be reread from live source",
             },
         },
+        # Exact identity minted and persisted by the lifecycle-failure owner.
+        # This is copied without reinterpretation; positive consumers still
+        # bind it to the immutable queue record and current lease evidence.
+        "repair_identity": _stable_mapping(plan_state.get("repair_identity")),
         "current_refs": {
             "workspace": str(workspace) if workspace is not None else "",
             "run_kind": run_kind,
@@ -479,6 +483,7 @@ def resolve_current_target(
             "resume_cursor": _stable_mapping(plan_state.get("resume_cursor")),
             "mtime": _mtime(plan_state_path) if plan_state_path is not None else 0.0,
             "fingerprint": _fingerprint(plan_state_path) if plan_state_path is not None else "",
+            "repair_identity": _stable_mapping(plan_state.get("repair_identity")),
         },
         "chain_state": {
             "path": str(chain_state_path) if chain_state_path is not None else "",

@@ -975,6 +975,7 @@ def _dispatch(
             child_pid=proc.pid,
             managed_run_id=managed_run_id,
             managed_manifest_path=str(managed_manifest),
+            repair_identity=repair_identity,
         )
         decision = repair_requests.write_decision(
             queue_dir,
@@ -1079,6 +1080,7 @@ def _dispatch(
             return 0
         delegation_result = _delegate_repair_to_simple_fixer(
             occurrence_target=occurrence_target,
+            repair_identity=repair_identity,
             queue_dir=queue_dir,
             request_id=request_id,
             session=session,
@@ -1577,6 +1579,7 @@ def _reject_legacy_repair_bin_overrides(argv: list[str] | None) -> None:
 def _delegate_repair_to_simple_fixer(
     *,
     occurrence_target: CustodyTargetKey,
+    repair_identity: Mapping[str, Any],
     queue_dir: Path,
     request_id: str,
     session: str,
@@ -1593,6 +1596,7 @@ def _delegate_repair_to_simple_fixer(
         caller_kind="operator_trigger",
         caller_id=request_id,
         target=occurrence_target,
+        repair_identity=repair_identity,
     )
 
     def _trigger_mutation(occ: SimpleFixerOccurrence) -> str:

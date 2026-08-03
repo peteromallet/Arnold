@@ -7,12 +7,31 @@ from pathlib import Path
 from threading import Barrier
 
 from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
+from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
 
 
 def _queue_root(tmp_path: Path) -> Path:
     root = tmp_path / ".megaplan" / "repair-queue"
     root.mkdir(parents=True)
     return root
+
+
+def _identity() -> dict[str, object]:
+    target = CustodyTargetKey(
+        environment="/workspace/demo", session="demo-session",
+        chain="/workspace/demo/chain.yaml", plan_revision="rev-1",
+        phase="repair", task="T1", attempt="1",
+        normalized_failure_kind="blocked", blocker_or_phase_result_hash="blocker-1",
+        fence="runner-fence:1",
+    )
+    identity = repair_requests.build_normalized_repair_identity(
+        target=target, run_id="run-1", run_revision="rev-1",
+        run_incarnation_id="incarnation-1", coordinator_attempt_id="coord-1",
+        fence_token=1, wbc_attempt_reference="wbc-1",
+        run_authority_grant_id="grant-1", lease_id="lease-1", custody_epoch=1,
+    )
+    assert identity is not None
+    return identity
 
 
 def test_foreign_namespace_pid_collision_is_unknown_and_cannot_release(tmp_path: Path) -> None:
@@ -69,13 +88,27 @@ def test_same_namespace_pid_reuse_is_stale_only_after_process_birth_mismatch(
 
 def test_concurrent_contenders_cannot_reclaim_foreign_namespace_claim(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    blocker_id = "blocker:v1:foreign-owner"
+    identity = _identity()
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        source="test",
+        problem_signature={
+            "failure_kind": "blocked", "current_state": "blocked",
+            "phase_or_step": "repair", "milestone_or_plan": "demo-plan",
+            "gate_recommendation": "", "blocked_task_id": "T1",
+        },
+        repair_identity=identity,
+    )
+    request = queued["request"]
+    blocker_id = request["blocker_id"]
     first = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id=blocker_id,
-        request_id="request-owner",
+        request_id=request["request_id"],
         actor="owner",
         session="demo-session",
+        repair_identity=identity,
         pid=os.getpid(),
         is_pid_live=lambda _pid: True,
     )
@@ -93,9 +126,10 @@ def test_concurrent_contenders_cannot_reclaim_foreign_namespace_claim(tmp_path: 
         return repair_requests.claim_active_repair_request(
             queue_dir,
             blocker_id=blocker_id,
-            request_id=f"request-{index}",
+            request_id=request["request_id"],
             actor=f"contender-{index}",
             session="demo-session",
+            repair_identity=identity,
             pid=os.getpid(),
             is_pid_live=lambda _pid: False,
         )
@@ -104,7 +138,7 @@ def test_concurrent_contenders_cannot_reclaim_foreign_namespace_claim(tmp_path: 
         results = list(executor.map(contend, range(contenders)))
 
     assert all(not result.claimed for result in results)
-    assert all(result.status == "busy" for result in results)
+    assert all(result.status == "already_claimed" for result in results)
     assert json.loads(owner_path.read_text(encoding="utf-8")) == foreign_owner
 
 

@@ -411,8 +411,9 @@ def validate_lease_authority(
     matching the lock-owner identity from *lock_owner*.
 
     Returns ``(authorized, diagnostics)`` where *authorized* is ``True``
-    only when the lease store contains a non-expired lease whose
-    ``owner_host`` and ``owner_pid`` match the lock's owner metadata.
+    only when the lease store contains a non-expired lease whose complete
+    process incarnation (host, PID, boot, PID namespace, and process-start
+    identity) matches the lock's owner metadata.
 
     This is the **authoritative** ownership check.  PID liveness alone
     (from :func:`inspect_repair_lock`) is admission evidence, not authority.
@@ -444,11 +445,18 @@ def validate_lease_authority(
 
     lock_host = str(lock_owner.get("hostname") or "")
     lock_pid = str(lock_owner.get("pid") or "")
+    lock_boot_id = str(lock_owner.get("boot_id") or "")
+    lock_pid_namespace = str(lock_owner.get("pid_namespace") or "")
+    lock_process_start = str(lock_owner.get("process_start_ticks") or "")
 
     diagnostics["lease_owner_host"] = lease.owner_host
     diagnostics["lease_owner_pid"] = lease.owner_pid
+    diagnostics["lease_owner_boot_id"] = lease.owner_boot_id
     diagnostics["lock_host"] = lock_host
     diagnostics["lock_pid"] = lock_pid
+    diagnostics["lock_boot_id"] = lock_boot_id
+    diagnostics["lock_pid_namespace"] = lock_pid_namespace
+    diagnostics["lock_process_start_ticks"] = lock_process_start
 
     if lease.owner_host != lock_host:
         diagnostics["reason"] = "owner_host_mismatch"
@@ -456,6 +464,41 @@ def validate_lease_authority(
 
     if lease.owner_pid != lock_pid:
         diagnostics["reason"] = "owner_pid_mismatch"
+        return False, diagnostics
+
+    if not lease.owner_boot_id or not lock_boot_id:
+        diagnostics["reason"] = "owner_boot_identity_missing"
+        return False, diagnostics
+    if lease.owner_boot_id != lock_boot_id:
+        diagnostics["reason"] = "owner_boot_id_mismatch"
+        return False, diagnostics
+    if not lock_pid_namespace or not lock_process_start:
+        diagnostics["reason"] = "lock_process_incarnation_missing"
+        return False, diagnostics
+
+    try:
+        history = lease_store.load_history(lease_id)
+    except Exception as exc:
+        diagnostics["reason"] = "lease_process_incarnation_unavailable"
+        diagnostics["error"] = str(exc)
+        return False, diagnostics
+    latest = history[-1] if history else None
+    payload = getattr(latest, "payload", None)
+    if not isinstance(payload, Mapping):
+        diagnostics["reason"] = "lease_process_incarnation_missing"
+        return False, diagnostics
+    lease_pid_namespace = str(payload.get("owner_pid_namespace") or "")
+    lease_process_start = str(payload.get("owner_process_start_ticks") or "")
+    diagnostics["lease_pid_namespace"] = lease_pid_namespace
+    diagnostics["lease_process_start_ticks"] = lease_process_start
+    if not lease_pid_namespace or not lease_process_start:
+        diagnostics["reason"] = "lease_process_incarnation_missing"
+        return False, diagnostics
+    if lease_pid_namespace != lock_pid_namespace:
+        diagnostics["reason"] = "owner_pid_namespace_mismatch"
+        return False, diagnostics
+    if lease_process_start != lock_process_start:
+        diagnostics["reason"] = "owner_process_start_mismatch"
         return False, diagnostics
 
     diagnostics["reason"] = "authorized"
@@ -646,7 +689,17 @@ def _process_start_ticks(pid: int) -> str:
         # proc(5): field 22 is process start time; suffix starts at field 3.
         return suffix.split()[19]
     except (OSError, IndexError):
-        return ""
+        try:
+            started = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.strip()
+            return f"ps-lstart:{started}" if started else ""
+        except Exception:
+            return ""
 
 
 def _owner_pid_liveness(

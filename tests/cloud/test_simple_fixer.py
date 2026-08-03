@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from arnold_pipelines.megaplan.cloud import simple_fixer as sf
+from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     singleton_occurrence_claim_lock_dir,
 )
@@ -42,7 +43,20 @@ def _target(**overrides):
 
 
 def _occurrence(**overrides):
-    return sf.SimpleFixerOccurrence(target=_target(**overrides))
+    target = _target(**overrides)
+    identity = repair_requests.build_normalized_repair_identity(
+        target=target,
+        run_id="demo",
+        run_revision="sha256:plan-rev-1",
+        run_incarnation_id="run-incarnation-1",
+        coordinator_attempt_id="coordinator:1",
+        fence_token=7,
+        wbc_attempt_reference="wbc:1",
+        run_authority_grant_id="grant-1",
+        lease_id="lease-1",
+        custody_epoch=1,
+    )
+    return sf.SimpleFixerOccurrence(target=target, repair_identity=identity)
 
 
 def _queue_dir(tmp_path):
@@ -114,19 +128,21 @@ def test_occurrence_identity_requires_exact_tuple():
         )
         is None
     )
-    # A mapping with the full tuple is accepted.
+    # A mapping with only the full F01 tuple remains readable but is not the
+    # authority-bearing run/custody occurrence.
     built = sf.build_simple_fixer_occurrence(_DEFAULT_TARGET)
     assert isinstance(built, sf.SimpleFixerOccurrence)
-    assert built.occurrence_fingerprint == fp
+    assert not built.authoritative
+    assert built.occurrence_fingerprint != fp
 
-    # The fingerprint is NOT derived from chain_identity (the optional 11th
-    # field): two targets identical on the F01 tuple but differing only in
-    # chain_identity share the same occurrence fingerprint.  This proves
-    # authority comes from the exact tuple, not an auxiliary projection.
+    # A predecessor F01-only target remains diagnostic/read-only even when it
+    # carries the optional chain identity.  It must not collide with the
+    # authority-bearing run/custody occurrence fingerprint.
     with_chain = sf.SimpleFixerOccurrence(
         target=CustodyTargetKey(chain_identity="chain-id-A", **_DEFAULT_TARGET)
     )
-    assert with_chain.occurrence_fingerprint == fp
+    assert not with_chain.authoritative
+    assert with_chain.occurrence_fingerprint != fp
 
     # A non-CustodyTargetKey target is rejected outright.
     with pytest.raises(ContractError):
@@ -355,7 +371,7 @@ def test_claim_rejects_non_occurrence_identity(tmp_path):
         session="sess-1",
     )
     assert result.outcome == "rejected_identity"
-    assert result.evidence["reason"] == "occurrence_must_be_simple_fixer_occurrence"
+    assert "current normalized repair identity" in result.evidence["reason"]
 
 
 def test_mutation_budget_is_occurrence_scoped(tmp_path):
