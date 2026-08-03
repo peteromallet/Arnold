@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 from dataclasses import replace
@@ -14,9 +15,12 @@ import pytest
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 from arnold_pipelines.megaplan.cloud.providers.ssh import (
     SshProvider,
+    _ISOLATED_GH_AUTH_ATTEST_SCRIPT,
+    _ISOLATED_GIT_CREDENTIAL_INSTALL_SCRIPT,
     _ISOLATED_CHAIN_RUNNER_COMMAND,
     _ISOLATED_CHAIN_RUNNER_ENTRYPOINT,
 )
+from arnold_pipelines.megaplan.cloud.auth import seed_isolated_git_credentials
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
@@ -744,6 +748,263 @@ def test_isolated_exec_targets_attested_container_id_not_mutable_name() -> None:
     provider.ssh_exec("true")
     assert remote_commands == [f"docker exec {container_id} bash -lc true"]
     assert "isolated-chain-runner" not in remote_commands[0]
+
+
+def test_isolated_git_auth_uses_stdin_exact_id_and_nonsecret_receipt() -> None:
+    token = "ghp_adversarial_secret_value"
+    container_id = "c" * 64
+    calls: list[tuple[str, str | None, str]] = []
+
+    class CredentialProvider(SshProvider):
+        def attest_isolated_chain_runner_runtime(self):
+            self._isolated_chain_runner_container_id = container_id
+            return {"status": "available", "container_id": container_id}
+
+        def _remote_run_compatible(
+            self,
+            command: str,
+            *,
+            capture_output: bool = True,
+            input: str | None = None,
+            surface: str,
+        ):
+            del capture_output
+            calls.append((command, input, surface))
+            stdout = ""
+            if surface == "isolated_chain_runner_git_auth_seed":
+                stdout = json.dumps(
+                    {
+                        "schema": "arnold.cloud.isolated_chain_runner_git_auth.v1",
+                        "status": "seeded",
+                        "credential_file_mode": "0600",
+                        "config_file_mode": "0600",
+                        "credential_scope": "github.com",
+                        "credential_helper": "store",
+                        "user_name": "Arnold Megaplan",
+                        "user_email": "megaplan@arnold.invalid",
+                    }
+                )
+            elif surface == "isolated_chain_runner_gh_auth_attest":
+                stdout = json.dumps(
+                    {
+                        "schema": "arnold.cloud.isolated_chain_runner_gh_auth.v1",
+                        "status": "authenticated",
+                        "hostname": "github.com",
+                        "config_file_mode": "0600",
+                    }
+                )
+            return subprocess.CompletedProcess([], 0, stdout, "")
+
+    receipt = CredentialProvider(_spec()).seed_isolated_chain_runner_git_credentials(
+        token
+    )
+
+    assert receipt["status"] == "seeded"
+    assert token not in json.dumps(receipt)
+    assert receipt["user_name"] == "Arnold Megaplan"
+    assert receipt["user_email"] == "megaplan@arnold.invalid"
+    assert len(calls) == 4
+    assert [surface for _, _, surface in calls] == [
+        "isolated_chain_runner_git_auth_seed",
+        "isolated_chain_runner_gh_auth_seed",
+        "isolated_chain_runner_gh_auth_status",
+        "isolated_chain_runner_gh_auth_attest",
+    ]
+    for command, stdin, _surface in calls:
+        assert token not in command
+        assert container_id in shlex.split(command)
+        assert "isolated-chain-runner" not in command
+        assert stdin == token if "_auth_seed" in _surface else stdin is None
+    gh_login = shlex.split(calls[1][0])
+    assert gh_login[-9:] == [
+        "gh",
+        "auth",
+        "login",
+        "--hostname",
+        "github.com",
+        "--git-protocol",
+        "https",
+        "--with-token",
+        "--insecure-storage",
+    ]
+
+
+def test_isolated_git_auth_rejects_container_name_swap_after_seed() -> None:
+    original_id = "d" * 64
+    replacement_id = "e" * 64
+    attestations = 0
+
+    class SwapProvider(SshProvider):
+        def attest_isolated_chain_runner_runtime(self):
+            nonlocal attestations
+            attestations += 1
+            container_id = original_id if attestations == 1 else replacement_id
+            self._isolated_chain_runner_container_id = container_id
+            return {"status": "available", "container_id": container_id}
+
+        def _remote_run_compatible(self, command: str, **kwargs):
+            surface = kwargs["surface"]
+            assert original_id in command
+            assert replacement_id not in command
+            stdout = ""
+            if surface == "isolated_chain_runner_git_auth_seed":
+                stdout = json.dumps(
+                    {
+                        "schema": "arnold.cloud.isolated_chain_runner_git_auth.v1",
+                        "status": "seeded",
+                        "credential_file_mode": "0600",
+                        "config_file_mode": "0600",
+                        "credential_scope": "github.com",
+                        "credential_helper": "store",
+                        "user_name": "Arnold Megaplan",
+                        "user_email": "megaplan@arnold.invalid",
+                    }
+                )
+            elif surface == "isolated_chain_runner_gh_auth_attest":
+                stdout = json.dumps(
+                    {
+                        "schema": "arnold.cloud.isolated_chain_runner_gh_auth.v1",
+                        "status": "authenticated",
+                        "hostname": "github.com",
+                        "config_file_mode": "0600",
+                    }
+                )
+            return subprocess.CompletedProcess([], 0, stdout, "")
+
+    with pytest.raises(CliError) as exc_info:
+        SwapProvider(_spec()).seed_isolated_chain_runner_git_credentials(
+            "ghp_secret"
+        )
+    assert exc_info.value.code == "isolated_chain_runner_name_replaced"
+
+
+def test_isolated_git_installer_atomic_modes_replacement_and_no_token_output(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "root"
+    home.mkdir(mode=0o700)
+    script = _ISOLATED_GIT_CREDENTIAL_INSTALL_SCRIPT.replace(
+        'if home != "/root":', f'if home != {str(home)!r}:'
+    )
+    uid, gid = os.getuid(), os.getgid()
+    script = script.replace(
+        "current.st_uid != 0 or current.st_gid != 0",
+        f"current.st_uid != {uid} or current.st_gid != {gid}",
+    ).replace(
+        "existing.st_uid != 0\n            or existing.st_gid != 0",
+        f"existing.st_uid != {uid}\n            or existing.st_gid != {gid}",
+    ).replace(
+        "stale.st_uid != 0\n                or stale.st_gid != 0",
+        f"stale.st_uid != {uid}\n                or stale.st_gid != {gid}",
+    ).replace(
+        "os.fchown(fd, 0, 0)", f"os.fchown(fd, {uid}, {gid})"
+    ).replace(
+        "installed.st_uid != 0\n            or installed.st_gid != 0",
+        f"installed.st_uid != {uid}\n            or installed.st_gid != {gid}",
+    )
+    token = "ghp_mode_test_secret"
+
+    for _ in range(2):
+        result = subprocess.run(
+            ["python", "-I", "-S", "-c", script, str(home)],
+            input=token,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        receipt = json.loads(result.stdout)
+        assert receipt["user_name"] == "Arnold Megaplan"
+        assert receipt["user_email"] == "megaplan@arnold.invalid"
+        assert token not in result.stderr
+        assert token not in result.stdout
+
+    credential = home / ".config" / "megaplan" / "git-credentials"
+    config = home / ".gitconfig"
+    assert credential.stat().st_mode & 0o777 == 0o600
+    assert config.stat().st_mode & 0o777 == 0o600
+    assert credential.read_text() == (
+        "https://x-access-token:ghp_mode_test_secret@github.com\n"
+    )
+    config_text = config.read_text()
+    assert token not in config_text
+    assert f"store --file {credential}" in config_text
+    assert "name = Arnold Megaplan" in config_text
+    assert "email = megaplan@arnold.invalid" in config_text
+    assert not list(credential.parent.glob("*.isolated-new"))
+    git_env = {**os.environ, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
+    identity = subprocess.run(
+        ["git", "config", "--global", "--get-regexp", r"^user\.(name|email)$"],
+        env=git_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert identity.returncode == 0
+    assert identity.stdout.splitlines() == [
+        "user.name Arnold Megaplan",
+        "user.email megaplan@arnold.invalid",
+    ]
+    credential_fill = subprocess.run(
+        ["git", "credential", "fill"],
+        input="protocol=https\nhost=github.com\n\n",
+        env=git_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert credential_fill.returncode == 0
+    assert "username=x-access-token" in credential_fill.stdout
+    assert f"password={token}" in credential_fill.stdout
+    gh_hosts = home / ".config" / "gh" / "hosts.yml"
+    gh_hosts.write_text("github.com: {}\n", encoding="utf-8")
+    gh_hosts.chmod(0o600)
+    attest_script = (
+        _ISOLATED_GH_AUTH_ATTEST_SCRIPT.replace(
+            "/root/.config/gh/hosts.yml", str(gh_hosts)
+        )
+        .replace("/root/.gitconfig", str(config))
+        .replace("/root/.config/megaplan/git-credentials", str(credential))
+        .replace("current.st_uid != 0", f"current.st_uid != {uid}")
+        .replace("current.st_gid != 0", f"current.st_gid != {gid}")
+    )
+    attest = subprocess.run(
+        ["python", "-I", "-S", "-c", attest_script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert attest.returncode == 0, attest.stderr
+    assert json.loads(attest.stdout)["config_file_mode"] == "0600"
+
+
+def test_isolated_git_seed_discovers_gh_without_token_in_argv_or_messages() -> None:
+    token = "ghp_local_discovery_secret"
+    observed: dict[str, object] = {}
+
+    def runner(argv, **kwargs):
+        observed["argv"] = argv
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(argv, 0, token + "\n", "")
+
+    class Provider:
+        def seed_isolated_chain_runner_git_credentials(self, value: str):
+            assert value == token
+            return {"status": "seeded"}
+
+    messages: list[str] = []
+    receipt = seed_isolated_git_credentials(
+        _spec(),
+        Provider(),
+        required=True,
+        runner=runner,
+        writer=messages.append,
+    )
+    assert observed["argv"] == ["gh", "auth", "token"]
+    assert token not in repr(observed["argv"])
+    assert observed["kwargs"]["stdin"] is subprocess.DEVNULL
+    assert token not in json.dumps(receipt)
+    assert token not in "".join(messages)
 
 
 @pytest.mark.parametrize(
