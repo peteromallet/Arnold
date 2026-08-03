@@ -26,7 +26,8 @@ The recovery boundary is:
    Execute.
 
 This ordering is the integrated launch contract in
-`docs/arnold/critique-attempt9-launch-contract.md` (commit `6d4314207d`). In
+`docs/arnold/critique-attempt9-launch-contract.md`, present in exact release
+candidate `daa2c850645532dffb697182203284c5b965a563`. In
 particular, resuming the chain from `gated` is forbidden: chain resume must not
 be used to create attempt 9.
 
@@ -90,11 +91,13 @@ file-receipt protocol.
   `af6149befd0e0a60700678999adbf10f425afa26f356a545b1e6246269bbe9a5`,
   72,328 bytes, 28 tasks, 28 sense checks, 29 critique-coverage rows, one user
   action; manifest status `RECOVERED_CANDIDATE_NOT_ADOPTED`.
-- Local cutover tests at integration base `e32fd243e5` plus migration commit
-  `eb5596a93a`: 14 focused marker tests, 46 adjacent runtime/chain-binding
-  tests, and the earlier 74 cancellation/profile/handoff/control tests passed;
-  Ruff and `git diff --check` passed.
-- Integrated launch contract `6d4314207d` locks Finalize to a one-shot direct
+- Final adversarial gate on exact code
+  `daa2c850645532dffb697182203284c5b965a563` is GO: 530 combined tests, 622
+  prior broad tests, 40 combined resident/notification/profile/control tests,
+  and 17 latest resident-recovery tests passed; modified production Python
+  compiles, donor Ruff and `git diff --check` pass. The fresh-clone resident
+  capability probe remains clean (old code created 61 ignored bytecode paths).
+- Integrated launch contract locks Finalize to a one-shot direct
   phase invocation and maps Execute's coordinator and every complexity tier
   1–10 to GLM-family routes. DeepSeek remains available only outside Execute;
   GPT-5.6 Sol high remains exclusive to Finalize.
@@ -323,8 +326,9 @@ This cancellation history is what makes the next Finalize owner ordinal 9.
 
 ### 5. Migrate the legacy marker, then cut over runtime custody
 
-Deploy migration commit `eb5596a93a` as part of the final exact engine, but do
-not touch the live marker during deployment. Run the dedicated
+Deploy exact candidate `daa2c850645532dffb697182203284c5b965a563`, which
+contains the marker migration and live-chain-shape correction, but do not touch
+the live marker during deployment. Run the dedicated
 `cloud.legacy_marker_runtime_migration` CLI from the isolated new-engine control
 venv with:
 
