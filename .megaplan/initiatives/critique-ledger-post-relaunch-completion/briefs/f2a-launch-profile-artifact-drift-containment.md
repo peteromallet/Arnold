@@ -25,6 +25,14 @@ and tool mode are independent axes. Historical M9 unsupported-keyword fixtures
 and current r5 implementation commits `f401431b7a`/`b168edbca0`/`18b279f5ef`
 are retained as input evidence; none is accepted deployment proof by itself.
 
+The joint F1/F2A
+`finalize-output-artifact-handoff-shared-retry-contract.json` closes the next
+boundary: a file artifact is not Codex `-o`'s transport receipt, and the model
+capture schema is not the post-handler product schema. Finalize capture uses
+pre-mutation `FINALIZE_MODEL_OUTPUT_SCHEMA`; only after validation may the
+handler enrich and persist. One durable occurrence budget spans inner repair
+and outer auto.
+
 ## Difficulty and dependencies
 
 Difficulty **5/5 — VERY HARD**. This joins policy resolution, credentials,
@@ -110,6 +118,17 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
 - Preserve open/dynamic maps used by `finalize`, `feedback` and `loop_plan`.
   Mutation fixtures cover unsupported keywords and prove exact dynamic keys and
   nested values survive canonical local validation.
+- Declare one authoritative output channel for every registered phase/agent/
+  executor before dispatch. For file-artifact Finalize, bind invocation-scoped
+  `finalize_output.json` path/generation/size/SHA-256/schema, classify Codex
+  `-o` as a diagnostic transport receipt, read back the artifact and atomically
+  promote it once. Missing, stale, wrong-path or changed artifacts fail typed;
+  the receipt is never fallback payload.
+- Bind Finalize worker capture to pre-handler `FINALIZE_MODEL_OUTPUT_SCHEMA`,
+  shared exactly by prompt projection, file capture, local strict and handler
+  input validation. `finalize_capture.json` is an enriched product boundary.
+  The handler adds validation/execution/baseline/custody evidence only after
+  model validation. Template reset cannot erase a receipted candidate.
 - Route deterministic `provider_contract/schema_error` through one phase
   invocation and no generic/model fallback. Launch one provenance-safe fixer
   for the durable occurrence or fail closed; admit exactly one repair-commit-
@@ -137,6 +156,10 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
   wrapper, watchdog or provider failure may re-resolve or silently substitute.
 - Metadata, an expected path, an upload success code or an object-store ETag is
   not remote-byte evidence. Readback bytes and child-loaded bytes both bind.
+- A CLI output receipt is transport evidence, never phase-payload authority.
+  Output-channel selection and model/product schema stages are explicit and
+  immutable before dispatch. A receipted candidate is immutable; reset reuses
+  it or creates a new path only after durable supersession.
 - Secrets never enter the canonical bundle or receipts. Only non-secret
   credential capability/identity evidence is bound.
 - PID alone is not worker identity. Kill authority requires the bound cgroup,
@@ -187,6 +210,15 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
 - The provider-schema dialect contract validates. Tests prove the response-
   enforcement/tool-mode cross product, canonical/wire/compiler/provider/
   profile/runtime/image hashes and child readback before provider dispatch.
+- The exact Finalize fixture promotes the valid 72,328-byte artifact rather
+  than the 339-byte Codex `-o` receipt, preserves all 28 tasks, 29 coverage rows
+  and feasibility, and binds the full SHA-256 extending `af6149be`. Worker
+  capture/local strict use `FINALIZE_MODEL_OUTPUT_SCHEMA`; handler enrichment
+  then passes the persisted product schema. Wrong schema-stage mutations and
+  template reset after a candidate receipt fail closed without erasing bytes.
+- Inner and outer concurrency/restart/response-loss tests share one occurrence
+  budget: initial plus one repair/replay maximum, with zero third calls when a
+  valid repair artifact already exists.
 - `finalize`, `feedback` and `loop_plan` dynamic maps plus M9 mutations
   (`default`, `const`, `oneOf`, `minimum`) preserve canonical semantics and
   select local strict validation whenever the provider dialect is insufficient.

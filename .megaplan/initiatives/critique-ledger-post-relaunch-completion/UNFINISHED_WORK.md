@@ -173,6 +173,16 @@ deferred obligations.
   Immediate branch: reducer/promotion regression work exists, pending accepted
   integration. F1 remainder: provider matrix, crash/late-writer isolation,
   installed parity and bounded artifact retention.
+- [ ] **VERY HARD — F1 shared inner/outer occurrence retry budget.** The
+  Finalize repair consumed one inner recovery call, yet outer auto launched a
+  third call because the two layers owned separate counters. Put initial phase,
+  inner repair/replay and outer auto behind one durable CAS ledger keyed by
+  run/incarnation/occurrence/state-version/phase/failure fingerprint. Permit one
+  initial call plus one shared repair or replay, never one retry per layer. A
+  valid repair artifact promotes without another model call. Restart, response
+  loss, timeout, observers and concurrent claimants cannot replenish or
+  multiply the budget. Contract:
+  `finalize-output-artifact-handoff-shared-retry-contract.json`.
 - [ ] **VERY HARD — F1 receipt-aware artifact archival and cleanup.** Never
   broad-glob, move or delete `critique_check_*` producer/raw artifacts: active
   `critique_custody_v1.json` and `critique_custody_v2.json` receipts name and
@@ -256,6 +266,21 @@ deferred obligations.
   that proves `18b` ancestry. An earlier `b168edbca0...` canary is rejected.
   Contract:
   `provider-schema-dialect-family-contract.json`.
+- [ ] **VERY HARD — F2A explicit phase-output artifact handoff.** The observed
+  Sol repair wrote a valid 72,328-byte `finalize_output.json` (SHA-256 prefix
+  `af6149be`, 28 tasks, 29 coverage rows, feasibility admitted), but Codex `-o`
+  returned a 339-byte receipt and `local_strict` validated that receipt instead,
+  rejecting required Finalize fields. Every registered phase/agent/executor
+  must declare one output channel before dispatch. Bind and read back the exact
+  artifact path/generation/size/full SHA-256/schema, classify `-o` as transport
+  receipt only, and atomically promote the artifact once. Missing/stale/wrong-
+  path/mutated artifacts fail typed with no receipt fallback. Capture the full
+  SHA extending `af6149be` before acceptance and test source/wheel/installed/
+  cloud plus restart/concurrency. Worker capture must use pre-handler
+  `FINALIZE_MODEL_OUTPUT_SCHEMA`, not enriched product `finalize_capture.json`;
+  prove handler-only enrichment and that template reset never erases a
+  receipted candidate. Joint F1/F2A contract:
+  `finalize-output-artifact-handoff-shared-retry-contract.json`.
 - [ ] **HARD — F2A long inline prompt/path-probe safety.** Harden
   `_normalize_stdin_text` so probing a long, single-line inline prompt as a
   possible path catches `OSError`, including `ENAMETOOLONG`, and returns the
@@ -1148,9 +1173,15 @@ claim cannot discharge an obligation.
   production authority, release authority, or cloud launch authority.
 - [ ] Complete generalized T1.4 graph repair/retry and T1.6 effect-family
   migration plus the full release evidence matrix.
-- [ ] Align the canonical `FINALIZE_MODEL_OUTPUT_SCHEMA` required set with the
-  persisted finalize schema; prompt, feasibility, capture and stored output
-  must consume one exact task-contract-v2 contract.
+- [ ] Separate the Finalize model and product schema boundaries. Prompt,
+  file-artifact capture, `local_strict` and handler input must consume exact
+  pre-mutation `FINALIZE_MODEL_OUTPUT_SCHEMA`; `finalize_capture.json` is a
+  post-handler enriched product shape and must never be the worker
+  `capture_schema`. After model-output validation, the handler alone adds
+  validation/execution/baseline/custody fields and validates the persisted
+  product. Bind both schema hashes and the enrichment transform. A template
+  reset never erases, truncates or reseeds a receipted candidate; reuse exact
+  bytes or durably supersede to a new invocation path.
 - [ ] Prove non-empty `dependency_reasons` against the real provider output
   schema, not only the offline fake.
 - [ ] Close the scratch-template `const2` mismatch without weakening the exact

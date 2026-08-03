@@ -1,0 +1,194 @@
+{
+  "schema": "arnold.cross_pipeline.phase_output_artifact_handoff_shared_retry.v1",
+  "status": "NORMATIVE_DESIGN_TARGET_WITH_READ_ONLY_INCIDENT_EVIDENCE",
+  "joint_owner_milestones": [
+    "f1-owner-storage-recovery-hardening",
+    "f2a-launch-profile-artifact-drift-containment"
+  ],
+  "scope": "ALL_REGISTERED_PHASES_AGENTS_EXECUTORS_REPAIRERS_AND_OUTER_AUTO_DRIVERS",
+  "difficulty": "5/5 VERY HARD",
+  "incident_fixture": {
+    "session": "critique-ledger-accountability-v3-r5-20260803",
+    "plan": "cl2-wbc-backed-ledger-20260803-1357",
+    "phase": "finalize",
+    "repair_artifact": {
+      "producer": "SOL_REPAIR",
+      "path": "finalize_output.json",
+      "size_bytes": 72328,
+      "observed_sha256_prefix": "af6149be",
+      "full_sha256_status": "NOT_PRESENT_IN_AUDIT_INPUT_MUST_BE_CAPTURED_BEFORE_ACCEPTANCE",
+      "json_and_model_output_schema_validation": "PASS",
+      "task_count": 28,
+      "coverage_count": 29,
+      "feasibility": "ADMITTED"
+    },
+    "transport_receipt": {
+      "producer": "CODEX_CLI_DASH_O",
+      "size_bytes": 339,
+      "classification": "TRANSPORT_RECEIPT_NOT_PHASE_PAYLOAD"
+    },
+    "observed_failure": {
+      "validator": "LOCAL_STRICT_JSON",
+      "rejected_input": "CODEX_CLI_DASH_O_TRANSPORT_RECEIPT",
+      "reason": "REQUIRED_FINALIZE_FIELDS_MISSING",
+      "valid_artifact_was_available": true
+    },
+    "schema_boundary_observation": {
+      "incorrect_worker_capture_schema": "finalize_capture.json_POST_HANDLER_ENRICHED_PRODUCT",
+      "correct_worker_capture_schema": "FINALIZE_MODEL_OUTPUT_SCHEMA_PRE_MUTATION",
+      "consequence": "EVEN_CORRECT_72328_BYTE_MODEL_OUTPUT_FAILS_IF_VALIDATED_AS_ENRICHED_PRODUCT_BEFORE_HANDLER_MUTATION"
+    },
+    "retry_observation": {
+      "inner_repair_count": 1,
+      "outer_auto_launched_third_call": true,
+      "classification": "NO_SHARED_CROSS_LAYER_OCCURRENCE_BUDGET"
+    },
+    "root_causes": [
+      "PHASE_OUTPUT_AUTHORITY_WAS_IMPLICIT_ACROSS_FILE_ARTIFACT_AND_TRANSPORT_RECEIPT_CHANNELS",
+      "VALIDATED_REPAIR_ARTIFACT_WAS_NOT_HANDED_OFF_AS_THE_AUTHORITATIVE_PHASE_PAYLOAD",
+      "LOCAL_STRICT_VALIDATED_THE_SMALL_TRANSPORT_RECEIPT_INSTEAD_OF_THE_BOUND_ARTIFACT",
+      "FINALIZE_WORKER_CAPTURE_SCHEMA_USED_POST_HANDLER_FINALIZE_CAPTURE_PRODUCT_SHAPE_INSTEAD_OF_PRE_MUTATION_MODEL_OUTPUT_SCHEMA",
+      "INNER_REPAIR_AND_OUTER_AUTO_OWNED_INDEPENDENT_RETRY_BUDGETS"
+    ],
+    "live_mutation_authority": false
+  },
+  "artifact_handoff_contract": {
+    "phase_declared_output_channel": "FILE_ARTIFACT",
+    "finalize_authoritative_artifact": "finalize_output.json",
+    "transport_receipt_role": "DIAGNOSTIC_RECEIPT_ONLY_NEVER_STRUCTURED_PHASE_PAYLOAD",
+    "required_pre_dispatch_binding": [
+      "occurrence_id",
+      "state_version",
+      "phase",
+      "phase_invocation_id",
+      "agent",
+      "executor",
+      "declared_output_channel",
+      "expected_artifact_path",
+      "canonical_schema_sha256",
+      "artifact_generation_token"
+    ],
+    "producer_completion_attestation": [
+      "phase_invocation_id",
+      "artifact_generation_token",
+      "artifact_path",
+      "artifact_size",
+      "artifact_sha256",
+      "schema_validation_result",
+      "producer_exit_status",
+      "transport_receipt_path_size_and_sha256"
+    ],
+    "ordered_handoff": [
+      "DECLARE_AND_BIND_ONE_OUTPUT_CHANNEL_BEFORE_DISPATCH",
+      "WRITE_ARTIFACT_TO_INVOCATION_SCOPED_TEMPORARY_PATH",
+      "FSYNC_CLOSE_AND_ATTEST_ARTIFACT_BYTES",
+      "READ_BACK_EXACT_PATH_SIZE_SHA256_GENERATION_AND_SCHEMA",
+      "CLASSIFY_EXECUTOR_OUTPUT_AS_TRANSPORT_RECEIPT",
+      "ATOMICALLY_PROMOTE_VALIDATED_ARTIFACT_ONCE",
+      "PERSIST_PROMOTION_RECEIPT_BEFORE_ADVANCING_PHASE"
+    ],
+    "selection_rule": "VALID_BOUND_ARTIFACT_IS_AUTHORITATIVE_AND_TRANSPORT_RECEIPT_CAN_NEVER_REPLACE_OR_OVERRIDE_IT",
+    "missing_invalid_or_stale_artifact": "TYPED_OUTPUT_ARTIFACT_HANDOFF_FAILURE_NO_RECEIPT_FALLBACK",
+    "post_attestation_change": "HASH_OR_IDENTITY_MISMATCH_FAILS_CLOSED_NO_PROMOTION",
+    "promotion_rule": "COMPARE_AND_SWAP_ON_OCCURRENCE_STATE_VERSION_PHASE_INVOCATION_AND_ARTIFACT_DIGEST_EXACTLY_ONCE",
+    "consumer_rule": "LOCAL_STRICT_AND_DOWNSTREAM_PHASES_READ_ONLY_THE_PROMOTED_ATTESTED_ARTIFACT_BYTES"
+  },
+  "finalize_schema_boundary_contract": {
+    "worker_capture_schema": "FINALIZE_MODEL_OUTPUT_SCHEMA",
+    "worker_capture_stage": "PRE_HANDLER_PRE_MUTATION_MODEL_OWNED_BYTES",
+    "forbidden_worker_capture_schema": "FINALIZE_CAPTURE_JSON_POST_HANDLER_ENRICHED_PRODUCT_SHAPE",
+    "shared_pre_handler_consumers": [
+      "FINALIZE_PROMPT_TEMPLATE",
+      "FILE_ARTIFACT_WORKER_CAPTURE",
+      "LOCAL_STRICT_MODEL_OUTPUT_VALIDATION",
+      "HANDLER_INPUT_VALIDATION"
+    ],
+    "handler_owned_enrichment": [
+      "VALIDATION_RESULTS",
+      "EXECUTION_EVIDENCE",
+      "BASELINE_TEST_METADATA",
+      "CUSTODY_AND_PROMOTION_EVIDENCE"
+    ],
+    "persisted_product_rule": "HANDLER_VALIDATES_MODEL_OUTPUT_FIRST_THEN_ENRICHES_AND_PERSISTS_AGAINST_PRODUCT_SCHEMA",
+    "required_schema_attestations": [
+      "finalize_model_output_schema_sha256",
+      "prompt_template_projection_sha256",
+      "worker_capture_schema_sha256",
+      "local_strict_schema_sha256",
+      "handler_input_schema_sha256",
+      "persisted_product_schema_sha256",
+      "handler_enrichment_version_and_source_sha256"
+    ],
+    "template_reset_rule": "NEVER_TRUNCATE_RESEED_OVERWRITE_OR_UNLINK_A_RECEIPTED_CANDIDATE_FOR_THE_SAME_INVOCATION",
+    "reset_after_receipt": "REUSE_EXACT_RECEIPTED_BYTES_OR_CREATE_NEW_SUPERSEDING_INVOCATION_PATH_AFTER_DURABLE_SUPERSESSION",
+    "receipt_candidate_binding": "OCCURRENCE_STATE_VERSION_PHASE_INVOCATION_GENERATION_PATH_SIZE_SHA256_SCHEMA_AND_FSYNC_IDENTITY",
+    "crash_or_ambiguity": "PRESERVE_CANDIDATE_AND_RECEIPT_FAIL_CLOSED_NO_TEMPLATE_RESET"
+  },
+  "shared_retry_budget_contract": {
+    "owner": "DURABLE_CROSS_LAYER_OCCURRENCE_ATTEMPT_LEDGER",
+    "key_fields": [
+      "session_id",
+      "plan_id",
+      "run_id",
+      "incarnation_id",
+      "occurrence_id",
+      "accepted_state_version",
+      "phase",
+      "failure_fingerprint"
+    ],
+    "maximum_phase_execution_calls_per_occurrence": 2,
+    "allocation": {
+      "initial_call": 1,
+      "shared_repair_or_replay_call": 1,
+      "outer_third_call": 0
+    },
+    "claim_rule": "EVERY_INNER_OR_OUTER_EXECUTION_COMPARE_AND_SWAP_CLAIMS_THE_SAME_DURABLE_SLOT_BEFORE_DISPATCH",
+    "valid_repair_artifact_rule": "PROMOTE_WITHOUT_ANOTHER_MODEL_CALL_WHEN_BOUND_ARTIFACT_ALREADY_VALIDATES",
+    "independent_layer_budgets": "FORBIDDEN",
+    "process_restart_response_loss_and_timeout": "DO_NOT_REPLENISH_OR_FORGET_CLAIMED_OR_AMBIGUOUS_SLOT",
+    "concurrency": "ONE_WINNER_ALL_OTHER_INNER_OUTER_OR_OBSERVER_CLAIMS_RECEIVE_TYPED_BUDGET_EXHAUSTED",
+    "new_budget_rule": "ONLY_NEW_DURABLE_OCCURRENCE_OR_ACCEPTED_STATE_VERSION_WITH_DISTINCT_FAILURE_FINGERPRINT",
+    "terminal_effect": "ONE_VERSION_KEYED_FAILURE_OR_MANUAL_REVIEW_NOTIFICATION_MAXIMUM"
+  },
+  "adjacent_observer_fix": {
+    "commit": "cfc65d7b7604c132664f8f725db0ce4eb12aa6a9",
+    "summary": "fix(cloud): reject unbound marker PIDs",
+    "regression": "OBSERVER_TOPOLOGY_COULD_TREAT_BARE_FOREIGN_OR_COLLIDING_PID_AS_LOCAL_LIVENESS",
+    "fix": "PROCESS_LIVENESS_REQUIRES_MARKER_PID_NAMESPACE_TO_MATCH_OBSERVER_PID_NAMESPACE",
+    "status": "BOUNDED_RUNNER_LEASE_OBSERVER_TOPOLOGY_REGRESSION_FIXED",
+    "acceptance_boundary": "INPUT_FIX_REQUIRES_INTEGRATED_INSTALLED_CROSS_CONTAINER_F1_PROOF"
+  },
+  "required_negative_and_mutation_tests": [
+    "VALID_72328_BYTE_ARTIFACT_WINS_OVER_339_BYTE_TRANSPORT_RECEIPT",
+    "TRANSPORT_RECEIPT_CAN_NEVER_SATISFY_FINALIZE_LOCAL_STRICT_SCHEMA",
+    "FULL_ARTIFACT_SHA256_MUST_EXTEND_OBSERVED_AF6149BE_PREFIX_BEFORE_ACCEPTANCE",
+    "TASK_28_COVERAGE_29_AND_FEASIBILITY_SURVIVE_EXACT_ARTIFACT_PROMOTION",
+    "STALE_PRIOR_INVOCATION_ARTIFACT_IS_REJECTED",
+    "WRONG_PATH_ARTIFACT_IS_REJECTED_WITHOUT_RECEIPT_FALLBACK",
+    "POST_ATTESTATION_ARTIFACT_MUTATION_FAILS_CLOSED",
+    "FINALIZE_WORKER_CAPTURE_USES_FINALIZE_MODEL_OUTPUT_SCHEMA_NOT_FINALIZE_CAPTURE_PRODUCT_SCHEMA",
+    "VALID_MODEL_OUTPUT_WITHOUT_HANDLER_OWNED_FIELDS_PASSES_PRE_HANDLER_CAPTURE",
+    "HANDLER_ENRICHES_ONLY_AFTER_MODEL_OUTPUT_VALIDATION_AND_PERSISTS_PRODUCT_SCHEMA",
+    "TEMPLATE_RESET_NEVER_ERASES_TRUNCATES_OR_RESEEDS_RECEIPTED_CANDIDATE",
+    "CRASH_BEFORE_OR_AFTER_RECEIPT_PRESERVES_CANDIDATE_AND_RECONCILES_WITHOUT_OVERWRITE",
+    "INNER_REPAIR_VALID_ARTIFACT_PROMOTES_WITH_ZERO_OUTER_THIRD_CALLS",
+    "INNER_AND_OUTER_CONCURRENT_RETRY_CLAIMS_HAVE_ONE_DURABLE_WINNER",
+    "PROCESS_RESTART_RESPONSE_LOSS_AND_TIMEOUT_DO_NOT_REPLENISH_RETRY_BUDGET",
+    "THIRD_CALL_IS_REJECTED_AFTER_INITIAL_PLUS_ONE_SHARED_REPAIR_OR_REPLAY",
+    "DISTINCT_NEW_OCCURRENCE_DOES_NOT_INHERIT_PRIOR_EXHAUSTION",
+    "SOURCE_WHEEL_INSTALLED_AND_CLOUD_CODEX_HERMES_AND_COMPATIBILITY_EXECUTORS_SHARE_HANDOFF_SEMANTICS",
+    "UNBOUND_OR_FOREIGN_MARKER_PID_CANNOT_ESTABLISH_LOCAL_PROCESS_LIVENESS"
+  ],
+  "acceptance": {
+    "full_artifact_sha256_required": true,
+    "observed_hash_prefix_must_match": "af6149be",
+    "source_wheel_installed_cloud_parity": true,
+    "registry_closed_phase_agent_executor_matrix": true,
+    "real_codex_dash_o_and_file_artifact_fixture_required": true,
+    "pre_handler_and_post_handler_schema_hash_proof_required": true,
+    "receipted_candidate_reset_safety_fixture_required": true,
+    "restart_response_loss_and_concurrency_fixture_required": true,
+    "independent_review_required": true,
+    "completion_evidence": "evidence/critique-ledger-recovery/F2A/finalize-output-handoff-shared-retry/completion-manifest.json"
+  }
+}

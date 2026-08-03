@@ -130,6 +130,14 @@ def _escalation_sidecar_path_fixture() -> dict:
     )
 
 
+def _finalize_output_handoff_retry_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name(
+            "finalize-output-artifact-handoff-shared-retry-contract.json"
+        )
+    )
+
+
 def _m7_runtime_rebind_projection_fixture() -> dict:
     return contract._load_json(
         Path(__file__).with_name("evidence")
@@ -240,6 +248,133 @@ def test_container_replacement_and_spoof_mutations_remain_required() -> None:
         match="cross-container liveness mutation-test acceptance drift",
     ):
         contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_runner_lease_observer_topology_fix_commit_is_pinned() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["bounded_runner_lease_fix"]["commit"] = "0" * 40
+    with pytest.raises(
+        contract.ContractError,
+        match="bounded runner-lease observer topology fix drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_valid_finalize_artifact_cannot_be_replaced_by_transport_receipt() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["artifact_handoff_contract"]["selection_rule"] = (
+        "PREFER_CODEX_DASH_O_RECEIPT"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="explicit phase-output artifact handoff drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+def test_finalize_incident_artifact_and_receipt_sizes_are_exact() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["incident_fixture"]["transport_receipt"]["size_bytes"] = 72328
+    with pytest.raises(
+        contract.ContractError,
+        match="exact finalize output/retry incident fixture drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+def test_finalize_worker_capture_must_use_pre_handler_model_schema() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["finalize_schema_boundary_contract"]["worker_capture_schema"] = (
+        "finalize_capture.json"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="finalize pre/post-handler schema boundary drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+def test_handler_enrichment_cannot_precede_model_output_validation() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["finalize_schema_boundary_contract"]["persisted_product_rule"] = (
+        "ENRICH_BEFORE_MODEL_VALIDATION"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="finalize pre/post-handler schema boundary drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+def test_template_reset_cannot_erase_a_receipted_finalize_candidate() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["finalize_schema_boundary_contract"]["template_reset_rule"] = (
+        "TRUNCATE_AND_RESEED"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="finalize pre/post-handler schema boundary drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+def test_inner_and_outer_layers_cannot_each_own_a_retry_budget() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["shared_retry_budget_contract"][
+        "maximum_phase_execution_calls_per_occurrence"
+    ] = 3
+    with pytest.raises(
+        contract.ContractError,
+        match="shared inner/outer occurrence retry budget drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+def test_valid_repair_artifact_must_not_trigger_an_outer_third_call() -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["shared_retry_budget_contract"]["valid_repair_artifact_rule"] = (
+        "DISPATCH_OUTER_RETRY"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="shared inner/outer occurrence retry budget drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
+
+
+@pytest.mark.parametrize(
+    "required_acceptance_field",
+    [
+        "full_artifact_sha256_required",
+        "receipted_candidate_reset_safety_fixture_required",
+    ],
+)
+def test_full_finalize_artifact_hash_and_reset_safety_proof_remain_required(
+    required_acceptance_field: str,
+) -> None:
+    handoff_contract = _finalize_output_handoff_retry_fixture()
+    handoff_contract["acceptance"][required_acceptance_field] = False
+    with pytest.raises(
+        contract.ContractError,
+        match="finalize handoff/retry mutation-test acceptance drift",
+    ):
+        contract._validate_finalize_output_artifact_handoff_shared_retry_contract(
+            handoff_contract
+        )
 
 
 def test_nested_escalation_record_cannot_be_promoted_to_canonical_authority() -> None:

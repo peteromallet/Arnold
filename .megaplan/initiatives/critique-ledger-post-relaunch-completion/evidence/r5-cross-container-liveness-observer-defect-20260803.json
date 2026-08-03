@@ -86,6 +86,14 @@
     "restart_or_response_loss_does_not_replenish_budget": true,
     "ambiguous_container_replacement": "FENCE_AND_RECONCILE_NO_SECOND_RECOVERY"
   },
+  "bounded_runner_lease_fix": {
+    "commit": "cfc65d7b7604c132664f8f725db0ce4eb12aa6a9",
+    "summary": "fix(cloud): reject unbound marker PIDs",
+    "regression": "OBSERVER_TOPOLOGY_COULD_TREAT_BARE_FOREIGN_OR_COLLIDING_PID_AS_LOCAL_LIVENESS",
+    "fix": "PROCESS_LIVENESS_REQUIRES_MARKER_PID_NAMESPACE_TO_MATCH_OBSERVER_PID_NAMESPACE",
+    "status": "BOUNDED_RUNNER_LEASE_OBSERVER_TOPOLOGY_REGRESSION_FIXED",
+    "acceptance_boundary": "INPUT_FIX_REQUIRES_INTEGRATED_INSTALLED_CROSS_CONTAINER_F1_PROOF"
+  },
   "scoped_adjacent_input_evidence": {
     "old_wrapper": {
       "scope": "SCOPED_OLD_WRAPPER_RUNTIME_ONLY",

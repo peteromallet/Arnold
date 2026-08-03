@@ -100,6 +100,19 @@ correctly appended as seq 635 at
 audit evidence, not ledger authority. Exact design and incident fixture:
 `escalation-sidecar-path-normalization-migration-contract.json`.
 
+The observed Finalize repair also proves retry ownership is not yet cross-layer.
+Sol produced and validated a 72,328-byte `finalize_output.json` with 28 tasks,
+29 coverage rows and admitted feasibility, but Codex `-o` returned a 339-byte
+receipt; `local_strict` saw the receipt rather than the artifact, and outer auto
+launched a third call after one inner repair. F1 owns the single durable
+occurrence-attempt budget shared by inner repair and outer auto. F2A owns the
+artifact handoff. Joint contract:
+`finalize-output-artifact-handoff-shared-retry-contract.json`.
+That contract also binds the deeper schema root: worker capture uses
+pre-handler `FINALIZE_MODEL_OUTPUT_SCHEMA`, not enriched product
+`finalize_capture.json`, and template reset cannot erase receipted candidate
+bytes.
+
 The exact-`18b` runtime rebind/relaunch also exposed an M7 chain-state
 projection mismatch: the persisted derived cursor recorded 645 rows while the
 rebound canonical source reported 630; canonical state remained intact. Treat
@@ -116,6 +129,10 @@ one container-neutral owner-authenticated lease/view. The scoped old-wrapper
 missing `repair_delegation` module and preexisting event-checkpoint `0 <= 9`
 remain separate historical inputs. Exact evidence is
 `evidence/r5-cross-container-liveness-observer-defect-20260803.json`.
+Runner-lease commit `cfc65d7b7604c132664f8f725db0ce4eb12aa6a9`
+fixes the bounded observer-topology regression by refusing to treat an unbound
+or foreign marker PID as local process liveness; integrated installed
+cross-container acceptance remains an F1 requirement.
 
 F1 acceptance is also blocked on dependency-closed revalidation of the
 historical M11 completion claim. Commit
@@ -212,6 +229,11 @@ disabled fail closed. Exact audit evidence is
   quarantine with readback hash/size and an fsynced append-only manifest. The
   source remains by default; no hand deletion, canonical seq-635 rewrite,
   renumbering or duplicate terminalization is allowed.
+- Inner repair, handler replay and outer auto share one durable CAS attempt
+  ledger keyed by run/incarnation/occurrence/state version/phase/failure. The
+  initial call plus one repair or replay is the total budget, not a per-layer
+  allowance. A valid repair artifact is promoted without a third call; restart,
+  timeout and response loss never replenish a claimed or ambiguous slot.
 - Process probes are namespace-scoped facts. `ps`, tmux or `os.kill` from a
   foreign container returns unknown, never proof of death. Cross-container
   liveness comes from the canonical lease's session/container generation/PID
@@ -344,6 +366,11 @@ receipts.
   most one canonical terminal event. Quarantine preserves exact nested bytes;
   restart and 200 polls retain canonical seq 635 exactly once and never consume
   the nested file.
+- The exact Finalize fixture proves one initial plus one shared inner/outer
+  repair/replay maximum. Concurrent inner and outer claims have one CAS winner;
+  process/host restart, response loss, timeout and 200 polls preserve the
+  exhausted or ambiguous slot. A valid bound artifact produces zero third calls
+  and one promotion/terminal effect maximum.
 - A canonical observe-only full report joins plan/chain/incarnation/worker and
   repair request/decision/attempt/claim/goal/manifest evidence with bounded log
   references, emits a content digest, performs zero mutations, and reports

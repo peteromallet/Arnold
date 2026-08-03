@@ -130,6 +130,20 @@ canary are registry-closed requirements across all production pipelines. The
 current repair commits are input evidence, not acceptance. See
 [`provider-schema-dialect-family-contract.json`](provider-schema-dialect-family-contract.json).
 
+The subsequent Finalize repair exposed a second cross-layer boundary. Sol wrote
+and validated a 72,328-byte `finalize_output.json` (observed SHA-256 prefix
+`af6149be`, 28 tasks, 29 coverage rows, feasibility admitted), while Codex
+`-o` returned a 339-byte transport receipt. `local_strict` was incorrectly given
+the receipt and rejected missing Finalize fields; outer auto then launched a
+third call after an inner repair. F1/F2A now require an explicit artifact-versus-
+receipt handoff and one durable occurrence budget shared by inner and outer
+layers. The full artifact SHA-256 must be captured before acceptance. See
+[`finalize-output-artifact-handoff-shared-retry-contract.json`](finalize-output-artifact-handoff-shared-retry-contract.json).
+The deeper schema root is also bound: the worker incorrectly used enriched
+product `finalize_capture.json` as `capture_schema`; it must use pre-handler
+`FINALIZE_MODEL_OUTPUT_SCHEMA`, then let the handler enrich/persist. A template
+reset can never erase a receipted candidate.
+
 The isolated canary added two concrete F2A obligations: long single-line inline
 prompts must survive pathname probing when the OS raises `ENAMETOOLONG`, and an
 ephemeral Codex call must either bind exact rollout/session usage or state typed
@@ -151,7 +165,9 @@ row and the watchdog remained stale/masked. F1 now requires a shared container-
 bound liveness lease, foreign-PID unknown semantics, typed contradiction handling
 and exactly-one projection/recovery behavior. The old wrapper's missing
 `repair_delegation` module and checkpoint `0 <= 9` remain separate input facts.
-See
+The bounded bare-marker-PID topology regression is fixed by runner-lease commit
+`cfc65d7b7604c132664f8f725db0ce4eb12aa6a9`; installed cross-container F1 proof
+remains required. See
 [`evidence/r5-cross-container-liveness-observer-defect-20260803.json`](evidence/r5-cross-container-liveness-observer-defect-20260803.json).
 
 A separate historical audit invalidates the old M11 completion/promotion claim

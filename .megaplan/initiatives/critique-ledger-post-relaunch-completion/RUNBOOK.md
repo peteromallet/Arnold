@@ -120,6 +120,27 @@ response loss and polling do not replenish the phase, fixer, claim, retry or
 notification budgets. Never disable structured response validation merely
 because tools are enabled.
 
+For file-artifact phases, declare the authoritative channel before dispatch.
+`finalize_output.json` is the Finalize payload; Codex `-o` is a transport receipt
+even when it contains JSON-like text. Bind the artifact to occurrence, state
+version, phase invocation, generation token, expected path, exact size/SHA-256
+and canonical schema; fsync, read back and validate those bytes before one
+atomic promotion. A missing, stale, wrong-path or changed artifact is a typed
+handoff failure—never permission to validate the receipt as the payload. Inner
+repair and outer auto must CAS against the same durable budget: initial call
+plus one shared repair/replay maximum. If the repair already produced a valid
+artifact, promote it with no third model call. Restart, timeout and response loss
+do not replenish a claimed or ambiguous slot.
+
+At Finalize, worker capture, the prompt projection, `local_strict` and handler
+input all use pre-mutation `FINALIZE_MODEL_OUTPUT_SCHEMA`. Do not give the worker
+post-handler enriched `finalize_capture.json`; the handler adds validation,
+execution, baseline and custody evidence only after model-output validation,
+then validates the persisted product. Once candidate bytes have a receipt,
+template initialization/reset must not truncate, reseed, overwrite or unlink
+them. Reuse the exact receipted candidate, or durably supersede the invocation
+and use a new path; ambiguity preserves bytes and fails closed.
+
 For the F2A installed-cloud canary, bind the exact final candidate and deployed
 runtime commit before calling Codex. The tested commit and canary-receipt commit
 must equal that deployed commit, which must be `18b279f5ef...` or a descendant

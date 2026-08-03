@@ -9,6 +9,7 @@
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/escalation-sidecar-path-normalization-migration-contract.json",
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json",
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/r5-cross-container-liveness-observer-defect-20260803.json",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finalize-output-artifact-handoff-shared-retry-contract.json",
     "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
     "evidence/critique-ledger-recovery/T1.5/completion-manifest.json",
     "evidence/critique-ledger-recovery/T1.7/completion-manifest.json",
@@ -33,6 +34,7 @@
   "f2a-launch-profile-artifact-drift-containment": [
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/provider-policy-execution-binding-contract.json",
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/provider-schema-dialect-family-contract.json",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finalize-output-artifact-handoff-shared-retry-contract.json",
     "evidence/critique-ledger-recovery/F2A/provider-policy-execution-binding/completion-manifest.json",
     "evidence/critique-ledger-recovery/F2A/provider-schema-dialect-family/completion-manifest.json"
   ],
