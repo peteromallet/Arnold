@@ -4,7 +4,7 @@ anchors:
 milestones:
 - label: cl2-ledger-replay
   idea: .megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md
-  branch: megaplan/critique-ledger-accountability-v3/cl2-ledger-replay
+  branch: megaplan/critique-ledger-accountability-v3-r5/cl2-ledger-replay
   profile: all-codex
   robustness: thorough
   depth: high
@@ -20,7 +20,7 @@ milestones:
   depends_on:
   - cl2-ledger-replay
   idea: .megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md
-  branch: megaplan/critique-ledger-accountability-v3/cl3-routing-briefings
+  branch: megaplan/critique-ledger-accountability-v3-r5/cl3-routing-briefings
   profile: all-codex
   robustness: full
   depth: medium
@@ -29,14 +29,14 @@ milestones:
     prompt projection, token budgets, and critic model routing; preserve the amended
     CL1/CL2 contracts and prove the mandatory blind floor, prompt isolation, and bounded
     complete domain briefings.
-  notes: Overall plan difficulty 5/5; all-codex/full/medium. The architecture
-    is locked, but subtle routing and context-budget errors can suppress findings
-    while all individual workers appear healthy.
+  notes: Overall plan difficulty 5/5; all-codex/full/medium. The architecture is locked,
+    but subtle routing and context-budget errors can suppress findings while all individual
+    workers appear healthy.
 - label: cl4-reconcile-role-flow
   depends_on:
   - cl3-routing-briefings
   idea: .megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md
-  branch: megaplan/critique-ledger-accountability-v3/cl4-reconcile-role-flow
+  branch: megaplan/critique-ledger-accountability-v3-r5/cl4-reconcile-role-flow
   profile: all-codex
   robustness: full
   depth: medium
@@ -52,7 +52,7 @@ milestones:
   depends_on:
   - cl4-reconcile-role-flow
   idea: .megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md
-  branch: megaplan/critique-ledger-accountability-v3/cl5-cutover-retirement
+  branch: megaplan/critique-ledger-accountability-v3-r5/cl5-cutover-retirement
   profile: all-codex
   robustness: thorough
   depth: high
