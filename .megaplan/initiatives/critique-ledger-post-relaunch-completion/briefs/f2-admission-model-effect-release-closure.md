@@ -14,11 +14,20 @@ T3.5 canaries; produce the launch-critical T3.6 release-authority receipt but
 leave its two administrative ticket closures to F7. Consume the frozen T6.2
 incident replay as input evidence only; F7 alone owns T8.3's permanent replay
 gate and publication.
+Add provider/server-attested backend-model identity and close the evidence
+vocabulary across requested CLI model, sealed CLI-local turn context,
+server-attested execution model and billing model.
 
 ## Locked decisions
 
 - Every physical model attempt has owner-bound transport evidence and typed
   health; only `SUCCEEDED` may yield a semantic result.
+- Requested model, `codex_cli_turn_context`, server-attested model and billing
+  model are distinct typed fields. No field is promoted into another by name
+  equality or prose.
+- Model-identity evidence binds dispatch ID, phase, source, target, freshness
+  and replay status. Providers without authoritative attestation return sticky
+  `UNKNOWN` and cannot satisfy a gate that requires backend identity.
 - Raw target-bound evidence, not a projection, grants admission.
 - Every external effect has a WBC occurrence, durable pre-effect intent, exact
   reconciliation and sticky UNKNOWN/no-redispatch behavior.
@@ -42,6 +51,10 @@ No broad production authority until F1 and F2 completion manifests both exist.
 - All admission/attempt/graph routes and effect families pass dynamic inventory,
   hostile replay/response-loss, installed parity and direct-module tests.
 - Full installed fault/crash matrix and all configured live route canaries pass.
+- Every supported provider proves requested/CLI-local/server-attested/billing
+  identity separation, freshness and replay binding. Missing or contradictory
+  attestation fails closed as `UNKNOWN`; no client rollout is labelled
+  `provider_observed`.
 - T2.6 zero-debt decision and the exact T3.6 release-authority receipt are
   accepted; the two administrative ticket closures remain explicitly pending
   for F7.

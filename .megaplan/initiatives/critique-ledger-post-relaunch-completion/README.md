@@ -38,8 +38,11 @@ accepted, and a typed SSH lifecycle/capacity/durability preflight is now a
 direct prelaunch dependency.
 
 Corrected launch-route authority:
-`.megaplan/subagents/critique-ledger-recovery/INTEGRATION/post-t1-5-fail-shortest-launch-route-luna.md`
-(SHA-256 `abe9d64aeb0a35f81ec5fa72b804471a2b2307e34210b993163575a7090e2f47`).
+`.megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json`
+(SHA-256 `fe726e549e85e868c5e7fac591fa2d3eeac56b543b5eeaa057140d740c8332ce`).
+It consumes the earlier post-T1.5 shortest-route rationale only together with
+the newer non-root privilege, mount, resource, effect and honest model-evidence
+bindings. The rationale document alone has no launch authority.
 
 The supervised canary must run with automatic fixer effects and notification
 provider effects disabled fail-closed unless a later independently accepted

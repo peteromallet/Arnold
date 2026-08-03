@@ -22,7 +22,7 @@
     {
       "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/zero-recovery-cl2-canary-launch-design-review.md",
       "sha256": "7a962e6241bece0e81cff350a225b188fd9568ca01d1d1d2908a9f99fef20d77",
-      "status": "LAUNCH_DESIGN_REVIEW_PENDING_EXACT_CANDIDATE_AND_LIVE_RECEIPTS"
+      "status": "SUPERSEDED_PRE_PRIVILEGE_REVIEW_DESIGN_EVIDENCE_ONLY"
     }
   ],
   "capacity_cut": {
@@ -84,10 +84,34 @@
       "uid": "dedicated_non_root",
       "gid": "dedicated_non_root",
       "no_new_privileges": true,
-      "effective_capabilities": [],
+      "capability_sets": {
+        "effective": [],
+        "permitted": [],
+        "inheritable": [],
+        "ambient": [],
+        "bounding": []
+      },
+      "strict_child_environment": {
+        "exact_keys": ["LANG", "LC_ALL", "HOME", "CODEX_HOME", "TMPDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "PATH", "USER", "LOGNAME", "MEGAPLAN_TURN_ID", "PYTHONNOUSERSITE", "PYTHONDONTWRITEBYTECODE", "GIT_CONFIG_NOSYSTEM"],
+        "inherits_root_secrets": false,
+        "inherits_proxy_credentials": false,
+        "writable_path_entries": false
+      },
       "writable_paths": ["exact_precreated_phase_output_inode", "fresh_phase_local_codex_state"],
       "forbidden_writes": ["source", ".git", "plan_state", "gate", "runner", "installed_engine", "root_auth", "later_phase_state"],
+      "global_scratch_writable": false,
+      "uid_processes_before_phase": 0,
       "surviving_processes_after_phase": 0
+    },
+    "required_resource_envelope": {
+      "container_pids_max": 256,
+      "container_memory_bytes": 4294967296,
+      "container_memory_swap_bytes": 4294967296,
+      "model_processes_max": 64,
+      "model_file_bytes_max": 67108864,
+      "core_bytes_max": 0,
+      "aggregate_runtime_tmpfs_bytes": 268435456,
+      "runtime_tmpfs_options": ["rw", "noexec", "nosuid", "nodev"]
     },
     "required_evidence": [
       "complete_mount_inventory_sha256",
@@ -97,6 +121,12 @@
       "run_observation_sha256",
       "stop_observation_sha256"
     ]
+  },
+  "model_evidence_contract": {
+    "finite_canary_label": "codex_cli_turn_context",
+    "required_bindings": ["exact_root_built_argv", "sealed_rollout_sha256", "phase", "dispatch_id", "source_commit", "source_tree"],
+    "forbidden_claims": ["provider_observed", "cryptographic_backend_identity", "billing_model_identity"],
+    "server_attestation_status": "DEFERRED_TO_F2_FAIL_CLOSED_UNKNOWN_WHEN_UNAVAILABLE"
   },
   "dirty_snapshot_commits": [
     {

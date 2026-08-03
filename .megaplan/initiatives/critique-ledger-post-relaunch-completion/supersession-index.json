@@ -1,11 +1,18 @@
 {
   "schema": "arnold.critique_ledger.supersession_index.v1",
   "current_operational_route": {
-    "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/post-t1-5-fail-shortest-launch-route-luna.md",
-    "sha256": "abe9d64aeb0a35f81ec5fa72b804471a2b2307e34210b993163575a7090e2f47",
-    "profile": "ZERO_RECOVERY"
+    "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json",
+    "sha256": "fe726e549e85e868c5e7fac591fa2d3eeac56b543b5eeaa057140d740c8332ce",
+    "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+    "reason": "composes the post-T1.5 shortest route with mandatory mount, privilege, resource, effect and honest model-evidence bindings"
   },
   "superseded": [
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/zero-recovery-cl2-canary-launch-design-review.md",
+      "sha256": "7a962e6241bece0e81cff350a225b188fd9568ca01d1d1d2908a9f99fef20d77",
+      "status": "SUPERSEDED_PRE_PRIVILEGE_REVIEW_DESIGN_EVIDENCE_ONLY",
+      "reason": "predates the isolated child plus non-root per-phase model boundary, finite resource envelope and honest codex_cli_turn_context vocabulary; its root HOME/auth and actual-model language has no launch authority"
+    },
     {
       "path": ".megaplan/subagents/critique-ledger-recovery/SEQUENCING/relaunch-cutline-luna-audit.md",
       "sha256": "9f80dac9152bdc10a330bef3244de0b33ea9c5d1be142827be1015e5ac9e76a4",

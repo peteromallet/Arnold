@@ -14,6 +14,9 @@ transactional storage; the non-exercised but shipped T1.5 legacy recovery
 retirement and honest disposition of all formerly hidden assertions; full T1.10
 key rotation, reminder buckets and child GLEKs; remaining T1.8/T1.9 owner/store
 generalization; and preparation of T4.6 without rewriting evidence.
+Generalize the finite Codex UID/capability/resource boundary into a reusable
+cross-pipeline worker profile and build a physically minimal image that omits
+dormant recovery/notification code and credentials.
 
 ## Locked decisions
 
@@ -36,6 +39,15 @@ generalization; and preparation of T4.6 without rewriting evidence.
 - The production fixed-socket owner—not a caller or wrapper—issues the exact
   occurrence target/ref, accepted state version, quiet transition and due
   selection. Immediate/reconcile wrappers receive the exact occurrence ID.
+- Phase OAuth and network egress are confined to the exact provider endpoint;
+  no ambient credential, proxy secret or unrelated destination is reachable.
+- Concurrent workers use distinct owner-issued identities/cgroups. A global
+  shared-UID kill is not the generalized concurrency authority.
+- Sealed phase rollouts/runtime receipts have explicit retention and garbage
+  collection; cleanup cannot erase incident evidence or leak writable state.
+- The privilege launcher has installed conformance for supported kernels and
+  container runtimes, including capability, setpriv, tmp/proc/signal and
+  resource-limit hostile matrices.
 
 ## Open questions
 
@@ -57,6 +69,13 @@ or replacement of accepted owner evidence with projections.
   dispositions.
 - Full notification rotation/reminder/child-key semantics pass source, wheel and
   installed-generation tests.
+- The reusable cross-pipeline worker profile proves per-worker UID/cgroup
+  isolation, zero model capabilities, strict env/credential/egress confinement,
+  bounded resources, deterministic process cleanup, sealed evidence retention
+  and portable installed-runtime conformance.
+- The production/minimal canary image physically excludes deferred
+  recovery/notification implementations and GLEKs; execution-surface denial
+  alone is not accepted as physical minimization.
 - Coordinated erasure and rollback after both ambiguity and completed success
   cannot mint a new attempt or effect, including after process and host restart.
 - The deployed production owner passes peer authentication, monotonic
