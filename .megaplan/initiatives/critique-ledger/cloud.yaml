@@ -40,5 +40,4 @@ ssh:
   workspace_dir: /opt/megaplan-cloud/workspace
   container: megaplan-cloud-agent-critique-ledger-v3
 
-secrets:
-  - GITHUB_TOKEN
+secrets: []
