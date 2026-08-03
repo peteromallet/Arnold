@@ -21,8 +21,8 @@ This module defines:
   plural repair queue APIs (the queue-root-validated ``mkdir`` lock
   primitive shared with :func:`claim_active_repair_request`), so that only
   one exact occurrence is actively claimed at a time.
-* a **two-try unchanged-fingerprint mutation budget** that caps no-op
-  retries, and
+* a **durable two-try unchanged-fingerprint mutation budget** that caps
+  no-op retries across claims, processes, and containers, and
 * **action gates** validated at every mutation boundary (claim held,
   identity exact, no child agent, budget not exhausted).
 
@@ -31,9 +31,14 @@ The module contains no subprocess/agent spawn logic by design.
 
 from __future__ import annotations
 
+import datetime as _datetime
 import hashlib
 import json
-from dataclasses import dataclass, field
+import os as _os
+import time as _time
+from dataclasses import asdict as _asdict
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_lock import (
@@ -86,8 +91,10 @@ SimpleFixerOutcome = (
     "already_claimed",    # same owner already holds the singleton claim
     "busy",               # occurrence claimed by a different owner
     "attempted",          # mutation applied and the fingerprint changed
+    "adopted",            # a durable completed effect was adopted without re-running
     "unchanged",          # mutation applied but the fingerprint did not change
     "exhausted",          # unchanged-fingerprint budget exhausted
+    "indeterminate",      # effect may have applied; automatic redrive is forbidden
     "rejected_identity",  # occurrence identity is not an exact F01 tuple
     "rejected_no_claim",  # action gate: no singleton claim held
     "rejected_child_agent",  # no-child-agent gate: fan-out requested
@@ -452,65 +459,8 @@ def release_singleton_occurrence_claim(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Two-try unchanged-fingerprint mutation budget
+# Durable two-try unchanged-fingerprint mutation budget
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-@dataclass
-class MutationBudget:
-    """Two-try unchanged-fingerprint budget for one exact occurrence.
-
-    Records consecutive mutation attempts whose occurrence fingerprint did
-    not change.  The budget is *occurrence-scoped*: it is bound to the
-    occurrence fingerprint and a foreign fingerprint never affects it.  When
-    :attr:`unchanged_attempts` reaches
-    :data:`MAX_UNCHANGED_FINGERPRINT_ATTEMPTS` the budget is exhausted and
-    further attempts are rejected with ``exhausted``.
-    """
-
-    occurrence_fingerprint: str
-    unchanged_attempts: int = 0
-    total_attempts: int = 0
-
-    def record_mutation(self, before_fingerprint: str, after_fingerprint: str) -> str:
-        """Record a mutation attempt and return its typed outcome.
-
-        ``before``/``after`` are the occurrence-state fingerprints observed
-        immediately before and after the mutation callable ran.  If they are
-        equal the attempt was a no-op; two consecutive no-ops exhaust the
-        budget.
-        """
-
-        self.total_attempts += 1
-        if before_fingerprint == after_fingerprint:
-            self.unchanged_attempts += 1
-            if self.unchanged_attempts >= MAX_UNCHANGED_FINGERPRINT_ATTEMPTS:
-                return "exhausted"
-            return "unchanged"
-        # A productive mutation resets the no-op streak.
-        self.unchanged_attempts = 0
-        return "attempted"
-
-    @property
-    def exhausted(self) -> bool:
-        return self.unchanged_attempts >= MAX_UNCHANGED_FINGERPRINT_ATTEMPTS
-
-    @property
-    def remaining(self) -> int:
-        """Number of unchanged attempts left before exhaustion (>= 0)."""
-
-        return max(0, MAX_UNCHANGED_FINGERPRINT_ATTEMPTS - self.unchanged_attempts)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": "simple_fixer_mutation_budget",
-            "schema_version": SIMPLE_FIXER_SCHEMA_VERSION,
-            "occurrence_fingerprint": self.occurrence_fingerprint,
-            "unchanged_attempts": self.unchanged_attempts,
-            "total_attempts": self.total_attempts,
-            "max_unchanged_fingerprint_attempts": MAX_UNCHANGED_FINGERPRINT_ATTEMPTS,
-            "exhausted": self.exhausted,
-        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -522,7 +472,7 @@ class MutationBudget:
 class SimpleFixerSession:
     """Stateful ``simple_fixer`` session for one exact occurrence.
 
-    Holds the singleton claim and the mutation budget.  Every mutation
+    Holds the singleton claim and opens the durable mutation ledger. Every mutation
     boundary is gated in :meth:`attempt_mutation`:
 
     1. identity must be an exact F01 tuple (guaranteed at construction);
@@ -534,11 +484,8 @@ class SimpleFixerSession:
 
     occurrence: SimpleFixerOccurrence
     claim: SimpleFixerClaimResult | None = None
-    budget: MutationBudget | None = None
-
-    def __post_init__(self) -> None:
-        if self.budget is None:
-            self.budget = MutationBudget(self.occurrence.occurrence_fingerprint)
+    effect_ledger: Any = None
+    last_reservation: Any = None
 
     @property
     def has_claim(self) -> bool:
@@ -572,26 +519,89 @@ class SimpleFixerSession:
         # Gate 3 — a singleton claim must be held.
         if not self.has_claim:
             return "rejected_no_claim"
-        # Gate 4 — budget not exhausted.
-        assert self.budget is not None  # set in __post_init__
-        if self.budget.exhausted:
+        # Gate 4 — reserve the occurrence-scoped durable effect before any
+        # mutation.  Claim lifetime is intentionally not budget lifetime.
+        from arnold_pipelines.megaplan.cloud.repair_effect_ledger import (
+            DECISION_ADOPTED,
+            DECISION_EXHAUSTED,
+            DECISION_INDETERMINATE,
+            DECISION_IN_FLIGHT,
+            RepairEffectLedger,
+            claim_owner_token,
+        )
+
+        if self.effect_ledger is None:
+            assert self.claim is not None
+            lock_dir = Path(self.claim.lock_dir)
+            queue_dir = lock_dir.parent.parent
+            self.effect_ledger = RepairEffectLedger(queue_dir)
+        owner_token = claim_owner_token(self.claim.owner if self.claim else None)
+        try:
+            reservation = self.effect_ledger.reserve(
+                self.occurrence.repair_identity,
+                owner_token=owner_token,
+                max_unchanged_attempts=MAX_UNCHANGED_FINGERPRINT_ATTEMPTS,
+            )
+        except (RuntimeError, ValueError):
+            return "rejected_identity"
+        self.last_reservation = reservation
+        if reservation.decision == DECISION_ADOPTED:
+            return "adopted"
+        if reservation.decision == DECISION_EXHAUSTED:
             return "exhausted"
+        if reservation.decision in (DECISION_INDETERMINATE, DECISION_IN_FLIGHT):
+            return "indeterminate"
+
         before = self.occurrence.occurrence_fingerprint
-        if after_fingerprint is None:
-            after_fingerprint = action.mutate(self.occurrence)
-        return self.budget.record_mutation(before, after_fingerprint)
+        try:
+            if after_fingerprint is None:
+                after_fingerprint = action.mutate(self.occurrence)
+        except Exception as exc:
+            # The callable may have performed its external effect before the
+            # exception/timeout became visible.  Persist ambiguity before
+            # returning; never convert it into an ordinary retryable failure.
+            outcome = self.effect_ledger.record_outcome(
+                self.occurrence.repair_identity,
+                reservation_id=reservation.reservation_id,
+                owner_token=owner_token,
+                before_fingerprint=before,
+                error=f"{type(exc).__name__}: {exc}",
+                max_unchanged_attempts=MAX_UNCHANGED_FINGERPRINT_ATTEMPTS,
+            )
+            self.last_reservation = outcome
+            return "indeterminate"
+        if not isinstance(after_fingerprint, str) or not after_fingerprint.strip():
+            outcome = self.effect_ledger.record_outcome(
+                self.occurrence.repair_identity,
+                reservation_id=reservation.reservation_id,
+                owner_token=owner_token,
+                before_fingerprint=before,
+                error="mutation_result_invalid",
+                max_unchanged_attempts=MAX_UNCHANGED_FINGERPRINT_ATTEMPTS,
+            )
+            self.last_reservation = outcome
+            return "indeterminate"
+        outcome = self.effect_ledger.record_outcome(
+            self.occurrence.repair_identity,
+            reservation_id=reservation.reservation_id,
+            owner_token=owner_token,
+            before_fingerprint=before,
+            after_fingerprint=str(after_fingerprint or ""),
+            max_unchanged_attempts=MAX_UNCHANGED_FINGERPRINT_ATTEMPTS,
+        )
+        self.last_reservation = outcome
+        if outcome.state == "COMPLETED":
+            return "attempted"
+        if outcome.state == "EXHAUSTED":
+            return "exhausted"
+        if outcome.state == "UNCHANGED":
+            return "unchanged"
+        return "indeterminate"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Step 36-37 — Canonical runner, verifier receipts, and latency ledger
 # ═══════════════════════════════════════════════════════════════════════════
-
-import datetime as _datetime
-import json as _json
-import os as _os
-import time as _time
-from dataclasses import asdict as _asdict
-
 
 @dataclass(frozen=True)
 class RunnerReceipt:
@@ -961,8 +971,10 @@ class CanonicalRunner:
             f"canonical_runner finish outcome={outcome} elapsed={elapsed:.3f}s"
         )
 
-        status = "success" if outcome == "attempted" else (
-            "failed" if outcome in ("unchanged", "exhausted", "rejected_gate") else "rejected"
+        status = "success" if outcome in ("attempted", "adopted") else (
+            "failed"
+            if outcome in ("unchanged", "exhausted", "indeterminate", "rejected_gate")
+            else "rejected"
         )
         receipt = RunnerReceipt.from_runner_result(
             occurrence_fingerprint=occurrence.occurrence_fingerprint,
@@ -1000,7 +1012,6 @@ __all__ = [
     "FORBIDDEN_AUTHORITY_SOURCES",
     "LEGACY_VERIFIER_SLOTS",
     "MAX_UNCHANGED_FINGERPRINT_ATTEMPTS",
-    "MutationBudget",
     "RunnerReceipt",
     "SIMPLE_FIXER_CONTRACT_TYPE",
     "SIMPLE_FIXER_OUTCOMES",
