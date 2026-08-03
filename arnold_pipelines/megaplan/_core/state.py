@@ -26,7 +26,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal, Mapping
 
 import fcntl
 
@@ -50,7 +50,13 @@ from arnold_pipelines.megaplan.planning.state import (
     TERMINAL_STATES,
     validate_plan_current_state,
 )
-from .phase_runtime import DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS, phase_stale_seconds
+from .phase_runtime import (
+    DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+    WORKER_DEAD,
+    active_step_cas_token,
+    observe_active_step_worker,
+    phase_stale_seconds,
+)
 
 from .io import (
     ProjectionCursor,
@@ -81,6 +87,32 @@ DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
 # sunset projection.  New code should derive status/trace/resume/inspect from
 # manifest journal events and artifact bindings.
 STATE_JSON_AUTHORITY = False
+
+
+def _reconciliation_active_step_snapshot(
+    state: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    """Fence state reconciliation against live or unprovable custody."""
+
+    active = state.get("active_step")
+    if not isinstance(active, Mapping):
+        return True, None
+    snapshot = dict(active)
+    return observe_active_step_worker(snapshot).state == WORKER_DEAD, snapshot
+
+
+def _reconciliation_active_step_matches(
+    current: Mapping[str, Any],
+    expected: Mapping[str, Any] | None,
+) -> bool:
+    active = current.get("active_step")
+    if expected is None:
+        return not isinstance(active, Mapping)
+    return (
+        isinstance(active, Mapping)
+        and dict(active) == dict(expected)
+        and active_step_cas_token(active) == active_step_cas_token(expected)
+    )
 
 
 def is_state_json_authority() -> bool:
@@ -436,8 +468,13 @@ def _reconcile_satisfied_user_action_gate(plan_dir: Path, state: dict[str, Any])
         return state
     if not _all_finalize_user_actions_satisfied(plan_dir, state):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") not in {STATE_AWAITING_HUMAN, "awaiting_human"}:
             return False
         if not _all_finalize_user_actions_satisfied(plan_dir, current):
@@ -490,8 +527,13 @@ def _reconcile_completed_review(plan_dir: Path, state: dict[str, Any]) -> dict[s
         return state
     if not _approved_review_outcome_is_done(plan_dir):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "executed":
             return False
         if not _approved_review_outcome_is_done(plan_dir):
@@ -563,8 +605,13 @@ def _reconcile_failed_no_next_after_finalize(
             return state
     if not _finalize_phase_completed_successfully(plan_dir, state):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "failed":
             return False
         current_resume = current.get("resume_cursor")
@@ -630,8 +677,13 @@ def _reconcile_failed_no_next_after_blocked_execute(
     all_done, _reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not all_done:
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "failed":
             return False
         current_resume = current.get("resume_cursor")
@@ -721,8 +773,13 @@ def _reconcile_failed_review_after_successful_execute(
         or getattr(phase_result, "exit_kind", None) != "success"
     ):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "failed":
             return False
         current_resume = current.get("resume_cursor")
@@ -1139,11 +1196,20 @@ def _reconcile_durable_phase_handoff(
             handoff["claim_run_id"] = active.get("run_id")
             handoff["claim_worker_pid"] = active.get("worker_pid")
         elif active_phase == "execute":
-            # Execute is durably complete.  Its old worker can no longer own
-            # the next boundary even if a stale PID remains in the cache.
-            state.pop("active_step", None)
-            handoff["status"] = "recovery_required"
-            handoff["recovery_reason"] = "execute_complete_with_stale_execute_custody"
+            observation = observe_active_step_worker(active)
+            if observation.state == WORKER_DEAD:
+                state.pop("active_step", None)
+                handoff["status"] = "recovery_required"
+                handoff["recovery_reason"] = (
+                    "execute_complete_with_proven_dead_execute_custody"
+                )
+            else:
+                # Completion evidence does not prove that a LIVE/UNKNOWN
+                # occurrence stopped.  Retain custody so auto cannot dispatch
+                # review until the owner clears or a later observation proves
+                # death.
+                handoff["status"] = "source_custody_unresolved"
+                handoff["recovery_reason"] = observation.reason
         state["pending_phase_handoff"] = handoff
         return
 
