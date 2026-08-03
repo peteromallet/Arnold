@@ -1,7 +1,7 @@
 {
   "schema": "arnold.critique_ledger.unfinished_work_custody.v4",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T05:27:12Z",
+  "contract_updated_at": "2026-08-03T05:37:22Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -230,6 +230,34 @@
         "tests": {"passed": 169, "skipped": 1},
         "change": "NARROW_ABSENT_TMUX_SOCKET_CLASSIFIER_PLUS_FAIL_CLOSED_UNKNOWN_REGRESSION"
       }
+    },
+    {
+      "id": "B28-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "d7194ec75dd27c9dc549af603effbdc4f11371ab", "tree": "0872e11712cb796cf0be2d65e7f4846bb54211d7"},
+      "status": "PASSED_EXIT_0_PENDING_INDEPENDENT_SOL_ACCEPTANCE_NOT_LIVE_GATE",
+      "result": {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"},
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b28-offline-smoke.json", "sha256": "2fa22ddcaeb92bb005cf24dfd8392b2e1e72206f7290c964b52a63549ef253d0", "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED"},
+      "receipt_digest": "3ec46ea9f0992d606da5f34c84d76a58c7c8650f51c79d9538d1682d78bf6d40",
+      "image": {
+        "production": "sha256:c1dcccbd0381bb8d578c14b9a0edfcbb24eddf9d70c537f1063a9e065feba878",
+        "derived": "sha256:5677ed0b6a888be55ce4aaf1cedbfc57d3037f1e55b6ca1e8e19067029f99476"
+      },
+      "verifier_receipt_digest": "fa98493c808093164446284204a7ba433f18a2934137a2d98c5ecac462381d40",
+      "phases": ["init", "plan", "critique", "gate", "finalize"],
+      "privilege_receipt_count": 4,
+      "independent_review": {"path": null, "sha256": null, "status": "PENDING_SOL_ACCEPTANCE"},
+      "repair_lineage": {
+        "repair": {"id": "A28", "commit": "4845a10a043f7d53ea235789d2603ad3869d212a", "tree": "5b2b48a45617f5ddae20075240f061239c884ffb"},
+        "launch": {"id": "B28", "commit": "d7194ec75dd27c9dc549af603effbdc4f11371ab", "tree": "0872e11712cb796cf0be2d65e7f4846bb54211d7"},
+        "tests": {"passed": 171, "skipped": 1},
+        "change": "ADMIT_ONLY_INERT_AF_UNIX_SOCKETS_THEN_COUNT_AND_SEAL_STILL_REJECT_OTHER_SPECIAL_LINKED_OBJECTS"
+      },
+      "retry_isolation": {
+        "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-2-20260803",
+        "container": "megaplan-cloud-agent-finite-canary-2",
+        "preserves_attempt": "B27-live-attempt-1"
+      }
     }
   ],
   "live_deploy_attempts": [
@@ -252,7 +280,55 @@
       },
       "root_cause": "NARROW_CLASSIFIER_TREATED_ABSENT_TMUX_SOCKET_AS_UNKNOWN",
       "repair": {"id": "A27", "commit": "185e8d97732ff25e5e5d6a00b6877b7a46f08129", "tree": "a7c204b757fe0673516d1e9e22a1308b73b0d778"},
-      "retry_status": "B27_LIVE_RETRY_PENDING"
+      "retry_status": "B27_LIVE_ATTEMPT_TERMINAL_RECONCILED"
+    }
+  ],
+  "live_canary_attempts": [
+    {
+      "id": "B27-live-attempt-1",
+      "candidate": {"commit": "0a3fbb56e48c5de98a455224c444a522ff31bf07", "tree": "beb5d68bfcbdd7b0867a139ec19885dbb260e57d"},
+      "status": "failed",
+      "terminal_state": "failed",
+      "run_receipt": {
+        "path": null,
+        "sha256": "710707648e66e37b2c57684faa135eb324f36b163796d45210763657ad6d4e17",
+        "digest": "ac95bf39a39c946b73a56a08625d8d15e57f8673764365c0d4ad3354826085bd",
+        "status": "PATH_NOT_PROVIDED_IMPORT_REQUIRED"
+      },
+      "dispatch_integrity": {
+        "status": "partial",
+        "start_dispatches": [
+          {"phase": "plan", "count": 1, "provider": "Codex", "model": "gpt-5.6-sol", "reasoning": "high"}
+        ],
+        "terminal_dispatch_count": 0,
+        "terminal_dispatch_absence_reason": "finite_model_boundary_failed"
+      },
+      "root_evidence": {
+        "source": "plan_v1_raw",
+        "observed_excerpt": "finite model boundary failed: CliError:finite-model runtime contains a special or linked object | CliError:source object is not trusted-owner non-writable: .../.zero-recovery-plan-worker-output.json | CliError:plan artifact permissions are unsafe...",
+        "actual_output": {"empty": true, "uid": 65532, "gid": 65532, "mode": "0600"},
+        "primary_cause": "REAL_CODEX_CREATED_AF_UNIX_IPC_SOCKET_UNDER_ISOLATED_CODEX_HOME_OFFLINE_FAKE_DID_NOT_MODEL_IT",
+        "boundary_effect": "RUNTIME_VALIDATOR_REJECTED_SOCKET_BEFORE_OUTPUT_RECLAIM",
+        "cascading_errors": ["OUTPUT_OWNER_NONWRITABLE_REJECTION", "PLAN_ARTIFACT_PERMISSION_REJECTION"]
+      },
+      "container": {
+        "id_prefix": "c6289bc3",
+        "full_id": null,
+        "stopped": true,
+        "exit_code": 137,
+        "oom_killed": false,
+        "reconciled_stop": true
+      },
+      "workspace": {
+        "path": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-20260802",
+        "owner": "root",
+        "mode": "0700",
+        "sealed": true,
+        "preserved": true
+      },
+      "background_effects": {"loop_started": false, "notifications_sent": false},
+      "reconciliation": "TERMINAL_RECONCILED_REMOTE_RECEIPT_IMPORT_PENDING",
+      "repair": {"id": "A28", "commit": "4845a10a043f7d53ea235789d2603ad3869d212a", "tree": "5b2b48a45617f5ddae20075240f061239c884ffb"}
     }
   ],
   "prelaunch_release_gates": [

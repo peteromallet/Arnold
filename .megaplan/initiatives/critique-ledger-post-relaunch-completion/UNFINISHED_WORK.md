@@ -207,19 +207,63 @@ deliberately pending import; it is not permission to recreate a receipt.
   `sha256:c5687c73d88307ab9d7847585aaa371d27fab1e1286283b6456dbbf0d269470d`,
   and derived image is
   `sha256:71ef320bd30fe70211e9885c6972994a5f61c9625cc24bba9aecc2874082fb6e`.
-  Sol acceptance is pending, so B27 is not a live gate or F0 authority.
-- [ ] Run a fresh supported B27 live retry only after independent acceptance;
-  do not reuse the failed transaction or infer authority from its safe unit
-  state.
-- [ ] Import and independently reconcile the failed-live and fresh-live receipt
-  bytes; no missing receipt may be synthesized.
+  Sol acceptance remains unrecorded; the later failed live attempt does not
+  retroactively satisfy that evidence gap or make B27 F0 authority.
+- [ ] Import B27 live attempt 1's already-terminal/reconciled run receipt. Its
+  declared SHA-256 is
+  `710707648e66e37b2c57684faa135eb324f36b163796d45210763657ad6d4e17`
+  and digest is
+  `ac95bf39a39c946b73a56a08625d8d15e57f8673764365c0d4ad3354826085bd`;
+  no receipt path was supplied locally. Status and terminal state were both
+  `failed`. Dispatch integrity was `partial`: exactly one plan start dispatch
+  used Codex `gpt-5.6-sol` high, and no terminal dispatch occurred because the
+  finite-model boundary failed.
+- [ ] Preserve B27's reported `plan_v1_raw` root-evidence excerpt:
+  `finite model boundary failed: CliError:finite-model runtime contains a special or linked object | CliError:source object is not trusted-owner non-writable: .../.zero-recovery-plan-worker-output.json | CliError:plan artifact permissions are unsafe...`.
+  The output itself remained empty, uid/gid 65532, mode 0600. Real Codex had
+  created an AF_UNIX IPC socket under isolated `CODEX_HOME`, unlike the offline
+  fake; the runtime validator rejected the socket before reclaiming output,
+  which caused the two ownership/permission errors to cascade.
+- [ ] Preserve B27's terminal containment evidence: container ID prefix
+  `c6289bc3` stopped at exit 137 with OOM false and `reconciled_stop` true; the
+  old workspace
+  `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-20260802` is
+  sealed root:0700 and preserved; no loop started and no notification was sent.
+- [ ] Preserve A28 at `4845a10a043f7d53ea235789d2603ad3869d212a` /
+  tree `5b2b48a45617f5ddae20075240f061239c884ffb`. It admits only AF_UNIX socket
+  filesystem objects after finite-UID process emptiness, counts them against
+  the runtime bound, seals ownership/mode, still rejects symlinks, FIFOs,
+  block/character devices and hardlinks, and improves exact error evidence.
+  Its recorded suite result is 171 passed and 1 skipped.
+- [ ] Copy and obtain Sol's independent acceptance for B28 at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b28-offline-smoke.json`.
+  Launch `d7194ec75dd27c9dc549af603effbdc4f11371ab` / tree
+  `0872e11712cb796cf0be2d65e7f4846bb54211d7` passed all five exact offline
+  phases with four privilege receipts. File SHA-256 is
+  `2fa22ddcaeb92bb005cf24dfd8392b2e1e72206f7290c964b52a63549ef253d0`,
+  receipt digest is
+  `3ec46ea9f0992d606da5f34c84d76a58c7c8650f51c79d9538d1682d78bf6d40`,
+  verifier digest is
+  `fa98493c808093164446284204a7ba433f18a2934137a2d98c5ecac462381d40`,
+  production image is
+  `sha256:c1dcccbd0381bb8d578c14b9a0edfcbb24eddf9d70c537f1063a9e065feba878`,
+  and derived image is
+  `sha256:5677ed0b6a888be55ce4aaf1cedbfc57d3037f1e55b6ca1e8e19067029f99476`.
+  Offline pass does not satisfy independent or live gates.
+- [ ] Run B28 only as a fresh supported live attempt in workspace
+  `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-2-20260803`
+  and container `megaplan-cloud-agent-finite-canary-2`; preserve B27 attempt 1.
+- [ ] Import the outstanding failed-fence, B27 live and future B28 live receipt
+  bytes; no missing receipt may be synthesized. B27's outcome is already
+  terminal/reconciled, while B28 live execution remains pending.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B27 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B28 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
-  offline history, B27 is the latest passing candidate pending Sol acceptance,
-  and no missing receipt may be synthesized.
+  offline history, B27 is terminal failed-live history, B28 is the latest
+  passing offline candidate pending Sol acceptance and live execution, and no
+  missing receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 

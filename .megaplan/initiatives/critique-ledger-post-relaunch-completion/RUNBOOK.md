@@ -11,9 +11,9 @@ incident. None of those routes reconciles the immutable one-dispatch intents.
 The follow-up chain remains closed while any prelaunch gate is pending, any
 historical operation lacks an effective terminal reconciliation, B11-B25 remain
 failed history, transaction `404dd858567d48ffbe8cb7c27d85185a` lacks imported
-and reconciled failure bytes, B27 remains independently unaccepted, or F0 has
-not admitted the exact stable-exit handoff. There is intentionally no launch
-command in this runbook until an accepted installed
+failure bytes, the terminal B27 live receipt lacks imported bytes, B28 remains
+independently unaccepted, or F0 has not admitted the exact stable-exit handoff.
+There is intentionally no launch command in this runbook until an accepted installed
 authority path and its exact invocation are committed and independently
 reviewed. A generic command is not a fallback.
 
@@ -46,14 +46,16 @@ backdated or reconstructed receipt.
 3. Obtain fresh capacity, reserve, cache, container epoch, boot, unit-mask and
    notification-provider zero-call observations. Process absence alone is not
    notification evidence.
-4. Preserve B26's independent Sol GO, then copy and independently review B27's
-   passing non-overwriting offline smoke. B8-B10 build failures and B10-B25
-   smoke failures remain immutable evidence.
+4. Preserve B26's independent Sol GO and B27's offline and terminal failed-live
+   evidence, then copy and independently review B28's passing non-overwriting
+   offline smoke. B8-B10 build failures and B10-B25 smoke failures remain
+   immutable evidence.
 5. Import and reconcile transaction `404dd858567d48ffbe8cb7c27d85185a`'s
-   durable failure receipt. Only after B27 is accepted: obtain fresh predeploy
-   authority, run a new supported live transaction, apply and verify the fence,
-   run the one finite canary, record conformance and completion, stop it, and
-   prove stable exit. The failed transaction created no canary and grants no
+   durable failure receipt and import B27's already-terminal run receipt. Only
+   after B28 is accepted: obtain fresh predeploy authority, use its isolated
+   attempt-2 workspace/container, run a new supported live transaction, apply
+   and verify the fence, run the one finite canary, record conformance and
+   completion, stop it, and prove stable exit. Neither prior failure grants
    reusable launch authority.
 6. Push the exact follow-up authority and evidence, create the required custody
    refs/tags, and independently reconstruct and validate it from a fresh clone.

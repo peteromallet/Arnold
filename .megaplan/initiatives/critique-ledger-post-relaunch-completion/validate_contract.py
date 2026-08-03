@@ -109,6 +109,24 @@ A27_REPAIR = {
     "tree": "a7c204b757fe0673516d1e9e22a1308b73b0d778",
 }
 
+A28_REPAIR = {
+    "id": "A28",
+    "commit": "4845a10a043f7d53ea235789d2603ad3869d212a",
+    "tree": "5b2b48a45617f5ddae20075240f061239c884ffb",
+}
+
+B28_PASS = {
+    "id": "B28-smoke",
+    "commit": "d7194ec75dd27c9dc549af603effbdc4f11371ab",
+    "tree": "0872e11712cb796cf0be2d65e7f4846bb54211d7",
+    "path": "/var/lib/arnold-zero-recovery/critique-ledger-b28-offline-smoke.json",
+    "sha256": "2fa22ddcaeb92bb005cf24dfd8392b2e1e72206f7290c964b52a63549ef253d0",
+    "receipt_digest": "3ec46ea9f0992d606da5f34c84d76a58c7c8650f51c79d9538d1682d78bf6d40",
+    "production_image": "sha256:c1dcccbd0381bb8d578c14b9a0edfcbb24eddf9d70c537f1063a9e065feba878",
+    "derived_image": "sha256:5677ed0b6a888be55ce4aaf1cedbfc57d3037f1e55b6ca1e8e19067029f99476",
+    "verifier_receipt_digest": "fa98493c808093164446284204a7ba433f18a2934137a2d98c5ecac462381d40",
+}
+
 FAILED_LIVE_TRANSACTION_ID = "404dd858567d48ffbe8cb7c27d85185a"
 
 OPERATION_IDS = [
@@ -237,7 +255,7 @@ def _validate_prelaunch_gates(custody: dict[str, Any], *, require_live: bool) ->
 
 def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = False) -> None:
     attempts = custody.get("prelaunch_attempts")
-    if not isinstance(attempts, list) or len(attempts) != len(KNOWN_ATTEMPTS) + 2:
+    if not isinstance(attempts, list) or len(attempts) != len(KNOWN_ATTEMPTS) + 3:
         raise ContractError("prelaunch attempt history is incomplete")
     expected_fields = {"id", "kind", "candidate", "status", "failure", "remote_receipt"}
     ids: list[str] = []
@@ -334,8 +352,71 @@ def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = F
                 or not (pending_review or accepted_review)
             ):
                 raise ContractError("B27 passing smoke binding drift")
+            continue
+        if index == len(KNOWN_ATTEMPTS) + 2:
+            if not isinstance(attempt, dict):
+                raise ContractError("B28 passing smoke has an invalid schema")
+            ids.append(attempt.get("id"))
+            review = attempt.get("independent_review")
+            pending_review = review == {"path": None, "sha256": None, "status": "PENDING_SOL_ACCEPTANCE"}
+            accepted_review = (
+                isinstance(review, dict)
+                and set(review) == {"path", "sha256", "status", "reviewer", "decision"}
+                and review.get("reviewer") == "Sol"
+                and review.get("decision") == "GO"
+                and review.get("status") == "ACCEPTED"
+                and isinstance(review.get("path"), str)
+                and SHA256.fullmatch(str(review.get("sha256"))) is not None
+            )
+            if accepted_review:
+                review_path = _repo_path(review["path"])
+                accepted_review = review_path.is_file() and _sha256(review_path) == review["sha256"]
+            expected_status = (
+                "PASSED_EXIT_0_PENDING_INDEPENDENT_SOL_ACCEPTANCE_NOT_LIVE_GATE"
+                if pending_review
+                else "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
+            )
+            if (
+                set(attempt) != {
+                    "id", "kind", "candidate", "status", "result", "remote_receipt",
+                    "receipt_digest", "image", "verifier_receipt_digest", "phases",
+                    "privilege_receipt_count", "independent_review", "repair_lineage",
+                    "retry_isolation",
+                }
+                or attempt.get("id") != B28_PASS["id"]
+                or attempt.get("kind") != "OFFLINE_STRUCTURAL_SMOKE"
+                or attempt.get("candidate") != {"commit": B28_PASS["commit"], "tree": B28_PASS["tree"]}
+                or attempt.get("status") != expected_status
+                or attempt.get("result") != {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"}
+                or attempt.get("remote_receipt") != {
+                    "path": B28_PASS["path"],
+                    "sha256": B28_PASS["sha256"],
+                    "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED",
+                }
+                or attempt.get("receipt_digest") != B28_PASS["receipt_digest"]
+                or attempt.get("image") != {
+                    "production": B28_PASS["production_image"],
+                    "derived": B28_PASS["derived_image"],
+                }
+                or attempt.get("verifier_receipt_digest") != B28_PASS["verifier_receipt_digest"]
+                or attempt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
+                or attempt.get("privilege_receipt_count") != 4
+                or attempt.get("repair_lineage") != {
+                    "repair": A28_REPAIR,
+                    "launch": {"id": "B28", "commit": B28_PASS["commit"], "tree": B28_PASS["tree"]},
+                    "tests": {"passed": 171, "skipped": 1},
+                    "change": "ADMIT_ONLY_INERT_AF_UNIX_SOCKETS_THEN_COUNT_AND_SEAL_STILL_REJECT_OTHER_SPECIAL_LINKED_OBJECTS",
+                }
+                or attempt.get("retry_isolation") != {
+                    "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-2-20260803",
+                    "container": "megaplan-cloud-agent-finite-canary-2",
+                    "preserves_attempt": "B27-live-attempt-1",
+                }
+                or not (pending_review or accepted_review)
+            ):
+                raise ContractError("B28 passing smoke binding drift")
             if require_live and not accepted_review:
-                raise ContractError("B27 passing smoke lacks independent Sol acceptance")
+                raise ContractError("B28 passing smoke lacks independent Sol acceptance")
             continue
         if not isinstance(attempt, dict) or set(attempt) != expected_fields:
             raise ContractError("prelaunch attempt has an inexact schema")
@@ -402,10 +483,70 @@ def _validate_live_deploy_attempts(custody: dict[str, Any]) -> None:
         },
         "root_cause": "NARROW_CLASSIFIER_TREATED_ABSENT_TMUX_SOCKET_AS_UNKNOWN",
         "repair": A27_REPAIR,
-        "retry_status": "B27_LIVE_RETRY_PENDING",
+        "retry_status": "B27_LIVE_ATTEMPT_TERMINAL_RECONCILED",
     }
     if attempt != expected:
         raise ContractError("failed live deploy transaction binding drift")
+
+
+def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
+    attempts = custody.get("live_canary_attempts")
+    if not isinstance(attempts, list) or len(attempts) != 1:
+        raise ContractError("live canary attempt history is incomplete")
+    attempt = attempts[0]
+    expected = {
+        "id": "B27-live-attempt-1",
+        "candidate": {"commit": B27_PASS["commit"], "tree": B27_PASS["tree"]},
+        "status": "failed",
+        "terminal_state": "failed",
+        "run_receipt": {
+            "path": None,
+            "sha256": "710707648e66e37b2c57684faa135eb324f36b163796d45210763657ad6d4e17",
+            "digest": "ac95bf39a39c946b73a56a08625d8d15e57f8673764365c0d4ad3354826085bd",
+            "status": "PATH_NOT_PROVIDED_IMPORT_REQUIRED",
+        },
+        "dispatch_integrity": {
+            "status": "partial",
+            "start_dispatches": [
+                {"phase": "plan", "count": 1, "provider": "Codex", "model": "gpt-5.6-sol", "reasoning": "high"}
+            ],
+            "terminal_dispatch_count": 0,
+            "terminal_dispatch_absence_reason": "finite_model_boundary_failed",
+        },
+        "root_evidence": {
+            "source": "plan_v1_raw",
+            "observed_excerpt": (
+                "finite model boundary failed: CliError:finite-model runtime contains a special or linked object | "
+                "CliError:source object is not trusted-owner non-writable: "
+                ".../.zero-recovery-plan-worker-output.json | "
+                "CliError:plan artifact permissions are unsafe..."
+            ),
+            "actual_output": {"empty": True, "uid": 65532, "gid": 65532, "mode": "0600"},
+            "primary_cause": "REAL_CODEX_CREATED_AF_UNIX_IPC_SOCKET_UNDER_ISOLATED_CODEX_HOME_OFFLINE_FAKE_DID_NOT_MODEL_IT",
+            "boundary_effect": "RUNTIME_VALIDATOR_REJECTED_SOCKET_BEFORE_OUTPUT_RECLAIM",
+            "cascading_errors": ["OUTPUT_OWNER_NONWRITABLE_REJECTION", "PLAN_ARTIFACT_PERMISSION_REJECTION"],
+        },
+        "container": {
+            "id_prefix": "c6289bc3",
+            "full_id": None,
+            "stopped": True,
+            "exit_code": 137,
+            "oom_killed": False,
+            "reconciled_stop": True,
+        },
+        "workspace": {
+            "path": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-20260802",
+            "owner": "root",
+            "mode": "0700",
+            "sealed": True,
+            "preserved": True,
+        },
+        "background_effects": {"loop_started": False, "notifications_sent": False},
+        "reconciliation": "TERMINAL_RECONCILED_REMOTE_RECEIPT_IMPORT_PENDING",
+        "repair": A28_REPAIR,
+    }
+    if attempt != expected:
+        raise ContractError("B27 live canary terminal binding drift")
 
 
 def _validate_operation_reconciliation(*, require_live: bool) -> None:
@@ -658,20 +799,20 @@ def _validate_supersession(*, require_live: bool) -> None:
     if (
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
-        or attempts.get("passing_successor") != B27_PASS["id"]
+        or attempts.get("passing_successor") != B28_PASS["id"]
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
     accepted = attempts.get("accepted_successor")
     if require_live:
-        if accepted != B27_PASS["id"]:
+        if accepted != B28_PASS["id"]:
             raise ContractError("latest passing smoke is not independently accepted")
         if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
             raise ContractError("strictly later smoke is not accepted")
     elif accepted == B26_PASS["id"]:
-        if attempts.get("status") != "B26_SOL_GO_B27_PASS_PENDING_SOL_ACCEPTANCE_AND_LIVE_RETRY":
+        if attempts.get("status") != "B26_SOL_GO_B27_LIVE_FAILED_B28_PASS_PENDING_SOL_ACCEPTANCE_AND_LIVE_RETRY":
             raise ContractError("latest passing smoke pending disposition drift")
-    elif accepted != B27_PASS["id"] or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
+    elif accepted != B28_PASS["id"] or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")
 
 
@@ -792,6 +933,7 @@ def validate(*, require_live: bool = False) -> None:
     _validate_obligations(custody)
     _validate_attempt_history(custody, require_live=require_live)
     _validate_live_deploy_attempts(custody)
+    _validate_live_canary_attempts(custody)
     _validate_prelaunch_gates(custody, require_live=require_live)
     _validate_host_control_state_contract(custody)
     reconciliation = custody.get("live_operation_reconciliation")

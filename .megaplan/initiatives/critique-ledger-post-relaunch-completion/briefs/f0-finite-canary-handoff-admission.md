@@ -12,10 +12,11 @@ Verify all of the following from committed evidence bytes:
   fresh-clone receipts bind one exact commit/tree/image lineage;
 - all B8-B10 failed builds and B10-B25 failed smokes remain preserved as
   rejected history; B26's independent Sol GO remains preserved; and B27's
-  passing receipt is independently accepted before it becomes the launch
-  candidate;
+  offline pass plus terminal failed-live receipt remain preserved;
 - failed live transaction `404dd858567d48ffbe8cb7c27d85185a` is imported and
   reconciled as no-marker/no-canary evidence before any fresh live retry;
+- B28's passing offline receipt is independently accepted before it becomes the
+  launch candidate, and its fresh workspace/container cannot reuse B27 state;
 - every immutable operation intent has one independently reviewed effective
   terminal outcome in `operation-reconciliation-manifest.json`, with no effect
   dispatched more than its declared maximum and no ambiguous operation left

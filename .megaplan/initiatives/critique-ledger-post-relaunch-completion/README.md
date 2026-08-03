@@ -70,9 +70,9 @@ epic.
 
 Machine-readable custody is frozen in [`custody-manifest.json`](custody-manifest.json),
 including immutable B8-B25 failure history, B26's independent Sol GO, the
-failed no-canary live transaction, and B27's passing smoke pending independent
-Sol acceptance. Terminal-operation and live-receipt reconciliation remain
-pending.
+failed no-canary fence transaction, B27's terminal/reconciled failed live
+canary, and B28's passing smoke pending independent Sol acceptance. Historical
+operation and remote receipt import remain pending.
 Conflicting or stale launch instructions are retired by
 [`supersession-index.json`](supersession-index.json). Human prose never
 overrides those typed dispositions.

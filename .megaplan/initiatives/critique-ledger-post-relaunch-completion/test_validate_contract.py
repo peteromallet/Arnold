@@ -85,7 +85,7 @@ def test_known_failed_attempt_cannot_be_relabelled_accepted() -> None:
 
 def test_b26_sol_go_cannot_drift() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
-    b26 = custody["prelaunch_attempts"][-2]
+    b26 = custody["prelaunch_attempts"][-3]
     b26["independent_review"]["decision"] = "NO_GO"
     with pytest.raises(contract.ContractError, match="B26 passing smoke binding drift"):
         contract._validate_attempt_history(custody)
@@ -93,9 +93,17 @@ def test_b26_sol_go_cannot_drift() -> None:
 
 def test_b27_pass_cannot_drift_into_unreviewed_acceptance() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
-    b27 = custody["prelaunch_attempts"][-1]
+    b27 = custody["prelaunch_attempts"][-2]
     b27["status"] = "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
     with pytest.raises(contract.ContractError, match="B27 passing smoke binding drift"):
+        contract._validate_attempt_history(custody)
+
+
+def test_b28_pass_cannot_drift_into_unreviewed_acceptance() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    b28 = custody["prelaunch_attempts"][-1]
+    b28["status"] = "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
+    with pytest.raises(contract.ContractError, match="B28 passing smoke binding drift"):
         contract._validate_attempt_history(custody)
 
 
@@ -104,6 +112,13 @@ def test_failed_live_attempt_cannot_claim_marker_publication() -> None:
     custody["live_deploy_attempts"][0]["marker_published"] = True
     with pytest.raises(contract.ContractError, match="failed live deploy transaction binding drift"):
         contract._validate_live_deploy_attempts(custody)
+
+
+def test_b27_failed_live_attempt_cannot_claim_terminal_dispatch() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["live_canary_attempts"][0]["dispatch_integrity"]["terminal_dispatch_count"] = 1
+    with pytest.raises(contract.ContractError, match="B27 live canary terminal binding drift"):
+        contract._validate_live_canary_attempts(custody)
 
 
 def test_pending_operation_cannot_fabricate_terminal_receipt() -> None:
