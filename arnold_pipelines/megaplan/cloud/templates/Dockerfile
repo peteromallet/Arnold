@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libreadline-dev \
       libsqlite3-dev \
       libssl-dev \
+      util-linux \
       openssh-client \
       procps \
       ripgrep \
@@ -71,9 +72,16 @@ RUN curl -fsSL https://bun.sh/install | bash \
 RUN . "$NVM_DIR/nvm.sh" \
     && npm i -g @openai/codex @anthropic-ai/claude-code @railway/cli@4.12.0 \
     && NVBIN=$(ls -d /root/.nvm/versions/node/*/bin | head -1) \
-    && ln -sf "$NVBIN/codex"  /usr/local/bin/codex \
-    && ln -sf "$NVBIN/claude" /usr/local/bin/claude \
-    && ln -sf "$NVBIN/railway" /usr/local/bin/railway \
+    && NODE_ROOT=$(dirname "$NVBIN") \
+    && cp -a "$NODE_ROOT" /opt/zero-recovery-node \
+    && chown -R root:root /opt/zero-recovery-node \
+    && chmod -R a-w /opt/zero-recovery-node \
+    && ln -sf /opt/zero-recovery-node/bin/node /usr/local/bin/node \
+    && ln -sf /opt/zero-recovery-node/bin/npm /usr/local/bin/npm \
+    && ln -sf /opt/zero-recovery-node/bin/npx /usr/local/bin/npx \
+    && ln -sf /opt/zero-recovery-node/bin/codex  /usr/local/bin/codex \
+    && ln -sf /opt/zero-recovery-node/bin/claude /usr/local/bin/claude \
+    && ln -sf /opt/zero-recovery-node/bin/railway /usr/local/bin/railway \
     && codex --version \
     && claude --version \
     && railway --version
@@ -82,6 +90,12 @@ RUN . "$NVM_DIR/nvm.sh" \
 ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"
 RUN pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC" \
     && arnold --help > /dev/null
+RUN groupadd --gid 65532 finite-model \
+    && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin finite-model \
+    && mkdir -p /run/megaplan-zero-recovery \
+    && chown root:root /run/megaplan-zero-recovery \
+    && chmod 0711 /run/megaplan-zero-recovery \
+    && chmod 0755 /tmp /var/tmp /dev/shm
 ${TOOLCHAIN_BLOCK}
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY healthserver.py /usr/local/bin/healthserver.py

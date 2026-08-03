@@ -4,15 +4,20 @@ import argparse
 import base64
 import hashlib
 import json
+import os
+import runpy
 import shlex
 import subprocess
+import sys
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from jsonschema import validate
 
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+from arnold_pipelines.megaplan.cloud.providers import ssh as ssh_provider_module
 from arnold_pipelines.megaplan.cloud.providers import zero_recovery
 from arnold_pipelines.megaplan.cloud.providers.ssh_preflight import (
     capacity_inventory_command,
@@ -21,15 +26,21 @@ from arnold_pipelines.megaplan.cloud.providers.ssh_preflight import (
 from arnold_pipelines.megaplan.cloud.providers.ssh import (
     _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT,
     _ZERO_RECOVERY_OAUTH_INSTALL_SCRIPT,
+    _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT,
+    _ZERO_RECOVERY_WORKSPACE_RESEAL_SCRIPT,
     SshProvider,
     _zero_recovery_canary_runtime_command,
     _require_advertised_branch_commit,
 )
 from arnold_pipelines.megaplan.workers._impl import (
+    _assert_zero_recovery_plan_unchanged,
+    _assert_zero_recovery_source_unchanged,
     _read_codex_observed_model,
     _codex_step_cost,
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
+    _zero_recovery_plan_snapshot,
+    _zero_recovery_source_identity,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
@@ -140,11 +151,15 @@ def _spec() -> CloudSpec:
         secrets=[], ssh=SshSpec(host="host", container="megaplan-cloud-agent-finite-canary"),
         zero_recovery_canary=True,
         zero_recovery_predecessor_container="megaplan-cloud-agent",
+        zero_recovery_workspace_dir=(
+            "/opt/megaplan-cloud/workspace/"
+            "critique-ledger-safe-v3-canary-20260802"
+        ),
     )
 
 
 def test_zero_profile_spec_is_strict_and_requires_distinct_predecessor(tmp_path: Path) -> None:
-    base = """provider: ssh\nmode: idle\nzero_recovery_canary: true\nrepo:\n  url: https://github.com/o/r.git\nagents:\n  default: codex\nssh:\n  host: host\n  container: canary\nsecrets: []\n"""
+    base = """provider: ssh\nmode: idle\nzero_recovery_canary: true\nzero_recovery_workspace_dir: /opt/megaplan-cloud/workspace/canary-run\nrepo:\n  url: https://github.com/o/r.git\n  workspace: /workspace/Arnold\nagents:\n  default: codex\nssh:\n  host: host\n  container: canary\nsecrets: []\n"""
     path = tmp_path / "cloud.yaml"
     path.write_text(base, encoding="utf-8")
     with pytest.raises(CliError):
@@ -256,7 +271,7 @@ def test_inventory_command_and_parser_reject_scope_or_docker_ambiguity() -> None
     assert parsed["status"] == "unknown"
 
 
-@pytest.mark.parametrize("action", ["exec", "quickstart", "retire-chain", "retire-stale-status"])
+@pytest.mark.parametrize("action", ["init", "exec", "quickstart", "retire-chain", "retire-stale-status"])
 def test_zero_cli_denies_generic_action_before_provider_creation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, action: str
 ) -> None:
@@ -271,10 +286,35 @@ def test_zero_cli_denies_generic_action_before_provider_creation(
 
     monkeypatch.setattr(cloud_cli, "_provider_for_action", provider)
     args = argparse.Namespace(
-        cloud_action=action, command="echo hostile", cloud_yaml=None, on_box=True
+        cloud_action=action, command="echo hostile", cloud_yaml=None, on_box=True,
+        force=True,
     )
     assert cloud_cli.run_cloud_cli(tmp_path, args) == 1
     assert called is False
+
+
+def test_zero_cli_denies_force_init_of_malformed_canonical_profile_before_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    canonical = (
+        tmp_path
+        / ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml"
+    )
+    canonical.parent.mkdir(parents=True)
+    malformed = "zero_recovery_canary: [malformed\n"
+    canonical.write_text(malformed, encoding="utf-8")
+    monkeypatch.setattr(
+        cloud_cli,
+        "_run_init",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("canonical profile must not reach init")
+        ),
+    )
+    args = argparse.Namespace(
+        cloud_action="init", cloud_yaml=str(canonical), force=True
+    )
+    assert cloud_cli.run_cloud_cli(tmp_path, args) == 1
+    assert canonical.read_text(encoding="utf-8") == malformed
 
 
 @pytest.mark.parametrize("action", ["build", "deploy", "reclaim-dangling-build-cache"])
@@ -366,7 +406,11 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
         tmp_path,
         start=start,
         worker=SimpleNamespace(
-            model_actual="gpt-5.6-sol", model_evidence="rollout_turn_context"
+            model_actual="gpt-5.6-sol", model_evidence="codex_cli_turn_context",
+            privilege_receipt_path=".zero-recovery-plan-privilege-receipt.json",
+            privilege_receipt_sha256="a" * 64,
+            rollout_path="sessions/2026/08/03/rollout-session.jsonl",
+            rollout_sha256="b" * 64,
         ),
     )
     rows = [json.loads(line) for line in (tmp_path / "zero_recovery_dispatch_ledger.ndjson").read_text().splitlines()]
@@ -376,15 +420,17 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
         _record_zero_recovery_dispatch(
             tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high"
         )
-    with pytest.raises(CliError, match="exact admitted model"):
+    with pytest.raises(CliError, match="admitted model boundary"):
         _record_zero_recovery_dispatch_terminal(
             tmp_path,
             start=start,
             worker=SimpleNamespace(
-                model_actual="other", model_evidence="rollout_turn_context"
+                model_actual="other", model_evidence="codex_cli_turn_context",
+                privilege_receipt_path="x", privilege_receipt_sha256="a" * 64,
+                rollout_path="sessions/x", rollout_sha256="b" * 64,
             ),
         )
-    with pytest.raises(CliError, match="exact admitted model"):
+    with pytest.raises(CliError, match="admitted model boundary"):
         _record_zero_recovery_dispatch_terminal(
             tmp_path,
             start=start,
@@ -461,6 +507,7 @@ def test_complete_recomputed_but_fake_reviewer_evidence_is_rejected(
 
 
 def test_codex_actual_model_comes_from_rollout_not_requested_value(tmp_path: Path) -> None:
+    assert _codex_step_cost(None, {}, "gpt-requested")[3] is None
     rollout = tmp_path / "rollout.jsonl"
     rollout.write_text(
         json.dumps({"type": "turn_context", "payload": {"model": "gpt-provider-actual"}})
@@ -471,7 +518,7 @@ def test_codex_actual_model_comes_from_rollout_not_requested_value(tmp_path: Pat
     from arnold_pipelines.megaplan.workers import _impl as worker_impl
 
     original = worker_impl._codex_session_jsonl_path
-    worker_impl._codex_session_jsonl_path = lambda _session: rollout
+    worker_impl._codex_session_jsonl_path = lambda _session, **_kwargs: rollout
     try:
         assert _codex_step_cost("session", {}, "gpt-requested")[3] == "gpt-provider-actual"
     finally:
@@ -502,6 +549,7 @@ def test_malformed_status_still_reconciles_running_exact_canary() -> None:
     provider._remote_run_compatible = remote
     provider.observe_container = lambda: next(observations)
     provider._observe_zero_recovery_canary_runtime = lambda **kwargs: {}
+    provider._reseal_zero_recovery_workspace = lambda _runtime: {}
     payload = provider.zero_recovery_canary_status(
         source_commit="a" * 40, source_tree="b" * 40
     )
@@ -561,6 +609,7 @@ def test_status_blind_stops_when_read_or_observation_raises(read_failure) -> Non
             "lifecycle": "stopped",
         }
         provider._observe_zero_recovery_canary_runtime = lambda **kwargs: {}
+        provider._reseal_zero_recovery_workspace = lambda _runtime: {}
         expected = SystemExit
     with pytest.raises(expected):
         provider.zero_recovery_canary_status(
@@ -569,3 +618,371 @@ def test_status_blind_stops_when_read_or_observation_raises(read_failure) -> Non
     assert ["docker", "stop", provider._ssh.container] in [
         shlex.split(command) for command in commands
     ]
+
+
+def test_isolated_workspace_creator_is_single_use_empty_nofollow_and_custodied(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "workspace"
+    parent.mkdir()
+    child = parent / "canary-run"
+    argv = [
+        "python3", "-c", _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT,
+        str(parent), str(child),
+    ]
+    assert "os.mkdir(name, 0o700" in _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT
+    assert "os.fchown(child_fd, 0, 65532)" in _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT
+    if os.geteuid() != 0:
+        pytest.skip("numeric root custody transition requires a root Linux host")
+    created = subprocess.run(argv, text=True, capture_output=True, check=True)
+    payload = json.loads(created.stdout)
+    assert payload == {
+        "schema": "arnold.cloud.zero_recovery_isolated_workspace.v1",
+        "status": "created",
+        "parent": str(parent),
+        "parent_realpath": str(parent),
+        "bind_source": str(child),
+        "bind_source_realpath": str(child),
+        "bind_destination": "/workspace",
+        "initial_custody": payload["initial_custody"],
+        "runtime_access": payload["runtime_access"],
+        "transition_digest": payload["transition_digest"],
+        "created_empty": True,
+        "never_reused": True,
+    }
+    assert payload["initial_custody"]["mode"] == "0700"
+    assert payload["runtime_access"]["mode"] == "0750"
+    assert (os.lstat(child).st_mode & 0o777) == 0o750
+    assert list(child.iterdir()) == []
+    assert subprocess.run(argv, text=True, capture_output=True).returncode != 0
+
+    symlink_child = parent / "symlink-run"
+    symlink_child.symlink_to(tmp_path)
+    assert subprocess.run(
+        ["python3", "-c", _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT,
+         str(parent), str(symlink_child)],
+        text=True, capture_output=True,
+    ).returncode != 0
+
+    nonempty_child = parent / "nonempty-run"
+    nonempty_child.mkdir()
+    (nonempty_child / "prior").write_text("historical", encoding="utf-8")
+    assert subprocess.run(
+        ["python3", "-c", _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT,
+         str(parent), str(nonempty_child)],
+        text=True, capture_output=True,
+    ).returncode != 0
+
+    sealed = subprocess.run(
+        [
+            "python3", "-c", _ZERO_RECOVERY_WORKSPACE_RESEAL_SCRIPT,
+            str(child), str(payload["runtime_access"]["st_dev"]),
+            str(payload["runtime_access"]["st_ino"]),
+            payload["transition_digest"],
+        ],
+        text=True, capture_output=True, check=True,
+    )
+    terminal = json.loads(sealed.stdout)
+    assert terminal["status"] == "sealed"
+    assert terminal["transition"]["after"] == {
+        "st_dev": payload["runtime_access"]["st_dev"],
+        "st_ino": payload["runtime_access"]["st_ino"],
+        "uid": 0,
+        "gid": 0,
+        "mode": "0700",
+    }
+
+
+def test_runtime_workspace_identity_reconstructs_exact_creation_receipt() -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    initial = {
+        "mode": "0700", "uid": 0, "gid": 0,
+        "st_dev": 12, "st_ino": 34, "empty": True,
+    }
+    runtime_access = {
+        "mode": "0750", "uid": 0, "gid": 65532,
+        "st_dev": 12, "st_ino": 34,
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            {"initial_custody": initial, "runtime_access": runtime_access},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    observation = {
+        "env": [
+            "ZERO_RECOVERY_WORKSPACE_DEV=12",
+            "ZERO_RECOVERY_WORKSPACE_INO=34",
+            f"ZERO_RECOVERY_WORKSPACE_TRANSITION_DIGEST={digest}",
+        ]
+    }
+    receipt = provider._zero_recovery_workspace_creation_from_runtime(observation)
+    assert receipt["initial_custody"] == initial
+    assert receipt["runtime_access"] == runtime_access
+    assert receipt["transition_digest"] == digest
+    observation["env"][-1] = "ZERO_RECOVERY_WORKSPACE_TRANSITION_DIGEST=" + "0" * 64
+    with pytest.raises(CliError, match="transition binding"):
+        provider._zero_recovery_workspace_creation_from_runtime(observation)
+
+
+def test_zero_deploy_mounts_only_fresh_child_without_shared_caches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = SshProvider(_spec())
+    provider._consumed_zero_recovery_transactions = set()
+    transaction = {"transaction_id": "tx", "transaction_digest": "d" * 64}
+    monkeypatch.setattr(
+        ssh_provider_module, "validate_predeploy_transaction",
+        lambda *args, **kwargs: transaction,
+    )
+    monkeypatch.setattr(ssh_provider_module, "fence_command", lambda *args, **kwargs: "fence")
+    monkeypatch.setattr(ssh_provider_module, "parse_fence_receipt", lambda *args, **kwargs: {})
+    provider.observe_zero_recovery_predecessor = lambda: {}
+    provider.observe_zero_recovery_predecessor_capacity = lambda: {}
+    provider.observe_container = lambda: {"lifecycle": "missing"}
+    provider._prepare_zero_recovery_isolated_workspace = lambda: {
+        "bind_source": provider._spec.zero_recovery_workspace_dir,
+        "runtime_access": {"st_dev": 12, "st_ino": 34},
+        "transition_digest": "e" * 64,
+    }
+    runtime_checks: list[bool] = []
+    provider._observe_zero_recovery_canary_runtime = lambda **kwargs: runtime_checks.append(True) or {}
+    calls: list[tuple[str, str]] = []
+
+    def remote(command: str, **kwargs):
+        calls.append((kwargs["surface"], command))
+        return subprocess.CompletedProcess([], 0, "{}\n", "")
+
+    provider._remote_run_compatible = remote
+    assert provider._deploy_direct(tmp_path, secrets={}, predeploy_transaction=transaction) == 0
+    run_command = next(command for surface, command in calls if surface == "deploy_run")
+    argv = shlex.split(run_command)
+    assert argv[:3] == ["docker", "run", "-d"]
+    assert "--restart" in argv and argv[argv.index("--restart") + 1] == "no"
+    mounts = [argv[index + 1] for index, value in enumerate(argv) if value == "-v"]
+    assert mounts == [
+        f"{provider._spec.zero_recovery_workspace_dir}:/workspace"
+    ]
+    assert provider._ssh.workspace_dir + ":/workspace" not in mounts
+    assert all(provider._ssh.cache_dir not in value for value in mounts)
+    assert "/var/run/docker.sock" not in run_command
+    assert "--privileged" not in argv
+    assert argv[argv.index("--cap-drop") + 1] == "ALL"
+    assert argv[argv.index("--pids-limit") + 1] == "256"
+    assert argv[argv.index("--memory") + 1] == "4g"
+    assert argv[argv.index("--memory-swap") + 1] == "4g"
+    assert "-p" not in argv
+    assert runtime_checks == [True]
+
+
+def test_runtime_rejects_any_mount_beyond_exact_isolated_workspace() -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    exact_mount = {
+        "Type": "bind",
+        "Source": provider._spec.zero_recovery_workspace_dir,
+        "Destination": "/workspace",
+        "RW": True,
+        "Propagation": "rprivate",
+    }
+
+    def output(mounts: list[dict[str, object]]) -> str:
+        return "\n".join(json.dumps(value) for value in (
+            {"Running": True},
+            ["MEGAPLAN_ZERO_RECOVERY_CANARY=1"],
+            ["/usr/local/bin/entrypoint.sh"],
+            {"Name": "no", "MaximumRetryCount": 0},
+            mounts,
+            ["ALL"],
+            ["CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"],
+            ["no-new-privileges:true"],
+            "none",
+            {"/run/megaplan-zero-recovery": "rw,noexec,nosuid,nodev,size=256m,mode=0711"},
+            256,
+            4_294_967_296,
+            4_294_967_296,
+            {},
+        ))
+
+    provider._remote_run_compatible = lambda *args, **kwargs: subprocess.CompletedProcess(
+        [], 0, output([exact_mount]), ""
+    )
+    observed = provider._observe_zero_recovery_canary_runtime()
+    assert observed["host_bind_count"] == 1
+    provider._remote_run_compatible = lambda *args, **kwargs: subprocess.CompletedProcess(
+        [], 0, output([
+            exact_mount,
+            {"Type": "bind", "Source": provider._ssh.workspace_dir,
+             "Destination": "/historical", "RW": True},
+        ]), ""
+    )
+    with pytest.raises(CliError, match="runtime"):
+        provider._observe_zero_recovery_canary_runtime()
+
+
+def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "canary@example.test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Canary"], cwd=root, check=True)
+    (root / ".gitignore").write_text("ignored-shadow.py\n", encoding="utf-8")
+    (root / "engine.py").write_text("ADMITTED = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore", "engine.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "admitted"], cwd=root, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, text=True,
+        capture_output=True, check=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True,
+        capture_output=True, check=True,
+    ).stdout.strip()
+    plan_dir = root / ".megaplan/plans/critique-ledger-cl2-planning-canary"
+    plan_dir.mkdir(parents=True)
+    (root / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts").mkdir(
+        parents=True
+    )
+    return head, tree, plan_dir
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "tracked_source", "head_ref", "untracked_shadow", "ignored_shadow",
+        "assume_unchanged_source", "index_flag", "config_fsmonitor", "hook",
+    ],
+)
+def test_runner_and_worker_reject_repository_identity_or_import_shadow_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    head, tree, plan_dir = _git_canary_fixture(tmp_path)
+    runner = runpy.run_path(
+        str(Path(".megaplan/initiatives/critique-ledger-safe-v3-canary/run_canary.py"))
+    )
+    integrity = runner["repository_integrity"]
+    integrity(
+        tmp_path, source_commit=head, source_tree=tree, checkpoint="baseline"
+    )
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    worker_before = _zero_recovery_source_identity(tmp_path, plan_dir)
+    if mutation == "tracked_source":
+        (tmp_path / "engine.py").write_text("ADMITTED = False\n", encoding="utf-8")
+    elif mutation == "head_ref":
+        (tmp_path / ".git/HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
+    elif mutation == "untracked_shadow":
+        (tmp_path / "arnold_pipelines.py").write_text("raise SystemExit\n", encoding="utf-8")
+    elif mutation == "ignored_shadow":
+        (tmp_path / "ignored-shadow.py").write_text("raise SystemExit\n", encoding="utf-8")
+    elif mutation == "assume_unchanged_source":
+        subprocess.run(
+            ["git", "update-index", "--assume-unchanged", "engine.py"],
+            cwd=tmp_path, check=True,
+        )
+        (tmp_path / "engine.py").write_text("CONCEALED = True\n", encoding="utf-8")
+    elif mutation == "index_flag":
+        subprocess.run(
+            ["git", "update-index", "--skip-worktree", "engine.py"],
+            cwd=tmp_path, check=True,
+        )
+    elif mutation == "config_fsmonitor":
+        subprocess.run(
+            ["git", "config", "core.fsmonitor", "/bin/false"],
+            cwd=tmp_path, check=True,
+        )
+    else:
+        hook = tmp_path / ".git/hooks/post-checkout"
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+    if mutation in {"tracked_source", "head_ref", "untracked_shadow", "ignored_shadow"}:
+        with pytest.raises(Exception):
+            integrity(tmp_path, source_commit=head, source_tree=tree, checkpoint="hostile")
+    with pytest.raises(Exception):
+        _assert_zero_recovery_source_unchanged(tmp_path, plan_dir, worker_before)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["state", "gate", "lock", "prior_receipt", "output_symlink", "output_hardlink"],
+)
+def test_worker_boundary_rejects_model_mutation_and_output_aliases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    plan_dir = tmp_path / ".megaplan/plans/critique-ledger-cl2-planning-canary"
+    receipt_dir = (
+        tmp_path
+        / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts"
+    )
+    plan_dir.mkdir(parents=True)
+    receipt_dir.mkdir(parents=True)
+    state = plan_dir / "state.json"
+    gate = plan_dir / "gate.json"
+    lock = receipt_dir / "single-use-run.lock"
+    prior = receipt_dir / "00-init.phase-receipt.json"
+    state.write_text("state", encoding="utf-8")
+    gate.write_text("gate", encoding="utf-8")
+    lock.write_text("lock", encoding="utf-8")
+    prior.write_text("receipt", encoding="utf-8")
+    output = plan_dir / ".zero-recovery-plan-worker-output.json"
+    before = _zero_recovery_plan_snapshot(
+        tmp_path, plan_dir, output_path=output
+    )
+    if mutation == "state":
+        state.write_text("altered", encoding="utf-8")
+    elif mutation == "gate":
+        gate.write_text("altered", encoding="utf-8")
+    elif mutation == "lock":
+        lock.unlink()
+    elif mutation == "prior_receipt":
+        prior.write_text("altered", encoding="utf-8")
+    elif mutation == "output_symlink":
+        output.symlink_to(state)
+    else:
+        protected = tmp_path / "historical-sibling.txt"
+        protected.write_text("preserve", encoding="utf-8")
+        os.link(protected, output)
+    with pytest.raises(CliError, match="model"):
+        _assert_zero_recovery_plan_unchanged(
+            tmp_path, plan_dir, output_path=output, before=before
+        )
+
+
+@pytest.mark.parametrize("phase", ["plan", "critique", "gate", "finalize"])
+def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
+    tmp_path: Path, phase: str
+) -> None:
+    fake = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+        "structural-smoke/fake_codex.py"
+    )
+    source = fake.read_text(encoding="utf-8")
+    assert "socket" not in source
+    assert "urllib" not in source
+    assert "requests" not in source
+    output = tmp_path / f"{phase}.json"
+    codex_home = tmp_path / "codex-home"
+    schema = Path(f".megaplan/schemas/{phase}.json")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(fake),
+            "exec",
+            "-o",
+            str(output),
+            "--output-schema",
+            str(schema),
+            "-",
+        ],
+        env={"CODEX_HOME": str(codex_home), "PATH": os.environ["PATH"]},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    validate(json.loads(output.read_text(encoding="utf-8")), json.loads(schema.read_text(encoding="utf-8")))
+    thread = json.loads(completed.stdout.splitlines()[0])
+    rollout = list((codex_home / "sessions").glob("*/*/*/rollout-*.jsonl"))
+    assert len(rollout) == 1
+    assert rollout[0].name.endswith(f"-{thread['thread_id']}.jsonl")
+    assert _read_codex_observed_model(rollout[0]) == "gpt-5.6-sol"

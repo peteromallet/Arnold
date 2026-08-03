@@ -53,8 +53,146 @@ INSTALL_LINK = "Install: https://www.openssh.com/"
 
 _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT = (
     "{{json .State}}\n{{json .Config.Env}}\n{{json .Config.Cmd}}\n"
-    "{{json .HostConfig.RestartPolicy}}"
+    "{{json .HostConfig.RestartPolicy}}\n{{json .Mounts}}\n"
+    "{{json .HostConfig.CapDrop}}\n{{json .HostConfig.CapAdd}}\n"
+    "{{json .HostConfig.SecurityOpt}}\n{{json .HostConfig.IpcMode}}\n"
+    "{{json .HostConfig.Tmpfs}}\n{{json .HostConfig.PidsLimit}}\n"
+    "{{json .HostConfig.Memory}}\n{{json .HostConfig.MemorySwap}}\n"
+    "{{json .HostConfig.PortBindings}}"
 )
+
+_ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT = r"""
+import hashlib, json, os, stat, sys
+
+parent, child = sys.argv[1:3]
+parent_realpath = os.path.realpath(parent)
+if parent_realpath != parent:
+    raise RuntimeError("isolated_workspace_parent_not_canonical")
+parent_stat = os.lstat(parent)
+if not stat.S_ISDIR(parent_stat.st_mode) or stat.S_ISLNK(parent_stat.st_mode):
+    raise RuntimeError("isolated_workspace_parent_invalid")
+name = os.path.basename(child)
+if not name or os.path.dirname(child) != parent or os.path.join(parent, name) != child:
+    raise RuntimeError("isolated_workspace_not_direct_child")
+parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    os.mkdir(name, 0o700, dir_fd=parent_fd)
+    child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    try:
+        initial_stat = os.fstat(child_fd)
+        if (
+            not stat.S_ISDIR(initial_stat.st_mode)
+            or stat.S_IMODE(initial_stat.st_mode) != 0o700
+            or initial_stat.st_uid != 0
+            or initial_stat.st_gid != 0
+            or os.listdir(child_fd)
+        ):
+            raise RuntimeError("isolated_workspace_initial_custody_invalid")
+        os.fchown(child_fd, 0, 65532)
+        os.fchmod(child_fd, 0o750)
+        child_stat = os.fstat(child_fd)
+        if (
+            not stat.S_ISDIR(child_stat.st_mode)
+            or stat.S_IMODE(child_stat.st_mode) != 0o750
+            or child_stat.st_uid != 0
+            or child_stat.st_gid != 65532
+            or child_stat.st_dev != initial_stat.st_dev
+            or child_stat.st_ino != initial_stat.st_ino
+        ):
+            raise RuntimeError("isolated_workspace_mode_invalid")
+        if os.listdir(child_fd):
+            raise RuntimeError("isolated_workspace_not_empty")
+        child_realpath = os.path.realpath(child)
+        if child_realpath != child:
+            raise RuntimeError("isolated_workspace_child_not_canonical")
+        os.fsync(child_fd)
+    finally:
+        os.close(child_fd)
+    os.fsync(parent_fd)
+finally:
+    os.close(parent_fd)
+initial_custody = {
+    "mode": "0700", "uid": 0, "gid": 0,
+    "st_dev": initial_stat.st_dev, "st_ino": initial_stat.st_ino,
+    "empty": True,
+}
+runtime_access = {
+    "mode": "0750", "uid": 0, "gid": 65532,
+    "st_dev": child_stat.st_dev, "st_ino": child_stat.st_ino,
+}
+transition = {"initial_custody": initial_custody, "runtime_access": runtime_access}
+print(json.dumps({
+    "schema": "arnold.cloud.zero_recovery_isolated_workspace.v1",
+    "status": "created",
+    "parent": parent,
+    "parent_realpath": parent_realpath,
+    "bind_source": child,
+    "bind_source_realpath": child_realpath,
+    "bind_destination": "/workspace",
+    "initial_custody": initial_custody,
+    "runtime_access": runtime_access,
+    "transition_digest": hashlib.sha256(json.dumps(
+        transition, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest(),
+    "created_empty": True,
+    "never_reused": True,
+}, sort_keys=True, separators=(",", ":")))
+""".strip()
+
+_ZERO_RECOVERY_WORKSPACE_RESEAL_SCRIPT = r"""
+import hashlib, json, os, stat, sys
+
+child, expected_dev, expected_ino, access_digest = sys.argv[1:5]
+expected_dev, expected_ino = int(expected_dev), int(expected_ino)
+if os.path.realpath(child) != child:
+    raise RuntimeError("terminal_workspace_not_canonical")
+fd = os.open(child, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    before = os.fstat(fd)
+    if (
+        not stat.S_ISDIR(before.st_mode)
+        or before.st_dev != expected_dev
+        or before.st_ino != expected_ino
+        or before.st_uid != 0
+        or before.st_gid not in {0, 65532}
+        or stat.S_IMODE(before.st_mode) not in {0o700, 0o750}
+    ):
+        raise RuntimeError("terminal_workspace_identity_mismatch")
+    os.fchown(fd, 0, 0)
+    os.fchmod(fd, 0o700)
+    os.fsync(fd)
+    after = os.fstat(fd)
+finally:
+    os.close(fd)
+if (
+    after.st_dev != expected_dev or after.st_ino != expected_ino
+    or after.st_uid != 0 or after.st_gid != 0
+    or stat.S_IMODE(after.st_mode) != 0o700
+):
+    raise RuntimeError("terminal_workspace_reseal_failed")
+transition = {
+    "before": {
+        "st_dev": before.st_dev, "st_ino": before.st_ino,
+        "uid": before.st_uid, "gid": before.st_gid,
+        "mode": f"{stat.S_IMODE(before.st_mode):04o}",
+    },
+    "after": {
+        "st_dev": after.st_dev, "st_ino": after.st_ino,
+        "uid": after.st_uid, "gid": after.st_gid,
+        "mode": f"{stat.S_IMODE(after.st_mode):04o}",
+    },
+}
+print(json.dumps({
+    "schema": "arnold.cloud.zero_recovery_terminal_workspace.v1",
+    "status": "sealed",
+    "path": child,
+    "access_transition_digest": access_digest,
+    "transition": transition,
+    "transition_digest": hashlib.sha256(json.dumps(
+        transition, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest(),
+}, sort_keys=True, separators=(",", ":")))
+""".strip()
 
 _ZERO_RECOVERY_OAUTH_INSTALL_SCRIPT = r"""
 import json, os, stat, sys
@@ -429,6 +567,89 @@ class SshProvider(Provider):
             expected_paths=paths,
         )
 
+    def _zero_recovery_isolated_workspace(self) -> str:
+        configured = self._spec.zero_recovery_workspace_dir
+        if not self._spec.zero_recovery_canary or configured is None:
+            raise CliError(
+                "zero_recovery_canary_invalid",
+                "isolated zero-recovery workspace is not configured",
+            )
+        workspace = validate_workspace_dir(configured)
+        parent = PurePosixPath(validate_workspace_dir(self._ssh.workspace_dir))
+        if PurePosixPath(workspace).parent != parent:
+            raise CliError(
+                "zero_recovery_canary_invalid",
+                "isolated workspace is not an exact child of the preserved workspace",
+            )
+        return workspace
+
+    def _prepare_zero_recovery_isolated_workspace(self) -> dict[str, Any]:
+        parent = validate_workspace_dir(self._ssh.workspace_dir)
+        child = self._zero_recovery_isolated_workspace()
+        result = self._remote_run_compatible(
+            shlex.join(
+                ["python3", "-c", _ZERO_RECOVERY_WORKSPACE_PREP_SCRIPT, parent, child]
+            ),
+            surface="zero_recovery_isolated_workspace_create",
+        )
+        lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+        try:
+            payload = json.loads(lines[0]) if len(lines) == 1 else None
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "zero_recovery_workspace_unknown",
+                "isolated workspace receipt was malformed",
+            ) from exc
+        expected = {
+            "schema": "arnold.cloud.zero_recovery_isolated_workspace.v1",
+            "status": "created",
+            "parent": parent,
+            "parent_realpath": parent,
+            "bind_source": child,
+            "bind_source_realpath": child,
+            "bind_destination": "/workspace",
+            "created_empty": True,
+            "never_reused": True,
+        }
+        initial = payload.get("initial_custody") if isinstance(payload, dict) else None
+        runtime_access = payload.get("runtime_access") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or {key: payload.get(key) for key in expected} != expected
+            or set(payload)
+            != {*expected, "initial_custody", "runtime_access", "transition_digest"}
+            or not isinstance(initial, dict)
+            or set(initial) != {"mode", "uid", "gid", "st_dev", "st_ino", "empty"}
+            or initial.get("mode") != "0700"
+            or initial.get("uid") != 0
+            or initial.get("gid") != 0
+            or initial.get("empty") is not True
+            or not isinstance(runtime_access, dict)
+            or set(runtime_access) != {"mode", "uid", "gid", "st_dev", "st_ino"}
+            or runtime_access.get("mode") != "0750"
+            or runtime_access.get("uid") != 0
+            or runtime_access.get("gid") != 65532
+            or type(initial.get("st_dev")) is not int
+            or type(initial.get("st_ino")) is not int
+            or initial["st_ino"] <= 0
+            or runtime_access.get("st_dev") != initial.get("st_dev")
+            or runtime_access.get("st_ino") != initial.get("st_ino")
+            or payload.get("transition_digest")
+            != hashlib.sha256(
+                json.dumps(
+                    {"initial_custody": initial, "runtime_access": runtime_access},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+        ):
+            raise CliError(
+                "zero_recovery_workspace_unknown",
+                "isolated workspace receipt did not bind the exact target",
+            )
+        self._zero_recovery_workspace_creation_receipt = payload
+        return payload
+
     def _zero_recovery_target(self) -> dict[str, Any]:
         return {
             "host": self._validated_host,
@@ -437,6 +658,8 @@ class SshProvider(Provider):
             "container": self._spec.zero_recovery_predecessor_container,
             "canary_container": self._ssh.container,
             "workspace": validate_workspace_dir(self._ssh.workspace_dir),
+            "canary_workspace": self._zero_recovery_isolated_workspace(),
+            "container_workspace": "/workspace",
             "capacity_scopes": [
                 validate_workspace_dir(self._ssh.workspace_dir),
                 validate_workspace_dir(self._ssh.remote_dir),
@@ -553,25 +776,108 @@ class SshProvider(Provider):
         )
         lines = (result.stdout or "").splitlines()
         try:
-            state, env, cmd, restart = [json.loads(line) for line in lines]
+            (
+                state, env, cmd, restart, mounts, cap_drop, cap_add,
+                security_opt, ipc_mode, tmpfs, pids_limit, memory_limit,
+                memory_swap, port_bindings,
+            ) = [json.loads(line) for line in lines]
         except (ValueError, json.JSONDecodeError) as exc:
             raise CliError(
                 "zero_recovery_canary_unknown", "canary runtime evidence malformed"
             ) from exc
         if (
-            len(lines) != 4
+            len(lines) != 14
             or not isinstance(state, dict)
             or state.get("Running") is not expected_running
             or not isinstance(env, list)
             or "MEGAPLAN_ZERO_RECOVERY_CANARY=1" not in env
             or cmd != ["/usr/local/bin/entrypoint.sh"]
             or restart != {"Name": "no", "MaximumRetryCount": 0}
+            or not isinstance(mounts, list)
+            or any(not isinstance(item, dict) for item in mounts)
+            or len([item for item in mounts if item.get("Type") == "bind"]) != 1
+            or any(
+                not isinstance(item, dict)
+                or item.get("Type") not in {"bind", "tmpfs"}
+                or (
+                    item.get("Type") == "tmpfs"
+                    and item.get("Destination") != "/run/megaplan-zero-recovery"
+                )
+                for item in mounts
+            )
+            or not isinstance(
+                next((item for item in mounts if item.get("Type") == "bind"), None),
+                dict,
+            )
+            or {
+                "Type": next(item for item in mounts if item.get("Type") == "bind").get("Type"),
+                "Source": next(item for item in mounts if item.get("Type") == "bind").get("Source"),
+                "Destination": next(item for item in mounts if item.get("Type") == "bind").get("Destination"),
+                "RW": next(item for item in mounts if item.get("Type") == "bind").get("RW"),
+                "Propagation": next(item for item in mounts if item.get("Type") == "bind").get("Propagation"),
+            }
+            != {
+                "Type": "bind",
+                "Source": self._zero_recovery_isolated_workspace(),
+                "Destination": "/workspace",
+                "RW": True,
+                "Propagation": "rprivate",
+            }
+            or cap_drop != ["ALL"]
+            or cap_add
+            != ["CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"]
+            or security_opt != ["no-new-privileges:true"]
+            or ipc_mode != "none"
+            or tmpfs
+            != {"/run/megaplan-zero-recovery": "rw,noexec,nosuid,nodev,size=256m,mode=0711"}
+            or pids_limit != 256
+            or memory_limit != 4_294_967_296
+            or memory_swap != 4_294_967_296
+            or port_bindings not in ({}, None)
         ):
             raise CliError(
                 "zero_recovery_canary_unknown",
                 "canary runtime flag, entrypoint, lifecycle, or restart policy mismatch",
             )
-        return {"state": state, "env": env, "cmd": cmd, "restart_policy": restart}
+        bind_mount = next(item for item in mounts if item.get("Type") == "bind")
+        normalized_mounts = [
+            {
+                "type": "bind", "source": bind_mount["Source"],
+                "destination": bind_mount["Destination"], "rw": bind_mount["RW"],
+                "propagation": bind_mount["Propagation"],
+            },
+            {
+                "type": "tmpfs", "source": None,
+                "destination": "/run/megaplan-zero-recovery", "rw": True,
+                "options": "rw,noexec,nosuid,nodev,size=256m,mode=0711",
+            },
+        ]
+        return {
+            "state": state,
+            "env": env,
+            "cmd": cmd,
+            "restart_policy": restart,
+            "workspace_bind": {
+                "type": "bind",
+                "source": bind_mount["Source"],
+                "destination": bind_mount["Destination"],
+                "rw": bind_mount["RW"],
+                "propagation": bind_mount["Propagation"],
+            },
+            "host_bind_count": 1,
+            "mount_inventory_sha256": hashlib.sha256(
+                json.dumps(normalized_mounts, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "runtime_tmpfs": tmpfs,
+            "cap_drop": cap_drop,
+            "cap_add": cap_add,
+            "security_opt": security_opt,
+            "ipc_mode": ipc_mode,
+            "pids_limit": pids_limit,
+            "memory_limit": memory_limit,
+            "memory_swap": memory_swap,
+            "port_bindings": {},
+        }
 
     def run_zero_recovery_canary(
         self,
@@ -649,7 +955,7 @@ class SshProvider(Provider):
                 f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse HEAD)\" = {source_commit}",
                 f"test \"$(git -C {shlex.quote(str(workspace))} rev-parse HEAD^{{tree}})\" = {source_tree}",
                 f"cd {shlex.quote(str(workspace))}",
-                f"MEGAPLAN_ZERO_RECOVERY_CANARY=1 ZERO_RECOVERY_SOURCE_COMMIT={source_commit} ZERO_RECOVERY_SOURCE_TREE={source_tree} ZERO_RECOVERY_MANIFEST_SHA256_B64={manifest_hashes_b64} PYTHONPATH={shlex.quote(str(workspace))} python3 -P {shlex.quote(str(runner))}",
+                f"MEGAPLAN_ZERO_RECOVERY_CANARY=1 ZERO_RECOVERY_SOURCE_COMMIT={source_commit} ZERO_RECOVERY_SOURCE_TREE={source_tree} ZERO_RECOVERY_MANIFEST_SHA256_B64={manifest_hashes_b64} PYTHONDONTWRITEBYTECODE=1 PYTHONPATH={shlex.quote(str(workspace))} python3 -P {shlex.quote(str(runner))}",
             ]
         )
         self._remote_run_compatible(
@@ -667,6 +973,143 @@ class SshProvider(Provider):
             surface="zero_recovery_finite_canary_run",
         )
         return 0
+
+    def _zero_recovery_workspace_creation_from_runtime(
+        self, runtime_observation: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        env = runtime_observation.get("env")
+        if not isinstance(env, list):
+            raise CliError(
+                "zero_recovery_workspace_unknown", "runtime environment was unavailable"
+            )
+        values: dict[str, str] = {}
+        for key in (
+            "ZERO_RECOVERY_WORKSPACE_DEV",
+            "ZERO_RECOVERY_WORKSPACE_INO",
+            "ZERO_RECOVERY_WORKSPACE_TRANSITION_DIGEST",
+        ):
+            matches = [item.split("=", 1)[1] for item in env if isinstance(item, str) and item.startswith(key + "=")]
+            if len(matches) != 1:
+                raise CliError(
+                    "zero_recovery_workspace_unknown",
+                    "runtime workspace identity was missing or duplicated",
+                )
+            values[key] = matches[0]
+        try:
+            st_dev = int(values["ZERO_RECOVERY_WORKSPACE_DEV"])
+            st_ino = int(values["ZERO_RECOVERY_WORKSPACE_INO"])
+        except ValueError as exc:
+            raise CliError(
+                "zero_recovery_workspace_unknown",
+                "runtime workspace identity was not numeric",
+            ) from exc
+        if st_dev < 0 or st_ino <= 0:
+            raise CliError(
+                "zero_recovery_workspace_unknown",
+                "runtime workspace identity was outside the admitted range",
+            )
+        initial = {
+            "mode": "0700", "uid": 0, "gid": 0,
+            "st_dev": st_dev, "st_ino": st_ino, "empty": True,
+        }
+        runtime_access = {
+            "mode": "0750", "uid": 0, "gid": 65532,
+            "st_dev": st_dev, "st_ino": st_ino,
+        }
+        transition_digest = hashlib.sha256(
+            json.dumps(
+                {"initial_custody": initial, "runtime_access": runtime_access},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if transition_digest != values["ZERO_RECOVERY_WORKSPACE_TRANSITION_DIGEST"]:
+            raise CliError(
+                "zero_recovery_workspace_unknown",
+                "runtime workspace transition binding did not match",
+            )
+        child = self._zero_recovery_isolated_workspace()
+        parent = validate_workspace_dir(self._ssh.workspace_dir)
+        receipt = {
+            "schema": "arnold.cloud.zero_recovery_isolated_workspace.v1",
+            "status": "created",
+            "parent": parent,
+            "parent_realpath": parent,
+            "bind_source": child,
+            "bind_source_realpath": child,
+            "bind_destination": "/workspace",
+            "initial_custody": initial,
+            "runtime_access": runtime_access,
+            "transition_digest": transition_digest,
+            "created_empty": True,
+            "never_reused": True,
+        }
+        self._zero_recovery_workspace_creation_receipt = receipt
+        return receipt
+
+    def _reseal_zero_recovery_workspace(
+        self, runtime_observation: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        creation = self._zero_recovery_workspace_creation_from_runtime(
+            runtime_observation
+        )
+        runtime_access = creation["runtime_access"]
+        child = self._zero_recovery_isolated_workspace()
+        result = self._remote_run_compatible(
+            shlex.join(
+                [
+                    "python3", "-c", _ZERO_RECOVERY_WORKSPACE_RESEAL_SCRIPT,
+                    child,
+                    str(runtime_access["st_dev"]),
+                    str(runtime_access["st_ino"]),
+                    creation["transition_digest"],
+                ]
+            ),
+            surface="zero_recovery_terminal_workspace_reseal",
+        )
+        lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+        try:
+            payload = json.loads(lines[0]) if len(lines) == 1 else None
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "zero_recovery_workspace_unknown", "terminal workspace receipt malformed"
+            ) from exc
+        transition = payload.get("transition") if isinstance(payload, dict) else None
+        before = transition.get("before") if isinstance(transition, dict) else None
+        after = transition.get("after") if isinstance(transition, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or set(payload)
+            != {"schema", "status", "path", "access_transition_digest", "transition", "transition_digest"}
+            or payload.get("schema")
+            != "arnold.cloud.zero_recovery_terminal_workspace.v1"
+            or payload.get("status") != "sealed"
+            or payload.get("path") != child
+            or payload.get("access_transition_digest")
+            != creation["transition_digest"]
+            or not isinstance(before, dict)
+            or not isinstance(after, dict)
+            or before.get("st_dev") != runtime_access["st_dev"]
+            or before.get("st_ino") != runtime_access["st_ino"]
+            or after
+            != {
+                "st_dev": runtime_access["st_dev"],
+                "st_ino": runtime_access["st_ino"],
+                "uid": 0,
+                "gid": 0,
+                "mode": "0700",
+            }
+            or payload.get("transition_digest")
+            != hashlib.sha256(
+                json.dumps(transition, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        ):
+            raise CliError(
+                "zero_recovery_workspace_unknown",
+                "terminal workspace receipt did not prove same-inode root custody",
+            )
+        self._zero_recovery_terminal_workspace_receipt = payload
+        return payload
 
     def execute_zero_recovery_canary(
         self,
@@ -709,7 +1152,10 @@ class SshProvider(Provider):
                 ):
                     cleanup_errors.append("observation did not prove exact stopped target")
                 else:
-                    self._observe_zero_recovery_canary_runtime(expected_running=False)
+                    stopped_runtime = self._observe_zero_recovery_canary_runtime(
+                        expected_running=False
+                    )
+                    self._reseal_zero_recovery_workspace(stopped_runtime)
             except BaseException as exc:
                 cleanup_errors.append(f"observation: {type(exc).__name__}")
         if cleanup_errors:
@@ -748,7 +1194,10 @@ class SshProvider(Provider):
                 "zero_recovery_canary_stop_unknown",
                 "status reconciliation did not prove the exact stopped canary",
             )
-        self._observe_zero_recovery_canary_runtime(expected_running=False)
+        stopped_runtime = self._observe_zero_recovery_canary_runtime(
+            expected_running=False
+        )
+        self._reseal_zero_recovery_workspace(stopped_runtime)
         # An already-stopped target may make docker stop nonzero; the exact final
         # stopped observation is authoritative and safe to accept.
         return observation, True
@@ -767,7 +1216,7 @@ class SshProvider(Provider):
                 "canary repo workspace must be below /workspace",
             ) from exc
         host_receipts = (
-            PurePosixPath(self._ssh.workspace_dir)
+            PurePosixPath(self._zero_recovery_isolated_workspace())
             / relative
             / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts"
         )
@@ -828,7 +1277,10 @@ class SshProvider(Provider):
                     "canary_spec_sha256", "launch_manifest_sha256", "state_sha256", "gate_sha256",
                     "dispatch_ledger_sha256", "dispatches", "import_root",
                     "dispatch_integrity", "phase_commands", "phase_receipt_sha256",
-                    "phase_receipts_manifest_sha256", "receipt_digest",
+                    "phase_receipts_manifest_sha256", "repository_integrity",
+                    "privilege_receipt_sha256",
+                    "privilege_receipts_manifest_sha256",
+                    "receipt_digest",
                 }
                 if (
                     not isinstance(receipt, dict)
@@ -874,6 +1326,12 @@ class SshProvider(Provider):
             observation, reconciled_stop = self._reconcile_zero_recovery_canary_stop()
         payload["container_observation"] = observation
         payload["reconciled_stop"] = reconciled_stop
+        payload["terminal_workspace"] = getattr(
+            self, "_zero_recovery_terminal_workspace_receipt", None
+        )
+        payload["workspace_creation"] = getattr(
+            self, "_zero_recovery_workspace_creation_receipt", None
+        )
         return payload
 
     def _remote_run_compatible(
@@ -1087,7 +1545,7 @@ class SshProvider(Provider):
                 == {
                     "status": "present",
                     "type": "bind",
-                    "source": self._ssh.workspace_dir,
+                    "source": self._zero_recovery_isolated_workspace(),
                     "destination": "/workspace",
                     "rw": True,
                 }
@@ -1104,15 +1562,32 @@ class SshProvider(Provider):
         if self._spec.zero_recovery_canary:
             env_lines.append("MEGAPLAN_ZERO_RECOVERY_CANARY=1")
         env_lines.extend(f"{name}={value}" for name, value in secrets.items())
+        workspace_receipt: dict[str, Any] | None = None
         if launch_container:
-            self._remote_run_compatible(
-                "mkdir -p "
-                f"{shlex.quote(self._ssh.remote_dir)} "
-                f"{shlex.quote(self._ssh.workspace_dir)} "
-                f"{shlex.quote(f'{self._ssh.cache_dir}/pip')} "
-                f"{shlex.quote(f'{self._ssh.cache_dir}/npm')}",
-                surface="deploy_prepare",
-            )
+            if self._spec.zero_recovery_canary:
+                self._remote_run_compatible(
+                    f"mkdir -p {shlex.quote(self._ssh.remote_dir)}",
+                    surface="deploy_prepare",
+                )
+                workspace_receipt = self._prepare_zero_recovery_isolated_workspace()
+                runtime_access = workspace_receipt["runtime_access"]
+                env_lines.extend(
+                    [
+                        f"ZERO_RECOVERY_WORKSPACE_DEV={runtime_access['st_dev']}",
+                        f"ZERO_RECOVERY_WORKSPACE_INO={runtime_access['st_ino']}",
+                        "ZERO_RECOVERY_WORKSPACE_TRANSITION_DIGEST="
+                        f"{workspace_receipt['transition_digest']}",
+                    ]
+                )
+            else:
+                self._remote_run_compatible(
+                    "mkdir -p "
+                    f"{shlex.quote(self._ssh.remote_dir)} "
+                    f"{shlex.quote(self._ssh.workspace_dir)} "
+                    f"{shlex.quote(f'{self._ssh.cache_dir}/pip')} "
+                    f"{shlex.quote(f'{self._ssh.cache_dir}/npm')}",
+                    surface="deploy_prepare",
+                )
             self._remote_run_compatible(
                 f"cat > {shlex.quote(env_path)}",
                 input="\n".join(env_lines) + "\n",
@@ -1124,6 +1599,19 @@ class SshProvider(Provider):
                 surface="deploy_remove_existing",
             )
         if launch_container:
+            workspace_mount = (
+                self._zero_recovery_isolated_workspace()
+                if self._spec.zero_recovery_canary
+                else self._ssh.workspace_dir
+            )
+            cache_mounts = (
+                []
+                if self._spec.zero_recovery_canary
+                else [
+                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/pip')}:/root/.cache/pip",
+                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/npm')}:/root/.npm",
+                ]
+            )
             self._remote_run_compatible(
                 " ".join(
                 [
@@ -1137,16 +1625,40 @@ class SshProvider(Provider):
                         if self._spec.zero_recovery_canary
                         else []
                     ),
+                    *(
+                        [
+                            "--cap-drop ALL",
+                            "--cap-add CHOWN",
+                            "--cap-add DAC_READ_SEARCH",
+                            "--cap-add KILL",
+                            "--cap-add SETGID",
+                            "--cap-add SETPCAP",
+                            "--cap-add SETUID",
+                            "--security-opt no-new-privileges:true",
+                            "--ipc none",
+                            "--pids-limit 256",
+                            "--memory 4g",
+                            "--memory-swap 4g",
+                            "--tmpfs /run/megaplan-zero-recovery:rw,noexec,nosuid,nodev,size=256m,mode=0711",
+                        ]
+                        if self._spec.zero_recovery_canary
+                        else []
+                    ),
                     f"--env-file {shlex.quote(env_path)}",
-                    f"-p {self._spec.resources.port}:{self._spec.resources.port}",
-                    f"-v {shlex.quote(self._ssh.workspace_dir)}:/workspace",
-                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/pip')}:/root/.cache/pip",
-                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/npm')}:/root/.npm",
+                    *(
+                        []
+                        if self._spec.zero_recovery_canary
+                        else [f"-p {self._spec.resources.port}:{self._spec.resources.port}"]
+                    ),
+                    f"-v {shlex.quote(workspace_mount)}:/workspace",
+                    *cache_mounts,
                     shlex.quote(self._ssh.container),
                 ]
                 ),
                 surface="deploy_run",
             )
+            if self._spec.zero_recovery_canary:
+                self._observe_zero_recovery_canary_runtime()
         if transaction is not None:
             verify_fence = self._remote_run_compatible(
                 fence_command(

@@ -126,6 +126,7 @@ class CloudSpec:
     chain_session_explicit: bool = False
     zero_recovery_canary: bool = False
     zero_recovery_predecessor_container: str | None = None
+    zero_recovery_workspace_dir: str | None = None
 
 
 def apply_repo_overrides(
@@ -434,6 +435,20 @@ def load_spec(path: Path) -> CloudSpec:
         raise _invalid(
             "`zero_recovery_predecessor_container` is only valid for a zero-recovery canary"
         )
+    zero_workspace_raw = raw.get("zero_recovery_workspace_dir")
+    zero_recovery_workspace_dir = (
+        _absolute_posix(zero_workspace_raw, "zero_recovery_workspace_dir")
+        if zero_workspace_raw is not None
+        else None
+    )
+    if zero_recovery_canary and zero_recovery_workspace_dir is None:
+        raise _invalid(
+            "`zero_recovery_canary: true` requires `zero_recovery_workspace_dir`"
+        )
+    if not zero_recovery_canary and zero_recovery_workspace_dir is not None:
+        raise _invalid(
+            "`zero_recovery_workspace_dir` is only valid for a zero-recovery canary"
+        )
 
     agents = _agents(raw.get("agents"))
 
@@ -520,6 +535,22 @@ def load_spec(path: Path) -> CloudSpec:
             raise _invalid(
                 "zero-recovery predecessor must be a safe container name distinct from ssh.container"
             )
+        shared_workspace = PurePosixPath(ssh.workspace_dir)
+        isolated_workspace = PurePosixPath(zero_recovery_workspace_dir or "/")
+        if (
+            isolated_workspace.parent != shared_workspace
+            or isolated_workspace.name in {"", ".", ".."}
+            or not _SSH_ALIAS_RE.fullmatch(isolated_workspace.name)
+        ):
+            raise _invalid(
+                "zero_recovery_workspace_dir must be one safe direct child of ssh.workspace_dir"
+            )
+        if repo.workspace != "/workspace/Arnold":
+            raise _invalid(
+                "zero-recovery repo.workspace must be exactly /workspace/Arnold"
+            )
+        if resources.volume is not None:
+            raise _invalid("zero-recovery resources.volume must be omitted")
 
     auto_spec: AutoSpec | None = None
     if mode == "auto":
@@ -584,4 +615,5 @@ def load_spec(path: Path) -> CloudSpec:
         chain_session_explicit=chain_session_explicit,
         zero_recovery_canary=zero_recovery_canary,
         zero_recovery_predecessor_container=zero_recovery_predecessor_container,
+        zero_recovery_workspace_dir=zero_recovery_workspace_dir,
     )

@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -100,6 +101,845 @@ _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_WORKER_CHANNEL = "codex_cli"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 _ZERO_RECOVERY_MODEL_PHASES = frozenset({"plan", "critique", "gate", "finalize"})
+_ZERO_RECOVERY_MODEL_UID = 65532
+_ZERO_RECOVERY_MODEL_GID = 65532
+_ZERO_RECOVERY_RUNTIME_ROOT = Path("/run/megaplan-zero-recovery")
+_ZERO_RECOVERY_MODEL_PATH = "/opt/zero-recovery-node/bin:/usr/local/bin:/usr/bin:/bin"
+
+
+def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
+    source_stat = os.lstat(source)
+    if (
+        not stat.S_ISREG(source_stat.st_mode)
+        or source_stat.st_nlink != 1
+        or source_stat.st_uid != 0
+        or source_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            f"canonical model input is not root-owned immutable data: {source}",
+        )
+    data = source.read_bytes()
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        os.fchown(fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+        os.fchmod(fd, 0o600)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _prepare_zero_recovery_model_runtime(
+    *, step: str, plan_dir: Path, output_path: Path
+) -> dict[str, Any] | None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    if os.geteuid() != 0:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary trusted harness must run as root",
+        )
+    preexisting = subprocess.run(
+        ["/usr/bin/pgrep", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
+        env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
+    )
+    if preexisting.returncode != 1:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite-model UID was not process-empty before dispatch",
+        )
+    for global_tmp in (Path("/tmp"), Path("/var/tmp"), Path("/dev/shm")):
+        global_tmp_stat = os.lstat(global_tmp)
+        if (
+            not stat.S_ISDIR(global_tmp_stat.st_mode)
+            or stat.S_ISLNK(global_tmp_stat.st_mode)
+            or global_tmp_stat.st_uid != 0
+            or global_tmp_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"global scratch is writable by the finite-model UID: {global_tmp}",
+            )
+    plan_stat = os.lstat(plan_dir)
+    if (
+        not stat.S_ISDIR(plan_stat.st_mode)
+        or stat.S_ISLNK(plan_stat.st_mode)
+        or plan_stat.st_uid != 0
+        or plan_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "plan output parent must be a root-owned non-writable directory",
+        )
+    runtime_root_stat = os.lstat(_ZERO_RECOVERY_RUNTIME_ROOT)
+    if (
+        not stat.S_ISDIR(runtime_root_stat.st_mode)
+        or stat.S_ISLNK(runtime_root_stat.st_mode)
+        or runtime_root_stat.st_uid != 0
+        or stat.S_IMODE(runtime_root_stat.st_mode) != 0o711
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model runtime root is not the admitted root-owned 0711 directory",
+        )
+    runtime = _ZERO_RECOVERY_RUNTIME_ROOT / f"{step}-{uuid.uuid4().hex}"
+    output_created = False
+    try:
+        os.mkdir(runtime, 0o700)
+        home = runtime / "home"
+        codex_home = home / ".codex"
+        tmp = runtime / "tmp"
+        for directory in (
+            home,
+            codex_home,
+            tmp,
+            runtime / "xdg-cache",
+            runtime / "xdg-config",
+        ):
+            os.mkdir(directory, 0o700)
+            os.chown(directory, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+        canonical_codex = Path("/root/.codex")
+        _zero_recovery_copy_private_file(
+            canonical_codex / "auth.json", codex_home / "auth.json"
+        )
+        _zero_recovery_copy_private_file(
+            canonical_codex / "config.toml", codex_home / "config.toml"
+        )
+        output_fd = os.open(
+            output_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        output_created = True
+        try:
+            os.fchown(output_fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+            os.fchmod(output_fd, 0o600)
+            os.fsync(output_fd)
+            output_stat = os.fstat(output_fd)
+        finally:
+            os.close(output_fd)
+        os.chown(runtime, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+        probe_env = _zero_recovery_model_env(
+            {
+                "runtime": runtime,
+                "home": home,
+                "codex_home": codex_home,
+                "tmp": tmp,
+            },
+            turn_id=f"privilege_probe_{step}",
+        )
+        probe = subprocess.run(
+            _zero_recovery_model_command(["/bin/cat", "/proc/self/status"]),
+            cwd=plan_dir,
+            env=probe_env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        status_fields: dict[str, str] = {}
+        for line in probe.stdout.splitlines():
+            key, separator, value = line.partition(":")
+            if separator:
+                status_fields[key] = value.strip()
+        privilege_observation = {
+            key: status_fields.get(key)
+            for key in (
+                "Uid", "Gid", "Groups", "NoNewPrivs", "CapInh", "CapPrm",
+                "CapEff", "CapBnd", "CapAmb",
+            )
+        }
+        zero_cap = "0000000000000000"
+        if (
+            probe.returncode != 0
+            or privilege_observation["Uid"] != "65532\t65532\t65532\t65532"
+            or privilege_observation["Gid"] != "65532\t65532\t65532\t65532"
+            or privilege_observation["Groups"] not in {"", None}
+            or privilege_observation["NoNewPrivs"] != "1"
+            or any(
+                privilege_observation[key] != zero_cap
+                for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
+            )
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite-model setpriv probe did not prove zero capabilities and NNP",
+            )
+        post_probe = subprocess.run(
+            ["/usr/bin/pgrep", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
+            env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
+        )
+        if post_probe.returncode != 1:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite-model privilege probe left a process",
+            )
+        return {
+            "step": step,
+            "runtime": runtime,
+            "home": home,
+            "codex_home": codex_home,
+            "tmp": tmp,
+            "output_dev": output_stat.st_dev,
+            "output_ino": output_stat.st_ino,
+            "privilege_observation": privilege_observation,
+        }
+    except BaseException:
+        if output_created:
+            try:
+                os.chown(output_path, 0, 0, follow_symlinks=False)
+                os.chmod(output_path, 0o600, follow_symlinks=False)
+            except OSError:
+                pass
+        if runtime.exists():
+            try:
+                _reclaim_zero_recovery_tree(runtime)
+            except BaseException:
+                pass
+        raise
+
+
+def _reclaim_zero_recovery_tree(path: Path) -> None:
+    current = os.lstat(path)
+    if stat.S_ISLNK(current.st_mode) or (
+        not stat.S_ISDIR(current.st_mode) and not stat.S_ISREG(current.st_mode)
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            f"model runtime contains a forbidden filesystem object: {path}",
+        )
+    if stat.S_ISREG(current.st_mode) and current.st_nlink != 1:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            f"model runtime contains a hard-linked file: {path}",
+        )
+    if stat.S_ISDIR(current.st_mode):
+        with os.scandir(path) as entries:
+            children = [Path(entry.path) for entry in entries]
+        for child in children:
+            _reclaim_zero_recovery_tree(child)
+        os.chown(path, 0, 0, follow_symlinks=False)
+        os.chmod(path, 0o700, follow_symlinks=False)
+    else:
+        os.chown(path, 0, 0, follow_symlinks=False)
+        os.chmod(path, 0o600, follow_symlinks=False)
+
+
+def _zero_recovery_runtime_usage(path: Path) -> tuple[int, int]:
+    files = 0
+    total_bytes = 0
+
+    def visit(candidate: Path) -> None:
+        nonlocal files, total_bytes
+        item_stat = os.lstat(candidate)
+        if stat.S_ISDIR(item_stat.st_mode) and not stat.S_ISLNK(item_stat.st_mode):
+            with os.scandir(candidate) as entries:
+                children = [Path(entry.path) for entry in entries]
+            for child in children:
+                visit(child)
+            return
+        if not stat.S_ISREG(item_stat.st_mode) or item_stat.st_nlink != 1:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite-model runtime contains a special or linked object",
+            )
+        files += 1
+        total_bytes += item_stat.st_size
+
+    visit(path)
+    return files, total_bytes
+
+
+def _write_zero_recovery_privilege_receipt(
+    runtime: dict[str, Any], *, output_path: Path, runtime_files: int, runtime_bytes: int
+) -> None:
+    output_stat = os.lstat(output_path)
+    output_digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+    runtime_stat = os.lstat(runtime["runtime"])
+    payload: dict[str, Any] = {
+        "schema": "arnold.megaplan.zero_recovery_privilege_receipt.v1",
+        "status": "sealed",
+        "phase": runtime["step"],
+        "model_uid": _ZERO_RECOVERY_MODEL_UID,
+        "model_gid": _ZERO_RECOVERY_MODEL_GID,
+        "uid_processes_before": 0,
+        "uid_processes_after": 0,
+        "privilege_observation": runtime["privilege_observation"],
+        "command_prefix": _zero_recovery_model_command([]),
+        "environment_keys": sorted(
+            _zero_recovery_model_env(runtime, turn_id="receipt").keys()
+        ),
+        "writable_roots": [output_path.name, str(runtime["runtime"])],
+        "global_scratch": {
+            "/tmp": "root_nonwritable",
+            "/var/tmp": "root_nonwritable",
+            "/dev/shm": "root_nonwritable",
+        },
+        "limits": {
+            "nproc": 64,
+            "fsize_bytes": 67_108_864,
+            "runtime_max_files": 4096,
+            "runtime_max_bytes": 134_217_728,
+            "output_max_bytes": 16_777_216,
+        },
+        "output": {
+            "path": output_path.name,
+            "st_dev": output_stat.st_dev,
+            "st_ino": output_stat.st_ino,
+            "size": output_stat.st_size,
+            "sha256": output_digest,
+            "sealed_uid": output_stat.st_uid,
+            "sealed_gid": output_stat.st_gid,
+            "mode": f"{stat.S_IMODE(output_stat.st_mode):04o}",
+            "nlink": output_stat.st_nlink,
+        },
+        "runtime": {
+            "path": str(runtime["runtime"]),
+            "st_dev": runtime_stat.st_dev,
+            "st_ino": runtime_stat.st_ino,
+            "files": runtime_files,
+            "bytes": runtime_bytes,
+            "sealed_uid": runtime_stat.st_uid,
+            "sealed_gid": runtime_stat.st_gid,
+            "mode": f"{stat.S_IMODE(runtime_stat.st_mode):04o}",
+        },
+        "recorded_at": now_utc(),
+    }
+    payload["receipt_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt_path = output_path.parent / (
+        f".zero-recovery-{runtime['step']}-privilege-receipt.json"
+    )
+    fd = os.open(
+        receipt_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    runtime["privilege_receipt_path"] = receipt_path
+    runtime["privilege_receipt_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
+    ).hexdigest()
+
+
+def _finish_zero_recovery_model_runtime(
+    runtime: dict[str, Any] | None, *, output_path: Path
+) -> None:
+    if runtime is None:
+        return
+    killed = subprocess.run(
+        ["/usr/bin/pkill", "-KILL", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
+        env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
+    )
+    if killed.returncode not in {0, 1}:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "could not terminate finite-model UID processes",
+        )
+    remaining: subprocess.CompletedProcess[bytes] | None = None
+    for _attempt in range(20):
+        remaining = subprocess.run(
+            ["/usr/bin/pgrep", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
+            env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
+        )
+        if remaining.returncode == 1:
+            break
+        time.sleep(0.01)
+    if remaining is None or remaining.returncode != 1:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite-model UID retained a process after provider return",
+        )
+    output_stat = os.lstat(output_path)
+    if (
+        not stat.S_ISREG(output_stat.st_mode)
+        or output_stat.st_nlink != 1
+        or output_stat.st_dev != runtime["output_dev"]
+        or output_stat.st_ino != runtime["output_ino"]
+        or output_stat.st_uid != _ZERO_RECOVERY_MODEL_UID
+        or output_stat.st_gid != _ZERO_RECOVERY_MODEL_GID
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model replaced or aliased its exact precreated output",
+        )
+    if output_stat.st_size > 16_777_216:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model output exceeded the admitted size bound",
+        )
+    runtime_files, runtime_bytes = _zero_recovery_runtime_usage(runtime["runtime"])
+    if runtime_files > 4096 or runtime_bytes > 134_217_728:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model runtime exceeded admitted file or byte bounds",
+        )
+    os.chown(output_path, 0, 0, follow_symlinks=False)
+    os.chmod(output_path, 0o600, follow_symlinks=False)
+    _reclaim_zero_recovery_tree(runtime["runtime"])
+    _write_zero_recovery_privilege_receipt(
+        runtime,
+        output_path=output_path,
+        runtime_files=runtime_files,
+        runtime_bytes=runtime_bytes,
+    )
+
+
+def _zero_recovery_model_command(command: list[str]) -> list[str]:
+    return [
+        "/usr/bin/setpriv",
+        f"--reuid={_ZERO_RECOVERY_MODEL_UID}",
+        f"--regid={_ZERO_RECOVERY_MODEL_GID}",
+        "--clear-groups",
+        "--no-new-privs",
+        "--bounding-set=-all",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--",
+        "/usr/bin/prlimit",
+        "--nproc=64",
+        "--fsize=67108864",
+        "--core=0",
+        "--",
+        *command,
+    ]
+
+
+def _zero_recovery_model_env(
+    runtime: dict[str, Any], *, turn_id: str
+) -> dict[str, str]:
+    return {
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "HOME": str(runtime["home"]),
+            "CODEX_HOME": str(runtime["codex_home"]),
+            "TMPDIR": str(runtime["tmp"]),
+            "XDG_CACHE_HOME": str(runtime["runtime"] / "xdg-cache"),
+            "XDG_CONFIG_HOME": str(runtime["runtime"] / "xdg-config"),
+            "PATH": _ZERO_RECOVERY_MODEL_PATH,
+            "USER": "finite-model",
+            "LOGNAME": "finite-model",
+            "MEGAPLAN_TURN_ID": turn_id,
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+
+
+def _zero_recovery_file_record(path: Path, *, trusted_uid: int) -> dict[str, Any]:
+    item_stat = os.lstat(path)
+    if item_stat.st_uid != trusted_uid or (
+        not stat.S_ISLNK(item_stat.st_mode) and item_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            f"source object is not trusted-owner non-writable: {path}",
+        )
+    if stat.S_ISLNK(item_stat.st_mode):
+        target = os.readlink(path)
+        return {
+            "kind": "symlink", "mode": stat.S_IMODE(item_stat.st_mode),
+            "uid": item_stat.st_uid, "gid": item_stat.st_gid,
+            "sha256": hashlib.sha256(target.encode()).hexdigest(),
+        }
+    if not stat.S_ISREG(item_stat.st_mode) or item_stat.st_nlink != 1:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            f"source object is not a single-link regular file: {path}",
+        )
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (item_stat.st_dev, item_stat.st_ino):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied", "source inode raced"
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+    finally:
+        os.close(fd)
+    return {
+        "kind": "file", "mode": stat.S_IMODE(item_stat.st_mode),
+        "uid": item_stat.st_uid, "gid": item_stat.st_gid,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _zero_recovery_git_metadata(root: Path, *, trusted_uid: int) -> dict[str, Any]:
+    git_dir = root / ".git"
+    git_stat = os.lstat(git_dir)
+    if (
+        not stat.S_ISDIR(git_stat.st_mode)
+        or stat.S_ISLNK(git_stat.st_mode)
+        or git_stat.st_uid != trusted_uid
+        or git_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied", ".git custody is unsafe"
+        )
+    records: dict[str, Any] = {}
+
+    def visit(path: Path, relative: str) -> None:
+        item_stat = os.lstat(path)
+        if item_stat.st_uid != trusted_uid or item_stat.st_mode & 0o022:
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                f"Git control metadata is writable: .git/{relative}",
+            )
+        if stat.S_ISDIR(item_stat.st_mode):
+            records[relative] = {
+                "kind": "dir", "mode": stat.S_IMODE(item_stat.st_mode),
+                "uid": item_stat.st_uid, "gid": item_stat.st_gid,
+            }
+            with os.scandir(path) as entries:
+                children = sorted(entries, key=lambda entry: entry.name)
+            for entry in children:
+                visit(Path(entry.path), f"{relative}/{entry.name}" if relative else entry.name)
+            return
+        records[relative] = _zero_recovery_file_record(
+            path, trusted_uid=trusted_uid
+        )
+
+    for name in (
+        "HEAD", "config", "config.worktree", "index", "packed-refs",
+        "refs", "hooks", "info", "shallow", "commondir", "gitdir", "modules",
+    ):
+        candidate = git_dir / name
+        try:
+            os.lstat(candidate)
+        except FileNotFoundError:
+            continue
+        visit(candidate, name)
+    return records
+
+
+def _zero_recovery_direct_source_manifest(
+    root: Path,
+    plan_dir: Path,
+    *,
+    tracked_index: list[dict[str, str]],
+    head: str,
+    tree: str,
+) -> dict[str, Any]:
+    trusted_uid = os.geteuid()
+    root_stat = os.lstat(root)
+    if (
+        not stat.S_ISDIR(root_stat.st_mode)
+        or stat.S_ISLNK(root_stat.st_mode)
+        or root_stat.st_uid != trusted_uid
+        or root_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied", "checkout root custody is unsafe"
+        )
+    tracked_paths = {entry["path"] for entry in tracked_index}
+    tracked_parents = {
+        parent.as_posix()
+        for value in tracked_paths
+        for parent in Path(value).parents
+        if parent.as_posix() != "."
+    }
+    plan_relative = plan_dir.absolute().relative_to(root.absolute()).as_posix()
+    allowed = (
+        plan_relative,
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
+    )
+    allowed_ancestors = {
+        parent.as_posix()
+        for value in allowed
+        for parent in Path(value).parents
+        if parent.as_posix() != "."
+    }
+    tracked: dict[str, Any] = {}
+    for entry in tracked_index:
+        relative = entry["path"]
+        tracked[relative] = _zero_recovery_file_record(
+            root / relative, trusted_uid=trusted_uid
+        )
+        tracked[relative]["git_mode"] = entry["git_mode"]
+        tracked[relative]["git_object"] = entry["git_object"]
+    runtime_delta: list[dict[str, Any]] = []
+
+    def visit(directory: Path, prefix: str = "") -> None:
+        directory_stat = os.lstat(directory)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or stat.S_ISLNK(directory_stat.st_mode)
+            or directory_stat.st_uid != trusted_uid
+            or directory_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                f"source directory custody is unsafe: {prefix or '.'}",
+            )
+        with os.scandir(directory) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for child in children:
+            relative = f"{prefix}/{child.name}" if prefix else child.name
+            if relative == ".git":
+                continue
+            item_stat = os.lstat(child.path)
+            if stat.S_ISDIR(item_stat.st_mode) and not stat.S_ISLNK(item_stat.st_mode):
+                if (
+                    relative not in tracked_parents
+                    and relative not in allowed_ancestors
+                    and not any(
+                        relative == root_value or relative.startswith(root_value + "/")
+                        for root_value in allowed
+                    )
+                ):
+                    raise CliError(
+                        "zero_recovery_worker_mutation_denied",
+                        f"forbidden untracked directory: {relative}",
+                    )
+                visit(Path(child.path), relative)
+                continue
+            if relative in tracked_paths:
+                continue
+            if not any(
+                relative == root_value or relative.startswith(root_value + "/")
+                for root_value in allowed
+            ):
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    f"forbidden untracked path: {relative}",
+                )
+            record = _zero_recovery_file_record(
+                Path(child.path), trusted_uid=trusted_uid
+            )
+            runtime_delta.append({"path": relative, **record})
+
+    visit(root)
+    git_metadata = _zero_recovery_git_metadata(root, trusted_uid=trusted_uid)
+    return {
+        "head": head,
+        "tree": tree,
+        "tracked_index": tracked_index,
+        "tracked": tracked,
+        "git_metadata": git_metadata,
+        "runtime_delta": runtime_delta,
+    }
+
+
+def _zero_recovery_source_identity(
+    root: Path, plan_dir: Path
+) -> dict[str, Any] | None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    git_env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+    }
+
+    def output(argv: list[str]) -> str:
+        result = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", *argv],
+            cwd=root, env=git_env, capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+
+    head = output(["rev-parse", "HEAD"])
+    tree = output(["rev-parse", "HEAD^{tree}"])
+    for argv in (
+        ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "diff", "--quiet", "HEAD", "--"],
+        ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "diff", "--cached", "--quiet", "HEAD", "--"],
+    ):
+        if subprocess.run(argv, cwd=root, env=git_env, check=False).returncode != 0:
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "model altered tracked source or index state",
+            )
+    staged = subprocess.run(
+        [
+            "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "ls-files", "--stage", "-z",
+        ],
+        cwd=root, env=git_env, capture_output=True, check=True,
+    ).stdout
+    tracked_index: list[dict[str, str]] = []
+    for raw_entry in staged.split(b"\0"):
+        if not raw_entry:
+            continue
+        metadata, raw_path = raw_entry.split(b"\t", 1)
+        git_mode, git_object, stage = metadata.decode("ascii").split(" ")
+        relative = raw_path.decode("utf-8", errors="strict")
+        if stage != "0" or Path(relative).as_posix() != relative or ".." in Path(relative).parts:
+            raise CliError(
+                "zero_recovery_worker_mutation_denied", "invalid tracked index entry"
+            )
+        tracked_index.append(
+            {"path": relative, "git_mode": git_mode, "git_object": git_object}
+        )
+    return _zero_recovery_direct_source_manifest(
+        root, plan_dir, tracked_index=tracked_index, head=head, tree=tree
+    )
+
+
+def _assert_zero_recovery_source_unchanged(
+    root: Path, plan_dir: Path, before: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if before is None:
+        return
+    after = _zero_recovery_direct_source_manifest(
+        root,
+        plan_dir,
+        tracked_index=before["tracked_index"],
+        head=before["head"],
+        tree=before["tree"],
+    )
+    if (
+        after["tracked"] != before["tracked"]
+        or after["git_metadata"] != before["git_metadata"]
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "model changed admitted HEAD or tree identity",
+        )
+    return after
+
+
+def _zero_recovery_plan_snapshot(
+    root: Path,
+    plan_dir: Path,
+    *,
+    output_path: Path,
+) -> dict[str, str] | None:
+    """Hash every plan artifact the finite-model process is forbidden to alter."""
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    plan_root = plan_dir.resolve()
+    output = output_path.absolute()
+    privilege_receipt = (
+        output.parent
+        / output.name.replace("-worker-output.json", "-privilege-receipt.json")
+    )
+    if plan_dir.absolute() != plan_root or output.parent != plan_root:
+        raise CliError(
+            "zero_recovery_worker_output_invalid",
+            "finite canary worker output parent must be the exact plan directory",
+        )
+    snapshot: dict[str, str] = {}
+    receipt_dir = (
+        root
+        / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts"
+    )
+    trusted_uid = os.geteuid()
+    for prefix, boundary in (("plan", plan_dir), ("receipts", receipt_dir)):
+        boundary_stat = os.lstat(boundary)
+        if (
+            not stat.S_ISDIR(boundary_stat.st_mode)
+            or stat.S_ISLNK(boundary_stat.st_mode)
+            or boundary_stat.st_uid != trusted_uid
+            or boundary_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                f"{prefix} boundary is not trusted-owner non-writable",
+            )
+        for candidate in boundary.rglob("*"):
+            candidate_stat = os.lstat(candidate)
+            if (
+                candidate_stat.st_uid != trusted_uid
+                or (
+                    not stat.S_ISLNK(candidate_stat.st_mode)
+                    and candidate_stat.st_mode & 0o022
+                )
+            ):
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    f"{prefix} artifact permissions are unsafe: {candidate.name}",
+                )
+            if stat.S_ISDIR(candidate_stat.st_mode) and not stat.S_ISLNK(candidate_stat.st_mode):
+                continue
+            if prefix == "plan" and candidate.absolute() in {output, privilege_receipt}:
+                continue
+            relative = candidate.relative_to(boundary).as_posix()
+            if stat.S_ISLNK(candidate_stat.st_mode):
+                data = os.readlink(candidate).encode()
+            elif stat.S_ISREG(candidate_stat.st_mode) and candidate_stat.st_nlink == 1:
+                data = candidate.read_bytes()
+            else:
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    f"unsupported {prefix} artifact at worker boundary: {relative}",
+                )
+            snapshot[f"{prefix}/{relative}"] = hashlib.sha256(data).hexdigest()
+    return snapshot
+
+
+def _assert_zero_recovery_plan_unchanged(
+    root: Path,
+    plan_dir: Path,
+    *,
+    output_path: Path,
+    before: dict[str, str] | None,
+) -> None:
+    if before is None:
+        return
+    try:
+        output_stat = os.lstat(output_path)
+    except FileNotFoundError:
+        output_stat = None
+    if output_stat is not None and (
+        not stat.S_ISREG(output_stat.st_mode) or output_stat.st_nlink != 1
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "model output path is not a single-link no-follow regular file",
+        )
+    after = _zero_recovery_plan_snapshot(
+        root, plan_dir, output_path=output_path
+    )
+    if after != before:
+        changed = sorted(set(before) ^ set(after or {}))
+        for path in sorted(set(before) & set(after or {})):
+            if before[path] != (after or {})[path]:
+                changed.append(path)
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "model altered forbidden plan artifacts: " + ", ".join(changed[:8]),
+        )
+
+
+def _verify_zero_recovery_worker_boundaries(
+    *,
+    root: Path,
+    plan_dir: Path,
+    output_path: Path,
+    runtime: dict[str, Any] | None,
+    source_before: dict[str, Any] | None,
+    plan_before: dict[str, str] | None,
+) -> None:
+    errors: list[str] = []
+    for check in (
+        lambda: _finish_zero_recovery_model_runtime(runtime, output_path=output_path),
+        lambda: _assert_zero_recovery_source_unchanged(
+            root, plan_dir, source_before
+        ),
+        lambda: _assert_zero_recovery_plan_unchanged(
+            root, plan_dir, output_path=output_path, before=plan_before
+        ),
+    ):
+        try:
+            check()
+        except BaseException as exc:
+            errors.append(f"{type(exc).__name__}:{str(exc)}")
+    if errors:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "finite model boundary failed: " + " | ".join(errors),
+        )
 
 
 def _record_zero_recovery_dispatch(
@@ -175,13 +1015,21 @@ def _record_zero_recovery_dispatch_terminal(
         return
     actual_model = getattr(worker, "model_actual", None)
     model_evidence = getattr(worker, "model_evidence", None)
+    privilege_receipt_path = getattr(worker, "privilege_receipt_path", None)
+    privilege_receipt_sha256 = getattr(worker, "privilege_receipt_sha256", None)
+    rollout_path = getattr(worker, "rollout_path", None)
+    rollout_sha256 = getattr(worker, "rollout_sha256", None)
     if (
         actual_model != start["selected_model"]
-        or model_evidence != "rollout_turn_context"
+        or model_evidence != "codex_cli_turn_context"
+        or not isinstance(privilege_receipt_path, str)
+        or not isinstance(privilege_receipt_sha256, str)
+        or not isinstance(rollout_path, str)
+        or not isinstance(rollout_sha256, str)
     ):
         raise CliError(
             "zero_recovery_dispatch_denied",
-            "provider rollout did not prove the exact admitted model",
+            "sealed Codex CLI evidence did not match the admitted model boundary",
         )
     record = {
         "schema": "arnold.megaplan.zero_recovery_dispatch.v1",
@@ -191,6 +1039,10 @@ def _record_zero_recovery_dispatch_terminal(
         "actual_agent": start["selected_agent"],
         "actual_model": actual_model,
         "model_evidence": model_evidence,
+        "privilege_receipt_path": privilege_receipt_path,
+        "privilege_receipt_sha256": privilege_receipt_sha256,
+        "rollout_path": rollout_path,
+        "rollout_sha256": rollout_sha256,
         "actual_effort": start["selected_effort"],
         "attempt": 1,
         "retry": False,
@@ -796,6 +1648,10 @@ class WorkerResult:
     rendered_prompt: str | None = None
     model_actual: str | None = None
     model_evidence: str | None = None
+    privilege_receipt_path: str | None = None
+    privilege_receipt_sha256: str | None = None
+    rollout_path: str | None = None
+    rollout_sha256: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -2141,7 +2997,9 @@ def _merge_partial_output(raw_output: str, output_path: Path) -> str:
     return merged
 
 
-def _codex_session_jsonl_path(session_id: str) -> Path | None:
+def _codex_session_jsonl_path(
+    session_id: str, *, codex_home: Path | None = None
+) -> Path | None:
     """Locate the rollout JSONL for a given codex session_id.
 
     Codex stores rollouts at
@@ -2152,8 +3010,10 @@ def _codex_session_jsonl_path(session_id: str) -> Path | None:
     """
     if not session_id:
         return None
-    codex_home_str = os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
-    sessions_root = Path(codex_home_str).expanduser() / "sessions"
+    resolved_codex_home = codex_home or Path(
+        os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
+    ).expanduser()
+    sessions_root = resolved_codex_home / "sessions"
     if not sessions_root.is_dir():
         return None
     try:
@@ -2268,6 +3128,8 @@ def _codex_step_cost(
     session_id: str | None,
     session_entry: dict[str, Any],
     requested_model: str | None = None,
+    *,
+    codex_home: Path | None = None,
 ) -> tuple[float, int, int, str | None, dict[str, Any] | None]:
     """Compute incremental cost (USD) and token deltas for one codex step.
 
@@ -2283,8 +3145,10 @@ def _codex_step_cost(
     from arnold_pipelines.megaplan.pricing.codex import cost_from_codex_usage_dict
 
     if not session_id:
-        return 0.0, 0, 0, requested_model, None
-    path = _codex_session_jsonl_path(session_id)
+        # A requested CLI model is not provider evidence.  In particular, zero
+        # recovery must fail closed when no rollout/session can attest it.
+        return 0.0, 0, 0, None, None
+    path = _codex_session_jsonl_path(session_id, codex_home=codex_home)
     if path is None:
         return 0.0, 0, 0, None, None
     observed_model = _read_codex_observed_model(path)
@@ -3377,7 +4241,20 @@ def _run_codex_step_uncapped(
             state["sessions"].pop(session_key, None)
             session = {}
             fresh = True
-    if output_path is None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
+        fixed_output = plan_dir / f".zero-recovery-{step}-worker-output.json"
+        if output_path is not None and Path(output_path).absolute() != fixed_output.absolute():
+            raise CliError(
+                "zero_recovery_worker_output_invalid",
+                "finite canary requires the fixed per-phase worker output",
+            )
+        output_path = fixed_output
+        if output_path.exists() or output_path.is_symlink():
+            raise CliError(
+                "zero_recovery_worker_output_invalid",
+                "finite canary worker output already exists",
+            )
+    elif output_path is None:
         out_handle = tempfile.NamedTemporaryFile(
             "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(plan_dir))
         )
@@ -3473,7 +4350,8 @@ def _run_codex_step_uncapped(
             # In a trusted container the surrounding runtime is the sandbox.
             # Skip the workspace-write sandbox (which requires user namespaces
             # that most container runtimes don't grant) and let Codex run
-            # unsandboxed. The outer container boundary still contains writes.
+            # without Codex's nested sandbox. The dedicated nonroot process and
+            # outer container boundaries still constrain writes.
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
             # Allow projects to declare extra writable roots via state.config.
@@ -3543,25 +4421,52 @@ def _run_codex_step_uncapped(
             output_path=output_path,
             include_cpu_signal=not strict_structured_liveness,
         )
-        result = run_command(
-            command,
-            cwd=work_dir,
-            stdin_text=prompt,
-            env=_codex_child_env(turn_id=f'plan_worker_{state["name"]}'),
-            timeout=timeout_seconds,
-            activity_callback=_activity_callback_for_state(state, plan_dir),
-            activity_guard=liveness.activity_guard,
-            pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
-            idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
-            progress_liveness_factory=liveness.bind_process,
-            # Structured non-execute liveness has no grace: a process that is
-            # merely alive but has no token/event/artifact evidence must
-            # surface as a retryable worker_stall at the configured bounded
-            # idle timeout.
-            progress_liveness_grace_timeout=(
-                0.0 if strict_structured_liveness else (codex_idle_s if codex_idle_s > 0 else None)
-            ),
+        worker_plan_before = _zero_recovery_plan_snapshot(
+            root, plan_dir, output_path=output_path
         )
+        worker_source_before = _zero_recovery_source_identity(root, plan_dir)
+        model_runtime = _prepare_zero_recovery_model_runtime(
+            step=step, plan_dir=plan_dir, output_path=output_path
+        )
+        try:
+            child_env = _codex_child_env(turn_id=f'plan_worker_{state["name"]}')
+            if model_runtime is not None:
+                child_env = _zero_recovery_model_env(
+                    model_runtime, turn_id=f'plan_worker_{state["name"]}'
+                )
+                command = _zero_recovery_model_command(command)
+            result = run_command(
+                command,
+                cwd=work_dir,
+                stdin_text=prompt,
+                env=child_env,
+                timeout=timeout_seconds,
+                activity_callback=(
+                    None
+                    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+                    else _activity_callback_for_state(state, plan_dir)
+                ),
+                activity_guard=liveness.activity_guard,
+                pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
+                idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
+                progress_liveness_factory=liveness.bind_process,
+                # Structured non-execute liveness has no grace: a process that is
+                # merely alive but has no token/event/artifact evidence must
+                # surface as a retryable worker_stall at the configured bounded
+                # idle timeout.
+                progress_liveness_grace_timeout=(
+                    0.0 if strict_structured_liveness else (codex_idle_s if codex_idle_s > 0 else None)
+                ),
+            )
+        finally:
+            _verify_zero_recovery_worker_boundaries(
+                root=root,
+                plan_dir=plan_dir,
+                output_path=output_path,
+                runtime=model_runtime,
+                source_before=worker_source_before,
+                plan_before=worker_plan_before,
+            )
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
     except CliError as error:
@@ -3971,12 +4876,15 @@ def _run_codex_step_uncapped(
         if isinstance(candidate_entry, dict) and candidate_entry.get("id") == cost_session_id:
             session_entry = candidate_entry
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
-        cost_session_id, session_entry, model
+        cost_session_id,
+        session_entry,
+        model,
+        codex_home=(model_runtime["codex_home"] if model_runtime is not None else None),
     )
     if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1" and model_actual is None:
         raise CliError(
             "zero_recovery_model_evidence_missing",
-            "Codex rollout did not provide a provider-observed model",
+            "Codex rollout did not provide a CLI turn-context model record",
         )
     observed_model = model_actual or model
     from arnold_pipelines.megaplan.pricing.codex import is_model_priced
@@ -4038,6 +4946,46 @@ def _run_codex_step_uncapped(
             "step cost is explicitly unpriced (numeric compatibility value $0.00)",
             flush=True,
         )
+    privilege_receipt_path: str | None = None
+    privilege_receipt_sha256: str | None = None
+    rollout_relative: str | None = None
+    rollout_sha256: str | None = None
+    if model_runtime is not None:
+        privilege_path = model_runtime.get("privilege_receipt_path")
+        privilege_digest = model_runtime.get("privilege_receipt_sha256")
+        rollout = _codex_session_jsonl_path(
+            cost_session_id or "", codex_home=model_runtime["codex_home"]
+        )
+        if (
+            not isinstance(privilege_path, Path)
+            or not isinstance(privilege_digest, str)
+            or rollout is None
+        ):
+            raise CliError(
+                "zero_recovery_model_evidence_missing",
+                "sealed privilege or Codex CLI rollout evidence is missing",
+            )
+        try:
+            rollout_relative = rollout.relative_to(model_runtime["codex_home"]).as_posix()
+        except ValueError as exc:
+            raise CliError(
+                "zero_recovery_model_evidence_missing",
+                "Codex CLI rollout escaped the sealed phase home",
+            ) from exc
+        rollout_stat = os.lstat(rollout)
+        if (
+            not stat.S_ISREG(rollout_stat.st_mode)
+            or rollout_stat.st_nlink != 1
+            or rollout_stat.st_uid != 0
+            or rollout_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_model_evidence_missing",
+                "Codex CLI rollout was not sealed root-owned evidence",
+            )
+        privilege_receipt_path = privilege_path.name
+        privilege_receipt_sha256 = privilege_digest
+        rollout_sha256 = hashlib.sha256(rollout.read_bytes()).hexdigest()
     return WorkerResult(
         payload=payload,
         raw_output=raw,
@@ -4047,7 +4995,11 @@ def _run_codex_step_uncapped(
         trace_output=trace_output,
         rendered_prompt=prompt,
         model_actual=observed_model,
-        model_evidence=("rollout_turn_context" if model_actual is not None else "requested_cli_arg"),
+        model_evidence=("codex_cli_turn_context" if model_actual is not None else "requested_cli_arg"),
+        privilege_receipt_path=privilege_receipt_path,
+        privilege_receipt_sha256=privilege_receipt_sha256,
+        rollout_path=rollout_relative,
+        rollout_sha256=rollout_sha256,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
