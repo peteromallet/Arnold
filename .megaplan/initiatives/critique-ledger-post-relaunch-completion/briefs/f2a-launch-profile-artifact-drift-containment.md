@@ -16,6 +16,15 @@ does not mean all-Codex; the partnered profiles retain their exact approved
 DeepSeek/Zhipu/Fireworks/Codex phase routes. Missing provider capability is a
 typed no-spawn result, not authority to substitute all-Codex.
 
+The companion normative design target
+`provider-schema-dialect-family-contract.json` closes the response-schema
+boundary inside that same execution binding. It preserves provider-neutral
+canonical semantics, compiles an exact provider wire dialect only when lossless,
+and otherwise selects canonical local strict validation. Response enforcement
+and tool mode are independent axes. Historical M9 unsupported-keyword fixtures
+and current r5 implementation commits `f401431b7a`/`b168edbca0` are retained as
+input evidence; neither is accepted deployment proof.
+
 ## Difficulty and dependencies
 
 Difficulty **5/5 — VERY HARD**. This joins policy resolution, credentials,
@@ -93,6 +102,19 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
   notification on initial detection. Successful automatic repair emits zero
   incident notifications. Unsafe, failed or exhausted containment/rollback/
   relaunch emits one occurrence/version-deduplicated failure notification.
+- Compile every canonical response schema after exact provider/profile/model/
+  runtime resolution and before dispatch. Attest canonical and wire schema
+  hashes, compiler version/source hash, response enforcement, independent tool
+  mode, runtime/image and canary identity. A provider dialect limitation may
+  choose local strict JSON but may never rewrite canonical semantics.
+- Preserve open/dynamic maps used by `finalize`, `feedback` and `loop_plan`.
+  Mutation fixtures cover unsupported keywords and prove exact dynamic keys and
+  nested values survive canonical local validation.
+- Route deterministic `provider_contract/schema_error` through one phase
+  invocation and no generic/model fallback. Launch one provenance-safe fixer
+  for the durable occurrence or fail closed; admit exactly one repair-commit-
+  bound same-phase retry. Crash, restart and response loss cannot multiply the
+  attempt, fixer claim, retry or notification.
 
 ## Locked decisions
 
@@ -115,6 +137,15 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
 - Rollback cannot revive a provider/profile whose credential or policy
   admission has expired.
 - Notification suppression never suppresses the internal audit ledger.
+- Tool availability does not choose or weaken response enforcement, and
+  response enforcement does not silently disable tools. The four-value cross
+  product is required acceptance evidence.
+- A schema error before transport has zero provider calls; a provider rejection
+  has one maximum. “One call” never means one per fallback model or after each
+  observer/restart poll.
+- A fixer is counted only after durable delegation provenance, a validated
+  managed manifest, live child proof and atomic claim transfer. Otherwise the
+  occurrence transitions once to deduplicated manual review with zero fixer.
 
 ## Done criteria
 
@@ -142,6 +173,21 @@ close both gaps rather than merely add fields to a Critique cloud wrapper.
 - The completion manifest hashes the launcher registry, intended and resolved
   maps, local/uploaded/readback/loaded byte digests, runtime attestations, drift
   and repair ledger, notification effects and the complete all-pipeline matrix.
+- The provider-schema dialect contract validates. Tests prove the response-
+  enforcement/tool-mode cross product, canonical/wire/compiler/provider/
+  profile/runtime/image hashes and child readback before provider dispatch.
+- `finalize`, `feedback` and `loop_plan` dynamic maps plus M9 mutations
+  (`default`, `const`, `oneOf`, `minimum`) preserve canonical semantics and
+  select local strict validation whenever the provider dialect is insufficient.
+- Deterministic schema-error fixtures prove one phase invocation, zero-or-one
+  provider transport call, no generic/model fallback, one managed fixer or
+  fail-closed outcome and exactly one same-occurrence post-repair retry. Process
+  restart, host restart, launch/response loss and 200 polls preserve one claim
+  and one terminal notification maximum; successful repair emits none.
+- A fresh installed-cloud real Codex canary binds canonical/wire/compiler,
+  provider/profile/model/runtime/image, raw response and canonical validation
+  hashes in a content-addressed receipt. A registry-closed matrix rejects every
+  untested production pipeline, phase, provider, profile, runtime and launcher.
 
 ## Anti-scope
 

@@ -271,6 +271,124 @@ def test_f2a_cannot_be_reduced_to_a_megaplan_only_contract() -> None:
         contract._validate_provider_policy_binding_contract(policy, chain)
 
 
+def _provider_schema_dialect_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name("provider-schema-dialect-family-contract.json")
+    )
+
+
+def test_response_enforcement_cannot_be_derived_from_tool_mode() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["orthogonal_runtime_axes"]["independence_rule"] = (
+        "TOOLS_ENABLED_DISABLES_SCHEMA_ENFORCEMENT"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="response-enforcement/tool-mode independence drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_provider_schema_attestation_cannot_omit_exact_wire_hash() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["schema_compilation_contract"]["attestation_fields"].remove(
+        "wire_schema_sha256_or_explicit_null"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="canonical/wire schema compilation attestation drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_dynamic_finalize_feedback_and_loop_plan_family_is_closed() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["schema_compilation_contract"]["dynamic_map_phases"].remove("feedback")
+    with pytest.raises(
+        contract.ContractError,
+        match="canonical/wire schema compilation attestation drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_historical_m9_unsupported_keyword_mutations_cannot_be_dropped() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["evidence_inputs"]["historical_m9"][
+        "unsupported_keyword_mutations"
+    ].remove("oneOf")
+    with pytest.raises(
+        contract.ContractError,
+        match="historical M9/current r5 provider-schema evidence drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_deterministic_schema_error_cannot_retry_or_fallback_before_repair() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["failure_and_repair_contract"]["one_call_rule"][
+        "generic_external_retry_calls"
+    ] = 1
+    with pytest.raises(
+        contract.ContractError,
+        match="deterministic schema-error one-call rule drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_schema_error_fixer_must_be_singleton_or_fail_closed() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["failure_and_repair_contract"]["fixer"][
+        "launches_per_occurrence"
+    ] = 2
+    with pytest.raises(
+        contract.ContractError,
+        match="singleton fixer/exactly-one post-repair retry drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_schema_error_allows_exactly_one_post_repair_retry() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["failure_and_repair_contract"]["post_repair_retry"]["maximum"] = 2
+    with pytest.raises(
+        contract.ContractError,
+        match="singleton fixer/exactly-one post-repair retry drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_restart_cannot_replenish_claim_retry_or_notification_budgets() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["failure_and_repair_contract"]["restart_dedupe"][
+        "terminal_failed_repair_notifications"
+    ] = 2
+    with pytest.raises(
+        contract.ContractError,
+        match="schema-repair occurrence/claim/notification dedupe drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_provider_schema_acceptance_requires_real_codex_cloud_canary() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["real_codex_canary"]["surface"] = "MOCK_ONLY"
+    with pytest.raises(
+        contract.ContractError,
+        match="real installed-cloud Codex canary drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
+def test_provider_schema_family_cannot_be_megaplan_only() -> None:
+    dialect = _provider_schema_dialect_fixture()
+    dialect["cross_pipeline_acceptance"]["coverage"] = "MEGAPLAN_ONLY"
+    with pytest.raises(
+        contract.ContractError,
+        match="provider-schema cross-pipeline registry closure drift",
+    ):
+        contract._validate_provider_schema_dialect_family_contract(dialect)
+
+
 def test_pending_prelaunch_evidence_cannot_be_fabricated() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["prelaunch_release_gates"][0]["evidence"] = {

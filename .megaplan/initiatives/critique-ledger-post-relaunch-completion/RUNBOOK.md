@@ -81,6 +81,16 @@ legacy repair loop, managed-child automatic repair, watchdog direct-repair
 fallback and meta-repair loop disabled. Do not use a manual toggle, status
 projection or synthetic receipt to bypass the hold.
 
+A deterministic `provider_contract/schema_error` is not a transient transport
+failure and must not enter generic retry or fallback. Record one exact
+occurrence/fingerprint after the single phase invocation (zero provider calls
+for a pre-dispatch compiler error, otherwise one maximum). Launch one managed,
+provenance-bound fixer or fail closed to deduplicated manual review; an accepted
+repair commit authorizes exactly one same-phase retry. Process/host restart,
+response loss and polling do not replenish the phase, fixer, claim, retry or
+notification budgets. Never disable structured response validation merely
+because tools are enabled.
+
 ## Complete fresh restart/relaunch procedure
 
 Use this only after the current generation is terminal or positively proven

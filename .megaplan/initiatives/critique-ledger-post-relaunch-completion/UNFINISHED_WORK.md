@@ -222,6 +222,23 @@ deferred obligations.
   Registry-closed source/wheel/installed/cloud tests cover every production
   pipeline and launcher, not only Megaplan. Contract:
   `provider-policy-execution-binding-contract.json`.
+- [ ] **VERY HARD — F2A cross-pipeline provider-schema dialect family.** Keep
+  response enforcement independent of tool mode. Bind immutable canonical
+  schema bytes, exact provider wire-schema bytes (or explicit null for local
+  strict JSON), compiler version/source hash, provider/profile/model,
+  runtime/image and real-canary receipt before the first provider call. Preserve
+  dynamic `finalize`, `feedback` and `loop_plan` maps without semantic rewrite;
+  unsupported provider keywords fall back to canonical local validation.
+  Deterministic `provider_contract/schema_error` gets one phase invocation and
+  at most one provider call, no generic/model fallback, one provenance-safe
+  singleton fixer or fail-closed manual review, and exactly one commit/failure-
+  bound post-repair retry. Process/host restart and response loss preserve the
+  occurrence, claim, retry and notification budgets. Require a fresh installed
+  cloud Codex canary plus registry-closed source/wheel/installed/cloud tests for
+  every production pipeline, model phase, provider, profile, runtime and
+  launcher. Historical M9 mutation fixtures and current r5 commits remain input
+  evidence, never acceptance. Contract:
+  `provider-schema-dialect-family-contract.json`.
 - [ ] **HARD — provider credential admission.** Before dispatch, prove every
   selected provider credential and auth mechanism is available. A missing
   selected credential is typed no-spawn; it never silently authorizes an

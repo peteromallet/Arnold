@@ -111,6 +111,15 @@ only patch. See
 and
 [`briefs/f2a-launch-profile-artifact-drift-containment.md`](briefs/f2a-launch-profile-artifact-drift-containment.md).
 
+F2A also closes the provider-schema dialect family exposed by historical M9
+mutation fixtures and the current r5 finalize failure. Response enforcement is
+independent of tool mode; canonical schema bytes are never rewritten merely to
+fit a provider dialect. Exact canonical/wire/compiler/provider/profile/runtime
+attestations, bounded schema-error repair and a real installed-cloud Codex
+canary are registry-closed requirements across all production pipelines. The
+current repair commits are input evidence, not acceptance. See
+[`provider-schema-dialect-family-contract.json`](provider-schema-dialect-family-contract.json).
+
 A separate historical audit invalidates the old M11 completion/promotion claim
 at commit `d10b0fef2b6dbc283639ca14adf6790153ebd2a6`. That commit contained
 `evidence/ownership-decision-record.json` with four blockers and

@@ -30,6 +30,7 @@ R5_REPAIR_CONTROL_EVIDENCE = (
     "evidence/r5-cl2-repair-control-incident-20260803.json"
 )
 PROVIDER_POLICY_BINDING_CONTRACT = "provider-policy-execution-binding-contract.json"
+PROVIDER_SCHEMA_DIALECT_CONTRACT = "provider-schema-dialect-family-contract.json"
 ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT = (
     "artifact-archival-projection-cleanup-contract.json"
 )
@@ -2094,10 +2095,14 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
     if proof_map.get("f2a-launch-profile-artifact-drift-containment") != [
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
         "provider-policy-execution-binding-contract.json",
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        "provider-schema-dialect-family-contract.json",
         "evidence/critique-ledger-recovery/F2A/"
         "provider-policy-execution-binding/completion-manifest.json",
+        "evidence/critique-ledger-recovery/F2A/"
+        "provider-schema-dialect-family/completion-manifest.json",
     ]:
-        raise ContractError("F2A provider-policy/binding proof map drift")
+        raise ContractError("F2A provider-policy/schema/binding proof map drift")
     if proof_map.get("finite-canary-stable-exit") != STABLE_EXIT_PROOFS:
         raise ContractError("stable-exit proof map drift")
     if proof_map.get("finite-canary-prelaunch-history") != [
@@ -2345,6 +2350,283 @@ def _validate_artifact_archival_projection_cleanup_contract(
         }
     ):
         raise ContractError("artifact archival/projection mutation-test acceptance drift")
+
+
+def _validate_provider_schema_dialect_family_contract(
+    dialect: dict[str, Any],
+) -> None:
+    if (
+        dialect.get("schema")
+        != "arnold.cross_pipeline.provider_schema_dialect_family.v1"
+        or dialect.get("status") != "NORMATIVE_DESIGN_TARGET_NOT_RUNTIME_PROOF"
+        or dialect.get("owner_milestone")
+        != "f2a-launch-profile-artifact-drift-containment"
+        or dialect.get("scope")
+        != "ALL_REGISTERED_PRODUCTION_PIPELINES_MODEL_PHASES_PROVIDERS_PROFILES_AND_LAUNCHERS"
+        or dialect.get("difficulty") != "5/5 VERY HARD"
+        or dialect.get("dependencies")
+        != [
+            "f1-owner-storage-recovery-hardening",
+            "f2-admission-model-effect-release-closure",
+        ]
+        or dialect.get("blocks") != ["f3-cl2-real-work-and-publication"]
+    ):
+        raise ContractError("provider-schema dialect identity/dependency drift")
+
+    evidence = dialect.get("evidence_inputs")
+    m9 = evidence.get("historical_m9") if isinstance(evidence, dict) else None
+    r5 = evidence.get("current_r5") if isinstance(evidence, dict) else None
+    commits = (
+        r5.get("implementation_inputs_not_acceptance")
+        if isinstance(r5, dict)
+        else None
+    )
+    if (
+        not isinstance(evidence, dict)
+        or not isinstance(m9, dict)
+        or m9
+        != {
+            "fixture": "M9_PROVIDER_SCHEMA_MUTATION_REPLAY",
+            "unsupported_keyword_mutations": [
+                "default",
+                "const",
+                "oneOf",
+                "minimum",
+            ],
+            "required_disposition": "LOCAL_CANONICAL_VALIDATION_WITHOUT_SEMANTIC_REWRITE",
+        }
+        or not isinstance(r5, dict)
+        or r5.get("session")
+        != "critique-ledger-accountability-v3-r5-20260803"
+        or r5.get("plan") != "cl2-wbc-backed-ledger-20260803-1357"
+        or r5.get("phase") != "finalize"
+        or r5.get("failure_identity")
+        != "PROVIDER_CONTRACT_SCHEMA_ERROR_DETERMINISTIC_NONRETRYABLE"
+        or commits
+        != [
+            {
+                "commit": "f401431b7a91f11518c241da9aea5920d3d41538",
+                "tree": "1f55839e952f6fbc255e2fcca72d5251ae68534a",
+                "subject": "NEGOTIATE_PROVIDER_RESPONSE_ENFORCEMENT",
+            },
+            {
+                "commit": "b168edbca01388fbad55383f43c290476ff0feda",
+                "tree": "ccd93dff64f59aa0e3ac22dcd5a75e1e3a8bc768",
+                "subject": "BOUND_PROVIDER_CONTRACT_FAILURE_RECOVERY",
+            },
+        ]
+        or evidence.get("rule")
+        != "PRESERVE_AS_INPUT_EVIDENCE_UNTIL_INTEGRATED_INSTALLED_AND_ACCEPTED_BY_THIS_CONTRACT"
+    ):
+        raise ContractError("historical M9/current r5 provider-schema evidence drift")
+
+    axes = dialect.get("orthogonal_runtime_axes")
+    if (
+        not isinstance(axes, dict)
+        or axes.get("response_enforcement")
+        != ["provider_strict", "local_strict_json"]
+        or axes.get("tool_mode") != ["disabled", "enabled"]
+        or axes.get("independence_rule")
+        != "RESPONSE_ENFORCEMENT_SELECTION_MUST_NOT_READ_OR_DERIVE_FROM_TOOL_MODE"
+        or axes.get("required_cross_product_tests") != 4
+        or set(axes.get("forbidden") or [])
+        != {
+            "DISABLE_RESPONSE_ENFORCEMENT_BECAUSE_TOOLS_ARE_ENABLED",
+            "DISABLE_TOOLS_BECAUSE_LOCAL_STRICT_JSON_IS_SELECTED",
+            "CLAIM_PROVIDER_STRICT_WHEN_NO_WIRE_SCHEMA_WAS_SENT",
+        }
+    ):
+        raise ContractError("response-enforcement/tool-mode independence drift")
+
+    compilation = dialect.get("schema_compilation_contract")
+    expected_attestation_fields = [
+        "workflow_manifest_hash",
+        "pipeline_identity",
+        "run_id",
+        "plan_id",
+        "incarnation_id",
+        "phase",
+        "canonical_schema_sha256",
+        "canonical_schema_version",
+        "dialect_compiler_id",
+        "dialect_compiler_version",
+        "dialect_compiler_source_sha256",
+        "response_enforcement",
+        "tool_mode",
+        "provider",
+        "profile",
+        "model",
+        "runtime_revision",
+        "runtime_image_digest",
+        "wire_schema_sha256_or_explicit_null",
+        "wire_schema_size_or_zero",
+        "wire_request_sha256",
+        "provider_response_sha256",
+        "canonical_validation_result",
+        "canary_receipt_sha256_or_explicit_null",
+    ]
+    if (
+        not isinstance(compilation, dict)
+        or compilation.get("canonical_semantics")
+        != "IMMUTABLE_PROVIDER_NEUTRAL_SCHEMA_BYTES"
+        or compilation.get("compile_time")
+        != "AFTER_PROVIDER_PROFILE_MODEL_AND_RUNTIME_RESOLUTION_BEFORE_PROVIDER_CALL"
+        or compilation.get("semantic_rewrite") != "FORBIDDEN"
+        or compilation.get("unsupported_provider_dialect_result")
+        != "LOCAL_STRICT_JSON_AGAINST_UNCHANGED_CANONICAL_SCHEMA"
+        or compilation.get("dynamic_map_phases")
+        != ["finalize", "feedback", "loop_plan"]
+        or compilation.get("dynamic_map_rule")
+        != "PRESERVE_ARBITRARY_DECLARED_KEYS_AND_NESTED_VALUES_UNDER_CANONICAL_LOCAL_VALIDATION"
+        or compilation.get("attestation_fields") != expected_attestation_fields
+        or compilation.get("hash_rules")
+        != {
+            "canonical": "SHA256_OF_CANONICAL_PROVIDER_NEUTRAL_SCHEMA_BYTES",
+            "wire": "SHA256_OF_EXACT_PROVIDER_BOUND_SCHEMA_BYTES_OR_EXPLICIT_NULL_FOR_LOCAL_STRICT_JSON",
+            "compiler": "VERSION_PLUS_SOURCE_SHA256",
+            "runtime": "FULL_SOURCE_REVISION_PLUS_IMMUTABLE_IMAGE_DIGEST",
+            "readback": "CHILD_RECOMPUTES_ALL_HASHES_BEFORE_FIRST_PROVIDER_CALL",
+        }
+    ):
+        raise ContractError("canonical/wire schema compilation attestation drift")
+
+    repair = dialect.get("failure_and_repair_contract")
+    typed = repair.get("typed_failure") if isinstance(repair, dict) else None
+    calls = repair.get("one_call_rule") if isinstance(repair, dict) else None
+    fixer = repair.get("fixer") if isinstance(repair, dict) else None
+    retry = repair.get("post_repair_retry") if isinstance(repair, dict) else None
+    dedupe = repair.get("restart_dedupe") if isinstance(repair, dict) else None
+    if (
+        not isinstance(typed, dict)
+        or typed.get("error_kind") != "provider_contract"
+        or typed.get("error_layer") != "schema_error"
+        or typed.get("deterministic") is not True
+        or typed.get("nonretryable") is not True
+        or typed.get("fingerprint_inputs")
+        != [
+            "canonical_schema_sha256",
+            "dialect_compiler_source_sha256",
+            "provider",
+            "profile",
+            "model",
+            "runtime_revision",
+            "phase",
+            "normalized_schema_error",
+        ]
+        or calls
+        != {
+            "phase_invocations_before_repair": 1,
+            "provider_transport_calls": "ZERO_FOR_PRE_DISPATCH_COMPILER_ERROR_OTHERWISE_ONE_MAXIMUM",
+            "automatic_model_or_provider_fallback_calls": 0,
+            "generic_external_retry_calls": 0,
+        }
+    ):
+        raise ContractError("deterministic schema-error one-call rule drift")
+    if (
+        not isinstance(fixer, dict)
+        or fixer.get("launches_per_occurrence") != 1
+        or fixer.get("requires")
+        != [
+            "CURRENT_OCCURRENCE_AND_STATE_VERSION",
+            "EXACT_FAILURE_FINGERPRINT",
+            "DURABLE_DELEGATION_PROVENANCE",
+            "VALIDATED_MANAGED_MANIFEST",
+            "LIVE_CHILD_AND_ATOMIC_CLAIM_TRANSFER",
+            "BOUNDED_MUTATION_SCOPE_AND_BUDGET",
+        ]
+        or fixer.get("missing_or_ambiguous_requirement")
+        != "ZERO_FIXER_FAIL_CLOSED_TO_ONE_DEDUPED_MANUAL_REVIEW"
+        or retry
+        != {
+            "maximum": 1,
+            "requires_exact_repair_commit_at_target_head": True,
+            "requires_same_occurrence_phase_and_failure_fingerprint": True,
+            "second_failure": "TERMINAL_MANUAL_REVIEW_NO_FALLBACK_NO_SECOND_FIXER_NO_SECOND_RETRY",
+        }
+    ):
+        raise ContractError("singleton fixer/exactly-one post-repair retry drift")
+    if (
+        not isinstance(dedupe, dict)
+        or dedupe.get("key_fields")
+        != [
+            "occurrence_id",
+            "accepted_state_version",
+            "phase",
+            "failure_fingerprint",
+        ]
+        or dedupe.get("process_restart_host_restart_and_response_loss")
+        != "PRESERVE_ONE_PHASE_ATTEMPT_ONE_FIXER_CLAIM_ONE_POST_REPAIR_RETRY"
+        or dedupe.get("unchanged_poll_count") != 200
+        or dedupe.get("successful_repair_notifications") != 0
+        or dedupe.get("terminal_failed_repair_notifications") != 1
+        or dedupe.get("claim_recovery")
+        != "OWNER_CHECKED_COMPARE_AND_SWAP_NEVER_TIMEOUT_ONLY_RECLAIM"
+    ):
+        raise ContractError("schema-repair occurrence/claim/notification dedupe drift")
+
+    canary = dialect.get("real_codex_canary")
+    if (
+        not isinstance(canary, dict)
+        or canary.get("surface")
+        != "FRESH_INSTALLED_CLOUD_RUNTIME_WITH_REAL_CODEX_PROVIDER_CALL"
+        or canary.get("model_family") != "CODEX"
+        or canary.get("fixtures")
+        != [
+            "CLOSED_SCHEMA_PROVIDER_STRICT_WITH_TOOLS_DISABLED",
+            "CLOSED_SCHEMA_PROVIDER_STRICT_WITH_TOOLS_ENABLED",
+            "DYNAMIC_FINALIZE_LOCAL_STRICT_JSON_WITH_TOOLS_DISABLED",
+            "DYNAMIC_FINALIZE_LOCAL_STRICT_JSON_WITH_TOOLS_ENABLED",
+            "DYNAMIC_FEEDBACK_KEYS_PRESERVED",
+            "DYNAMIC_LOOP_PLAN_NESTED_KEYS_PRESERVED",
+            "UNSUPPORTED_KEYWORD_MUTATION_FALLS_BACK_WITHOUT_SEMANTIC_REWRITE",
+        ]
+        or set(canary.get("required_proof") or [])
+        != {
+            "EXACT_COMMITTED_CANONICAL_SCHEMA_HASH",
+            "EXACT_WIRE_SCHEMA_HASH_OR_EXPLICIT_NULL",
+            "COMPILER_VERSION_AND_SOURCE_HASH",
+            "PROVIDER_PROFILE_MODEL_RUNTIME_AND_IMAGE_BINDING",
+            "ONE_PROVIDER_CALL_MAXIMUM",
+            "RAW_RESPONSE_HASH",
+            "CANONICAL_VALIDATION_PASS",
+            "ZERO_UNDECLARED_FALLBACK",
+            "CONTENT_ADDRESSED_CANARY_RECEIPT",
+        }
+    ):
+        raise ContractError("real installed-cloud Codex canary drift")
+
+    acceptance = dialect.get("cross_pipeline_acceptance")
+    if (
+        not isinstance(acceptance, dict)
+        or acceptance.get("coverage")
+        != "REGISTRY_CLOSED_EVERY_PRODUCTION_PIPELINE_MODEL_PHASE_PROVIDER_PROFILE_RUNTIME_AND_LAUNCH_ENTRYPOINT"
+        or acceptance.get("surfaces")
+        != ["SOURCE", "WHEEL", "INSTALLED", "CLOUD"]
+        or acceptance.get("registry_rule")
+        != "A_NEW_PRODUCTION_PIPELINE_PHASE_PROVIDER_PROFILE_OR_LAUNCHER_WITHOUT_SCHEMA_DIALECT_FIXTURES_FAILS_CI"
+        or acceptance.get("required_mutations")
+        != [
+            "TOOL_MODE_TOGGLE",
+            "RESPONSE_ENFORCEMENT_TOGGLE",
+            "CANONICAL_SCHEMA_BYTE_CHANGE",
+            "WIRE_SCHEMA_BYTE_CHANGE",
+            "COMPILER_SOURCE_OR_VERSION_CHANGE",
+            "UNSUPPORTED_KEYWORD_INSERTION",
+            "DYNAMIC_MAP_KEY_INSERTION",
+            "PROVIDER_PROFILE_MODEL_DRIFT",
+            "RUNTIME_REVISION_OR_IMAGE_DRIFT",
+            "PROVIDER_SCHEMA_REJECTION",
+            "FIXER_LAUNCH_RESPONSE_LOSS",
+            "POST_REPAIR_RETRY_RESPONSE_LOSS",
+            "PROCESS_RESTART",
+            "HOST_RESTART",
+            "NOTIFICATION_RESPONSE_LOSS",
+        ]
+        or acceptance.get("completion_evidence")
+        != "evidence/critique-ledger-recovery/F2A/provider-schema-dialect-family/completion-manifest.json"
+        or acceptance.get("independent_review_required") is not True
+    ):
+        raise ContractError("provider-schema cross-pipeline registry closure drift")
 
 
 def _validate_provider_policy_binding_contract(
@@ -2879,6 +3161,9 @@ def validate(*, require_live: bool = False) -> None:
         raise ContractError("chain.yaml must contain a mapping")
     _validate_provider_policy_binding_contract(
         _load_json(INITIATIVE / PROVIDER_POLICY_BINDING_CONTRACT), chain
+    )
+    _validate_provider_schema_dialect_family_contract(
+        _load_json(INITIATIVE / PROVIDER_SCHEMA_DIALECT_CONTRACT)
     )
     try:
         parsed_chain = load_spec(chain_path)

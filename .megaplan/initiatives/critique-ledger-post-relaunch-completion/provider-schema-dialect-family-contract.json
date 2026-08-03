@@ -1,0 +1,215 @@
+{
+  "schema": "arnold.cross_pipeline.provider_schema_dialect_family.v1",
+  "status": "NORMATIVE_DESIGN_TARGET_NOT_RUNTIME_PROOF",
+  "owner_milestone": "f2a-launch-profile-artifact-drift-containment",
+  "scope": "ALL_REGISTERED_PRODUCTION_PIPELINES_MODEL_PHASES_PROVIDERS_PROFILES_AND_LAUNCHERS",
+  "difficulty": "5/5 VERY HARD",
+  "dependencies": [
+    "f1-owner-storage-recovery-hardening",
+    "f2-admission-model-effect-release-closure"
+  ],
+  "blocks": [
+    "f3-cl2-real-work-and-publication"
+  ],
+  "evidence_inputs": {
+    "historical_m9": {
+      "fixture": "M9_PROVIDER_SCHEMA_MUTATION_REPLAY",
+      "unsupported_keyword_mutations": [
+        "default",
+        "const",
+        "oneOf",
+        "minimum"
+      ],
+      "required_disposition": "LOCAL_CANONICAL_VALIDATION_WITHOUT_SEMANTIC_REWRITE"
+    },
+    "current_r5": {
+      "session": "critique-ledger-accountability-v3-r5-20260803",
+      "plan": "cl2-wbc-backed-ledger-20260803-1357",
+      "phase": "finalize",
+      "failure_identity": "PROVIDER_CONTRACT_SCHEMA_ERROR_DETERMINISTIC_NONRETRYABLE",
+      "implementation_inputs_not_acceptance": [
+        {
+          "commit": "f401431b7a91f11518c241da9aea5920d3d41538",
+          "tree": "1f55839e952f6fbc255e2fcca72d5251ae68534a",
+          "subject": "NEGOTIATE_PROVIDER_RESPONSE_ENFORCEMENT"
+        },
+        {
+          "commit": "b168edbca01388fbad55383f43c290476ff0feda",
+          "tree": "ccd93dff64f59aa0e3ac22dcd5a75e1e3a8bc768",
+          "subject": "BOUND_PROVIDER_CONTRACT_FAILURE_RECOVERY"
+        }
+      ]
+    },
+    "rule": "PRESERVE_AS_INPUT_EVIDENCE_UNTIL_INTEGRATED_INSTALLED_AND_ACCEPTED_BY_THIS_CONTRACT"
+  },
+  "orthogonal_runtime_axes": {
+    "response_enforcement": [
+      "provider_strict",
+      "local_strict_json"
+    ],
+    "tool_mode": [
+      "disabled",
+      "enabled"
+    ],
+    "independence_rule": "RESPONSE_ENFORCEMENT_SELECTION_MUST_NOT_READ_OR_DERIVE_FROM_TOOL_MODE",
+    "required_cross_product_tests": 4,
+    "forbidden": [
+      "DISABLE_RESPONSE_ENFORCEMENT_BECAUSE_TOOLS_ARE_ENABLED",
+      "DISABLE_TOOLS_BECAUSE_LOCAL_STRICT_JSON_IS_SELECTED",
+      "CLAIM_PROVIDER_STRICT_WHEN_NO_WIRE_SCHEMA_WAS_SENT"
+    ]
+  },
+  "schema_compilation_contract": {
+    "canonical_semantics": "IMMUTABLE_PROVIDER_NEUTRAL_SCHEMA_BYTES",
+    "compile_time": "AFTER_PROVIDER_PROFILE_MODEL_AND_RUNTIME_RESOLUTION_BEFORE_PROVIDER_CALL",
+    "semantic_rewrite": "FORBIDDEN",
+    "unsupported_provider_dialect_result": "LOCAL_STRICT_JSON_AGAINST_UNCHANGED_CANONICAL_SCHEMA",
+    "dynamic_map_phases": [
+      "finalize",
+      "feedback",
+      "loop_plan"
+    ],
+    "dynamic_map_rule": "PRESERVE_ARBITRARY_DECLARED_KEYS_AND_NESTED_VALUES_UNDER_CANONICAL_LOCAL_VALIDATION",
+    "attestation_fields": [
+      "workflow_manifest_hash",
+      "pipeline_identity",
+      "run_id",
+      "plan_id",
+      "incarnation_id",
+      "phase",
+      "canonical_schema_sha256",
+      "canonical_schema_version",
+      "dialect_compiler_id",
+      "dialect_compiler_version",
+      "dialect_compiler_source_sha256",
+      "response_enforcement",
+      "tool_mode",
+      "provider",
+      "profile",
+      "model",
+      "runtime_revision",
+      "runtime_image_digest",
+      "wire_schema_sha256_or_explicit_null",
+      "wire_schema_size_or_zero",
+      "wire_request_sha256",
+      "provider_response_sha256",
+      "canonical_validation_result",
+      "canary_receipt_sha256_or_explicit_null"
+    ],
+    "hash_rules": {
+      "canonical": "SHA256_OF_CANONICAL_PROVIDER_NEUTRAL_SCHEMA_BYTES",
+      "wire": "SHA256_OF_EXACT_PROVIDER_BOUND_SCHEMA_BYTES_OR_EXPLICIT_NULL_FOR_LOCAL_STRICT_JSON",
+      "compiler": "VERSION_PLUS_SOURCE_SHA256",
+      "runtime": "FULL_SOURCE_REVISION_PLUS_IMMUTABLE_IMAGE_DIGEST",
+      "readback": "CHILD_RECOMPUTES_ALL_HASHES_BEFORE_FIRST_PROVIDER_CALL"
+    }
+  },
+  "failure_and_repair_contract": {
+    "typed_failure": {
+      "error_kind": "provider_contract",
+      "error_layer": "schema_error",
+      "deterministic": true,
+      "nonretryable": true,
+      "fingerprint_inputs": [
+        "canonical_schema_sha256",
+        "dialect_compiler_source_sha256",
+        "provider",
+        "profile",
+        "model",
+        "runtime_revision",
+        "phase",
+        "normalized_schema_error"
+      ]
+    },
+    "one_call_rule": {
+      "phase_invocations_before_repair": 1,
+      "provider_transport_calls": "ZERO_FOR_PRE_DISPATCH_COMPILER_ERROR_OTHERWISE_ONE_MAXIMUM",
+      "automatic_model_or_provider_fallback_calls": 0,
+      "generic_external_retry_calls": 0
+    },
+    "fixer": {
+      "launches_per_occurrence": 1,
+      "requires": [
+        "CURRENT_OCCURRENCE_AND_STATE_VERSION",
+        "EXACT_FAILURE_FINGERPRINT",
+        "DURABLE_DELEGATION_PROVENANCE",
+        "VALIDATED_MANAGED_MANIFEST",
+        "LIVE_CHILD_AND_ATOMIC_CLAIM_TRANSFER",
+        "BOUNDED_MUTATION_SCOPE_AND_BUDGET"
+      ],
+      "missing_or_ambiguous_requirement": "ZERO_FIXER_FAIL_CLOSED_TO_ONE_DEDUPED_MANUAL_REVIEW"
+    },
+    "post_repair_retry": {
+      "maximum": 1,
+      "requires_exact_repair_commit_at_target_head": true,
+      "requires_same_occurrence_phase_and_failure_fingerprint": true,
+      "second_failure": "TERMINAL_MANUAL_REVIEW_NO_FALLBACK_NO_SECOND_FIXER_NO_SECOND_RETRY"
+    },
+    "restart_dedupe": {
+      "key_fields": [
+        "occurrence_id",
+        "accepted_state_version",
+        "phase",
+        "failure_fingerprint"
+      ],
+      "process_restart_host_restart_and_response_loss": "PRESERVE_ONE_PHASE_ATTEMPT_ONE_FIXER_CLAIM_ONE_POST_REPAIR_RETRY",
+      "unchanged_poll_count": 200,
+      "successful_repair_notifications": 0,
+      "terminal_failed_repair_notifications": 1,
+      "claim_recovery": "OWNER_CHECKED_COMPARE_AND_SWAP_NEVER_TIMEOUT_ONLY_RECLAIM"
+    }
+  },
+  "real_codex_canary": {
+    "surface": "FRESH_INSTALLED_CLOUD_RUNTIME_WITH_REAL_CODEX_PROVIDER_CALL",
+    "model_family": "CODEX",
+    "fixtures": [
+      "CLOSED_SCHEMA_PROVIDER_STRICT_WITH_TOOLS_DISABLED",
+      "CLOSED_SCHEMA_PROVIDER_STRICT_WITH_TOOLS_ENABLED",
+      "DYNAMIC_FINALIZE_LOCAL_STRICT_JSON_WITH_TOOLS_DISABLED",
+      "DYNAMIC_FINALIZE_LOCAL_STRICT_JSON_WITH_TOOLS_ENABLED",
+      "DYNAMIC_FEEDBACK_KEYS_PRESERVED",
+      "DYNAMIC_LOOP_PLAN_NESTED_KEYS_PRESERVED",
+      "UNSUPPORTED_KEYWORD_MUTATION_FALLS_BACK_WITHOUT_SEMANTIC_REWRITE"
+    ],
+    "required_proof": [
+      "EXACT_COMMITTED_CANONICAL_SCHEMA_HASH",
+      "EXACT_WIRE_SCHEMA_HASH_OR_EXPLICIT_NULL",
+      "COMPILER_VERSION_AND_SOURCE_HASH",
+      "PROVIDER_PROFILE_MODEL_RUNTIME_AND_IMAGE_BINDING",
+      "ONE_PROVIDER_CALL_MAXIMUM",
+      "RAW_RESPONSE_HASH",
+      "CANONICAL_VALIDATION_PASS",
+      "ZERO_UNDECLARED_FALLBACK",
+      "CONTENT_ADDRESSED_CANARY_RECEIPT"
+    ]
+  },
+  "cross_pipeline_acceptance": {
+    "coverage": "REGISTRY_CLOSED_EVERY_PRODUCTION_PIPELINE_MODEL_PHASE_PROVIDER_PROFILE_RUNTIME_AND_LAUNCH_ENTRYPOINT",
+    "surfaces": [
+      "SOURCE",
+      "WHEEL",
+      "INSTALLED",
+      "CLOUD"
+    ],
+    "registry_rule": "A_NEW_PRODUCTION_PIPELINE_PHASE_PROVIDER_PROFILE_OR_LAUNCHER_WITHOUT_SCHEMA_DIALECT_FIXTURES_FAILS_CI",
+    "required_mutations": [
+      "TOOL_MODE_TOGGLE",
+      "RESPONSE_ENFORCEMENT_TOGGLE",
+      "CANONICAL_SCHEMA_BYTE_CHANGE",
+      "WIRE_SCHEMA_BYTE_CHANGE",
+      "COMPILER_SOURCE_OR_VERSION_CHANGE",
+      "UNSUPPORTED_KEYWORD_INSERTION",
+      "DYNAMIC_MAP_KEY_INSERTION",
+      "PROVIDER_PROFILE_MODEL_DRIFT",
+      "RUNTIME_REVISION_OR_IMAGE_DRIFT",
+      "PROVIDER_SCHEMA_REJECTION",
+      "FIXER_LAUNCH_RESPONSE_LOSS",
+      "POST_REPAIR_RETRY_RESPONSE_LOSS",
+      "PROCESS_RESTART",
+      "HOST_RESTART",
+      "NOTIFICATION_RESPONSE_LOSS"
+    ],
+    "completion_evidence": "evidence/critique-ledger-recovery/F2A/provider-schema-dialect-family/completion-manifest.json",
+    "independent_review_required": true
+  }
+}

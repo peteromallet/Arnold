@@ -29,7 +29,9 @@
   ],
   "f2a-launch-profile-artifact-drift-containment": [
     ".megaplan/initiatives/critique-ledger-post-relaunch-completion/provider-policy-execution-binding-contract.json",
-    "evidence/critique-ledger-recovery/F2A/provider-policy-execution-binding/completion-manifest.json"
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/provider-schema-dialect-family-contract.json",
+    "evidence/critique-ledger-recovery/F2A/provider-policy-execution-binding/completion-manifest.json",
+    "evidence/critique-ledger-recovery/F2A/provider-schema-dialect-family/completion-manifest.json"
   ],
   "f3-cl2-real-work-and-publication": [
     "evidence/critique-ledger-recovery/T6.3/completion-manifest.json",
