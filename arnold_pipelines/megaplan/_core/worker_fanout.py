@@ -195,6 +195,7 @@ class WorkerUnitResult:
     attempted_specs: tuple[str, ...] = ()
     failed_attempt_reasons: tuple[str, ...] = ()
     fallback_trigger: str | None = None
+    auth_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         selected_spec = AgentSpec(
@@ -257,6 +258,11 @@ class WorkerUnitResult:
             attempted_specs=unit.attempted_specs,
             failed_attempt_reasons=unit.failed_attempt_reasons,
             fallback_trigger=unit.fallback_trigger,
+            auth_metadata=(
+                dict(worker.auth_metadata)
+                if isinstance(getattr(worker, "auth_metadata", None), dict)
+                else {}
+            ),
         )
 
 
@@ -602,6 +608,13 @@ def _dispatch_worker_unit_attempt(
     options = dict(worker_options or {})
     if len(unit.configured_specs) > 1:
         options["_suppress_ambient_agent_fallback"] = True
+    dispatch_key = str(
+        unit.extra.get("wbc_dispatch_key")
+        or unit.extra.get("ledger_step_label")
+        or unit.extra.get("check_id")
+        or unit.extra.get("area_id")
+        or unit.output_path.name
+    )
     wbc_dispatch = build_worker_dispatch_spec(
         plan_dir=plan_dir,
         state=state,
@@ -617,6 +630,7 @@ def _dispatch_worker_unit_attempt(
         attempted_specs=unit.attempted_specs,
         failed_attempt_reasons=unit.failed_attempt_reasons,
         fallback_trigger=unit.fallback_trigger,
+        dispatch_key=dispatch_key,
     )
     worker, _agent, _mode, _refreshed = run_step_with_worker(
         unit.step,
