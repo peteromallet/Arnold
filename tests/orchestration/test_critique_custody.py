@@ -328,6 +328,59 @@ def test_exact_legacy_unbound_fixture_migrates_without_rewriting_source(tmp_path
     )
 
 
+def test_legacy_migration_survives_clearance_rewrite_and_finalize_validation(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path, iteration=2)
+    receipt_path = _legacy_unbound_fixture(plan_dir, state)
+    old_clearance_sha = critique_custody.sha256_file(
+        plan_dir / "critique_clearance.json"
+    )
+    [migration] = migrate_legacy_critique_custody(
+        plan_dir,
+        iteration=2,
+        expected_source_sha256=critique_custody.sha256_file(receipt_path),
+        actor="operator:test",
+        reason="admit legacy custody before normal clearance refresh",
+    )
+    receipt = critique_custody.read_json(receipt_path)
+    [finding_id] = receipt["finding_ids"]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": finding_id,
+                "action": "accept_tradeoff",
+                "evidence": "The gate reviewed the exact preserved concern.",
+                "rationale": "The remaining risk is explicit, bounded, and accepted.",
+            }
+        ],
+    )
+
+    clearance = write_critique_clearance(plan_dir, state)
+
+    assert critique_custody.sha256_file(plan_dir / "critique_clearance.json") != old_clearance_sha
+    stored_clearance_row = next(
+        row
+        for row in migration["lineage_evidence"]
+        if row["role"] == "critique_clearance"
+    )
+    assert stored_clearance_row["sha256"] == old_clearance_sha
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": finding_id,
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 preserves the bounded accepted-risk contract.",
+        }
+    ]
+    bind_finalize_custody(plan_dir, graph, clearance)
+
+    assert_finalize_custody(plan_dir, graph)
+
+
 def test_legacy_migration_is_idempotent_across_publish_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

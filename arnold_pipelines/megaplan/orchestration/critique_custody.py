@@ -343,6 +343,63 @@ def _legacy_lineage_evidence(
     ]
 
 
+def _legacy_lineage_evidence_issues(
+    stored: object,
+    current: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Compare durable lineage without pinning a rewritable clearance byte stream.
+
+    The migration sidecar is an immutable record of the evidence inspected at
+    migration time.  ``critique_clearance.json`` is intentionally regenerated
+    as resolution evidence advances (and includes ``produced_at``), so its
+    historical hash must remain in the sidecar without becoming a permanent
+    hash pin on the current clearance.  ``_legacy_lineage_evidence`` already
+    validates the current clearance's own digest and exact source-receipt row;
+    here we compare every immutable lineage artifact byte-for-byte and compare
+    the clearance by stable role/artifact identity only.
+    """
+    if not isinstance(stored, list):
+        return ["legacy lineage_evidence is not an array"]
+    stored_by_role: dict[str, Mapping[str, Any]] = {}
+    issues: list[str] = []
+    for index, row in enumerate(stored):
+        if not isinstance(row, Mapping):
+            issues.append(f"legacy lineage row {index} is not an object")
+            continue
+        role = row.get("role")
+        if not isinstance(role, str) or not role:
+            issues.append(f"legacy lineage row {index} has no role")
+            continue
+        if role in stored_by_role:
+            issues.append(f"legacy lineage has duplicate role {role!r}")
+            continue
+        artifact = row.get("artifact")
+        digest = row.get("sha256")
+        if not isinstance(artifact, str) or Path(artifact).name != artifact:
+            issues.append(f"legacy lineage role {role!r} has an unsafe artifact")
+        if not isinstance(digest, str) or re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", digest) is None:
+            issues.append(f"legacy lineage role {role!r} has an invalid sha256")
+        stored_by_role[role] = row
+
+    current_by_role = {
+        str(row.get("role")): row
+        for row in current
+        if isinstance(row.get("role"), str)
+    }
+    if set(stored_by_role) != set(current_by_role):
+        issues.append("legacy lineage roles differ from the admitted lineage")
+        return issues
+    for role, current_row in current_by_role.items():
+        stored_row = stored_by_role[role]
+        if role == "critique_clearance":
+            if stored_row.get("artifact") != current_row.get("artifact"):
+                issues.append("legacy clearance artifact identity changed")
+            continue
+        if dict(stored_row) != dict(current_row):
+            issues.append(f"legacy immutable lineage changed for {role}")
+    return issues
+
+
 def _stable_finding_id(flag: Mapping[str, Any]) -> str:
     identity = {
         "source_check_id": flag.get("source_check_id"),
@@ -789,9 +846,13 @@ def _validate_legacy_migration_receipt(
         issues.append("legacy migration producer evidence binding mismatch")
     if migration.get("producer_binding_digest") != _digest(expected_binding):
         issues.append("legacy migration producer binding digest mismatch")
-    expected_lineage = _legacy_lineage_evidence(plan_dir, legacy_path, legacy_receipt)
-    if migration.get("lineage_evidence") != expected_lineage:
-        issues.append("legacy migration lineage evidence mismatch")
+    current_lineage = _legacy_lineage_evidence(plan_dir, legacy_path, legacy_receipt)
+    issues.extend(
+        _legacy_lineage_evidence_issues(
+            migration.get("lineage_evidence"),
+            current_lineage,
+        )
+    )
     if migration.get("custody_status") != "legacy_unbound":
         issues.append("legacy migration does not explicitly preserve unbound custody status")
     if not isinstance(migration.get("actor"), str) or not migration.get("actor", "").strip():
