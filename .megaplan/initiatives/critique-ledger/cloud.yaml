@@ -3,7 +3,7 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: megaplan/critique-ledger-accountability-v3-20260803
-  workspace: /workspace/critique-ledger-accountability-v3-20260803/Arnold
+  workspace: /workspace/critique-ledger-accountability-v3-r2-20260803/Arnold
 
 extra_repos:
   - url: https://github.com/peteromallet/Arnold.git
@@ -17,7 +17,7 @@ codex:
   model: gpt-5.6-sol
   reasoning: high
 
-chain_session: critique-ledger-accountability-v3-20260803
+chain_session: critique-ledger-accountability-v3-r2-20260803
 mode: idle
 isolated_chain_runner: true
 isolated_chain_runner_image_id: sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d
