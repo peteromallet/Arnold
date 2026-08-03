@@ -7,11 +7,41 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud import manual_repair_trigger, repair_requests
+from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
 
 
 SESSION = "custody-control-plane-test"
 PLAN = "m5a-test-plan"
 ARTIFACT_HASH = "sha256:" + "a" * 64
+
+
+def _identity(workspace: Path) -> dict[str, object]:
+    target = CustodyTargetKey(
+        environment=str(workspace),
+        session=SESSION,
+        chain=str(workspace / "chain.yaml"),
+        plan_revision="sha256:manual-plan-revision",
+        phase="review",
+        task="T24",
+        attempt="1",
+        normalized_failure_kind="quality_gate_blocked",
+        blocker_or_phase_result_hash=ARTIFACT_HASH,
+        fence="runner-fence:1",
+    )
+    identity = repair_requests.build_normalized_repair_identity(
+        target=target,
+        run_id="manual-run-1",
+        run_revision="sha256:manual-plan-revision",
+        run_incarnation_id="manual-run-incarnation-1",
+        coordinator_attempt_id="manual-coordinator-1",
+        fence_token=1,
+        wbc_attempt_reference="manual-wbc-1",
+        run_authority_grant_id="manual-grant-1",
+        lease_id="manual-lease-1",
+        custody_epoch=1,
+    )
+    assert identity is not None
+    return identity
 
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, dict]:
@@ -21,10 +51,12 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict]:
     plan_dir = workspace / ".megaplan" / "plans" / PLAN
     plan_dir.mkdir(parents=True)
     marker_dir.mkdir(parents=True)
+    repair_identity = _identity(workspace)
     state = {
         "name": PLAN,
         "current_state": "blocked",
         "config": {"profile": "partnered-5"},
+        "repair_identity": repair_identity,
         "resume_cursor": {
             "phase": "review",
             "evidence_cursor": {
@@ -38,6 +70,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict]:
             "phase": "review",
             "suggested_action": "Dispatch one bounded automatic repair.",
             "metadata": {
+                "repair_identity": repair_identity,
                 "blocked_task_ids": ["T24"],
                 "evidence_cursor": {
                     "history_index": 15,
@@ -207,11 +240,13 @@ def test_manual_trigger_rejects_legacy_trigger_bin(
     fresh_plan_dir = fresh_workspace / ".megaplan" / "plans" / PLAN
     fresh_plan_dir.mkdir(parents=True)
     state_path = fresh_plan_dir / "state.json"
+    fresh_identity = _identity(fresh_workspace)
     state_path.write_text(
         json.dumps({
             "name": PLAN,
             "current_state": "blocked",
             "config": {"profile": "partnered-5"},
+            "repair_identity": fresh_identity,
             "resume_cursor": {
                 "phase": "review",
                 "evidence_cursor": {
@@ -225,6 +260,7 @@ def test_manual_trigger_rejects_legacy_trigger_bin(
                 "phase": "review",
                 "suggested_action": "Dispatch one bounded automatic repair.",
                 "metadata": {
+                    "repair_identity": fresh_identity,
                     "blocked_task_ids": ["T24"],
                     "evidence_cursor": {
                         "history_index": 15,

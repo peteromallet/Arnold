@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from arnold_pipelines.megaplan.cloud import repair_lock
+from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
 from arnold_pipelines.megaplan.custody.contracts import (
     CustodyLease,
     build_custody_target_key,
     build_repair_occurrence_key,
+    process_birth_identity,
 )
 
 
@@ -27,6 +29,25 @@ class FakeLeaseStore:
     def current_lease(self, lease_id: str) -> CustodyLease | None:
         return self._leases.get(lease_id)
 
+    def load_history(self, lease_id: str) -> list[object]:
+        from types import SimpleNamespace
+
+        lease = self._leases.get(lease_id)
+        if lease is None:
+            return []
+        return [
+            SimpleNamespace(
+                payload={
+                    "owner_pid_namespace": repair_lock._pid_namespace(
+                        int(lease.owner_pid)
+                    ),
+                    "owner_process_start_ticks": repair_lock._process_start_ticks(
+                        int(lease.owner_pid)
+                    ),
+                }
+            )
+        ]
+
 
 def _make_test_custody_lease(
     lease_id: str = "lease-001",
@@ -39,6 +60,8 @@ def _make_test_custody_lease(
     is_expired: bool = False,
 ) -> CustodyLease:
     """Build a minimal CustodyLease for testing lease-authority integration."""
+    if not owner_boot_id:
+        owner_boot_id = str(process_birth_identity().get("boot_id") or "")
     if acquired_at is None:
         acquired_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
     if expires_at is None:
@@ -148,18 +171,21 @@ def test_acquire_repair_lock_claims_owner_metadata_and_reports_busy_without_muta
 
 def test_repair_lock_records_and_checks_exact_repair_identity(tmp_path: Path) -> None:
     lock_dir = tmp_path / "demo-session.lock"
-    identity = {
-        "environment_id": "/workspace/demo",
-        "session_id": "demo-session",
-        "chain_id": "/workspace/demo/chain.yaml",
-        "plan_revision": "sha256:rev-1",
-        "phase": "review",
-        "task_id": "T24",
-        "attempt_number": 1,
-        "failure_kind": "quality_gate_blocked",
-        "blocker_digest": "blocker:v1:demo",
-        "coordinator_fence_token": "fence-1",
-    }
+    target = build_custody_target_key(
+        environment="/workspace/demo", session="demo-session",
+        chain="/workspace/demo/chain.yaml", plan_revision="sha256:rev-1",
+        phase="review", task="T24", attempt="1",
+        normalized_failure_kind="quality_gate_blocked",
+        blocker_or_phase_result_hash="blocker:v1:demo", fence="fence-1",
+    )
+    assert target is not None
+    identity = repair_requests.build_normalized_repair_identity(
+        target=target, run_id="run-1", run_revision="sha256:rev-1",
+        run_incarnation_id="incarnation-1", coordinator_attempt_id="coord-1",
+        fence_token=1, wbc_attempt_reference="wbc-1",
+        run_authority_grant_id="grant-1", lease_id="lease-1", custody_epoch=1,
+    )
+    assert identity is not None
 
     acquired = repair_lock.acquire_repair_lock(
         lock_dir,
@@ -173,14 +199,14 @@ def test_repair_lock_records_and_checks_exact_repair_identity(tmp_path: Path) ->
 
     assert acquired.acquired
     persisted = json.loads(repair_lock.owner_metadata_path(lock_dir).read_text(encoding="utf-8"))
-    assert persisted["repair_identity"]["attempt_number"] == 1
+    assert persisted["repair_identity"]["occurrence"]["target"]["attempt"] == "1"
     assert persisted["repair_identity_key"]
 
     mismatched = repair_lock.acquire_repair_lock(
         lock_dir,
         session="demo-session",
         target_id="target-identity",
-        repair_identity={**identity, "attempt_number": 2, "coordinator_fence_token": "fence-2"},
+        repair_identity={**identity, "run_incarnation_id": "incarnation-2"},
         pid=222,
         command="arnold-repair-loop --session demo-session --retry",
         is_pid_live=lambda pid: pid == 111,
@@ -233,8 +259,7 @@ def test_repair_lock_treats_missing_owner_identity_as_stale_mismatch(tmp_path: P
 
     assert result.unknown
     assert result.stale_evidence is not None
-    assert "repair_identity_mismatch" in result.stale_evidence["reasons"]
-    assert result.stale_evidence["observed_repair_identity_key"] == ""
+    assert "owner_pid_liveness_unknown" in result.stale_evidence["reasons"]
 
 
 def test_acquire_repair_lock_reports_stale_evidence_without_deleting_lock(tmp_path: Path) -> None:
@@ -531,13 +556,14 @@ class TestPidLivenessIsNotAuthority:
     ) -> None:
         """When the lease store confirms ownership, authoritative release succeeds."""
         lock_dir = tmp_path / "matching-owner.lock"
-        live_pids = {111}
+        owner_pid = os.getpid()
+        live_pids = {owner_pid}
 
         acquired = repair_lock.acquire_repair_lock(
             lock_dir,
             session="demo-session",
             target_id="target-1",
-            pid=111,
+            pid=owner_pid,
             command="arnold-repair-loop --session demo-session",
             started_at=datetime.now(timezone.utc).isoformat(),
             timeout_seconds=300,
@@ -549,7 +575,7 @@ class TestPidLivenessIsNotAuthority:
         matching_lease = _make_test_custody_lease(
             lease_id="lease-001",
             owner_host="worker-a",
-            owner_pid="111",
+            owner_pid=str(owner_pid),
         )
         store = FakeLeaseStore(_leases={"lease-001": matching_lease})
         assert repair_lock.release_repair_lock(
@@ -605,14 +631,15 @@ class TestRenewRequiresLeaseAuthority:
     def test_renew_succeeds_with_matching_lease(self, tmp_path: Path) -> None:
         """Renew updates timeout_seconds when lease store confirms ownership."""
         lock_dir = tmp_path / "renew-ok.lock"
-        live_pids = {111}
+        owner_pid = os.getpid()
+        live_pids = {owner_pid}
         started = datetime.now(timezone.utc).isoformat()
 
         acquired = repair_lock.acquire_repair_lock(
             lock_dir,
             session="demo-session",
             target_id="target-1",
-            pid=111,
+            pid=owner_pid,
             command="arnold-repair-loop --session demo-session",
             started_at=started,
             timeout_seconds=300,
@@ -624,7 +651,7 @@ class TestRenewRequiresLeaseAuthority:
         matching_lease = _make_test_custody_lease(
             lease_id="lease-001",
             owner_host="worker-a",
-            owner_pid="111",
+            owner_pid=str(owner_pid),
         )
         store = FakeLeaseStore(_leases={"lease-001": matching_lease})
 
@@ -833,33 +860,33 @@ class TestRenewRequiresLeaseAuthority:
             is_pid_live=lambda pid: False,  # PID is dead — but lease authority valid
         )
 
-        # Renewal succeeds because lease authority is what matters.
-        assert result.acquired
-        assert result.owner is not None
-        assert result.owner["timeout_seconds"] == 600
+        assert result.status == "unauthorized"
+        assert result.stale_evidence["lease_diagnostics"]["reason"] == "owner_boot_identity_missing"
         assert lock_dir.exists()
 
-        # Cleanup.
-        assert repair_lock.release_repair_lock(
-            lock_dir,
-            owner=result.owner,
-            lease_store=store,
-            lease_id="lease-001",
-        )
-        assert not lock_dir.exists()
+        # Fail-closed leaves the legacy lock untouched for explicit recovery.
+        assert lock_dir.exists()
 
 
 class TestValidateLeaseAuthority:
     """Direct tests for the validate_lease_authority function."""
 
     def test_authorized_when_lease_matches(self) -> None:
+        owner_pid = os.getpid()
+        birth = process_birth_identity()
         lease = _make_test_custody_lease(
             lease_id="lease-001",
             owner_host="worker-a",
-            owner_pid="111",
+            owner_pid=str(owner_pid),
         )
         store = FakeLeaseStore(_leases={"lease-001": lease})
-        lock_owner = {"hostname": "worker-a", "pid": 111}
+        lock_owner = {
+            "hostname": "worker-a",
+            "pid": owner_pid,
+            "boot_id": birth["boot_id"],
+            "pid_namespace": repair_lock._pid_namespace(owner_pid),
+            "process_start_ticks": repair_lock._process_start_ticks(owner_pid),
+        }
 
         authorized, diag = repair_lock.validate_lease_authority(
             store, "lease-001", lock_owner
@@ -867,7 +894,7 @@ class TestValidateLeaseAuthority:
         assert authorized
         assert diag["reason"] == "authorized"
         assert diag["lease_owner_host"] == "worker-a"
-        assert diag["lease_owner_pid"] == "111"
+        assert diag["lease_owner_pid"] == str(owner_pid)
 
     def test_unauthorized_when_lease_missing(self) -> None:
         store = FakeLeaseStore(_leases={})

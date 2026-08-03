@@ -2303,10 +2303,19 @@ def retrigger_ordinary_repair(
     timeout_secs: float | None = None,
     runner: Callable[..., Any] | None = None,
     release_lock: Callable[..., bool] | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> RetriggerExecutionResult:
     """Release the ordinary repair lock, then invoke the primary repair loop."""
     if not command:
         raise ValueError("command must not be empty")
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        normalize_repair_identity,
+    )
+
+    if normalize_repair_identity(repair_identity) is None:
+        raise PermissionError(
+            "ordinary repair retrigger requires the current normalized repair identity"
+        )
 
     # ── M7 shadow validation before repair retrigger ────────────────────
     if _M7_VALIDATOR_AVAILABLE:

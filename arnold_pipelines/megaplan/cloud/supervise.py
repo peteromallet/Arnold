@@ -246,6 +246,7 @@ def enqueue_supervisor_repair_request(
 
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
     from arnold_pipelines.megaplan.cloud.repair_requests import (
+        derive_repair_identity,
         enqueue_occurrence_bound_repair_request,
     )
 
@@ -255,6 +256,7 @@ def enqueue_supervisor_repair_request(
     # Resolve that identity at enqueue time so a deterministic supervisor exit
     # cannot be discarded merely because the producer substituted a spec path.
     current_plan_name = ""
+    current: dict[str, Any] | None = None
     try:
         current = resolve_current_target(
             session,
@@ -288,30 +290,9 @@ def enqueue_supervisor_repair_request(
         current_plan_name=current_plan_name,
     )
 
-    # ── Step 39 (T25): Build exact occurrence identity for
-    # supervised-run-exhausted enqueue.  The F01 tuple binds this
-    # request to the exact repair occurrence so downstream recovery
-    # joins can identify the same tuple.
-    workspace_str = str(workspace)
-    fence_token = _derive_supervise_fence_token(log_path)
-    plan_revision = _derive_supervise_plan_revision(
-        marker_dir, current_plan_name
-    )
-
-    occurrence_identity = {
-        "environment": workspace_str,
-        "session": session,
-        "chain": remote_spec,
-        "plan_revision": plan_revision,
-        "phase": "arnold-supervise",
-        "task": "phase:arnold-supervise",
-        "attempt": _derive_supervise_attempt(log_path),
-        "normalized_failure_kind": "supervised_run_exhausted",
-        "blocker_or_phase_result_hash": _derive_supervise_blocker_hash(
-            log_path, reason
-        ),
-        "fence": fence_token,
-    }
+    # Supervisor liveness and log metadata are evidence, not authority.  Only
+    # reuse the complete identity persisted by the current-target owner.
+    occurrence_identity = derive_repair_identity(current_target=current)
 
     return enqueue_occurrence_bound_repair_request(
         queue_root=queue_root,
@@ -333,63 +314,6 @@ def enqueue_supervisor_repair_request(
             "next_three_hour",
         ],
     )
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Step 39 (T25) — Occurrence identity derivation helpers for supervise enqueue
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def _derive_supervise_fence_token(log_path: str) -> str:
-    """Derive a fence token from the supervise log file."""
-    try:
-        stat = Path(log_path).stat()
-        return f"fence:{stat.st_mtime_ns}:{stat.st_size}"
-    except OSError:
-        return "fence:unknown"
-
-
-def _derive_supervise_plan_revision(
-    marker_dir: str | Path, current_plan_name: str
-) -> str:
-    """Derive a plan revision from the marker directory."""
-    marker = Path(marker_dir)
-    if current_plan_name:
-        # Try reading the plan's state.json to extract plan_revision.
-        try:
-            plan_dir = marker / "plans" / current_plan_name
-            if not plan_dir.is_dir():
-                plan_dir = marker / current_plan_name
-            data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                rev = data.get("plan_revision") or data.get("revision") or ""
-                if rev:
-                    return str(rev).strip()
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            pass
-    # Fallback.
-    digest = hashlib.sha256(
-        f"{marker}:{current_plan_name}".encode("utf-8")
-    ).hexdigest()[:16]
-    return f"sha256:{digest}"
-
-
-def _derive_supervise_attempt(log_path: str) -> str:
-    """Derive attempt number from supervise log modification count."""
-    try:
-        stat = Path(log_path).stat()
-        # Simple heuristic: each write increments st_mtime_ns,
-        # use it as a proxy for attempt count.
-        return str(stat.st_nlink or 1)
-    except OSError:
-        return "1"
-
-
-def _derive_supervise_blocker_hash(log_path: str, reason: str) -> str:
-    """Derive a blocker hash from supervise context."""
-    parts = [log_path, reason]
-    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
 
 
 def _derive_supervise_evidence_cursor_digest(

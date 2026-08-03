@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan.custody.contracts import (
     F01_REPAIR_OCCURRENCE_FIELDS,
     build_custody_target_key,
     build_repair_occurrence_key,
+    normalize_custody_target_key,
     normalize_repair_occurrence_key,
     process_birth_identity,
 )
@@ -52,62 +53,127 @@ ATTEMPTS_DIR_NAME = "attempts"
 ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 OCCURRENCE_CLAIMS_DIR_NAME = "occurrence-claims"
 CURRENT_SCHEMA_VERSION = 1
+REPAIR_IDENTITY_SCHEMA_VERSION = "megaplan-repair-identity-v1"
+
+
+def build_normalized_repair_identity(
+    *,
+    target: CustodyTargetKey,
+    run_id: str,
+    run_revision: str,
+    run_incarnation_id: str,
+    coordinator_attempt_id: str,
+    fence_token: int,
+    wbc_attempt_reference: str,
+    run_authority_grant_id: str,
+    lease_id: str,
+    custody_epoch: int,
+) -> dict[str, Any] | None:
+    """Build the canonical repair identity without provider/model trivia."""
+    occurrence = build_repair_occurrence_key(
+        target=target,
+        run_id=run_id,
+        run_revision=run_revision,
+        coordinator_attempt_id=coordinator_attempt_id,
+        fence_token=fence_token,
+        wbc_attempt_reference=wbc_attempt_reference,
+    )
+    if occurrence is None:
+        return None
+    return normalize_repair_identity(
+        {
+            "schema_version": REPAIR_IDENTITY_SCHEMA_VERSION,
+            "occurrence": occurrence.to_dict(),
+            "run_incarnation_id": run_incarnation_id,
+            "run_authority_grant_id": run_authority_grant_id,
+            "lease_id": lease_id,
+            "custody_epoch": custody_epoch,
+        }
+    )
 
 
 def normalize_repair_identity(
     payload: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Normalize the exact repair occurrence tuple for custody comparison."""
-    normalized = normalize_repair_occurrence_key(payload)
-    if normalized is not None:
-        return normalized.to_dict()
+    """Return the one authority-bearing repair identity envelope.
+
+    The predecessor ten-field/F01 mapping remains readable elsewhere for
+    diagnosis, but it is deliberately not normalized here: F01 alone does
+    not identify the run incarnation, coordinator attempt, or current
+    custody lease.  Positive enqueue/claim/mutation boundaries consume only
+    this current envelope.
+    """
     if not isinstance(payload, Mapping):
         return None
-    legacy_fields = (
-        "environment_id",
-        "session_id",
-        "chain_id",
-        "plan_revision",
-        "phase",
-        "task_id",
-        "attempt_number",
-        "failure_kind",
-        "blocker_digest",
-        "coordinator_fence_token",
-    )
-    if any(field not in payload for field in legacy_fields):
-        return None
-    try:
-        result = {
-            field: (
-                int(payload[field])
-                if field == "attempt_number"
-                else str(payload[field]).strip()
-            )
-            for field in legacy_fields
+
+    occurrence_raw = payload.get("occurrence")
+    occurrence: RepairOccurrenceKey | None = None
+    if isinstance(occurrence_raw, Mapping):
+        # Require the current nested occurrence contract.  The compatibility
+        # constructor also understands predecessor shapes, so explicitly
+        # reject those at this authority boundary.
+        if (
+            occurrence_raw.get("contract_type") == "repair_occurrence_key"
+            and isinstance(occurrence_raw.get("target"), Mapping)
+        ):
+            occurrence = normalize_repair_occurrence_key(occurrence_raw)
+    elif isinstance(payload.get("target"), Mapping):
+        occurrence = normalize_repair_occurrence_key(payload)
+    elif all(field in payload for field in F01_REPAIR_OCCURRENCE_FIELDS):
+        target_payload = {
+            field: payload.get(field) for field in F01_REPAIR_OCCURRENCE_FIELDS
         }
-    except (ContractError, TypeError, ValueError):
+        target_payload["chain_identity"] = payload.get("chain_identity")
+        target = normalize_custody_target_key(target_payload)
+        try:
+            fence_token = int(payload.get("fence_token"))
+        except (TypeError, ValueError):
+            fence_token = -1
+        if target is not None and fence_token >= 0:
+            occurrence = build_repair_occurrence_key(
+                target=target,
+                run_id=str(payload.get("run_id") or "").strip(),
+                run_revision=str(payload.get("run_revision") or "").strip(),
+                coordinator_attempt_id=str(
+                    payload.get("coordinator_attempt_id") or ""
+                ).strip(),
+                fence_token=fence_token,
+                wbc_attempt_reference=str(
+                    payload.get("wbc_attempt_reference") or ""
+                ).strip(),
+            )
+    if occurrence is None:
         return None
-    if result["attempt_number"] <= 0 or any(
-        not value
-        for field, value in result.items()
-        if field != "attempt_number"
-    ):
+
+    required_text = {
+        "run_incarnation_id": payload.get("run_incarnation_id"),
+        "run_authority_grant_id": payload.get("run_authority_grant_id"),
+        "lease_id": payload.get("lease_id"),
+    }
+    normalized_text = {
+        name: str(value or "").strip() for name, value in required_text.items()
+    }
+    if not all(normalized_text.values()):
         return None
-    return result
+    custody_epoch = _positive_int(payload.get("custody_epoch"))
+    if custody_epoch is None:
+        return None
+    return {
+        "schema_version": REPAIR_IDENTITY_SCHEMA_VERSION,
+        "occurrence": occurrence.to_dict(),
+        **normalized_text,
+        "custody_epoch": custody_epoch,
+    }
 
 
 def repair_identity_key(payload: Mapping[str, Any] | None) -> str:
     """Return the deterministic key for a normalized repair occurrence."""
-    normalized = normalize_repair_occurrence_key(payload)
-    if normalized is not None:
-        return normalized.key
-    legacy = normalize_repair_identity(payload)
-    if legacy is None:
+    normalized = normalize_repair_identity(payload)
+    if normalized is None:
         return ""
-    return "repair-occurrence:" + hashlib.sha256(
+    return "sha256:" + hashlib.sha256(
         json.dumps(
-            legacy,
+            normalized,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -132,6 +198,119 @@ def _positive_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def build_owned_lifecycle_repair_identity(
+    *,
+    environment: str,
+    session: str,
+    chain: str,
+    plan_revision: str,
+    phase: str,
+    task: str,
+    attempt: str,
+    normalized_failure_kind: str,
+    blocker_or_phase_result_hash: str,
+    active_step: Mapping[str, Any] | None,
+    live_runner_lease: Mapping[str, Any] | None,
+    coordinator_attempt_id: str,
+) -> dict[str, Any] | None:
+    """Mint repair authority only at the live lifecycle-failure owner boundary.
+
+    This is the ordinary positive producer.  It consumes the persisted active
+    step plus a fresh reread of the exact runner lease.  Labels, mtimes, PIDs,
+    or a stale active-step projection cannot independently create authority.
+    The resulting grant and repair-custody lease identifiers are
+    content-addressed records of that already-authoritative boundary.
+    """
+    active = _mapping(active_step)
+    recorded_lease = _mapping(active.get("runner_lease"))
+    live_lease = _mapping(live_runner_lease)
+    incarnation = _mapping(active.get("runner_incarnation"))
+    orphan_fence = _mapping(active.get("orphan_fence"))
+    required_incarnation = (
+        incarnation.get("host_id"),
+        incarnation.get("pid_namespace_id"),
+        incarnation.get("worker_pid"),
+        incarnation.get("worker_process_start_identity"),
+    )
+    run_id = str(active.get("run_id") or "").strip()
+    coordinator_attempt = str(coordinator_attempt_id or "").strip()
+    if (
+        not run_id
+        or not coordinator_attempt
+        or not all(str(value or "").strip() for value in required_incarnation)
+        or str(orphan_fence.get("run_id") or "").strip() != run_id
+        or str(orphan_fence.get("invocation_id") or "").strip()
+        != coordinator_attempt
+    ):
+        return None
+
+    lease_fields = ("lease_id", "runner_fence", "marker_binding")
+    if not all(str(live_lease.get(field) or "").strip() for field in lease_fields):
+        return None
+    if any(
+        str(recorded_lease.get(field) or "").strip()
+        != str(live_lease.get(field) or "").strip()
+        for field in lease_fields
+    ):
+        return None
+    try:
+        fence_token = int(live_lease.get("runner_fence"))
+    except (TypeError, ValueError):
+        return None
+    if fence_token < 0:
+        return None
+
+    target = build_custody_target_key(
+        environment=environment,
+        session=session,
+        chain=chain,
+        plan_revision=plan_revision,
+        phase=phase,
+        task=task,
+        attempt=attempt,
+        normalized_failure_kind=normalized_failure_kind,
+        blocker_or_phase_result_hash=blocker_or_phase_result_hash,
+        fence=f"runner-fence:{fence_token}",
+        chain_identity=str(live_lease.get("marker_binding") or ""),
+    )
+    if target is None:
+        return None
+
+    incarnation_id = "sha256:" + hashlib.sha256(
+        json.dumps(
+            dict(incarnation), sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+    ).hexdigest()
+    authority_basis = {
+        "target": target.to_dict(),
+        "run_id": run_id,
+        "run_revision": str(plan_revision or "").strip(),
+        "run_incarnation_id": incarnation_id,
+        "coordinator_attempt_id": coordinator_attempt,
+        "fence_token": fence_token,
+        "wbc_attempt_reference": coordinator_attempt,
+        "runner_lease_id": str(live_lease.get("lease_id") or ""),
+        "runner_marker_binding": str(live_lease.get("marker_binding") or ""),
+    }
+    authority_digest = hashlib.sha256(
+        json.dumps(
+            authority_basis, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+    ).hexdigest()
+    return build_normalized_repair_identity(
+        target=target,
+        run_id=run_id,
+        run_revision=str(plan_revision or "").strip(),
+        run_incarnation_id=incarnation_id,
+        coordinator_attempt_id=coordinator_attempt,
+        fence_token=fence_token,
+        wbc_attempt_reference=coordinator_attempt,
+        run_authority_grant_id=f"repair-grant:{authority_digest}",
+        lease_id=f"repair-custody:{authority_digest}",
+        custody_epoch=1,
+    )
+
+
 def _first_text(*values: Any) -> str:
     for value in values:
         text = _text(value)
@@ -142,7 +321,7 @@ def _first_text(*values: Any) -> str:
 
 def derive_repair_identity(
     *,
-    session: str,
+    session: str = "",
     problem_signature: Mapping[str, Any] | None = None,
     target: Mapping[str, Any] | None = None,
     plan_state: Mapping[str, Any] | None = None,
@@ -151,140 +330,29 @@ def derive_repair_identity(
     blocker_fingerprint: Mapping[str, Any] | None = None,
     repair_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Build the exact predecessor occurrence tuple used to fence custody."""
-    if repair_identity is not None:
-        return normalize_repair_identity(repair_identity)
+    """Return only explicitly persisted current repair authority.
 
-    signature = _mapping(problem_signature)
-    target_payload = _mapping(target)
-    state_payload = _mapping(plan_state)
-    current_payload = _mapping(current_target)
-    if not (
-        state_payload
-        or current_payload
-        or any(
-            _text(target_payload.get(field))
-            for field in (
-                "environment_id",
-                "chain_id",
-                "plan_revision",
-                "coordinator_fence_token",
-                "fence_token",
-            )
-        )
-    ):
-        return None
-
-    current_refs = _mapping(current_payload.get("current_refs"))
-    marker = _mapping(current_payload.get("marker"))
-    current_plan_state = _mapping(current_payload.get("plan_state"))
-    latest_failure = _mapping(state_payload.get("latest_failure"))
-    latest_failure_meta = _mapping(latest_failure.get("metadata"))
-    active_step = _mapping(current_payload.get("active_step_heartbeat"))
-    evidence_cursor = _mapping(
-        latest_failure.get("evidence_cursor")
-        or latest_failure_meta.get("evidence_cursor")
-        or _mapping(state_payload.get("resume_cursor")).get("evidence_cursor")
-        or target_payload.get("evidence_cursor")
+    Labels, liveness, failure summaries, and rebuildable projections remain
+    useful diagnostic evidence, but they may not mint a run incarnation,
+    coordinator attempt, fence, or custody epoch.  Producers must persist the
+    normalized envelope at the source or explicitly reacquire it.
+    """
+    del session, problem_signature, blocker_id, blocker_fingerprint
+    candidates = (
+        repair_identity,
+        _mapping(target).get("repair_identity"),
+        _mapping(plan_state).get("repair_identity"),
+        _mapping(_mapping(plan_state).get("meta")).get("repair_identity"),
+        _mapping(current_target).get("repair_identity"),
+        _mapping(_mapping(current_target).get("current_refs")).get(
+            "repair_identity"
+        ),
     )
-    environment_id = _first_text(
-        target_payload.get("environment_id"),
-        target_payload.get("workspace_path"),
-        current_refs.get("workspace"),
-        marker.get("workspace"),
-        target_payload.get("plan_dir"),
-        marker.get("path"),
-    )
-    session_id = _first_text(
-        session,
-        current_payload.get("target_session"),
-        marker.get("session"),
-    )
-    chain_id = _first_text(
-        target_payload.get("chain_id"),
-        target_payload.get("remote_spec"),
-        current_refs.get("remote_spec"),
-        marker.get("remote_spec"),
-        target_payload.get("plan_dir"),
-        current_refs.get("run_kind"),
-    )
-    plan_revision = _first_text(
-        target_payload.get("plan_revision"),
-        state_payload.get("plan_revision"),
-        _mapping(state_payload.get("meta")).get("plan_revision"),
-        current_refs.get("plan_revision"),
-        current_plan_state.get("fingerprint"),
-        current_payload.get("target_id"),
-        evidence_cursor.get("review_artifact_hash"),
-        signature.get("milestone_or_plan"),
-    )
-    phase = _first_text(
-        target_payload.get("phase"),
-        latest_failure.get("phase"),
-        active_step.get("phase"),
-        signature.get("phase_or_step"),
-        state_payload.get("current_state"),
-    )
-    task_id = _first_text(
-        target_payload.get("task_id"),
-        latest_failure.get("blocked_task_id"),
-        latest_failure.get("task_id"),
-        latest_failure_meta.get("blocked_task_id"),
-        latest_failure_meta.get("task_id"),
-        signature.get("blocked_task_id"),
-        f"phase:{phase}" if phase else "",
-    )
-    attempt_number = (
-        _positive_int(target_payload.get("attempt_number"))
-        or _positive_int(target_payload.get("attempt"))
-        or _positive_int(latest_failure.get("attempt_number"))
-        or _positive_int(latest_failure_meta.get("attempt_number"))
-        or _positive_int(latest_failure_meta.get("attempt"))
-        or _positive_int(active_step.get("attempt"))
-        or 1
-    )
-    failure_kind = _first_text(
-        target_payload.get("failure_kind"),
-        latest_failure.get("kind"),
-        signature.get("failure_kind"),
-        _mapping(current_payload.get("event_cursors")).get("latest_failure_kind"),
-        state_payload.get("current_state"),
-    )
-    blocker_digest = _first_text(
-        target_payload.get("blocker_digest"),
-        blocker_id,
-        repair_contract.blocker_id_for_fingerprint(blocker_fingerprint),
-        problem_signature_key(signature) if signature else "",
-        current_payload.get("target_id"),
-    )
-    coordinator_fence_token = _first_text(
-        target_payload.get("coordinator_fence_token"),
-        target_payload.get("fence_token"),
-        state_payload.get("fence_token"),
-        _mapping(state_payload.get("meta")).get("fence_token"),
-        latest_failure_meta.get("coordinator_fence_token"),
-        latest_failure_meta.get("fence_token"),
-        current_refs.get("fence_token"),
-        current_plan_state.get("fingerprint"),
-        evidence_cursor.get("review_artifact_hash"),
-        blocker_digest,
-    )
-    try:
-        occurrence = RepairOccurrenceKey(
-            environment_id=environment_id,
-            session_id=session_id,
-            chain_id=chain_id,
-            plan_revision=plan_revision,
-            phase=phase,
-            task_id=task_id,
-            attempt_number=attempt_number,
-            failure_kind=failure_kind,
-            blocker_digest=blocker_digest,
-            coordinator_fence_token=coordinator_fence_token,
-        )
-    except (TypeError, ValueError):
-        return None
-    return occurrence.to_dict()
+    for candidate in candidates:
+        normalized = normalize_repair_identity(_mapping(candidate))
+        if normalized is not None:
+            return normalized
+    return None
 
 
 def exact_repair_identity_available(
@@ -293,29 +361,12 @@ def exact_repair_identity_available(
     plan_state: Mapping[str, Any] | None = None,
     current_target: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Whether revision and fence both come from explicit current evidence."""
-    target_payload = _mapping(target)
-    state_payload = _mapping(plan_state)
-    current_payload = _mapping(current_target)
-    current_refs = _mapping(current_payload.get("current_refs"))
-    latest_failure = _mapping(state_payload.get("latest_failure"))
-    latest_failure_meta = _mapping(latest_failure.get("metadata"))
-    plan_revision = _first_text(
-        target_payload.get("plan_revision"),
-        state_payload.get("plan_revision"),
-        _mapping(state_payload.get("meta")).get("plan_revision"),
-        current_refs.get("plan_revision"),
-    )
-    coordinator_fence_token = _first_text(
-        target_payload.get("coordinator_fence_token"),
-        target_payload.get("fence_token"),
-        state_payload.get("fence_token"),
-        _mapping(state_payload.get("meta")).get("fence_token"),
-        latest_failure_meta.get("coordinator_fence_token"),
-        latest_failure_meta.get("fence_token"),
-        current_refs.get("fence_token"),
-    )
-    return bool(plan_revision and coordinator_fence_token)
+    """Whether explicit current evidence carries the complete identity."""
+    return derive_repair_identity(
+        target=target,
+        plan_state=plan_state,
+        current_target=current_target,
+    ) is not None
 
 REPAIR_ACTION_REPAIR = "repair"
 REPAIR_ACTION_RETRY = "retry"
@@ -809,6 +860,15 @@ def repair_request_contract_violations(request: Mapping[str, Any]) -> list[str]:
         or str(provenance.get("session") or "").strip() != session
     ):
         violations.append("invalid_provenance")
+    normalized_identity = normalize_repair_identity(
+        _mapping(request.get("repair_identity"))
+    )
+    if normalized_identity is None:
+        violations.append("invalid_repair_identity")
+    elif request.get("repair_identity_key") != repair_identity_key(
+        normalized_identity
+    ):
+        violations.append("invalid_repair_identity_key")
     problem_signature = request.get("problem_signature")
     evidence_refs = request.get("evidence_refs")
     if not isinstance(problem_signature, Mapping) or not isinstance(evidence_refs, list):
@@ -891,6 +951,21 @@ def enqueue_repair_request(
     source_identity = str(source or "").strip()
     if not source_identity:
         raise ValueError("repair request provenance source is required")
+    normalized_identity = normalize_repair_identity(repair_identity)
+    if normalized_identity is None:
+        return {
+            "status": "zero_authority_rejected",
+            "outcome": "zero_authority_rejected",
+            "evidence": {
+                "reason": (
+                    "enqueue requires the current normalized repair identity "
+                    "(exact occurrence, run incarnation, grant, lease, and "
+                    "custody epoch)"
+                ),
+                "source": source_identity,
+                "legacy_identity_read_only": bool(repair_identity),
+            },
+        }
 
     # ── Merge acceptance predicate fields into the problem signature ──────
     extended_signature = dict(problem_signature)
@@ -949,7 +1024,7 @@ def enqueue_repair_request(
         problem_signature=extended_signature,
         root_cause_hint=root_cause_hint,
         extra_signature_fields=extra_fields,
-        repair_identity=repair_identity,
+        repair_identity=normalized_identity,
     )
     request_path = requests_dir(queue_root) / f"{request_id}.json"
     predecessor_request_id = ""
@@ -970,6 +1045,23 @@ def enqueue_repair_request(
                 }
             )
             request_path = requests_dir(queue_root) / f"{request_id}.json"
+    if not predecessor_request_id:
+        # Preserve migration lineage without treating an identity-free record
+        # as authority.  Old requests used an identity-independent request ID,
+        # so a current exact-identity successor will not naturally collide at
+        # ``request_path``.  A deterministic diagnostic scan is safe here: it
+        # only records the predecessor and never makes the legacy record
+        # claimable or eligible for coalescing.
+        for candidate in reversed(iter_repair_requests(queue_root)):
+            if has_claimable_repair_request_contract(candidate):
+                continue
+            if str(candidate.get("session") or "").strip() != str(session or "").strip():
+                continue
+            if candidate.get("problem_signature_key") != signature_key:
+                continue
+            predecessor_request_id = str(candidate.get("request_id") or "").strip()
+            if predecessor_request_id:
+                break
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "kind": "repair_request",
@@ -1006,41 +1098,6 @@ def enqueue_repair_request(
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
 
-    # ── Step 13A: carry exact repair identity (occurrence, host/process birth,
-    # grant/fence, WBC attempt/global effect, lease, epoch) on the request
-    # record so later recovery joins bind the same tuple.  Additive and
-    # optional: legacy callers omitting it produce an empty identity block and
-    # a ``pending`` shadow lease (see ``_shadow_acquire_custody_lease``).
-    normalized_identity = normalize_repair_identity(repair_identity) or {}
-    if repair_identity and not normalized_identity:
-        # Standard custody identity fields.
-        for identity_field in (
-            "run_id",
-            "run_revision",
-            "coordinator_attempt_id",
-            "run_authority_grant_id",
-            "coordinator_fence_token",
-            "wbc_attempt_reference",
-            "global_logical_effect_key",
-            "lease_id",
-            "custody_epoch",
-            "owner_host",
-            "owner_pid",
-            "owner_boot_id",
-        ):
-            if identity_field in repair_identity:
-                normalized_identity[identity_field] = repair_identity[identity_field]
-        # ── Step 39 (T25): exact occurrence identity (F01 tuple) ──
-        for f01_field in F01_REPAIR_OCCURRENCE_FIELDS:
-            if f01_field in repair_identity:
-                normalized_identity[f01_field] = repair_identity[f01_field]
-        # ── Step 39: evidence cursor digest ──
-        if "evidence_cursor_digest" in repair_identity:
-            normalized_identity["evidence_cursor_digest"] = repair_identity["evidence_cursor_digest"]
-        # ── Step 39: terminal receipt expectations ──
-        terminal = repair_identity.get("terminal_receipt_expectations")
-        if isinstance(terminal, list):
-            normalized_identity["terminal_receipt_expectations"] = list(terminal)
     record["repair_identity"] = normalized_identity
     record["repair_identity_key"] = repair_identity_key(normalized_identity)
 
@@ -1110,28 +1167,31 @@ def enqueue_repair_request(
     # ── M7: shadow custody lease acquisition ──
     lease_store = _open_custody_lease_store(lease_store_dir)
     if lease_store is not None:
-        custody_target = _build_custody_target_from_repair_context(
-            session=session,
-            problem_signature=problem_signature,
-            target=target,
+        occurrence = _mapping(normalized_identity.get("occurrence"))
+        custody_target = normalize_custody_target_key(
+            _mapping(occurrence.get("target"))
         )
         identity = process_birth_identity()
-        _ri = repair_identity or {}
         lease_result = _shadow_acquire_custody_lease(
             lease_store=lease_store,
             lease_id=f"repair-req-{request_id}",
             target=custody_target,
-            owner_host=_ri.get("owner_host") or identity.get("host", _hostname()),
-            owner_pid=str(_ri.get("owner_pid") or identity.get("pid", os.getpid())),
-            owner_boot_id=_ri.get("owner_boot_id") or identity.get("boot_id", ""),
-            run_id=str(_ri.get("run_id") or ""),
-            run_revision=str(_ri.get("run_revision") or ""),
-            coordinator_attempt_id=str(_ri.get("coordinator_attempt_id") or ""),
-            run_authority_grant_id=str(
-                _ri.get("run_authority_grant_id") or ""
+            owner_host=str(identity.get("host") or _hostname()),
+            owner_pid=str(identity.get("pid") or os.getpid()),
+            owner_boot_id=str(identity.get("boot_id") or ""),
+            run_id=str(occurrence.get("run_id") or ""),
+            run_revision=str(occurrence.get("run_revision") or ""),
+            coordinator_attempt_id=str(
+                occurrence.get("coordinator_attempt_id") or ""
             ),
-            coordinator_fence_token=int(_ri.get("coordinator_fence_token") or 0),
-            wbc_attempt_reference=str(_ri.get("wbc_attempt_reference") or ""),
+            run_authority_grant_id=str(
+                normalized_identity.get("run_authority_grant_id") or ""
+            ),
+            coordinator_fence_token=int(occurrence.get("fence_token") or 0),
+            wbc_attempt_reference=str(
+                occurrence.get("wbc_attempt_reference") or ""
+            ),
+            custody_epoch=int(normalized_identity.get("custody_epoch") or 0),
             payload_extra={
                 "source": source,
                 "request_id": request_id,
@@ -1154,29 +1214,22 @@ def enqueue_human_gate_repair_request(
     artifact_stage: str,
     step_name: str,
     prompt: str,
-    # ── Step 40 (T26): occurrence identity for human-gate enqueue ──
+    # ── Current normalized identity for human-gate enqueue ──
     occurrence_identity: Mapping[str, Any] | None = None,
     evidence_cursor_digest: str = "",
     terminal_receipt_expectations: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Megaplan-owned hook used by the neutral human-gate step.
 
-    Step 40 (T26): converts human-gate enqueue to occurrence-compatible
-    requests or typed zero-authority rejection.  When *occurrence_identity*
-    is provided with all ten F01 fields non-empty the request is delegated
-    to :func:`enqueue_occurrence_bound_repair_request`.  When the identity
-    is missing or incomplete a typed ``zero_authority_rejected`` outcome is
-    emitted with the current authority and custody evidence (plan, pipeline,
-    step, session, workspace) so that a human-gate suspension cannot become
-    repair authority on its own.
+    Converts human-gate enqueue to occurrence-compatible requests or typed
+    zero-authority rejection.  F01 alone is diagnostic: positive enqueue
+    requires the same normalized run/custody identity as every other source.
     """
 
     from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
     from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
         emit_zero_authority_rejection,
     )
-    from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
-
     if not repair_request_queue_enabled():
         return None
 
@@ -1194,31 +1247,8 @@ def enqueue_human_gate_repair_request(
 
     # ── Validate and normalize occurrence identity ─────────────────────
     if occurrence_identity:
-        f01_present = 0
-        normalized_identity: dict[str, Any] = {}
-        for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
-            value = str(occurrence_identity.get(field_name, "")).strip()
-            normalized_identity[field_name] = value
-            if value:
-                f01_present += 1
-        # Carry forward standard custody fields.
-        for std_field in (
-            "run_authority_grant_id",
-            "coordinator_fence_token",
-            "lease_id",
-            "custody_epoch",
-        ):
-            if std_field in occurrence_identity:
-                normalized_identity[std_field] = occurrence_identity[std_field]
-        if evidence_cursor_digest:
-            normalized_identity["evidence_cursor_digest"] = evidence_cursor_digest
-        if terminal_receipt_expectations:
-            normalized_identity["terminal_receipt_expectations"] = list(
-                terminal_receipt_expectations
-            )
-
-        if f01_present == len(F01_REPAIR_OCCURRENCE_FIELDS):
-            # Full F01 tuple — delegate to occurrence-bound enqueue.
+        normalized_identity = normalize_repair_identity(occurrence_identity)
+        if normalized_identity is not None:
             return enqueue_occurrence_bound_repair_request(
                 queue_root=queue_root,
                 session=session,
@@ -1246,14 +1276,12 @@ def enqueue_human_gate_repair_request(
                 terminal_receipt_expectations=terminal_receipt_expectations,
             )
 
-        # Partial identity — reject with typed outcome.
         rejection = emit_zero_authority_rejection(
             "enqueue_producer",
             "human_gate",
             reason=(
-                "insufficient occurrence identity for human-gate enqueue: "
-                f"{f01_present}/{len(F01_REPAIR_OCCURRENCE_FIELDS)} "
-                "F01 fields non-empty; all ten are required"
+                "human-gate enqueue requires the complete normalized "
+                "run/custody identity; F01-only evidence is read-only"
             ),
         )
         return {
@@ -1266,14 +1294,14 @@ def enqueue_human_gate_repair_request(
         }
 
     # A human-gate label, suspension, or liveness observation is not repair
-    # authority.  Producers that cannot supply the exact F01 occurrence tuple
+    # authority.  Producers that cannot supply the normalized run/custody identity
     # must fail closed instead of creating even a coalescible legacy request.
     rejection = emit_zero_authority_rejection(
         "enqueue_producer",
         "human_gate",
         reason=(
             "manual/liveness context cannot become repair authority without "
-            "a complete F01 occurrence identity"
+            "the complete normalized run/custody identity"
         ),
     )
     return {
@@ -1400,6 +1428,8 @@ def find_pending_by_signature(
 ) -> dict[str, Any] | None:
     key = problem_signature_key(problem_signature, extra_fields=extra_fields)
     identity_key = repair_identity_key(repair_identity)
+    if not identity_key:
+        return None
     decided = _decided_request_ids(queue_dir)
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
@@ -1411,9 +1441,7 @@ def find_pending_by_signature(
         if blocker_id and str(record.get("blocker_id") or "").strip() != blocker_id:
             continue
         if record.get("problem_signature_key") == key:
-            if identity_key and str(
-                record.get("repair_identity_key") or ""
-            ) != identity_key:
+            if str(record.get("repair_identity_key") or "") != identity_key:
                 continue
             return record
     return None
@@ -1487,6 +1515,9 @@ def write_dispatch_attempt(
 ) -> dict[str, Any]:
     """Write immutable proof that a claimed request launched a managed child."""
 
+    normalized_identity = normalize_repair_identity(repair_identity)
+    if normalized_identity is None:
+        raise ValueError("dispatch attempt requires current normalized repair identity")
     when = created_at or utc_now()
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
@@ -1514,8 +1545,8 @@ def write_dispatch_attempt(
         "managed_manifest_path": str(managed_manifest_path or "").strip(),
         "status": "launched",
         "created_at": when,
-        "repair_identity": normalize_repair_identity(repair_identity) or {},
-        "repair_identity_key": repair_identity_key(repair_identity),
+        "repair_identity": normalized_identity,
+        "repair_identity_key": repair_identity_key(normalized_identity),
     }
     for field in (
         "request_id",
@@ -1630,6 +1661,36 @@ def claim_active_repair_request(
         normalized_repair_identity
     )
     claim_lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
+    request_path = requests_dir(queue_dir) / f"{normalized_request_id}.json"
+    try:
+        request_record = json.loads(request_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        request_record = None
+    observed_identity_key = (
+        str(request_record.get("repair_identity_key") or "")
+        if isinstance(request_record, Mapping)
+        else ""
+    )
+    if (
+        normalized_repair_identity is None
+        or not isinstance(request_record, Mapping)
+        or not has_claimable_repair_request_contract(request_record)
+        or observed_identity_key != normalized_repair_identity_key
+    ):
+        return ActiveRepairClaimResult(
+            status="stale",
+            lock_dir=claim_lock_dir,
+            evidence={
+                "reason": "repair_identity_unclaimable",
+                "request_id": normalized_request_id,
+                "expected_repair_identity_key": observed_identity_key,
+                "observed_repair_identity_key": normalized_repair_identity_key,
+                "migration": (
+                    "legacy or partial records are read-only; explicitly "
+                    "reacquire and enqueue a current normalized identity"
+                ),
+            },
+        )
     metadata = {
         "kind": "active_repair_request_claim",
         "schema_version": CURRENT_SCHEMA_VERSION,
@@ -1749,6 +1810,11 @@ def bind_managed_run_to_active_claim(
         str(expected_repair_identity_key or "").strip()
         or repair_identity_key(repair_identity)
     )
+    if (
+        normalize_repair_identity(repair_identity) is None
+        or not normalized_repair_identity_key
+    ):
+        return False
     lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
     owner_path = owner_metadata_path(lock_dir)
     bind_lock = lock_dir.with_name(lock_dir.name + ".managed-run-bind")
@@ -2101,6 +2167,7 @@ def _shadow_acquire_custody_lease(
     owner_host: str = "",
     owner_pid: str = "",
     owner_boot_id: str = "",
+    custody_epoch: int = 0,
     causal_predecessor: str = "",
     expires_at: str = "",
     payload_extra: Mapping[str, Any] | None = None,
@@ -2149,6 +2216,7 @@ def _shadow_acquire_custody_lease(
         coordinator_attempt_id,
         wbc_attempt_reference,
         run_authority_grant_id,
+        custody_epoch,
     )
     if not all(str(value).strip() for value in required_identity):
         result["m7_lease_status"] = "pending"
@@ -2178,6 +2246,32 @@ def _shadow_acquire_custody_lease(
         payload: dict[str, Any] = {"m7_shadow": True}
         if payload_extra:
             payload.update(dict(payload_extra))
+        if not owner_boot_id:
+            result["m7_lease_status"] = "pending"
+            result["m7_lease_detail"] = "owner boot identity is unavailable"
+            return result
+        try:
+            owner_incarnation = process_owner_identity(int(owner_pid))
+        except (TypeError, ValueError):
+            owner_incarnation = {}
+        owner_pid_namespace = str(
+            owner_incarnation.get("pid_namespace") or ""
+        )
+        owner_process_start = str(
+            owner_incarnation.get("process_start_ticks") or ""
+        )
+        if not owner_pid_namespace or not owner_process_start:
+            result["m7_lease_status"] = "pending"
+            result["m7_lease_detail"] = (
+                "owner PID namespace/process-start identity is unavailable"
+            )
+            return result
+        payload.update(
+            {
+                "owner_pid_namespace": owner_pid_namespace,
+                "owner_process_start_ticks": owner_process_start,
+            }
+        )
 
         # Step 11A: route the lifecycle caller through the blessed lease
         # helper instead of constructing a raw CustodyLeaseEvent and calling
@@ -2193,7 +2287,7 @@ def _shadow_acquire_custody_lease(
             coordinator_fence_token=coordinator_fence_token,
             wbc_attempt_reference=wbc_attempt_reference,
             occurrence_digest=occ_key.occurrence_digest,
-            custody_epoch=1,
+            custody_epoch=custody_epoch,
             sequence=1,
             idempotency_key=f"idem-{lease_id}",
             causal_predecessor=causal_predecessor,
@@ -2423,61 +2517,16 @@ def enqueue_occurrence_bound_repair_request(
         emit_zero_authority_rejection,
     )
 
-    # ── Validate and normalize occurrence identity ──────────────────────
-    normalized_identity: dict[str, Any] = {}
-    if occurrence_identity:
-        # Normalize F01 fields.
-        f01_present = 0
-        for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
-            value = str(occurrence_identity.get(field_name, "")).strip()
-            normalized_identity[field_name] = value
-            if value:
-                f01_present += 1
-
-        # Carry forward standard custody fields.
-        for std_field in (
-            "run_authority_grant_id",
-            "coordinator_fence_token",
-            "lease_id",
-            "custody_epoch",
-        ):
-            if std_field in occurrence_identity:
-                normalized_identity[std_field] = occurrence_identity[std_field]
-
-        # Evidence cursor digest.
-        if evidence_cursor_digest:
-            normalized_identity["evidence_cursor_digest"] = evidence_cursor_digest
-
-        # Terminal receipt expectations.
-        if terminal_receipt_expectations:
-            normalized_identity["terminal_receipt_expectations"] = list(
-                terminal_receipt_expectations
-            )
-
-        # Reject partial identity: all ten F01 fields must be non-empty
-        # so authority is never derived from labels/liveness/WBC
-        # receipts/rebuildable projections.
-        if f01_present != len(F01_REPAIR_OCCURRENCE_FIELDS):
-            rejection = emit_zero_authority_rejection(
-                "enqueue_producer",
-                source,
-                reason=(
-                    "insufficient occurrence identity: "
-                    f"{f01_present}/{len(F01_REPAIR_OCCURRENCE_FIELDS)} "
-                    "F01 fields non-empty; all ten are required"
-                ),
-            )
-            return {
-                "status": "zero_authority_rejected",
-                "outcome": "zero_authority_rejected",
-                "evidence": rejection.evidence,
-            }
-    else:
-        # No occurrence identity supplied: emit typed rejection.
+    normalized_identity = normalize_repair_identity(occurrence_identity)
+    if normalized_identity is None:
         rejection = emit_zero_authority_rejection(
             "enqueue_producer",
             source,
-            reason="occurrence_identity is required for occurrence-bound enqueue",
+            reason=(
+                "the current normalized repair identity is required: exact "
+                "F01 occurrence plus run revision/incarnation, coordinator "
+                "attempt, fence, lease, grant, and custody epoch"
+            ),
         )
         return {
             "status": "zero_authority_rejected",
@@ -2502,7 +2551,7 @@ def enqueue_occurrence_bound_repair_request(
         acceptance_transaction_id=acceptance_transaction_id,
         acceptance_snapshot_hash=acceptance_snapshot_hash,
         lease_store_dir=lease_store_dir,
-        repair_identity=normalized_identity if normalized_identity else None,
+        repair_identity=normalized_identity,
     )
 
 
@@ -2510,6 +2559,7 @@ __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
     "ATTEMPTS_DIR_NAME",
     "CURRENT_SCHEMA_VERSION",
+    "REPAIR_IDENTITY_SCHEMA_VERSION",
     "DECISIONS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
     "QUEUE_DIR_NAME",
@@ -2522,6 +2572,9 @@ __all__ = [
     "attempts_dir",
     "claim_active_repair_request",
     "bind_managed_run_to_active_claim",
+    "build_owned_lifecycle_repair_identity",
+    "build_normalized_repair_identity",
+    "derive_repair_identity",
     "enqueue_human_gate_repair_request",
     "enqueue_occurrence_bound_repair_request",
     "enqueue_repair_request",
@@ -2531,12 +2584,14 @@ __all__ = [
     "iter_repair_attempts",
     "iter_repair_requests",
     "normalize_problem_signature",
+    "normalize_repair_identity",
     "persist_failure_occurrence",
     "problem_signature_key",
     "occurrence_claims_dir",
     "record_malformed_file",
     "redacted_hint_hash",
     "repair_queue_dir",
+    "repair_identity_key",
     "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
     "singleton_occurrence_claim_lock_dir",

@@ -517,6 +517,14 @@ class PlanRepository:
         state["current_state"] = current_state
         state.pop("active_step", None)
         state["latest_failure"] = failure
+        repair_identity = failure["metadata"].get("repair_identity")
+        if isinstance(repair_identity, dict):
+            # Publish the exact owner-minted identity at the canonical plan
+            # state boundary so watchdog/supervisor/manual recovery all reread
+            # the same occurrence after active_step is cleared.
+            state["repair_identity"] = dict(repair_identity)
+        else:
+            state.pop("repair_identity", None)
         if resume_cursor is None:
             state.pop("resume_cursor", None)
         else:

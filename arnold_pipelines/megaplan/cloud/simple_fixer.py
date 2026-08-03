@@ -130,6 +130,7 @@ class SimpleFixerOccurrence(Contract):
     schema_version: ClassVar[int] = SIMPLE_FIXER_SCHEMA_VERSION
 
     target: CustodyTargetKey
+    repair_identity: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, CustodyTargetKey):
@@ -146,11 +147,33 @@ class SimpleFixerOccurrence(Contract):
                     "from a label, liveness signal, WBC receipt, or "
                     "rebuildable projection"
                 )
+        if self.repair_identity is not None:
+            from arnold_pipelines.megaplan.cloud.repair_requests import (
+                normalize_repair_identity,
+            )
+
+            normalized = normalize_repair_identity(self.repair_identity)
+            if normalized is None:
+                raise ContractError("simple fixer repair identity is not current")
+            occurrence = normalized.get("occurrence")
+            if not isinstance(occurrence, Mapping) or occurrence.get("target") != self.target.to_dict():
+                raise ContractError("simple fixer target disagrees with repair identity")
+            object.__setattr__(self, "repair_identity", normalized)
+
+    @property
+    def authoritative(self) -> bool:
+        return self.repair_identity is not None
 
     @property
     def occurrence_fingerprint(self) -> str:
         """Deterministic SHA-256 fingerprint over the exact F01 tuple."""
 
+        if self.repair_identity is not None:
+            from arnold_pipelines.megaplan.cloud.repair_requests import (
+                repair_identity_key,
+            )
+
+            return repair_identity_key(self.repair_identity)
         return _fingerprint_from_tuple(
             {name: getattr(self.target, name) for name in F01_REPAIR_OCCURRENCE_FIELDS}
         )
@@ -159,12 +182,15 @@ class SimpleFixerOccurrence(Contract):
         # Override so the nested CustodyTargetKey is serialized to a plain
         # object (the base ``_plain`` helper does not recurse into Contract
         # instances) and so the fingerprint is included in the projection.
-        return {
+        result = {
             "contract_type": self.contract_type,
             "schema_version": self.schema_version,
             "target": dict(self.target.to_dict()),
             "occurrence_fingerprint": self.occurrence_fingerprint,
         }
+        if self.repair_identity is not None:
+            result["repair_identity"] = dict(self.repair_identity)
+        return result
 
 
 def build_simple_fixer_occurrence(target: CustodyTargetKey | Mapping[str, Any] | None) -> SimpleFixerOccurrence | None:
@@ -178,16 +204,32 @@ def build_simple_fixer_occurrence(target: CustodyTargetKey | Mapping[str, Any] |
 
     if isinstance(target, SimpleFixerOccurrence):
         return target
+    repair_identity: Mapping[str, Any] | None = None
     if isinstance(target, CustodyTargetKey):
         key = target
     elif isinstance(target, Mapping):
-        key = build_custody_target_key(**{name: target.get(name, "") for name in F01_REPAIR_OCCURRENCE_FIELDS})
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            normalize_repair_identity,
+        )
+        from arnold_pipelines.megaplan.custody.contracts import (
+            normalize_custody_target_key,
+        )
+
+        normalized = normalize_repair_identity(target)
+        if normalized is not None:
+            occurrence = normalized.get("occurrence")
+            key = normalize_custody_target_key(
+                occurrence.get("target") if isinstance(occurrence, Mapping) else None
+            )
+            repair_identity = normalized
+        else:
+            key = build_custody_target_key(**{name: target.get(name, "") for name in F01_REPAIR_OCCURRENCE_FIELDS})
     else:
         return None
     if key is None:
         return None
     try:
-        return SimpleFixerOccurrence(target=key)
+        return SimpleFixerOccurrence(target=key, repair_identity=repair_identity)
     except ContractError:
         return None
 
@@ -333,12 +375,17 @@ def claim_singleton_occurrence(
     left for explicit operator/repair-loop handling.
     """
 
-    if not isinstance(occurrence, SimpleFixerOccurrence):
+    if not isinstance(occurrence, SimpleFixerOccurrence) or not occurrence.authoritative:
         return SimpleFixerClaimResult(
             outcome="rejected_identity",
             occurrence_fingerprint="",
             lock_dir="",
-            evidence={"reason": "occurrence_must_be_simple_fixer_occurrence"},
+            evidence={
+                "reason": (
+                    "occurrence requires the current normalized repair identity; "
+                    "legacy F01-only occurrences are read-only"
+                )
+            },
         )
     fingerprint = occurrence.occurrence_fingerprint
     lock_dir = singleton_occurrence_claim_lock_dir(queue_dir, fingerprint)
@@ -350,6 +397,7 @@ def claim_singleton_occurrence(
         "request_id": request_id,
         "occurrence_fingerprint": fingerprint,
         "occurrence": occurrence.target.to_dict(),
+        "repair_identity": dict(occurrence.repair_identity or {}),
     }
     result = acquire_repair_lock(
         lock_dir,
@@ -519,6 +567,8 @@ class SimpleFixerSession:
         )
         if verdict is not None:
             return verdict
+        if not self.occurrence.authoritative:
+            return "rejected_identity"
         # Gate 3 — a singleton claim must be held.
         if not self.has_claim:
             return "rejected_no_claim"

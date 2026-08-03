@@ -27,13 +27,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from arnold_pipelines.megaplan.cloud.repair_contract import append_incident_record
-from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
-from arnold_pipelines.megaplan.cloud.simple_fixer import (
-    FORBIDDEN_AUTHORITY_SOURCES,
-    build_simple_fixer_occurrence,
-)
-from arnold_pipelines.megaplan.custody.contracts import (
-    F01_REPAIR_OCCURRENCE_FIELDS,
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    enqueue_occurrence_bound_repair_request,
+    normalize_repair_identity,
 )
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
 from arnold_pipelines.megaplan.source_cursor_contract import (
@@ -367,35 +363,14 @@ def enqueue_audit_repair_request(
         "event_signature": f"six_hour_auditor:{layer}:{code}:attempt:{retry_ordinal}",
     }
     diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
-    # ── Step 46 (T32): canonical occurrence-compatible identity ──────
-    # The auditor is a reconciliation backstop.  It must not mint authority
-    # from report state.  Build the canonical occurrence identity from the
-    # exact F01 repair-occurrence tuple; when the tuple is partial, record
-    # the forbidden authority source so downstream recovery joins never
-    # treat the partial identity as authoritative.
-    f01 = _auditor_f01_fields(audit_item)
-    occurrence = build_simple_fixer_occurrence(f01)
-    occurrence_fingerprint = ""
-    forbidden_authority_source = ""
-    if occurrence is not None:
-        occurrence_fingerprint = occurrence.occurrence_fingerprint
-    else:
-        forbidden_authority_source = _auditor_forbidden_source(f01)
-        if forbidden_authority_source not in FORBIDDEN_AUTHORITY_SOURCES:
-            forbidden_authority_source = "label"
+    # The auditor is a reconciliation backstop, not an authority producer.
+    # Reuse only the complete identity previously persisted by the lifecycle
+    # owner; report labels and F01 projections remain diagnostic/read-only.
     custody_summary = _auditor_mapping(audit_item.get("repair_custody_summary"))
-    fence = f01.get("fence", "")
-    grant = _auditor_text(
-        escalation_gate.get("run_authority_grant_id")
-        or custody_summary.get("run_authority_grant_id")
-    )
-    lease_id = _auditor_text(
-        escalation_gate.get("lease_id") or custody_summary.get("lease_id")
-    )
-    epoch = _auditor_text(
-        escalation_gate.get("custody_epoch")
-        or custody_summary.get("custody_epoch")
-        or custody_summary.get("epoch")
+    occurrence_identity = normalize_repair_identity(
+        _auditor_mapping(audit_item.get("repair_identity"))
+        or _auditor_mapping(escalation_gate.get("repair_identity"))
+        or _auditor_mapping(custody_summary.get("repair_identity"))
     )
     evidence_cursor_digest = "sha256:" + sha256(
         json.dumps(
@@ -405,23 +380,7 @@ def enqueue_audit_repair_request(
             ensure_ascii=False,
         ).encode("utf-8")
     ).hexdigest()
-    occurrence_identity: dict[str, Any] = {
-        **{name: f01[name] for name in F01_REPAIR_OCCURRENCE_FIELDS},
-        "occurrence_fingerprint": occurrence_fingerprint,
-        "run_authority_grant_id": grant,
-        "coordinator_fence_token": fence,
-        "lease_id": lease_id,
-        "custody_epoch": epoch,
-        "evidence_cursor_digest": evidence_cursor_digest,
-        "root_cause_identity": root_cause_identity,
-        "retry_ordinal": retry_ordinal,
-        "terminal_receipt_expectations": list(
-            _AUDITOR_TERMINAL_RECEIPT_EXPECTATIONS
-        ),
-        "forbidden_authority_source": forbidden_authority_source,
-        "queue_authoritative": False,
-    }
-    return enqueue_repair_request(
+    return enqueue_occurrence_bound_repair_request(
         queue_root=queue_root,
         session=session,
         problem_signature=signature,
@@ -453,7 +412,7 @@ def enqueue_audit_repair_request(
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
-        repair_identity=occurrence_identity,
+        occurrence_identity=occurrence_identity,
     )
 
 

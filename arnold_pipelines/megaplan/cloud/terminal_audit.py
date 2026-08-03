@@ -30,6 +30,9 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     update_session_index,
     validate_repair_data,
 )
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    normalize_repair_identity,
+)
 from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
     RepairDelegation,
     RepairDelegationResult,
@@ -112,6 +115,22 @@ def capture_terminal_snapshot(session: str, marker_dir: Path) -> dict[str, Any]:
         elif target_liveness.get("state") == "dead":
             worker_alive = False
 
+    repair_identity = normalize_repair_identity(
+        plan_state.get("repair_identity")
+        if isinstance(plan_state.get("repair_identity"), dict)
+        else (plan_state.get("meta") or {}).get("repair_identity")
+        if isinstance(plan_state.get("meta"), dict)
+        else None
+    )
+    occurrence = (
+        repair_identity.get("occurrence")
+        if isinstance(repair_identity, dict)
+        else None
+    )
+    repair_target = (
+        occurrence.get("target") if isinstance(occurrence, dict) else None
+    )
+
     return {
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "workspace": str(workspace),
@@ -130,6 +149,8 @@ def capture_terminal_snapshot(session: str, marker_dir: Path) -> dict[str, Any]:
         "worker_pid_alive": worker_alive,
         "current_target_liveness": target_liveness,
         "remote_spec": str(marker.get("remote_spec") or "").strip(),
+        "repair_identity": repair_identity,
+        "repair_target": repair_target,
     }
 
 
@@ -208,7 +229,7 @@ def run_terminal_audit(
             delegation = build_repair_delegation(
                 caller_kind="terminal_audit",
                 caller_id=f"terminal-audit:{session}",
-                target=pre_snapshot.get("repair_target"),
+                target=pre_snapshot.get("repair_identity"),
             )
             if delegation is None:
                 # Cannot construct exact F01 tuple — emit typed rejection.

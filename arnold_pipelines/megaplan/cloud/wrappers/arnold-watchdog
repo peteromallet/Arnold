@@ -1323,7 +1323,8 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 )
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     active_repair_claim_lock_dir,
-    enqueue_repair_request,
+    derive_repair_identity,
+    enqueue_occurrence_bound_repair_request,
     repair_queue_dir,
 )
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
@@ -1467,7 +1468,7 @@ if not projection.get("active_request_ids"):
     latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
     metadata = latest_failure.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
-    enqueue_repair_request(
+    enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
         session=session,
@@ -1493,6 +1494,11 @@ if not projection.get("active_request_ids"):
             ),
         },
         root_cause_hint=str(latest_failure.get("message") or ""),
+        occurrence_identity=derive_repair_identity(
+            session=session,
+            plan_state=plan_state,
+            current_target=target,
+        ),
     )
     projection = project_repair_custody(
         plan_state=plan_state,
@@ -5304,12 +5310,25 @@ def _pid_is_live(candidate: int) -> bool:
         return False
     return True
 
+request = next(
+    (
+        item
+        for item in repair_requests.iter_repair_requests(
+            repair_requests.repair_queue_dir(marker_dir)
+        )
+        if str(item.get("request_id") or "") == request_id
+    ),
+    {},
+)
+repair_identity = request.get("repair_identity") if isinstance(request, dict) else None
+
 result = repair_requests.claim_active_repair_request(
     repair_requests.repair_queue_dir(marker_dir),
     blocker_id=blocker_id,
     request_id=request_id,
     actor="arnold-watchdog",
     session=session,
+    repair_identity=repair_identity,
     pid=pid,
     command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
     cwd=workspace,
@@ -5338,6 +5357,7 @@ if result.status == "stale":
             request_id=request_id,
             actor="arnold-watchdog",
             session=session,
+            repair_identity=repair_identity,
             pid=pid,
             command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
             cwd=workspace,
@@ -7071,13 +7091,13 @@ def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> 
     try:
         from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
         from arnold_pipelines.megaplan.cloud.repair_requests import (
-            enqueue_repair_request,
+            enqueue_occurrence_bound_repair_request,
             repair_queue_dir,
         )
 
         if not repair_request_queue_enabled():
             return "queue_disabled"
-        result = enqueue_repair_request(
+        result = enqueue_occurrence_bound_repair_request(
             queue_root=repair_queue_dir(marker_dir),
             marker_dir=marker_dir,
             session=session,
@@ -7103,6 +7123,7 @@ def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> 
                 "pr_number": pr_number,
                 "pr_state": pr_state or "unknown",
             },
+            occurrence_identity=None,
         )
         return str(result.get("status") or "queued")
     except Exception as exc:

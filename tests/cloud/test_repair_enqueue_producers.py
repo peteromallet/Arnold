@@ -19,6 +19,7 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     F01_REPAIR_OCCURRENCE_FIELDS,
+    build_normalized_repair_identity,
     enqueue_occurrence_bound_repair_request,
     enqueue_repair_request,
     validate_queue_root,
@@ -64,9 +65,34 @@ def _problem_sig(**overrides):
 
 
 def _occurrence_identity(**overrides):
-    identity = dict(_DEFAULT_F01)
-    identity.update(overrides)
-    return identity
+    fields = dict(_DEFAULT_F01)
+    fields.update({k: v for k, v in overrides.items() if k in fields})
+    try:
+        target = CustodyTargetKey(**fields)
+    except Exception:
+        return fields
+    result = build_normalized_repair_identity(
+        target=target,
+        run_id=str(overrides.get("run_id") or "run-1"),
+        run_revision=str(overrides.get("run_revision") or fields["plan_revision"]),
+        run_incarnation_id=str(
+            overrides.get("run_incarnation_id") or "run-incarnation-1"
+        ),
+        coordinator_attempt_id=str(
+            overrides.get("coordinator_attempt_id") or "coordinator-1"
+        ),
+        fence_token=int(overrides.get("coordinator_fence_token") or 1),
+        wbc_attempt_reference=str(
+            overrides.get("wbc_attempt_reference") or "wbc-1"
+        ),
+        run_authority_grant_id=str(
+            overrides.get("run_authority_grant_id") or "grant-1"
+        ),
+        lease_id=str(overrides.get("lease_id") or "lease-1"),
+        custody_epoch=int(overrides.get("custody_epoch") or 1),
+    )
+    assert result is not None
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -109,23 +135,17 @@ def test_lifecycle_and_supervise_enqueue_bind_occurrence_identity(tmp_path):
     identity = request.get("repair_identity", {})
     assert isinstance(identity, dict), "repair_identity must be a dict"
 
+    target_identity = identity["occurrence"]["target"]
     for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
-        assert field_name in identity, (
+        assert field_name in target_identity, (
             f"F01 field {field_name!r} missing from repair_identity"
         )
-        assert identity[field_name], (
+        assert target_identity[field_name], (
             f"F01 field {field_name!r} is empty in repair_identity"
         )
 
-    # Verify evidence cursor digest.
-    assert identity.get("evidence_cursor_digest") == "sha256:test-cursor-digest"
-
-    # Verify terminal receipt expectations.
-    assert identity.get("terminal_receipt_expectations") == [
-        "five_minute",
-        "one_hour",
-        "next_three_hour",
-    ]
+    assert "evidence_cursor_digest" not in identity
+    assert "terminal_receipt_expectations" not in identity
 
     # Verify source and failure kind in the request record.
     assert request["source"] == "lifecycle_failure"
@@ -163,7 +183,7 @@ def test_supervise_source_binds_occurrence_identity(tmp_path):
     assert result["status"] == "queued"
 
     identity = result["request"].get("repair_identity", {})
-    assert identity.get("normalized_failure_kind") == "supervised_run_exhausted"
+    assert identity["occurrence"]["target"]["normalized_failure_kind"] == "supervised_run_exhausted"
     assert identity.get("source") is None  # source is not an F01 field
     assert result["request"]["source"] == "arnold_supervise_exit"
 
@@ -196,7 +216,7 @@ def test_partial_occurrence_identity_is_rejected(tmp_path):
     assert result["status"] == "zero_authority_rejected"
     assert result["outcome"] == "zero_authority_rejected"
     evidence = result.get("evidence", {})
-    assert "insufficient occurrence identity" in str(evidence.get("reason", ""))
+    assert "normalized repair identity" in str(evidence.get("reason", ""))
 
 
 def test_missing_occurrence_identity_is_rejected(tmp_path):
@@ -216,11 +236,7 @@ def test_missing_occurrence_identity_is_rejected(tmp_path):
     assert result["outcome"] == "zero_authority_rejected"
 
 
-def test_legacy_enqueue_without_occurrence_identity_still_works(tmp_path):
-    """The original enqueue_repair_request without occurrence_identity
-    (legacy path) must continue to work — backward compatibility is
-    preserved.
-    """
+def test_legacy_enqueue_without_occurrence_identity_is_read_only(tmp_path):
     queue_dir = _queue_dir(tmp_path)
 
     result = enqueue_repair_request(
@@ -238,10 +254,7 @@ def test_legacy_enqueue_without_occurrence_identity_still_works(tmp_path):
         # No repair_identity — legacy path.
     )
 
-    assert result["status"] == "queued"
-    identity = result["request"].get("repair_identity", {})
-    # Legacy path produces empty identity — no F01 fields.
-    assert isinstance(identity, dict)
+    assert result["status"] == "zero_authority_rejected"
 
 
 def test_f01_fields_are_normalized_on_request_record(tmp_path):
@@ -285,13 +298,14 @@ def test_f01_fields_are_normalized_on_request_record(tmp_path):
     id2 = result2["request"]["repair_identity"]
 
     # Same occurrence identity → same normalized F01 fields.
+    target1 = id1["occurrence"]["target"]
+    target2 = id2["occurrence"]["target"]
     for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
-        assert id1.get(field_name) == id2.get(field_name), (
+        assert target1.get(field_name) == target2.get(field_name), (
             f"F01 field {field_name!r} differs between identical occurrences"
         )
 
-    # Evidence cursor digests match.
-    assert id1.get("evidence_cursor_digest") == id2.get("evidence_cursor_digest")
+    assert id1 == id2
 
 
 def test_terminal_receipt_expectations_default_to_none(tmp_path):
@@ -365,7 +379,7 @@ def test_grant_fence_lease_epoch_carried_when_provided(tmp_path):
     assert result["status"] == "queued"
     identity = result["request"].get("repair_identity", {})
     assert identity.get("run_authority_grant_id") == "grant-123"
-    assert identity.get("coordinator_fence_token") == 42
+    assert identity["occurrence"]["fence_token"] == 42
     assert identity.get("lease_id") == "lease-abc"
     assert identity.get("custody_epoch") == 7
 
@@ -416,18 +430,9 @@ def test_bridge_and_native_human_gate_enqueue_bind_occurrence_identity(tmp_path)
     )
 
     # ── Scenario A: full F01 tuple → occurrence-bound enqueue ──────────
-    full_f01 = {
-        "environment": "/workspace/test",
-        "session": "test-session",
-        "chain": "/workspace/test/chain.yaml",
-        "plan_revision": "sha256:test-rev",
-        "phase": "review",
-        "task": "human_gate",
-        "attempt": "1",
-        "normalized_failure_kind": "human_gate",
-        "blocker_or_phase_result_hash": "sha256:test-blocker",
-        "fence": "fence-token-1",
-    }
+    full_f01 = _occurrence_identity(
+        phase="review", task="human_gate", normalized_failure_kind="human_gate"
+    )
 
     result_a = enqueue_human_gate_repair_request(
         **common_kwargs,
@@ -443,18 +448,16 @@ def test_bridge_and_native_human_gate_enqueue_bind_occurrence_identity(tmp_path)
     request = result_a["request"]
     assert request["source"] == "human_gate"
     identity = request.get("repair_identity", {})
+    target_identity = identity["occurrence"]["target"]
     for field_name in F01_REPAIR_OCCURRENCE_FIELDS:
-        assert field_name in identity, (
+        assert field_name in target_identity, (
             f"F01 field {field_name!r} missing from repair_identity"
         )
-        assert identity[field_name], (
+        assert target_identity[field_name], (
             f"F01 field {field_name!r} is empty in repair_identity"
         )
-    assert identity.get("evidence_cursor_digest") == "sha256:test-cursor"
-    assert identity.get("terminal_receipt_expectations") == [
-        "five_minute",
-        "one_hour",
-    ]
+    assert "evidence_cursor_digest" not in identity
+    assert "terminal_receipt_expectations" not in identity
 
     # ── Scenario B: partial F01 tuple → zero_authority_rejected ────────
     partial_f01 = {
@@ -479,7 +482,7 @@ def test_bridge_and_native_human_gate_enqueue_bind_occurrence_identity(tmp_path)
     assert result_b["status"] == "zero_authority_rejected"
     assert result_b["outcome"] == "zero_authority_rejected"
     evidence = result_b.get("evidence", {})
-    assert "insufficient occurrence identity" in str(evidence.get("reason", ""))
+    assert "normalized run/custody identity" in str(evidence.get("reason", ""))
     # Custody evidence must include the human-gate context.
     assert evidence.get("plan_name") == "test-plan"
     assert evidence.get("pipeline_name") == "demo_judges"

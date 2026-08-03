@@ -27,18 +27,60 @@ def _signature(**overrides: str) -> dict[str, str]:
 
 
 def _repair_identity(*, attempt_number: int = 1, fence_token: str = "fence-1") -> dict[str, object]:
-    return {
-        "environment_id": "/workspace/demo",
-        "session_id": "demo",
-        "chain_id": "/workspace/demo/chain.yaml",
-        "plan_revision": "sha256:plan-rev-1",
-        "phase": "execute",
-        "task_id": "T1",
-        "attempt_number": attempt_number,
-        "failure_kind": "execute_failed",
-        "blocker_digest": "blocker:v1:demo",
-        "coordinator_fence_token": fence_token,
-    }
+    target = repair_requests.build_custody_target_key(
+        environment="/workspace/demo",
+        session="demo",
+        chain="/workspace/demo/chain.yaml",
+        plan_revision="sha256:plan-rev-1",
+        phase="execute",
+        task="T1",
+        attempt=str(attempt_number),
+        normalized_failure_kind="execute_failed",
+        blocker_or_phase_result_hash="blocker:v1:demo",
+        fence=fence_token,
+        chain_identity="chain-incarnation-1",
+    )
+    assert target is not None
+    result = repair_requests.build_normalized_repair_identity(
+        target=target,
+        run_id="demo",
+        run_revision="sha256:plan-rev-1",
+        run_incarnation_id="run-incarnation-1",
+        coordinator_attempt_id=f"coordinator:{attempt_number}",
+        fence_token=attempt_number,
+        wbc_attempt_reference=f"wbc:{attempt_number}",
+        run_authority_grant_id="grant-1",
+        lease_id="lease-1",
+        custody_epoch=attempt_number,
+    )
+    assert result is not None
+    return result
+
+
+def _enqueue(**kwargs: object) -> dict[str, object]:
+    kwargs.setdefault("repair_identity", _repair_identity())
+    return repair_requests.enqueue_repair_request(**kwargs)
+
+
+def _claimable_request(
+    queue_dir: Path,
+    *,
+    blocked_task_id: str,
+    session: str = "demo-session",
+    repair_identity: dict[str, object] | None = None,
+) -> dict[str, object]:
+    result = _enqueue(
+        queue_root=queue_dir,
+        session=session,
+        source="test",
+        problem_signature=_signature(blocked_task_id=blocked_task_id),
+        root_cause_hint=f"claim fixture for {blocked_task_id}",
+        repair_identity=repair_identity or _repair_identity(),
+    )
+    assert result["status"] == "queued"
+    request = result["request"]
+    assert isinstance(request, dict)
+    return request
 
 
 def _queue_root(tmp_path: Path) -> Path:
@@ -91,7 +133,7 @@ def test_public_read_api_does_not_infer_queue_from_marker_parent(tmp_path: Path)
 
 def test_enqueue_requires_explicit_queue_root_even_with_marker_provenance(tmp_path: Path) -> None:
     try:
-        repair_requests.enqueue_repair_request(
+        _enqueue(
             marker_dir=tmp_path / ".megaplan" / "chain-markers",
             session="demo",
             source="test",
@@ -107,8 +149,10 @@ def test_concurrent_active_repair_request_claim_has_one_winner_and_typed_losers(
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
-    blocker_id = "blocker:v1:shared"
-    request_id = "req-active"
+    request = _claimable_request(queue_dir, blocked_task_id="shared")
+    blocker_id = str(request["blocker_id"])
+    request_id = str(request["request_id"])
+    repair_identity = request["repair_identity"]
     contenders = 8
     barrier = Barrier(contenders)
 
@@ -125,6 +169,7 @@ def test_concurrent_active_repair_request_claim_has_one_winner_and_typed_losers(
             cwd="/workspace/project",
             hostname="worker-host",
             is_pid_live=lambda pid: True,
+            repair_identity=repair_identity,
         )
 
     with ThreadPoolExecutor(max_workers=contenders) as executor:
@@ -151,60 +196,81 @@ def test_active_repair_claim_for_different_request_reports_busy_owner(
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
+    first_request = _claimable_request(
+        queue_dir,
+        blocked_task_id="shared",
+        repair_identity=_repair_identity(attempt_number=1),
+    )
+    second_result = _enqueue(
+        queue_root=queue_dir,
+        session="demo-session",
+        source="test",
+        problem_signature=_signature(blocked_task_id="shared"),
+        root_cause_hint="claim fixture for shared",
+        repair_identity=_repair_identity(attempt_number=2, fence_token="fence-2"),
+    )
+    assert second_result["status"] == "queued"
+    second_request = second_result["request"]
+    assert isinstance(second_request, dict)
     first = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:shared",
-        request_id="req-a",
+        blocker_id=str(first_request["blocker_id"]),
+        request_id=str(first_request["request_id"]),
         actor="trigger-a",
         session="demo-session",
         pid=111,
         is_pid_live=lambda pid: True,
+        repair_identity=first_request["repair_identity"],
     )
 
     second = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:shared",
-        request_id="req-b",
+        blocker_id=str(second_request["blocker_id"]),
+        request_id=str(second_request["request_id"]),
         actor="trigger-b",
         session="demo-session",
         pid=222,
         is_pid_live=lambda pid: True,
+        repair_identity=second_request["repair_identity"],
     )
 
     assert first.claimed
     assert second.busy
     assert second.evidence is not None
     assert second.evidence["status"] == "busy"
-    assert second.evidence["owner_request_id"] == "req-a"
-    assert second.evidence["request_id"] == "req-b"
+    assert second.evidence["owner_request_id"] == first_request["request_id"]
+    assert second.evidence["request_id"] == second_request["request_id"]
     assert second.evidence["owner_actor"] == "trigger-a"
 
 
 def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
+    request = _claimable_request(queue_dir, blocked_task_id="stale")
     first = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:stale",
-        request_id="req-stale",
+        blocker_id=str(request["blocker_id"]),
+        request_id=str(request["request_id"]),
         actor="trigger-a",
         session="demo-session",
         pid=333,
         started_at="2026-07-04T01:00:00+00:00",
         timeout_seconds=60,
         is_pid_live=lambda pid: True,
+        repair_identity=request["repair_identity"],
     )
     assert first.claimed
     owner_path = first.lock_dir / "owner.json"
 
     stale = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:stale",
-        request_id="req-stale",
+        blocker_id=str(request["blocker_id"]),
+        request_id=str(request["request_id"]),
         actor="trigger-b",
         session="demo-session",
         pid=444,
         now=datetime(2026, 7, 4, 1, 10, tzinfo=timezone.utc),
         is_pid_live=lambda pid: False,
+        repair_identity=request["repair_identity"],
     )
 
     assert stale.stale
@@ -219,28 +285,31 @@ def test_active_repair_claim_preserves_live_owner_without_reclaiming(
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
+    request = _claimable_request(queue_dir, blocked_task_id="process-mismatch")
     first = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:process-mismatch",
-        request_id="req-process-mismatch",
+        blocker_id=str(request["blocker_id"]),
+        request_id=str(request["request_id"]),
         actor="trigger-a",
         session="demo-session",
         pid=os.getpid(),
         command="arnold-repair-loop demo-session /workspace/project /workspace/project/.megaplan/chain.yaml",
         started_at="2026-07-04T01:00:00+00:00",
         is_pid_live=lambda pid: pid == os.getpid(),
+        repair_identity=request["repair_identity"],
     )
     assert first.claimed
 
     stale = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:process-mismatch",
-        request_id="req-process-mismatch",
+        blocker_id=str(request["blocker_id"]),
+        request_id=str(request["request_id"]),
         actor="trigger-b",
         session="demo-session",
         pid=556,
         command="arnold-repair-loop demo-session /workspace/project /workspace/project/.megaplan/chain.yaml",
         is_pid_live=lambda pid: pid in {os.getpid(), 556},
+        repair_identity=request["repair_identity"],
     )
 
     assert stale.already_claimed
@@ -250,24 +319,38 @@ def test_active_repair_claim_preserves_live_owner_without_reclaiming(
 
 def test_active_repair_claim_defaults_to_pid_liveness_probe(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
+    first_request = _claimable_request(queue_dir, blocked_task_id="dead-owner")
+    second_result = _enqueue(
+        queue_root=queue_dir,
+        session="demo-session",
+        source="test",
+        problem_signature=_signature(blocked_task_id="dead-owner"),
+        root_cause_hint="claim fixture for dead-owner",
+        repair_identity=_repair_identity(attempt_number=2, fence_token="fence-2"),
+    )
+    assert second_result["status"] == "queued"
+    second_request = second_result["request"]
+    assert isinstance(second_request, dict)
     first = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:dead-owner",
-        request_id="req-dead",
+        blocker_id=str(first_request["blocker_id"]),
+        request_id=str(first_request["request_id"]),
         actor="trigger-a",
         session="demo-session",
         pid=99999999,
+        repair_identity=first_request["repair_identity"],
     )
 
     assert first.claimed
 
     stale = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:dead-owner",
-        request_id="req-new",
+        blocker_id=str(second_request["blocker_id"]),
+        request_id=str(second_request["request_id"]),
         actor="trigger-b",
         session="demo-session",
         pid=444,
+        repair_identity=second_request["repair_identity"],
     )
 
     assert stale.stale
@@ -280,7 +363,7 @@ def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path
     marker_dir = tmp_path / ".megaplan" / "chain-markers"
     raw_hint = "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456"
 
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         marker_dir=marker_dir,
         session="demo",
@@ -289,7 +372,7 @@ def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path
         root_cause_hint=raw_hint,
         created_at="2026-07-01T00:00:00Z",
     )
-    second = repair_requests.enqueue_repair_request(
+    second = _enqueue(
         queue_root=queue_dir,
         marker_dir=marker_dir,
         session="demo",
@@ -316,7 +399,7 @@ def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path
 def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
 
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -324,7 +407,7 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
         root_cause_hint="first failure",
         created_at="2026-07-01T01:00:00Z",
     )
-    duplicate = repair_requests.enqueue_repair_request(
+    duplicate = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -332,7 +415,7 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
         root_cause_hint="different raw text",
         created_at="2026-07-01T01:05:00Z",
     )
-    distinct = repair_requests.enqueue_repair_request(
+    distinct = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -356,14 +439,14 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
 def test_same_signature_does_not_coalesce_across_sessions(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
 
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         session="session-a",
         source="watchdog",
         problem_signature=_signature(),
         root_cause_hint="same failure",
     )
-    second = repair_requests.enqueue_repair_request(
+    second = _enqueue(
         queue_root=queue_dir,
         session="session-b",
         source="watchdog",
@@ -394,7 +477,7 @@ def test_distinct_redacted_root_cause_hints_have_distinct_hashes() -> None:
 def test_stale_and_superseded_are_decisions_not_request_rewrites(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
 
-    stale = repair_requests.enqueue_repair_request(
+    stale = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -402,7 +485,7 @@ def test_stale_and_superseded_are_decisions_not_request_rewrites(tmp_path: Path)
         root_cause_hint="old",
         stale_reason="marker no longer matches current plan",
     )
-    superseded = repair_requests.enqueue_repair_request(
+    superseded = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -427,7 +510,7 @@ def test_malformed_files_are_reported_and_valid_requests_remain_ordered(tmp_path
     request_dir.mkdir(parents=True)
     (request_dir / "broken.json").write_text("{not json", encoding="utf-8")
 
-    later = repair_requests.enqueue_repair_request(
+    later = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -435,7 +518,7 @@ def test_malformed_files_are_reported_and_valid_requests_remain_ordered(tmp_path
         root_cause_hint="later",
         created_at="2026-07-01T02:00:00Z",
     )
-    earlier = repair_requests.enqueue_repair_request(
+    earlier = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
@@ -579,7 +662,7 @@ def test_enqueue_rejects_missing_provenance_before_persistence(tmp_path: Path) -
     queue_dir = _queue_root(tmp_path)
 
     with pytest.raises(ValueError, match="provenance source"):
-        repair_requests.enqueue_repair_request(
+        _enqueue(
             queue_root=queue_dir,
             session="demo",
             source="",
@@ -595,7 +678,7 @@ def test_acceptance_rejects_identity_with_missing_provenance_or_evidence(
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="watchdog",
@@ -634,7 +717,7 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
         "retry_strategy": "repair_phase_contract",
     }
 
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         session="custody-control-plane-20260714",
         source="lifecycle_failure",
@@ -644,7 +727,7 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
         root_cause_hint="duplicate worker-local flag IDs and blank evidence",
         created_at="2026-07-16T13:35:03Z",
     )
-    replay = repair_requests.enqueue_repair_request(
+    replay = _enqueue(
         queue_root=queue_dir,
         session="custody-control-plane-20260714",
         source="lifecycle_failure",
@@ -683,6 +766,7 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
         session=request["session"],
         pid=4242,
         is_pid_live=lambda _pid: True,
+        repair_identity=request["repair_identity"],
     )
     assert claim.claimed
     assert claim.owner is not None
@@ -705,7 +789,7 @@ def test_completed_repair_request_preserves_legacy_identity_and_profile_contract
             "forbid_standalone_completion": True,
         },
     }
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_dir,
         session="custody-control-plane-20260714",
         source="resident_authorized_recovery",
@@ -760,7 +844,7 @@ def test_completed_repair_recurrence_remains_visible_to_l2_l3_backstops(
 ) -> None:
     queue_dir = _queue_root(tmp_path)
     plan_name = "m9-rebuildable-projections-20260722-0431"
-    queued = repair_requests.enqueue_repair_request(
+    queued = _enqueue(
         queue_root=queue_dir,
         session="custody-control-plane-20260714",
         source="resident_authorized_recovery",
@@ -834,7 +918,7 @@ def test_replay_mints_claimable_successor_for_identity_free_legacy_request(
     repair_contract.atomic_write_json(legacy_path, legacy_record)
     legacy_bytes = legacy_path.read_bytes()
 
-    replay = repair_requests.enqueue_repair_request(
+    replay = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="lifecycle_failure",
@@ -903,7 +987,7 @@ def test_find_pending_by_signature_returns_none_when_queue_is_empty(tmp_path: Pa
 
 def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    enqueued = repair_requests.enqueue_repair_request(
+    enqueued = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -915,6 +999,7 @@ def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
     found = repair_requests.find_pending_by_signature(
         queue_dir,
         _signature(blocked_task_id="T1"),
+        repair_identity=enqueued["request"]["repair_identity"],
     )
     assert found is not None
     assert found["request_id"] == enqueued["request"]["request_id"]
@@ -922,7 +1007,7 @@ def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
 
 def test_find_pending_by_signature_keeps_dispatched_request_open(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    enqueued = repair_requests.enqueue_repair_request(
+    enqueued = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -940,6 +1025,7 @@ def test_find_pending_by_signature_keeps_dispatched_request_open(tmp_path: Path)
     found = repair_requests.find_pending_by_signature(
         queue_dir,
         _signature(blocked_task_id="T1"),
+        repair_identity=enqueued["request"]["repair_identity"],
     )
 
     assert found is not None
@@ -948,7 +1034,7 @@ def test_find_pending_by_signature_keeps_dispatched_request_open(tmp_path: Path)
 
 def test_find_pending_by_signature_excludes_stale_requests(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    repair_requests.enqueue_repair_request(
+    _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -965,7 +1051,7 @@ def test_find_pending_by_signature_excludes_stale_requests(tmp_path: Path) -> No
 
 def test_find_pending_by_signature_excludes_superseded_requests(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    repair_requests.enqueue_repair_request(
+    _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -982,7 +1068,7 @@ def test_find_pending_by_signature_excludes_superseded_requests(tmp_path: Path) 
 
 def test_find_pending_by_signature_returns_none_for_different_signature(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    repair_requests.enqueue_repair_request(
+    _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1007,7 +1093,7 @@ def test_timestamp_drift_does_not_create_multiple_requests_for_same_signature(tm
     results = []
     for i, ts in enumerate(["2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z", "2026-07-01T10:10:00Z"]):
         results.append(
-            repair_requests.enqueue_repair_request(
+            _enqueue(
                 queue_root=queue_dir,
                 session="demo",
                 source="test",
@@ -1026,7 +1112,7 @@ def test_timestamp_drift_does_not_create_multiple_requests_for_same_signature(tm
 
 def test_exact_repair_identity_prevents_coalescing_across_attempts(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1034,7 +1120,7 @@ def test_exact_repair_identity_prevents_coalescing_across_attempts(tmp_path: Pat
         root_cause_hint="same blocker new attempt",
         repair_identity=_repair_identity(attempt_number=1, fence_token="fence-1"),
     )
-    second = repair_requests.enqueue_repair_request(
+    second = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1054,28 +1140,39 @@ def test_exact_repair_identity_does_not_coalesce_with_legacy_identity_free_reque
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
-    legacy = repair_requests.enqueue_repair_request(
-        queue_root=queue_dir,
+    signature = _signature(blocked_task_id="T1")
+    legacy_request_id = repair_requests.request_id_for(
         session="demo",
-        source="test",
-        problem_signature=_signature(blocked_task_id="T1"),
+        problem_signature=signature,
         root_cause_hint="legacy request without exact identity",
     )
-    exact = repair_requests.enqueue_repair_request(
+    legacy_record = {
+        "schema_version": 1,
+        "kind": "repair_request",
+        "request_id": legacy_request_id,
+        "created_at": "2026-07-01T00:00:00Z",
+        "session": "demo",
+        "problem_signature": repair_requests.normalize_problem_signature(signature),
+        "problem_signature_key": repair_requests.problem_signature_key(signature),
+    }
+    repair_contract.atomic_write_json(
+        repair_requests.requests_dir(queue_dir) / f"{legacy_request_id}.json",
+        legacy_record,
+    )
+    exact = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
-        problem_signature=_signature(blocked_task_id="T1"),
+        problem_signature=signature,
         root_cause_hint="same blocker with exact identity",
         repair_identity=_repair_identity(attempt_number=1, fence_token="fence-1"),
     )
 
-    assert legacy["status"] == "queued"
     assert exact["status"] == "queued"
     requests = repair_requests.iter_repair_requests(queue_dir)
     assert len(requests) == 2
     assert {
-        request["repair_identity_key"] for request in requests
+        str(request.get("repair_identity_key") or "") for request in requests
     } == {
         "",
         repair_requests.repair_identity_key(_repair_identity(attempt_number=1, fence_token="fence-1")),
@@ -1087,10 +1184,15 @@ def test_bind_managed_run_to_active_claim_rejects_mismatched_repair_identity(
 ) -> None:
     queue_dir = _queue_root(tmp_path)
     identity = _repair_identity(attempt_number=1, fence_token="fence-1")
+    request = _claimable_request(
+        queue_dir,
+        blocked_task_id="bind",
+        repair_identity=identity,
+    )
     claim = repair_requests.claim_active_repair_request(
         queue_dir,
-        blocker_id="blocker:v1:bind",
-        request_id="req-bind",
+        blocker_id=str(request["blocker_id"]),
+        request_id=str(request["request_id"]),
         actor="trigger-a",
         session="demo-session",
         repair_identity=identity,
@@ -1101,8 +1203,8 @@ def test_bind_managed_run_to_active_claim_rejects_mismatched_repair_identity(
     assert claim.claimed
     assert not repair_requests.bind_managed_run_to_active_claim(
         queue_dir,
-        blocker_id="blocker:v1:bind",
-        request_id="req-bind",
+        blocker_id=str(request["blocker_id"]),
+        request_id=str(request["request_id"]),
         managed_run_id="managed-1",
         managed_manifest_path="/tmp/managed-1/manifest.json",
         expected_owner_pid=111,
@@ -1121,7 +1223,7 @@ def test_bind_managed_run_to_active_claim_rejects_mismatched_repair_identity(
 
 def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    third = repair_requests.enqueue_repair_request(
+    third = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1129,7 +1231,7 @@ def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path
         root_cause_hint="third",
         created_at="2026-07-01T12:00:00Z",
     )
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1137,7 +1239,7 @@ def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path
         root_cause_hint="first",
         created_at="2026-07-01T10:00:00Z",
     )
-    second = repair_requests.enqueue_repair_request(
+    second = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1217,7 +1319,7 @@ def test_malformed_wrong_kind_is_reported(tmp_path: Path) -> None:
 def test_enqueue_request_file_is_immutable_after_first_write(tmp_path: Path) -> None:
     """Once written, the request file content never changes — coalescing doesn't touch it."""
     queue_dir = _queue_root(tmp_path)
-    first = repair_requests.enqueue_repair_request(
+    first = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1231,7 +1333,7 @@ def test_enqueue_request_file_is_immutable_after_first_write(tmp_path: Path) -> 
     first_mtime = first_path.stat().st_mtime
 
     # Coalesce
-    second = repair_requests.enqueue_repair_request(
+    second = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1249,7 +1351,7 @@ def test_enqueue_request_file_is_immutable_after_first_write(tmp_path: Path) -> 
 def test_stale_request_file_persists_unchanged(tmp_path: Path) -> None:
     """Stale requests still write the request file but mark it as stale via decision."""
     queue_dir = _queue_root(tmp_path)
-    result = repair_requests.enqueue_repair_request(
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1270,7 +1372,7 @@ def test_stale_request_file_persists_unchanged(tmp_path: Path) -> None:
 def test_superseded_request_file_persists_unchanged(tmp_path: Path) -> None:
     """Superseded requests still write the request file but mark it via decision."""
     queue_dir = _queue_root(tmp_path)
-    result = repair_requests.enqueue_repair_request(
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1294,7 +1396,7 @@ def test_superseded_request_file_persists_unchanged(tmp_path: Path) -> None:
 
 def test_request_marker_never_contains_root_cause_hint_raw_text(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    result = repair_requests.enqueue_repair_request(
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1317,7 +1419,7 @@ def test_redacted_hint_hash_is_consistent() -> None:
 
 def test_target_is_stored_as_stable_sorted_mapping(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    result = repair_requests.enqueue_repair_request(
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1337,7 +1439,7 @@ def test_target_is_stored_as_stable_sorted_mapping(tmp_path: Path) -> None:
 def test_iter_repair_requests_includes_all_requests_regardless_of_decisions(tmp_path: Path) -> None:
     """iter_repair_requests returns request files regardless of decision state."""
     queue_dir = _queue_root(tmp_path)
-    repair_requests.enqueue_repair_request(
+    _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1345,7 +1447,7 @@ def test_iter_repair_requests_includes_all_requests_regardless_of_decisions(tmp_
         root_cause_hint="stale",
         stale_reason="expired",
     )
-    repair_requests.enqueue_repair_request(
+    _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1361,7 +1463,7 @@ def test_iter_repair_requests_includes_all_requests_regardless_of_decisions(tmp_
 
 def test_enqueue_with_workspace_and_run_kind_stored(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    result = repair_requests.enqueue_repair_request(
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo",
         source="test",
@@ -1457,17 +1559,10 @@ def test_write_repair_verdict_decision_minimal_fields(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_enqueue_without_repair_identity_records_pending_shadow_lease(
+def test_enqueue_without_repair_identity_is_zero_authority_rejected(
     tmp_path: Path,
 ) -> None:
-    """Enqueueing without repair identity yields a *pending* shadow lease.
-
-    Step 13A removed the synthetic ``repair-run-*``/``wbc-ref-*``/``grant-*``
-    placeholders.  A pre-dispatch enqueue must not mint a lease whose
-    occurrence/WBC/grant identity does not correspond to a real dispatched run;
-    instead the lease is recorded ``pending`` until dispatch supplies exact
-    identity.
-    """
+    """A pre-dispatch producer cannot mint or queue synthetic authority."""
 
     queue_dir = _queue_root(tmp_path)
     lease_dir = tmp_path / ".megaplan" / "custody-leases"
@@ -1479,16 +1574,9 @@ def test_enqueue_without_repair_identity_records_pending_shadow_lease(
         workspace=str(tmp_path),
         lease_store_dir=str(lease_dir),
     )
-    assert result["status"] == "queued"
-    shadow = result["m7_custody_lease"]
-    assert shadow["m7_lease_status"] == "pending"
-    assert "incomplete" in shadow["m7_lease_detail"]
-    # No synthetic occurrence/epoch was fabricated.
-    assert shadow["m7_lease_event_id"] == ""
-    assert shadow["m7_lease_epoch"] == 0
-    # The request record carries an (empty) repair_identity block.
-    request = result["request"]
-    assert request["repair_identity"] == {}
+    assert result["status"] == "zero_authority_rejected"
+    assert repair_requests.iter_repair_requests(queue_dir) == []
+    assert not lease_dir.exists()
 
 
 def test_enqueue_with_full_repair_identity_binds_shadow_lease(tmp_path: Path) -> None:
@@ -1496,21 +1584,8 @@ def test_enqueue_with_full_repair_identity_binds_shadow_lease(tmp_path: Path) ->
 
     queue_dir = _queue_root(tmp_path)
     lease_dir = tmp_path / ".megaplan" / "custody-leases"
-    identity = {
-        "run_id": "run-abc",
-        "run_revision": "rev-001",
-        "coordinator_attempt_id": "coord-7",
-        "run_authority_grant_id": "grant-9",
-        "coordinator_fence_token": 5,
-        "wbc_attempt_reference": "wbc-real-1",
-        "global_logical_effect_key": "glek-xyz",
-        "lease_id": "repair-req-special",
-        "custody_epoch": 2,
-        "owner_host": "worker-host",
-        "owner_pid": 4242,
-        "owner_boot_id": "boot-aa",
-    }
-    result = repair_requests.enqueue_repair_request(
+    identity = _repair_identity()
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo-session",
         problem_signature=_signature(),
@@ -1521,9 +1596,7 @@ def test_enqueue_with_full_repair_identity_binds_shadow_lease(tmp_path: Path) ->
     )
     assert result["status"] == "queued"
     request = result["request"]
-    # All supplied identity fields are carried on the record.
-    for field, expected in identity.items():
-        assert request["repair_identity"][field] == expected
+    assert request["repair_identity"] == identity
     shadow = result["m7_custody_lease"]
     assert shadow["m7_lease_status"] == "acquired"
     assert shadow["m7_lease_epoch"] == 1
@@ -1574,7 +1647,7 @@ def test_pending_request_then_escalates_after_unclaimed_handoffs(tmp_path: Path)
     """A pending (identity-incomplete) request escalates if never claimed."""
 
     queue_dir = _queue_root(tmp_path)
-    result = repair_requests.enqueue_repair_request(
+    result = _enqueue(
         queue_root=queue_dir,
         session="demo-session",
         problem_signature=_signature(),
