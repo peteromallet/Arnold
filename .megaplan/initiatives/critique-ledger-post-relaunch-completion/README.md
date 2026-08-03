@@ -33,9 +33,21 @@ forbidden for this recovery.
 
 ## Current operational handoff — 2026-08-03
 
-Critique Ledger is now running again on the cloud machine. This is a live
-operational relaunch, not completion of this follow-up epic and not permission
-to erase the failed-attempt history below.
+The initial observation below is superseded. Critique Ledger later reached the
+Finalize incident described in this document and is now intentionally paused
+on the cloud machine while the attempt-9 relaunch gate is completed. It is not
+currently cooking. Preserve the failed-attempt history and do not resume the
+stopped attempt-8 processes. The canonical action board is
+[`UNFINISHED_WORK.md`](UNFINISHED_WORK.md), and audit/fix disposition is in
+[`REMEDIATION_LEDGER.md`](REMEDIATION_LEDGER.md).
+
+The safe continuation retains the same r5 session, CL2 plan, workspace, and
+accepted upstream artifacts; explicitly aborts attempt 8; creates immutable
+attempt 9; adopts or recreates the validated Finalize candidate through the
+fixed authority seam; and continues into GLM Execute. It does not restart the
+epic from Prep.
+
+The following bullets describe the earlier live observation only:
 
 - Session: `critique-ledger-accountability-v3-r5-20260803`.
 - Current plan: `cl2-wbc-backed-ledger-20260803-1357`.
