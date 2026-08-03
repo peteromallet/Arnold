@@ -15,3 +15,8 @@ The canonical product North Star remains
 only when custody is complete, the gate independently says PROCEED, the terminal
 state is finalized, and all evidence is content-addressed to the accepted source
 commit/tree and exact zero-recovery host/container/workspace identity.
+
+For CL2, the accepted runtime source identity is an exact clean committed Git
+commit and its tree. Dirty or uncommitted source is rejected. This is a settled
+product decision shared by finalization, every execute entry path, and handoff;
+the finite gate must not convert it into an `add_human_halt` action.

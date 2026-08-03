@@ -1264,6 +1264,14 @@ def _raise_north_star_revise_halt(
     revise cost-sanity guard), so the halt shows up in history as a normal
     step failure without inventing a new runner state.
     """
+    # This guard runs before the ordinary worker seam establishes a revise
+    # invocation. Mint and persist a fresh deterministic-boundary identity so
+    # the typed revise PhaseResult cannot inherit the prior gate invocation.
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        generate_invocation_id,
+    )
+
+    state.setdefault("meta", {})["current_invocation_id"] = generate_invocation_id()
     summaries = [
         {
             "id": a.get("id"),
@@ -1297,6 +1305,31 @@ def _raise_north_star_revise_halt(
         iteration=iteration,
         error=error,
         duration_ms=0,
+    )
+    # ``record_step_failure`` clears the active step before the outer phase
+    # guard can classify the exception. Emit the typed phase boundary here so
+    # callers never mistake an intentional product/human halt for an
+    # infrastructure failure or a stale prior-phase result.
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        BlockedTask,
+        ExitKind,
+        _emit_phase_result,
+    )
+
+    _emit_phase_result(
+        "revise",
+        state,
+        plan_dir,
+        exit_kind=ExitKind.blocked_by_prereq.value,
+        blocked_tasks=tuple(
+            BlockedTask(
+                task_id=str(action.get("id")),
+                reason=str(action.get("concern") or message),
+                blocking_action_ids=(str(action.get("id")),),
+                blocker_kind="north_star_revise_human_halt",
+            )
+            for action in halt_actions
+        ),
     )
     raise error
 
@@ -1448,6 +1481,27 @@ def _raise_north_star_revise_unresolved(
         iteration=iteration,
         error=error,
         duration_ms=duration_ms,
+    )
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        BlockedTask,
+        ExitKind,
+        _emit_phase_result,
+    )
+
+    _emit_phase_result(
+        "revise",
+        state,
+        plan_dir,
+        exit_kind=ExitKind.blocked_by_prereq.value,
+        blocked_tasks=tuple(
+            BlockedTask(
+                task_id=str(action.get("id")),
+                reason=str(action.get("reason") or message),
+                blocking_action_ids=(str(action.get("id")),),
+                blocker_kind="north_star_revise_unresolved_blocking",
+            )
+            for action in unresolved
+        ),
     )
     raise error
 

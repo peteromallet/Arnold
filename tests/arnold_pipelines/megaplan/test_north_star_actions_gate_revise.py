@@ -28,8 +28,10 @@ from arnold_pipelines.megaplan.north_star_actions import (
 from arnold_pipelines.megaplan.orchestration.gate_checks import build_gate_artifact
 from arnold_pipelines.megaplan.orchestration.critique_runtime import (
     _carried_north_star_actions,
+    _raise_north_star_revise_halt,
     _revise_north_star_halt_actions,
 )
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.handlers.gate import _build_gate_carry
 
 
@@ -590,6 +592,45 @@ class TestReviseNorthStarHaltActions:
         )
         halted = _revise_north_star_halt_actions([action])
         assert len(halted) == 0
+
+    def test_human_halt_emits_typed_blocked_phase_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        action = _ns_action(
+            id="ns-halt-typed",
+            action_type="add_human_halt",
+            severity=SEVERITY_BLOCKING,
+            severity_source=SEVERITY_SOURCE_WORKER,
+            evidence="Needs a product decision.",
+        )
+        state: dict[str, Any] = {
+            "meta": {"current_invocation_id": "prior-gate-invocation"}
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.orchestration.critique_runtime.record_step_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        with pytest.raises(CliError, match="Revise halted before worker"):
+            _raise_north_star_revise_halt(
+                tmp_path,
+                state,  # type: ignore[arg-type]
+                iteration=2,
+                halt_actions=[action],
+            )
+
+        result = json.loads((tmp_path / "phase_result.json").read_text(encoding="utf-8"))
+        assert result["phase"] == "revise"
+        assert result["invocation_id"] != "prior-gate-invocation"
+        assert result["invocation_id"] == state["meta"]["current_invocation_id"]
+        assert result["exit_kind"] == "blocked_by_prereq"
+        assert result["external_error"] is None
+        assert len(result["blocked_tasks"]) == 1
+        blocked = result["blocked_tasks"][0]
+        assert blocked["task_id"] == "ns-halt-typed"
+        assert blocked["reason"]
+        assert blocked["blocking_action_ids"] == ["ns-halt-typed"]
+        assert blocked["blocker_kind"] == "north_star_revise_human_halt"
 
     def test_blocking_unmappable_action_type_halts(self) -> None:
         """A blocking action whose action_type is not in the mappable set halts."""

@@ -20,6 +20,12 @@ MAX_PHASES = (*INITIAL_PHASES, *REVISE_PHASES, "finalize")
 MODEL_PHASES = frozenset(MAX_PHASES) - {"init"}
 CANARY_ID = "critique-ledger-safe-v3-canary"
 PLAN_NAME = "critique-ledger-cl2-planning-canary"
+PRODUCT_REVISE_STOP_CODES = frozenset(
+    {
+        "north_star_revise_human_halt",
+        "north_star_revise_unresolved_blocking",
+    }
+)
 
 
 def canonical(value: object) -> bytes:
@@ -77,6 +83,143 @@ def strict_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} is not an object")
     return value
+
+
+def classify_product_revise_stop(
+    plan_dir: Path,
+    *,
+    stdout: str,
+    returncode: int,
+    plan_iteration: int,
+    ledger_path: Path,
+    prior_dispatch_expectations: list[tuple[str, int]],
+) -> dict[str, Any] | None:
+    """Admit only typed, cross-checked revise product stops.
+
+    The phase CLI is allowed to stop before or after its worker when a carried
+    North Star action requires a human or remains unresolved.  Those are
+    product outcomes, not provider/infrastructure failures.  Any malformed,
+    untyped, state-drifting, or ledger-inconsistent nonzero remains on the
+    generic infrastructure-failure path.
+    """
+    if returncode != 1:
+        return None
+
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate CLI error field: {key}")
+            value[key] = item
+        return value
+
+    try:
+        payload = json.loads(stdout.strip(), object_pairs_hook=reject_duplicates)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("error") not in PRODUCT_REVISE_STOP_CODES:
+        return None
+    if (
+        set(payload) != {"success", "error", "message", "valid_next", "details"}
+        or payload.get("success") is not False
+        or not isinstance(payload.get("message"), str)
+        or not isinstance(payload.get("valid_next"), list)
+        or any(not isinstance(item, str) for item in payload["valid_next"])
+        or not isinstance(payload.get("details"), dict)
+    ):
+        raise RuntimeError("product_revise_stop_cli_contract_mismatch")
+
+    error_code = str(payload["error"])
+    details = payload["details"]
+    action_key = (
+        "halt_actions"
+        if error_code == "north_star_revise_human_halt"
+        else "unresolved_actions"
+    )
+    if (
+        set(details) != {"step", action_key, "count"}
+        or details.get("step") != "revise"
+        or not isinstance(details.get(action_key), list)
+        or not details[action_key]
+        or details.get("count") != len(details[action_key])
+    ):
+        raise RuntimeError("product_revise_stop_details_mismatch")
+    action_ids = [
+        item.get("id") if isinstance(item, dict) else None
+        for item in details[action_key]
+    ]
+    if (
+        any(not isinstance(item, str) or not item for item in action_ids)
+        or len(set(action_ids)) != len(action_ids)
+    ):
+        raise RuntimeError("product_revise_stop_action_identity_mismatch")
+
+    phase_result = strict_object(plan_dir / "phase_result.json")
+    blocked_tasks = phase_result.get("blocked_tasks")
+    if (
+        phase_result.get("schema") != "megaplan.phase_result"
+        or phase_result.get("schema_version") != 1
+        or phase_result.get("phase_result_contract_version") != 1
+        or phase_result.get("phase") != "revise"
+        or phase_result.get("exit_kind") != "blocked_by_prereq"
+        or phase_result.get("external_error") is not None
+        or not isinstance(blocked_tasks, list)
+        or len(blocked_tasks) != len(action_ids)
+    ):
+        raise RuntimeError("product_revise_stop_phase_result_mismatch")
+    phase_action_ids: list[str] = []
+    for task in blocked_tasks:
+        if (
+            not isinstance(task, dict)
+            or task.get("blocker_kind") != error_code
+            or not isinstance(task.get("blocking_action_ids"), list)
+            or len(task["blocking_action_ids"]) != 1
+            or task.get("task_id") != task["blocking_action_ids"][0]
+        ):
+            raise RuntimeError("product_revise_stop_blocked_task_mismatch")
+        phase_action_ids.append(task["task_id"])
+    if phase_action_ids != action_ids:
+        raise RuntimeError("product_revise_stop_action_order_mismatch")
+
+    state = strict_object(plan_dir / "state.json")
+    if (
+        state.get("current_state") != "critiqued"
+        or state.get("iteration") != plan_iteration - 1
+        or state.get("active_step") not in (None, "")
+    ):
+        raise RuntimeError("product_revise_stop_state_mismatch")
+    carry_path = plan_dir / "gate_carry.json"
+    carry = strict_object(carry_path if carry_path.is_file() else plan_dir / "gate.json")
+    carried_actions = carry.get("north_star_actions")
+    if not isinstance(carried_actions, list):
+        raise RuntimeError("product_revise_stop_carry_missing")
+    carried_by_id = {
+        item.get("id"): item for item in carried_actions
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    if any(action_id not in carried_by_id for action_id in action_ids):
+        raise RuntimeError("product_revise_stop_not_carried")
+    if error_code == "north_star_revise_human_halt" and any(
+        carried_by_id[action_id].get("action_type") != "add_human_halt"
+        for action_id in action_ids
+    ):
+        raise RuntimeError("product_revise_human_halt_type_mismatch")
+
+    records = read_dispatch_records(ledger_path)
+    revise_dispatched = error_code == "north_star_revise_unresolved_blocking"
+    expected = list(prior_dispatch_expectations)
+    if revise_dispatched:
+        expected.append(("revise", plan_iteration))
+    if len(records) != 2 * len(expected):
+        raise RuntimeError("product_revise_stop_dispatch_count_mismatch")
+    read_dispatch_ledger(ledger_path, expected)
+    return {
+        "kind": "product_revise_blocked",
+        "reason_code": error_code,
+        "action_ids": action_ids,
+        "revise_dispatch_started": revise_dispatched,
+        "state": state,
+    }
 
 
 def classify_gate(
@@ -569,6 +712,61 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
                     ) from integrity_exc
             returncode = completed.returncode
             if completed.returncode != 0:
+                product_stop = (
+                    classify_product_revise_stop(
+                        plan_dir,
+                        stdout=phase_stdout,
+                        returncode=returncode,
+                        plan_iteration=phase_plan_iteration,
+                        ledger_path=ledger_path,
+                        prior_dispatch_expectations=dispatch_expectations,
+                    )
+                    if phase == "revise"
+                    else None
+                )
+                if product_stop is not None:
+                    revise_dispatched = bool(product_stop["revise_dispatch_started"])
+                    if revise_dispatched:
+                        dispatch_expectations.append((phase, phase_plan_iteration))
+                    state = product_stop.pop("state")
+                    current_state = state.get("current_state")
+                    terminal_state = "product_revise_blocked"
+                    product_outcome = {
+                        **product_stop,
+                        "gate_attempt": len(gate_attempts),
+                    }
+                    results.append({
+                        "phase": phase,
+                        "plan_iteration": phase_plan_iteration,
+                        "dispatch_ordinal": (
+                            dispatch_ordinal if revise_dispatched else None
+                        ),
+                        "returncode": returncode,
+                        "state": current_state,
+                        "gate_recommendation": None,
+                    })
+                    phase_receipt(
+                        receipt_dir,
+                        index,
+                        phase,
+                        plan_iteration=phase_plan_iteration,
+                        dispatch_ordinal=(
+                            dispatch_ordinal if revise_dispatched else None
+                        ),
+                        status="product_terminal",
+                        returncode=returncode,
+                        state=str(current_state),
+                        reason=str(product_outcome["reason_code"]),
+                        argv=argv,
+                        state_path=plan_dir / "state.json",
+                        ledger_path=ledger_path,
+                        integrity_before=integrity_before,
+                        integrity_after=integrity_after,
+                        stdout=phase_stdout,
+                        stderr=phase_stderr,
+                    )
+                    index += 1
+                    break
                 raise RuntimeError(f"nonzero_returncode:{returncode}")
             state_path = plan_dir / "state.json"
             state = strict_object(state_path)
@@ -659,7 +857,10 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             reason = f"{type(exc).__name__}:{str(exc)[:160]}"
         else:
             index += 1
-            if terminal_state == "product_gate_not_proceed":
+            if terminal_state in {
+                "product_gate_not_proceed",
+                "product_revise_blocked",
+            }:
                 break
             continue
         infrastructure_status = "failed"
