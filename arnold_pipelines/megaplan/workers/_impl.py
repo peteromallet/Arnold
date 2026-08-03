@@ -6700,6 +6700,7 @@ def _run_step_with_worker_legacy(
         _expected = expected_worker_launch_values(
             spec_path=_bound_chain_spec,
             root=root,
+            runtime_vector_available=_launch_seed_present,
         )
     _strict_runtime_binding = bool(_expected.pop("require_full_vector", False))
     _runtime_vector = ""
