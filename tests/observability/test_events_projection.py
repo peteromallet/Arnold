@@ -148,6 +148,26 @@ def test_event_writer_rebuilds_projection_when_cursor_is_stale(tmp_path: Path) -
     assert [event["seq"] for event in read_events(plan_dir)] == [0, 1]
 
 
+def test_event_writer_recovers_missing_sequence_sidecar_from_store(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.observability.events import EventWriter
+
+    plan_id = "resume-plan"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_id
+    store = FileStore(tmp_path / "store")
+    writer = EventWriter(plan_dir, store=store)
+    assert writer.emit(EventKind.INIT, payload={"plan_name": plan_id})["seq"] == 0
+    assert writer.emit(EventKind.NOTE_ADDED, payload={"note": "before clone"})["seq"] == 1
+    (plan_dir / ".events.seq").unlink()
+
+    resumed = EventWriter(plan_dir, store=store).emit(
+        EventKind.NOTE_ADDED,
+        payload={"note": "after clone"},
+    )
+
+    assert resumed["seq"] == 2
+    assert [event["seq"] for event in read_events(plan_dir)] == [0, 1, 2]
+
+
 def test_atomic_projection_rebuild_never_exposes_truncated_destination(
     tmp_path: Path, monkeypatch
 ) -> None:
