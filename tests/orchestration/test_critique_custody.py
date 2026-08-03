@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
     assert_finalize_custody,
     bind_finalize_custody,
+    migrate_legacy_critique_custody,
     prepare_critique_payload,
     validate_gate_input_custody,
     validate_finalize_resolution_coverage,
@@ -222,6 +223,191 @@ def test_valid_oversized_task_finding_survives_normalization_and_reaches_gate(tm
 def _rewrite_receipt_digest(receipt: dict[str, Any]) -> None:
     receipt.pop("receipt_digest", None)
     receipt["receipt_digest"] = critique_custody._digest(receipt)
+
+
+def _legacy_unbound_fixture(plan_dir: Path, state: dict[str, Any]) -> Path:
+    """Reproduce the exact v1-on-v2-filename shape from the preserved r5 run."""
+    payload = _oversized_payload()
+    receipt = _persist_critique(plan_dir, state, payload)
+    iteration = int(state["iteration"])
+    producer_path = plan_dir / f"critique_check_scope_producer_v{iteration}.json"
+    atomic_write_json(producer_path, payload)
+    receipt["schema_version"] = "megaplan-critique-custody-v1"
+    receipt.pop("producer_binding")
+    receipt.pop("producer_binding_digest")
+    receipt["raw_sources"].append(
+        {"artifact": producer_path.name, "sha256": critique_custody.sha256_file(producer_path)}
+    )
+    _rewrite_receipt_digest(receipt)
+    receipt_path = plan_dir / f"critique_custody_v{iteration}.json"
+    atomic_write_json(receipt_path, receipt)
+
+    critique_sha = receipt["critique_sha256"]
+    state["current_state"] = "gated"
+    state["history"] = [
+        {
+            "step": "critique",
+            "result": "success",
+            "duration_ms": 1234,
+            "output_file": receipt["critique_artifact"],
+            "artifact_hash": critique_sha,
+        }
+    ]
+    atomic_write_json(plan_dir / "state.json", state)
+    atomic_write_json(
+        plan_dir / f"step_receipt_critique_v{iteration}.json",
+        {
+            "phase": "critique",
+            "iteration": iteration,
+            "duration_ms": 1234,
+            "upstream_artifact_hashes": [receipt["plan_sha256"]],
+        },
+    )
+    custody_binding = {
+        "schema_version": "megaplan-critique-custody-v1",
+        "receipt": receipt_path.name,
+        "receipt_sha256": critique_custody.sha256_file(receipt_path),
+        "finding_count": receipt["finding_count"],
+        "finding_ids": receipt["finding_ids"],
+        "flag_ids": receipt["flag_ids"],
+        "loss_count": 0,
+        "admitted": True,
+    }
+    atomic_write_json(
+        plan_dir / f"gate_signals_v{iteration}.json",
+        {"signals": {"critique_custody": custody_binding}},
+    )
+    atomic_write_json(
+        plan_dir / f"step_receipt_gate_v{iteration}.json",
+        {
+            "phase": "gate",
+            "iteration": iteration,
+            "upstream_artifact_hashes": [critique_sha],
+        },
+    )
+    gate_payload = {
+        "recommendation": "PROCEED",
+        "signals": {"critique_custody": custody_binding},
+    }
+    atomic_write_json(plan_dir / f"gate_v{iteration}.json", gate_payload)
+    atomic_write_json(plan_dir / "gate.json", gate_payload)
+    clearance = {
+        "schema_version": "megaplan-critique-clearance-v1",
+        "source_receipts": [
+            {"artifact": receipt_path.name, "sha256": critique_custody.sha256_file(receipt_path)}
+        ],
+        "admitted": True,
+    }
+    clearance["clearance_digest"] = critique_custody._digest(clearance)
+    atomic_write_json(plan_dir / "critique_clearance.json", clearance)
+    return receipt_path
+
+
+def test_exact_legacy_unbound_fixture_migrates_without_rewriting_source(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path, iteration=2)
+    receipt_path = _legacy_unbound_fixture(plan_dir, state)
+    source_before = receipt_path.read_bytes()
+    source_sha = critique_custody.sha256_file(receipt_path)
+
+    [migration] = migrate_legacy_critique_custody(
+        plan_dir,
+        iteration=2,
+        expected_source_sha256=source_sha,
+        actor="operator:test",
+        reason="admit preserved pre-v2 custody without inventing provenance",
+    )
+
+    assert receipt_path.read_bytes() == source_before
+    assert migration["custody_status"] == "legacy_unbound"
+    assert migration["producer_binding"]["producer_identity"] is None
+    assert migration["producer_binding"]["invocation_identity"] is None
+    critique_custody._validate_receipt_at_path(
+        plan_dir, receipt_path, json.loads(receipt_path.read_text())
+    )
+
+
+def test_legacy_migration_is_idempotent_across_publish_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    source_sha = critique_custody.sha256_file(receipt_path)
+    real_link = critique_custody.os.link
+    failed = False
+
+    def crash_once(source: object, target: object) -> None:
+        nonlocal failed
+        if not failed and str(target).endswith("critique_custody_legacy_migration_v2.json"):
+            failed = True
+            raise OSError("simulated crash before publish")
+        real_link(source, target)
+
+    monkeypatch.setattr(critique_custody.os, "link", crash_once)
+    kwargs = {
+        "iteration": 2,
+        "expected_source_sha256": source_sha,
+        "actor": "operator:test",
+        "reason": "crash-safe migration",
+    }
+    with pytest.raises(OSError, match="simulated crash"):
+        migrate_legacy_critique_custody(plan_dir, **kwargs)
+    assert not (plan_dir / "critique_custody_legacy_migration_v2.json").exists()
+
+    [first] = migrate_legacy_critique_custody(plan_dir, **kwargs)
+    sidecar = plan_dir / "critique_custody_legacy_migration_v2.json"
+    before = sidecar.read_bytes()
+    [second] = migrate_legacy_critique_custody(plan_dir, **kwargs)
+    assert second == first
+    assert sidecar.read_bytes() == before
+
+
+def test_legacy_migration_rejects_artifact_hash_divergence(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    receipt = json.loads(receipt_path.read_text())
+    receipt["raw_sources"][0]["sha256"] = "sha256:" + "0" * 64
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(CritiqueCustodyError, match="raw source hash mismatch"):
+        migrate_legacy_critique_custody(
+            plan_dir,
+            iteration=2,
+            expected_source_sha256=critique_custody.sha256_file(receipt_path),
+            actor="operator:test",
+            reason="must reject divergent evidence",
+        )
+
+
+def test_legacy_migration_rejects_wrong_source_cas_and_gate_lineage(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    with pytest.raises(CritiqueCustodyError, match="expected sha256"):
+        migrate_legacy_critique_custody(
+            plan_dir,
+            iteration=2,
+            expected_source_sha256="sha256:" + "f" * 64,
+            actor="operator:test",
+            reason="CAS mismatch",
+        )
+
+    gate = json.loads((plan_dir / "gate_v2.json").read_text())
+    gate["recommendation"] = "ITERATE"
+    gate["signals"]["critique_custody"]["receipt_sha256"] = "sha256:" + "0" * 64
+    atomic_write_json(plan_dir / "gate_v2.json", gate)
+    with pytest.raises(CritiqueCustodyError, match="versioned gate does not bind"):
+        migrate_legacy_critique_custody(
+            plan_dir,
+            iteration=2,
+            expected_source_sha256=critique_custody.sha256_file(receipt_path),
+            actor="operator:test",
+            reason="lineage mismatch",
+        )
 
 
 def test_gate_rejects_self_consistent_receipt_copied_from_older_iteration(
