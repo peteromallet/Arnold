@@ -126,6 +126,34 @@ _ZERO_RECOVERY_EMPTY_RUNTIME_DIRS = {
 }
 
 
+def _zero_recovery_global_scratch_observation() -> dict[str, str]:
+    """Prove global scratch is inaccessible; IPC-none may omit /dev/shm."""
+    observation: dict[str, str] = {}
+    for global_tmp in (Path("/tmp"), Path("/var/tmp"), Path("/dev/shm")):
+        try:
+            global_tmp_stat = os.lstat(global_tmp)
+        except FileNotFoundError:
+            if global_tmp == Path("/dev/shm"):
+                observation[str(global_tmp)] = "absent_ipc_none"
+                continue
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"required global scratch path is absent: {global_tmp}",
+            )
+        if (
+            not stat.S_ISDIR(global_tmp_stat.st_mode)
+            or stat.S_ISLNK(global_tmp_stat.st_mode)
+            or global_tmp_stat.st_uid != 0
+            or global_tmp_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"global scratch is writable by the finite-model UID: {global_tmp}",
+            )
+        observation[str(global_tmp)] = "root_nonwritable"
+    return observation
+
+
 def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
     source_stat = os.lstat(source)
     if (
@@ -171,18 +199,7 @@ def _prepare_zero_recovery_model_runtime(
             "zero_recovery_privilege_boundary_invalid",
             "finite-model UID was not process-empty before dispatch",
         )
-    for global_tmp in (Path("/tmp"), Path("/var/tmp"), Path("/dev/shm")):
-        global_tmp_stat = os.lstat(global_tmp)
-        if (
-            not stat.S_ISDIR(global_tmp_stat.st_mode)
-            or stat.S_ISLNK(global_tmp_stat.st_mode)
-            or global_tmp_stat.st_uid != 0
-            or global_tmp_stat.st_mode & 0o022
-        ):
-            raise CliError(
-                "zero_recovery_privilege_boundary_invalid",
-                f"global scratch is writable by the finite-model UID: {global_tmp}",
-            )
+    global_scratch = _zero_recovery_global_scratch_observation()
     plan_stat = os.lstat(plan_dir)
     if (
         not stat.S_ISDIR(plan_stat.st_mode)
@@ -306,6 +323,7 @@ def _prepare_zero_recovery_model_runtime(
             "output_dev": output_stat.st_dev,
             "output_ino": output_stat.st_ino,
             "privilege_observation": privilege_observation,
+            "global_scratch": global_scratch,
         }
     except BaseException:
         if output_created:
@@ -393,11 +411,7 @@ def _write_zero_recovery_privilege_receipt(
             _zero_recovery_model_env(runtime, turn_id="receipt").keys()
         ),
         "writable_roots": [output_path.name, str(runtime["runtime"])],
-        "global_scratch": {
-            "/tmp": "root_nonwritable",
-            "/var/tmp": "root_nonwritable",
-            "/dev/shm": "root_nonwritable",
-        },
+        "global_scratch": runtime["global_scratch"],
         "limits": {
             "nproc": 64,
             "fsize_bytes": 67_108_864,
