@@ -54,6 +54,7 @@ from arnold_pipelines.megaplan.types import CliError
 
 SOURCE_ID = "a" * 64
 IMAGE_ID = "sha256:" + "b" * 64
+RESIDENT_IMAGE_ID = "sha256:" + "d" * 64
 RESIDENT_ID = "c" * 64
 WORKSPACE = "/opt/megaplan-cloud/workspace"
 SOURCE = "megaplan-cloud-agent"
@@ -150,6 +151,7 @@ def _recover_receipt(*, status: str = "healthy") -> dict[str, object]:
         "source_container": SOURCE,
         "source_container_id": SOURCE_ID,
         "source_image_id": IMAGE_ID,
+        "resident_image_id": RESIDENT_IMAGE_ID,
         "workspace": WORKSPACE,
         "resident_container": resident,
         "resident_container_id": RESIDENT_ID,
@@ -220,6 +222,7 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
         source_container=SOURCE,
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         **RUNTIME_ARGS,
         workspace=WORKSPACE,
         outage_epoch="discord-enospc-20260803",
@@ -236,6 +239,7 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
     assert config["listener_recovery_seed_schema"] == LISTENER_RECOVERY_SEED_SCHEMA
     assert config["expected_runtime_python_path"] == RUNTIME_PYTHON
     assert config["expected_runtime_python_sha256"] == RUNTIME_PYTHON_SHA256
+    assert config["expected_resident_image_id"] == RESIDENT_IMAGE_ID
     assert config["custody_host_root"].startswith(
         "/var/lib/arnold/megaplan-resident-recovery/"
     )
@@ -254,6 +258,7 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
     assert "--env-file" in script
     assert '"--entrypoint", capture["runtime_python_path"]' in script
     assert 'cfg["expected_source_image_id"], "-lc", command' not in script
+    assert 'cfg["expected_resident_image_id"]' in script
     assert "dst=/workspace/.megaplan/resident-only-custody" not in script
     assert "dst=/run/megaplan-resident-recovery,readonly" in script
     assert "docker\", \"create" in script
@@ -263,6 +268,21 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
     assert "--restart\", \"no" in script
     assert "one-secret-value" not in command + script
     compile(script, "<resident-recover>", "exec")
+
+
+def test_recovery_image_dependency_floor_includes_discord_listener_runtime() -> None:
+    dockerfile = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "templates"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert '"PyYAML>=6.0"' in dockerfile
+    assert '"discord.py>=2.6,<3"' in dockerfile
+    assert "import discord, httpx, psutil, pydantic, ulid, yaml" in dockerfile
 
 
 def test_recovery_seed_is_single_use_within_the_exact_container(tmp_path: Path) -> None:
@@ -287,6 +307,7 @@ def test_down_builder_is_exact_stop_remove_not_generic_shell() -> None:
         source_container=SOURCE,
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         expected_resident_container_id=RESIDENT_ID,
         workspace=WORKSPACE,
         outage_epoch="discord-enospc-20260803",
@@ -305,6 +326,7 @@ def test_recover_rejects_mutable_workspace_interpreter() -> None:
             source_container=SOURCE,
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            expected_resident_image_id=RESIDENT_IMAGE_ID,
             expected_runtime_path=RUNTIME_PATH,
             expected_runtime_commit=RUNTIME_COMMIT,
             expected_runtime_tree=RUNTIME_TREE,
@@ -326,6 +348,7 @@ def test_provider_recover_cas_capacity_and_receipt_binding() -> None:
         outage_epoch="discord-enospc-20260803",
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         **RUNTIME_ARGS,
         health_timeout_seconds=45,
     )
@@ -344,6 +367,7 @@ def test_provider_recover_fails_closed_before_effect_on_source_mismatch() -> Non
             outage_epoch="discord-enospc-20260803",
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            expected_resident_image_id=RESIDENT_IMAGE_ID,
             **RUNTIME_ARGS,
         )
 
@@ -358,6 +382,7 @@ def test_provider_recover_fails_closed_before_effect_below_capacity_floor() -> N
             outage_epoch="discord-enospc-20260803",
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            expected_resident_image_id=RESIDENT_IMAGE_ID,
             **RUNTIME_ARGS,
         )
 
@@ -374,6 +399,7 @@ def test_provider_recover_rejects_health_for_a_different_container() -> None:
             outage_epoch="discord-enospc-20260803",
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            expected_resident_image_id=RESIDENT_IMAGE_ID,
             **RUNTIME_ARGS,
         )
 
@@ -402,6 +428,7 @@ def test_provider_down_binds_exact_receipt() -> None:
         outage_epoch="discord-enospc-20260803",
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         expected_resident_container_id=RESIDENT_ID,
     )
 
@@ -422,6 +449,8 @@ def test_cli_registers_complete_recover_and_down_contract() -> None:
             SOURCE_ID,
             "--expected-source-image-id",
             IMAGE_ID,
+            "--expected-resident-image-id",
+            RESIDENT_IMAGE_ID,
             "--expected-runtime-path",
             RUNTIME_PATH,
             "--expected-runtime-commit",
@@ -443,6 +472,8 @@ def test_cli_registers_complete_recover_and_down_contract() -> None:
             SOURCE_ID,
             "--expected-source-image-id",
             IMAGE_ID,
+            "--expected-resident-image-id",
+            RESIDENT_IMAGE_ID,
             "--expected-resident-container-id",
             RESIDENT_ID,
         ]
@@ -467,6 +498,8 @@ def test_cli_dispatches_recover_and_preserves_failed_health_exit(
             SOURCE_ID,
             "--expected-source-image-id",
             IMAGE_ID,
+            "--expected-resident-image-id",
+            RESIDENT_IMAGE_ID,
             "--expected-runtime-path",
             RUNTIME_PATH,
             "--expected-runtime-commit",
@@ -486,6 +519,7 @@ def test_cli_dispatches_recover_and_preserves_failed_health_exit(
                 "outage_epoch": "discord-enospc-20260803",
                 "expected_source_container_id": SOURCE_ID,
                 "expected_source_image_id": IMAGE_ID,
+                "expected_resident_image_id": RESIDENT_IMAGE_ID,
                 "expected_runtime_path": RUNTIME_PATH,
                 "expected_runtime_commit": RUNTIME_COMMIT,
                 "expected_runtime_tree": RUNTIME_TREE,
@@ -514,6 +548,8 @@ def test_cli_dispatches_exact_down(tmp_path, monkeypatch, capsys) -> None:
             SOURCE_ID,
             "--expected-source-image-id",
             IMAGE_ID,
+            "--expected-resident-image-id",
+            RESIDENT_IMAGE_ID,
             "--expected-resident-container-id",
             RESIDENT_ID,
         ]
@@ -743,6 +779,7 @@ workspace = os.environ["FAKE_DOCKER_WORKSPACE"]
 custody_root = os.environ["FAKE_CUSTODY_ROOT"]
 source_id = os.environ["FAKE_SOURCE_ID"]
 image_id = os.environ["FAKE_IMAGE_ID"]
+resident_image_id = os.environ["FAKE_RESIDENT_IMAGE_ID"]
 resident_id = os.environ["FAKE_RESIDENT_ID"]
 source_name = os.environ["FAKE_SOURCE_NAME"]
 resident_name = source_name + "-resident-only"
@@ -810,7 +847,8 @@ if args[0] == "create":
     env_map = {{row.split("=", 1)[0]: row.split("=", 1)[1] for row in env_rows}}
     entrypoint_index = args.index("--entrypoint")
     image_index = entrypoint_index + 2
-    state["resident"] = {{"Id": resident_id, "Image": image_id, "Name": "/" + resident_name,
+    assert args[image_index] == resident_image_id
+    state["resident"] = {{"Id": resident_id, "Image": resident_image_id, "Name": "/" + resident_name,
       "State": {{"Running": False, "Paused": False, "Restarting": False, "ExitCode": 0, "StartedAt": ""}},
       "HostConfig": {{"RestartPolicy": {{"Name": "no", "MaximumRetryCount": 0}}, "CapDrop": ["ALL"], "CapAdd": None, "SecurityOpt": ["no-new-privileges:true"], "PidsLimit": 256, "Memory": 2147483648, "MemorySwap": 2147483648}},
       "Config": {{"Entrypoint": [args[entrypoint_index + 1]], "User": "0:0", "WorkingDir": args[args.index("--workdir") + 1], "Cmd": args[image_index + 1:], "Env": [key + "=" + value for key, value in env_map.items()]}},
@@ -854,6 +892,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         "FAKE_CUSTODY_ROOT": str(tmp_path / "custody" / SOURCE_ID),
         "FAKE_SOURCE_ID": SOURCE_ID,
         "FAKE_IMAGE_ID": IMAGE_ID,
+        "FAKE_RESIDENT_IMAGE_ID": RESIDENT_IMAGE_ID,
         "FAKE_RESIDENT_ID": RESIDENT_ID,
         "FAKE_SOURCE_NAME": SOURCE,
     }
@@ -861,6 +900,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         "source_container": SOURCE,
         "expected_source_container_id": SOURCE_ID,
         "expected_source_image_id": IMAGE_ID,
+        "expected_resident_image_id": RESIDENT_IMAGE_ID,
         "workspace": str(workspace),
         "outage_epoch": "discord-enospc-20260803",
         **RUNTIME_ARGS,
@@ -924,6 +964,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         source_container=SOURCE,
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         workspace=str(workspace),
         outage_epoch="discord-enospc-20260803",
         expected_resident_container_id=RESIDENT_ID,
@@ -1109,6 +1150,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         source_container=SOURCE,
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         expected_resident_container_id=RESIDENT_ID,
         workspace=str(workspace),
         outage_epoch="discord-enospc-post-create-swap",
@@ -1169,6 +1211,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         source_container=SOURCE,
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        expected_resident_image_id=RESIDENT_IMAGE_ID,
         expected_resident_container_id=RESIDENT_ID,
         workspace=str(workspace),
         outage_epoch="discord-enospc-seed-rewrite",

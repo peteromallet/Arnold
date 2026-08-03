@@ -96,9 +96,9 @@ def validate_container_id(value: str, *, label: str) -> str:
     return value
 
 
-def validate_image_id(value: str) -> str:
+def validate_image_id(value: str, *, label: str = "expected source image") -> str:
     if not isinstance(value, str) or not _IMAGE_ID_RE.fullmatch(value):
-        raise CliError("resident_recovery_invalid", "expected source image must be an exact sha256 image ID")
+        raise CliError("resident_recovery_invalid", f"{label} must be an exact sha256 image ID")
     return value
 
 
@@ -283,7 +283,7 @@ def resident_identity(item):
     expected_cmd = hashlib.sha256(json.dumps(resident_argv, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     actual_cmd = hashlib.sha256(json.dumps(config.get("Cmd") if isinstance(config, dict) else None, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if (
-        item.get("Image") != cfg["expected_source_image_id"]
+        item.get("Image") != cfg["expected_resident_image_id"]
         or item.get("Name") != "/" + cfg["resident_container"]
         or not isinstance(config, dict) or config.get("Entrypoint") != [capture["runtime_python_path"]]
         or config.get("User") != "0:0"
@@ -512,7 +512,7 @@ def capture_runtime(*, check_help, runtime_source=None):
         "--security-opt", "no-new-privileges:true", "--pids-limit", "64",
         "--memory", "512m", "--memory-swap", "512m",
         *mounts,
-        "--entrypoint", "/bin/bash", cfg["expected_source_image_id"], "-lc", listener_capture,
+        "--entrypoint", "/bin/bash", cfg["expected_resident_image_id"], "-lc", listener_capture,
         "resident-runtime-capture", cfg["expected_runtime_path"], cfg["expected_runtime_commit"], cfg["expected_runtime_tree"],
         cfg["expected_runtime_python_path"], cfg["expected_runtime_python_sha256"], "1" if check_help else "0",
     ], check=False)
@@ -627,7 +627,8 @@ command_sha256 = hashlib.sha256(json.dumps(resident_argv, sort_keys=True, separa
 intent_core = {
     "schema": "arnold.cloud.resident_only_intent.v1", "outage_epoch": cfg["outage_epoch"],
     "source_container": cfg["source_container"], "source_container_id": cfg["expected_source_container_id"],
-    "source_image_id": cfg["expected_source_image_id"], "workspace": cfg["workspace"],
+    "source_image_id": cfg["expected_source_image_id"],
+    "resident_image_id": cfg["expected_resident_image_id"], "workspace": cfg["workspace"],
     "resident_container": cfg["resident_container"], "resident_command_sha256": command_sha256,
     "resident_env_sha256": sanitized_env_sha256,
     "runtime_capture": capture,
@@ -659,7 +660,7 @@ if resident is None:
         "--mount", "type=bind,src=" + cfg["workspace"] + ",dst=/workspace",
         "--mount", "type=bind,src=" + runtime_host_path + ",dst=" + cfg["expected_runtime_path"] + ",readonly",
         "--mount", "type=bind,src=" + seed_epoch_path + ",dst=/run/megaplan-resident-recovery,readonly",
-        "--entrypoint", capture["runtime_python_path"], cfg["expected_source_image_id"], *resident_argv,
+        "--entrypoint", capture["runtime_python_path"], cfg["expected_resident_image_id"], *resident_argv,
     ])
     created_id = (created.stdout or "").strip()
     if len(created_id) != 64 or any(ch not in "0123456789abcdef" for ch in created_id):
@@ -684,6 +685,7 @@ seed_core = {
     "outage_epoch": cfg["outage_epoch"],
     "source_container_id": cfg["expected_source_container_id"],
     "source_image_id": cfg["expected_source_image_id"],
+    "resident_image_id": cfg["expected_resident_image_id"],
     "workspace_host_path": cfg["workspace"],
     "workspace_identity": capture["workspace_identity"],
     "runtime_path": capture["runtime_path"],
@@ -736,6 +738,7 @@ start_receipt = {
     "schema": "arnold.cloud.resident_only_start.v1", "status": "started",
     "outage_epoch": cfg["outage_epoch"], "source_container": cfg["source_container"],
     "source_container_id": cfg["expected_source_container_id"], "source_image_id": cfg["expected_source_image_id"],
+    "resident_image_id": cfg["expected_resident_image_id"],
     "workspace": cfg["workspace"], "resident_container": cfg["resident_container"],
     "resident_container_id": identity["container_id"], "resident_command_sha256": command_sha256,
     "resident_env_sha256": sanitized_env_sha256,
@@ -902,12 +905,13 @@ if (
 ):
     raise RuntimeError("source_fence_receipt_invalid")
 if (
-    set(attempt) != {"schema", "outage_epoch", "source_container", "source_container_id", "source_image_id", "workspace", "resident_container", "resident_command_sha256", "resident_env_sha256", "runtime_capture", "source_fence_sha256"}
+    set(attempt) != {"schema", "outage_epoch", "source_container", "source_container_id", "source_image_id", "resident_image_id", "workspace", "resident_container", "resident_command_sha256", "resident_env_sha256", "runtime_capture", "source_fence_sha256"}
     or attempt.get("schema") != "arnold.cloud.resident_only_intent.v1"
     or attempt.get("outage_epoch") != cfg["outage_epoch"]
     or attempt.get("source_container") != cfg["source_container"]
     or attempt.get("source_container_id") != cfg["expected_source_container_id"]
     or attempt.get("source_image_id") != cfg["expected_source_image_id"]
+    or attempt.get("resident_image_id") != cfg["expected_resident_image_id"]
     or attempt.get("workspace") != cfg["workspace"]
     or attempt.get("resident_container") != cfg["resident_container"]
     or any(not isinstance(attempt.get(key), str) or len(attempt[key]) != 64 for key in ("resident_command_sha256", "resident_env_sha256", "source_fence_sha256"))
@@ -920,13 +924,14 @@ if os.path.exists(start_path):
     if not isinstance(start.get("started_at"), str) or not start.get("started_at"):
         raise RuntimeError("start_receipt_started_at_invalid")
     if (
-        set(start) != {"schema", "status", "outage_epoch", "source_container", "source_container_id", "source_image_id", "workspace", "resident_container", "resident_container_id", "resident_command_sha256", "resident_env_sha256", "intent_sha256", "recovery_seed_sha256", "runtime_path", "runtime_commit", "runtime_tree", "runtime_python_path", "runtime_python_sha256", "restart_policy", "listener_only", "started_at"}
+        set(start) != {"schema", "status", "outage_epoch", "source_container", "source_container_id", "source_image_id", "resident_image_id", "workspace", "resident_container", "resident_container_id", "resident_command_sha256", "resident_env_sha256", "intent_sha256", "recovery_seed_sha256", "runtime_path", "runtime_commit", "runtime_tree", "runtime_python_path", "runtime_python_sha256", "restart_policy", "listener_only", "started_at"}
         or start.get("schema") != "arnold.cloud.resident_only_start.v1"
         or start.get("status") != "started"
         or start.get("outage_epoch") != cfg["outage_epoch"]
         or start.get("source_container") != cfg["source_container"]
         or start.get("source_container_id") != cfg["expected_source_container_id"]
         or start.get("source_image_id") != cfg["expected_source_image_id"]
+        or start.get("resident_image_id") != cfg["expected_resident_image_id"]
         or start.get("workspace") != cfg["workspace"]
         or start.get("resident_container") != cfg["resident_container"]
         or start.get("resident_container_id") != cfg["expected_resident_container_id"]
@@ -965,7 +970,7 @@ else:
 resident_by_id = inspect(cfg["expected_resident_container_id"])
 resident_by_name = inspect(cfg["resident_container"])
 if resident_by_id is not None:
-    if resident_by_name is None or resident_by_name.get("Id") != resident_by_id.get("Id") or resident_by_id.get("Image") != cfg["expected_source_image_id"] or workspace_mount(resident_by_id) != {"type": "bind", "source": cfg["workspace"], "destination": "/workspace", "rw": True}:
+    if resident_by_name is None or resident_by_name.get("Id") != resident_by_id.get("Id") or resident_by_id.get("Image") != cfg["expected_resident_image_id"] or workspace_mount(resident_by_id) != {"type": "bind", "source": cfg["workspace"], "destination": "/workspace", "rw": True}:
         raise RuntimeError("resident_down_compare_and_swap_failed")
     resident_state = resident_by_id.get("State")
     if isinstance(resident_state, dict) and resident_state.get("Running") is True:
@@ -1017,6 +1022,7 @@ def resident_recover_command(
     source_container: str,
     expected_source_container_id: str,
     expected_source_image_id: str,
+    expected_resident_image_id: str,
     expected_runtime_path: str,
     expected_runtime_commit: str,
     expected_runtime_tree: str,
@@ -1049,6 +1055,10 @@ def resident_recover_command(
         "source_container": source,
         "expected_source_container_id": validate_container_id(expected_source_container_id, label="expected source container ID"),
         "expected_source_image_id": validate_image_id(expected_source_image_id),
+        "expected_resident_image_id": validate_image_id(
+            expected_resident_image_id,
+            label="expected resident image",
+        ),
         "custody_host_parent": _CUSTODY_BASE,
         "custody_host_root": resident_custody_host_root(expected_source_container_id),
         "expected_runtime_path": validate_runtime_path(expected_runtime_path),
@@ -1077,6 +1087,7 @@ def resident_down_command(
     source_container: str,
     expected_source_container_id: str,
     expected_source_image_id: str,
+    expected_resident_image_id: str,
     expected_resident_container_id: str,
     workspace: str,
     outage_epoch: str,
@@ -1086,6 +1097,10 @@ def resident_down_command(
         "source_container": source,
         "expected_source_container_id": validate_container_id(expected_source_container_id, label="expected source container ID"),
         "expected_source_image_id": validate_image_id(expected_source_image_id),
+        "expected_resident_image_id": validate_image_id(
+            expected_resident_image_id,
+            label="expected resident image",
+        ),
         "custody_host_root": resident_custody_host_root(expected_source_container_id),
         "expected_resident_container_id": validate_container_id(expected_resident_container_id, label="expected resident container ID"),
         "workspace": validate_workspace_dir(workspace),
@@ -1152,6 +1167,7 @@ def parse_resident_recovery_receipt(stdout: str) -> dict[str, Any]:
             "source_container",
             "source_container_id",
             "source_image_id",
+            "resident_image_id",
             "workspace",
             "resident_container",
             "resident_container_id",
@@ -1172,6 +1188,7 @@ def parse_resident_recovery_receipt(stdout: str) -> dict[str, Any]:
         or start.get("status") != "started"
         or not _CONTAINER_ID_RE.fullmatch(str(start.get("source_container_id") or ""))
         or not _IMAGE_ID_RE.fullmatch(str(start.get("source_image_id") or ""))
+        or not _IMAGE_ID_RE.fullmatch(str(start.get("resident_image_id") or ""))
         or not _CONTAINER_ID_RE.fullmatch(str(start.get("resident_container_id") or ""))
         or not re.fullmatch(r"[0-9a-f]{64}", str(start.get("resident_command_sha256") or ""))
         or not re.fullmatch(r"[0-9a-f]{64}", str(start.get("resident_env_sha256") or ""))
