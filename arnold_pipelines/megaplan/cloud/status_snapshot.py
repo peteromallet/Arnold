@@ -57,6 +57,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold_pipelines.megaplan.cloud.liveness_lease import observe_liveness_lease
+
 from arnold_pipelines.megaplan._core.io import (
     ProjectionCursor,
     ProjectionCursorMismatchError,
@@ -379,7 +381,7 @@ REPAIR_FRESH_S = 6 * 60 * 60
 CHAIN_HEALTH_STALE_GRACE_S = 5
 
 SessionStatus = str  # one of: running | repairing | blocked | paused | complete | attention
-LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
+LivenessProbe = Callable[[Mapping[str, Any]], dict[str, Any]]
 
 
 # --- public API ------------------------------------------------------------
@@ -1445,7 +1447,7 @@ def _build_session_entry(
         plan_state_label = None
     latest_activity = _latest_activity(chain_health, marker, plan_state_doc)
     liveness = _augment_liveness_with_plan_state(
-        _safe_liveness(liveness_probe, marker),
+        _safe_liveness(liveness_probe, marker, marker_dir=marker_dir),
         chain_health=chain_health,
         plan_state=plan_state_doc,
     )
@@ -1507,18 +1509,7 @@ def _build_session_entry(
     )
     active_step_for_advancement = bool(
         isinstance(plan_state_doc, Mapping) and plan_state_doc.get("active_step")
-    )
-    if active_step_for_advancement:
-        advancement_active_step = plan_state_doc.get("active_step")
-        raw_worker_pid = (
-            advancement_active_step.get("worker_pid")
-            if isinstance(advancement_active_step, Mapping)
-            else None
-        )
-        if raw_worker_pid not in (None, ""):
-            worker_pid = _as_int(raw_worker_pid)
-            if worker_pid is None or not _pid_is_live(worker_pid):
-                active_step_for_advancement = False
+    ) and bool(liveness.get("tmux") or liveness.get("process"))
     # ── Successor gate parameters ─────────────────────────────────────
     _successors: list = []
     _completion_contract_mode = "shadow"
@@ -1726,7 +1717,7 @@ def _build_session_entry(
         supervisor_identity=str(marker.get("supervisor_identity") or ""),
         tmux_live=bool(liveness.get("tmux")),
         process_live=bool(liveness.get("process")),
-        active_step_worker_pid_liveness=_active_step_pid_liveness(plan_state_doc),
+        active_step_worker_pid_liveness=bool(liveness.get("process")),
         watchdog_status=_watchdog_status(watchdog_item, chain_complete),
         chain_complete=chain_complete,
         relaunch_command=str(marker.get("relaunch_command") or ""),
@@ -1759,6 +1750,8 @@ def _build_session_entry(
         "should_run": status not in {"complete", "paused"} and plan_current_state != "paused",
         "tmux": liveness.get("tmux", False),
         "process": liveness.get("process", False),
+        "liveness_state": liveness.get("state", "unknown"),
+        "liveness_source": liveness.get("source", "local_probe"),
         "watchdog": watchdog_status,
         "repairing": status == "repairing",
         "current_plan": current_plan,
@@ -1810,6 +1803,7 @@ def _build_session_entry(
                 str(repair_data_dir / f"{session}.needs-human.json") if needs_human else None
             ),
             "superseded_by": superseding_sibling,
+            "liveness_lease": liveness.get("lease"),
         },
     }
     # ── M9: mark plan-percent bookkeeping as explicitly non-authoritative ──
@@ -2393,21 +2387,16 @@ def _classify_session(
         and isinstance(plan_state.get("active_step"), Mapping)
         else {}
     )
-    active_worker_pid = active_step.get("worker_pid") if active_step else None
-    if active_worker_pid not in (None, ""):
-        try:
-            active_worker_dead = not _pid_is_live(int(active_worker_pid))
-        except (TypeError, ValueError):
-            active_worker_dead = True
-        if active_worker_dead:
-            return (
-                "attention",
-                "stale active step has dead worker PID; runner is stopped and "
-                "fresh progress/repair sidecars do not establish liveness",
-            )
+    if active_step:
+        return (
+            "attention",
+            "active step has no authoritative live runner lease; process state is unknown "
+            "and activity sidecars do not establish liveness",
+        )
 
+    # Recent activity is useful display context, never liveness authority.
     if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
-        return "running", "recent plan/chain activity"
+        return "attention", "recent activity observed but runner liveness is unknown"
 
     # Not complete, not blocked, not under repair, not live, not recent. That is
     # exactly the "should be working but is not" case the watchdog escalates.
@@ -2991,24 +2980,16 @@ def _latest_activity(
 
 
 def _augment_liveness_with_plan_state(
-    liveness: Mapping[str, bool],
+    liveness: Mapping[str, Any],
     *,
     chain_health: Mapping[str, Any] | None,
     plan_state: Mapping[str, Any] | None,
-) -> dict[str, bool]:
-    augmented = {"tmux": bool(liveness.get("tmux")), "process": bool(liveness.get("process"))}
-    if augmented["process"]:
-        return augmented
-
-    active_step = plan_state.get("active_step") if isinstance(plan_state, Mapping) else None
-    if isinstance(active_step, Mapping):
-        pid = _as_int(active_step.get("worker_pid"))
-        if pid is not None and _pid_is_live(pid):
-            augmented["process"] = True
-            return augmented
-
-    # Chain-health active-step flags are cached breadcrumbs. They can outlive
-    # the worker, so only a live PID or process probe may upgrade liveness.
+) -> dict[str, Any]:
+    augmented = dict(liveness)
+    augmented["tmux"] = bool(liveness.get("tmux"))
+    augmented["process"] = bool(liveness.get("process"))
+    # Plan/chain activity and bare worker PIDs are cached breadcrumbs.  A PID is
+    # meaningful only in its owning namespace; neither may upgrade liveness.
     return augmented
 
 
@@ -3031,17 +3012,36 @@ def _is_plan_kind_marker(workspace: Path | None) -> bool:
     return workspace is not None and workspace.exists()
 
 
-def _safe_liveness(probe: LivenessProbe, marker: Mapping[str, Any]) -> dict[str, bool]:
+def _safe_liveness(
+    probe: LivenessProbe,
+    marker: Mapping[str, Any],
+    *,
+    marker_dir: Path = DEFAULT_MARKER_DIR,
+) -> dict[str, Any]:
     try:
         result = probe(marker)
     except Exception:
-        return {"tmux": False, "process": False}
+        result = {}
     if not isinstance(result, dict):
-        return {"tmux": False, "process": False}
-    return {
+        result = {}
+    local = {
         "tmux": bool(result.get("tmux")),
         "process": bool(result.get("process")),
+        "state": "live" if result.get("tmux") or result.get("process") else "unknown",
+        "source": "local_probe",
     }
+    if local["tmux"] or local["process"]:
+        return local
+    lease = observe_liveness_lease(marker, marker_dir=marker_dir)
+    if lease.get("live"):
+        return {
+            "tmux": False,
+            "process": True,
+            "state": "remote_live",
+            "source": "runner_lease",
+            "lease": lease,
+        }
+    return {**local, "state": str(lease.get("state") or "unknown"), "lease": lease}
 
 
 def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
