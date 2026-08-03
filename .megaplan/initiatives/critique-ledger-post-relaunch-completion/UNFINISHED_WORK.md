@@ -106,6 +106,11 @@ machine-readable authority; the paths and counts below are operator guidance.
   `/private/tmp/arnold-critique-recovery-contract-bundles-20260802`; bind exact
   route/model, semantic success, bounded response-loss retry, sticky UNKNOWN
   and installed parity.
+- [ ] Add provider/server-attested backend-model identity (or an independently
+  authoritative equivalent). Exact CLI argv plus a sealed Codex rollout
+  `turn_context.model` is useful operational evidence but is same-UID
+  client-generated evidence, not cryptographic provider attestation; never
+  relabel it as `provider_observed`.
 - [ ] Integrate and generalize the bounded Stage-A T1.3 transport component
   `2f1500aea1d03fbf13df5c796b17bd03d17bb79c` only through a clean descendant
   with conflict and package qualification. Its acceptance covers authenticated,

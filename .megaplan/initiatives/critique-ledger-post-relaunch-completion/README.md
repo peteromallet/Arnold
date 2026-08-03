@@ -89,6 +89,9 @@ F2 explicitly inherits:
 
 - the paused T1.1 universal admission repair and its remaining validation;
 - the paused T1.2 typed critic-attempt implementation;
+- provider/server-attested model identity. The finite canary may bind the exact
+  requested argv and root-custodied Codex CLI `turn_context`, but must label it
+  `codex_cli_turn_context`; it is not cryptographic proof of the backend model;
 - integration/generalization of the independently accepted bounded Stage-A
   T1.3 authenticated raw target-bound transport component at
   `2f1500aea1d03fbf13df5c796b17bd03d17bb79c`; this is not T1.2 attempt/model
