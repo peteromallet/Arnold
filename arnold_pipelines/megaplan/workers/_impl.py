@@ -1174,7 +1174,22 @@ def _assert_zero_recovery_source_unchanged(
             for path in set(before_schemas) | set(after_schemas)
             if before_schemas.get(path) != after_schemas.get(path)
         )
-        changed.append("runtime_schema:" + ",".join(schema_changes[:8]))
+        schema_evidence = []
+        for path in schema_changes[:8]:
+            prior = before_schemas.get(path)
+            current = after_schemas.get(path)
+            prior_text = (
+                "absent"
+                if prior is None
+                else f"{prior[0]:04o}:{prior[1][:12]}"
+            )
+            current_text = (
+                "absent"
+                if current is None
+                else f"{current[0]:04o}:{current[1][:12]}"
+            )
+            schema_evidence.append(f"{path}({prior_text}->{current_text})")
+        changed.append("runtime_schema:" + ",".join(schema_evidence))
     if changed:
         raise CliError(
             "zero_recovery_worker_mutation_denied",

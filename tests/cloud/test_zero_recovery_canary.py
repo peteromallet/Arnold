@@ -2327,6 +2327,25 @@ def test_runner_post_init_binds_canonical_schema_runtime_and_rejects_drift(
     assert exc.value.code == "zero_recovery_worker_mutation_denied"
 
 
+def test_zero_recovery_schema_mode_drift_reports_exact_transition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, _, plan_dir = _git_canary_fixture(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    ensure_runtime_layout(tmp_path)
+    schema = tmp_path / ".megaplan/schemas/plan.json"
+    schema.chmod(0o644)
+    before = _zero_recovery_source_identity(tmp_path, plan_dir)
+    schema.chmod(0o600)
+
+    with pytest.raises(CliError) as exc:
+        _assert_zero_recovery_source_unchanged(tmp_path, plan_dir, before)
+
+    assert exc.value.code == "zero_recovery_worker_mutation_denied"
+    assert ".megaplan/schemas/plan.json(0644:" in str(exc.value)
+    assert "->0600:" in str(exc.value)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
