@@ -38,10 +38,14 @@ from .ssh_preflight import (
 )
 from .resident_recovery import (
     parse_resident_down_receipt,
+    parse_resident_reconcile_adoption_receipt,
+    parse_resident_reconcile_down_receipt,
     parse_resident_recovery_receipt,
     resident_custody_host_root,
     resident_down_command,
     resident_only_container_name,
+    resident_receipt_sha256,
+    resident_reconcile_adoption_command,
     resident_recover_command,
 )
 from .zero_recovery import (
@@ -1603,6 +1607,112 @@ class SshProvider(Provider):
                 "resident down receipt did not match the admitted transaction",
             )
         return payload
+
+    def resident_reconcile_down(
+        self,
+        *,
+        outage_epoch: str,
+        expected_source_container_id: str,
+        expected_source_image_id: str,
+        expected_resident_image_id: str,
+        expected_resident_container_id: str,
+        expected_resident_command_sha256: str,
+        expected_resident_env_sha256: str,
+        expected_recovery_seed_host_dir: str,
+        expected_recovery_seed_sha256: str,
+        expected_runtime_path: str,
+        expected_runtime_commit: str,
+        expected_runtime_tree: str,
+        expected_runtime_content_sha256: str,
+        expected_runtime_python_path: str,
+        expected_runtime_python_sha256: str,
+        expected_workspace_device: int,
+        expected_workspace_inode: int,
+    ) -> dict[str, Any]:
+        """Adopt and remove one exact live resident lacking launch receipts."""
+
+        self._require_resident_recovery_source(
+            expected_source_container_id=expected_source_container_id,
+            expected_source_image_id=expected_source_image_id,
+        )
+        source_container = self._resident_recovery_source_container()
+        command, script = resident_reconcile_adoption_command(
+            source_container=source_container,
+            expected_source_container_id=expected_source_container_id,
+            expected_source_image_id=expected_source_image_id,
+            expected_resident_image_id=expected_resident_image_id,
+            expected_resident_container_id=expected_resident_container_id,
+            expected_resident_command_sha256=expected_resident_command_sha256,
+            expected_resident_env_sha256=expected_resident_env_sha256,
+            expected_recovery_seed_host_dir=expected_recovery_seed_host_dir,
+            expected_recovery_seed_sha256=expected_recovery_seed_sha256,
+            expected_runtime_path=expected_runtime_path,
+            expected_runtime_commit=expected_runtime_commit,
+            expected_runtime_tree=expected_runtime_tree,
+            expected_runtime_content_sha256=expected_runtime_content_sha256,
+            expected_runtime_python_path=expected_runtime_python_path,
+            expected_runtime_python_sha256=expected_runtime_python_sha256,
+            expected_workspace_device=expected_workspace_device,
+            expected_workspace_inode=expected_workspace_inode,
+            workspace=self._ssh.workspace_dir,
+            outage_epoch=outage_epoch,
+        )
+        result = self._remote_run_compatible(
+            command,
+            input=script,
+            surface="resident_only_reconcile_adopt",
+        )
+        adoption = parse_resident_reconcile_adoption_receipt(result.stdout or "")
+        expected_resident = resident_only_container_name(source_container)
+        if (
+            adoption.get("outage_epoch") != outage_epoch
+            or adoption.get("source_container_id") != expected_source_container_id
+            or adoption.get("source_image_id") != expected_source_image_id
+            or adoption.get("resident_container") != expected_resident
+            or adoption.get("resident_container_id")
+            != expected_resident_container_id
+            or adoption.get("resident_image_id") != expected_resident_image_id
+            or adoption.get("workspace") != self._ssh.workspace_dir
+        ):
+            raise CliError(
+                "resident_reconcile_unknown",
+                "resident adoption receipt did not match the admitted transaction",
+            )
+        adoption_sha = resident_receipt_sha256(adoption)
+        command, script = resident_down_command(
+            source_container=source_container,
+            expected_source_container_id=expected_source_container_id,
+            expected_source_image_id=expected_source_image_id,
+            expected_resident_image_id=expected_resident_image_id,
+            expected_resident_container_id=expected_resident_container_id,
+            workspace=self._ssh.workspace_dir,
+            outage_epoch=outage_epoch,
+            expected_reconcile_adoption_sha256=adoption_sha,
+        )
+        result = self._remote_run_compatible(
+            command,
+            input=script,
+            surface="resident_only_reconcile_down",
+        )
+        down = parse_resident_reconcile_down_receipt(result.stdout or "")
+        if (
+            down.get("outage_epoch") != outage_epoch
+            or down.get("resident_container") != expected_resident
+            or down.get("resident_container_id") != expected_resident_container_id
+            or down.get("reconcile_adoption_sha256") != adoption_sha
+            or down.get("source_fence_rollback", {}).get("source_container_id")
+            != expected_source_container_id
+        ):
+            raise CliError(
+                "resident_reconcile_unknown",
+                "resident reconcile-down receipt did not match the admitted transaction",
+            )
+        return {
+            "schema": "arnold.cloud.resident_only_reconcile_transaction.v1",
+            "status": "down",
+            "adoption_receipt": adoption,
+            "down_receipt": down,
+        }
 
     def _zero_recovery_isolated_workspace(self) -> str:
         configured = self._spec.zero_recovery_workspace_dir

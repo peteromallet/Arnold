@@ -22,6 +22,9 @@ from arnold_pipelines.megaplan.cloud.providers.ssh_preflight import (
 from arnold_pipelines.megaplan.resident.listener_recovery import (
     LISTENER_RECOVERY_SEED_SCHEMA,
 )
+from arnold_pipelines.megaplan.cloud.providers.resident_reconcile import (
+    RECONCILE_ADOPTION_SCRIPT,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -30,6 +33,8 @@ DOWN_SCHEMA = "arnold.cloud.resident_only_down.v1"
 START_SCHEMA = "arnold.cloud.resident_only_start.v1"
 HEALTH_SCHEMA = "arnold.cloud.resident_only_health.v1"
 FENCE_SCHEMA = "arnold.cloud.resident_only_source_fence.v1"
+RECONCILE_ADOPTION_SCHEMA = "arnold.cloud.resident_only_reconcile_adoption.v1"
+RECONCILE_DOWN_SCHEMA = "arnold.cloud.resident_only_reconcile_down.v1"
 _EPOCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _CONTAINER_ID_RE = re.compile(r"[0-9a-f]{64}\Z")
 _IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -825,6 +830,9 @@ print(json.dumps({
 '''.strip()
 
 
+_RECONCILE_SCRIPT = RECONCILE_ADOPTION_SCRIPT
+
+
 _DOWN_SCRIPT = r'''
 import base64, hashlib, json, os, stat, subprocess, sys
 
@@ -882,6 +890,147 @@ def read_exact(path):
         return value
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle, object_pairs_hook=reject_duplicates)
+
+def canonical_sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+def publish_once(path, payload):
+    data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if os.path.exists(path):
+        if read_exact(path) != payload:
+            raise RuntimeError("immutable_receipt_mismatch")
+        return
+    import tempfile
+    parent = os.path.dirname(path)
+    fd, temporary = tempfile.mkstemp(prefix=".reconcile-down.", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError:
+            if read_exact(path) != payload:
+                raise RuntimeError("immutable_receipt_mismatch")
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+def exact_remove_resident():
+    resident_by_id = inspect(cfg["expected_resident_container_id"])
+    resident_by_name = inspect(cfg["resident_container"])
+    if resident_by_id is not None:
+        if (
+            resident_by_name is None
+            or resident_by_name.get("Id") != resident_by_id.get("Id")
+            or resident_by_id.get("Id") != cfg["expected_resident_container_id"]
+            or resident_by_id.get("Image") != cfg["expected_resident_image_id"]
+            or workspace_mount(resident_by_id)
+            != {"type": "bind", "source": cfg["workspace"], "destination": "/workspace", "rw": True}
+        ):
+            raise RuntimeError("resident_down_compare_and_swap_failed")
+        resident_state = resident_by_id.get("State")
+        if isinstance(resident_state, dict) and resident_state.get("Running") is True:
+            call(["docker", "stop", "--time", "15", cfg["expected_resident_container_id"]])
+        resident_by_id = inspect(cfg["expected_resident_container_id"])
+        resident_by_name = inspect(cfg["resident_container"])
+        if (
+            resident_by_id is None
+            or resident_by_id.get("Id") != cfg["expected_resident_container_id"]
+            or resident_by_name is None
+            or resident_by_name.get("Id") != cfg["expected_resident_container_id"]
+        ):
+            raise RuntimeError("resident_down_stop_reconciliation_failed")
+        call(["docker", "rm", cfg["expected_resident_container_id"]])
+    elif resident_by_name is not None:
+        raise RuntimeError("resident_name_rebound")
+    if inspect(cfg["expected_resident_container_id"]) is not None or inspect(cfg["resident_container"]) is not None:
+        raise RuntimeError("resident_down_remove_failed")
+
+reconcile_adoption_sha = cfg.get("expected_reconcile_adoption_sha256")
+if reconcile_adoption_sha is not None:
+    reconcile_adoption_path = prefix + ".reconcile.adopted.json"
+    reconcile_intent_path = prefix + ".reconcile.intent.json"
+    reconcile_down_intent_path = prefix + ".reconcile.down.intent.json"
+    reconcile_down_path = prefix + ".reconcile.down.json"
+    adoption = read_exact(reconcile_adoption_path)
+    reconcile_intent = read_exact(reconcile_intent_path)
+    if (
+        canonical_sha(adoption) != reconcile_adoption_sha
+        or adoption.get("schema") != "arnold.cloud.resident_only_reconcile_adoption.v1"
+        or adoption.get("status") != "adopted"
+        or adoption.get("reconcile_intent_sha256") != canonical_sha(reconcile_intent)
+        or adoption.get("outage_epoch") != cfg["outage_epoch"]
+        or adoption.get("source_container") != cfg["source_container"]
+        or adoption.get("source_container_id") != cfg["expected_source_container_id"]
+        or adoption.get("source_image_id") != cfg["expected_source_image_id"]
+        or adoption.get("resident_container") != cfg["resident_container"]
+        or adoption.get("resident_container_id") != cfg["expected_resident_container_id"]
+        or adoption.get("resident_image_id") != cfg["expected_resident_image_id"]
+        or adoption.get("workspace") != cfg["workspace"]
+        or adoption.get("source_fence_rollback") != {"status": "not_applicable"}
+    ):
+        raise RuntimeError("reconcile_adoption_compare_and_swap_failed")
+    receipt = {
+        "schema": "arnold.cloud.resident_only_reconcile_down.v1",
+        "status": "down",
+        "outage_epoch": cfg["outage_epoch"],
+        "resident_container": cfg["resident_container"],
+        "resident_container_id": cfg["expected_resident_container_id"],
+        "removed": True,
+        "reconcile_adoption_sha256": reconcile_adoption_sha,
+        "source_fence_rollback": {
+            "status": "not_applicable",
+            "source_container_id": cfg["expected_source_container_id"],
+        },
+    }
+    if os.path.exists(reconcile_down_path):
+        if read_exact(reconcile_down_path) != receipt:
+            raise RuntimeError("reconcile_down_receipt_mismatch")
+        if inspect(cfg["expected_resident_container_id"]) is not None or inspect(cfg["resident_container"]) is not None:
+            raise RuntimeError("reconcile_terminal_but_resident_present")
+        print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+        raise SystemExit(0)
+    down_intent = {
+        "schema": "arnold.cloud.resident_only_reconcile_down_intent.v1",
+        "outage_epoch": cfg["outage_epoch"],
+        "resident_container": cfg["resident_container"],
+        "resident_container_id": cfg["expected_resident_container_id"],
+        "reconcile_adoption_sha256": reconcile_adoption_sha,
+    }
+    if os.path.exists(reconcile_down_intent_path):
+        if read_exact(reconcile_down_intent_path) != down_intent:
+            raise RuntimeError("reconcile_down_intent_mismatch")
+    else:
+        before_id = inspect(cfg["expected_resident_container_id"])
+        before_name = inspect(cfg["resident_container"])
+        if (
+            before_id is None
+            or before_name is None
+            or before_id.get("Id") != cfg["expected_resident_container_id"]
+            or before_name.get("Id") != cfg["expected_resident_container_id"]
+            or before_id.get("Image") != cfg["expected_resident_image_id"]
+            or workspace_mount(before_id)
+            != {"type": "bind", "source": cfg["workspace"], "destination": "/workspace", "rw": True}
+        ):
+            raise RuntimeError("reconcile_resident_absent_before_down_intent")
+        publish_once(reconcile_down_intent_path, down_intent)
+    exact_remove_resident()
+    publish_once(reconcile_down_path, receipt)
+    print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(0)
+
 fence_intent = read_exact(fence_intent_path)
 fence = read_exact(fence_path)
 attempt = read_exact(attempt_intent_path)
@@ -979,22 +1128,7 @@ if os.path.exists(down_intent_path):
 else:
     write_once(down_intent_path, intent)
 
-resident_by_id = inspect(cfg["expected_resident_container_id"])
-resident_by_name = inspect(cfg["resident_container"])
-if resident_by_id is not None:
-    if resident_by_name is None or resident_by_name.get("Id") != resident_by_id.get("Id") or resident_by_id.get("Image") != cfg["expected_resident_image_id"] or workspace_mount(resident_by_id) != {"type": "bind", "source": cfg["workspace"], "destination": "/workspace", "rw": True}:
-        raise RuntimeError("resident_down_compare_and_swap_failed")
-    resident_state = resident_by_id.get("State")
-    if isinstance(resident_state, dict) and resident_state.get("Running") is True:
-        call(["docker", "stop", "--time", "15", cfg["expected_resident_container_id"]])
-    resident_by_id = inspect(cfg["expected_resident_container_id"])
-    if resident_by_id is None or resident_by_id.get("Id") != cfg["expected_resident_container_id"]:
-        raise RuntimeError("resident_down_stop_reconciliation_failed")
-    call(["docker", "rm", cfg["expected_resident_container_id"]])
-elif resident_by_name is not None:
-    raise RuntimeError("resident_name_rebound")
-if inspect(cfg["expected_resident_container_id"]) is not None or inspect(cfg["resident_container"]) is not None:
-    raise RuntimeError("resident_down_remove_failed")
+exact_remove_resident()
 
 # Restore only the exact predecessor ID to its fenced prior policy.
 source = inspect(cfg["expected_source_container_id"])
@@ -1095,6 +1229,157 @@ def resident_recover_command(
     return shlex.join(["python3", "-", _encoded_config(payload)]), _RECOVER_SCRIPT
 
 
+def resident_reconcile_adoption_command(
+    *,
+    source_container: str,
+    expected_source_container_id: str,
+    expected_source_image_id: str,
+    expected_resident_image_id: str,
+    expected_resident_container_id: str,
+    expected_resident_command_sha256: str,
+    expected_resident_env_sha256: str,
+    expected_recovery_seed_host_dir: str,
+    expected_recovery_seed_sha256: str,
+    expected_runtime_path: str,
+    expected_runtime_commit: str,
+    expected_runtime_tree: str,
+    expected_runtime_content_sha256: str,
+    expected_runtime_python_path: str,
+    expected_runtime_python_sha256: str,
+    expected_workspace_device: int,
+    expected_workspace_inode: int,
+    workspace: str,
+    outage_epoch: str,
+) -> tuple[str, str]:
+    """Build the proof-only half of the finite reconcile-down transaction."""
+
+    source = validate_container_name(source_container)
+    epoch = validate_outage_epoch(outage_epoch)
+    source_id = validate_container_id(
+        expected_source_container_id,
+        label="expected source container ID",
+    )
+    runtime_path = validate_runtime_path(expected_runtime_path)
+    runtime_python = validate_absolute_path(
+        expected_runtime_python_path,
+        label="expected runtime Python path",
+    )
+    if runtime_python == "/workspace" or runtime_python.startswith("/workspace/"):
+        raise CliError(
+            "resident_recovery_invalid",
+            "expected runtime Python must come from the immutable accepted image",
+        )
+    for label, value in {
+        "expected workspace device": expected_workspace_device,
+        "expected workspace inode": expected_workspace_inode,
+    }.items():
+        if type(value) is not int or value < 0:
+            raise CliError(
+                "resident_recovery_invalid",
+                f"{label} must be a non-negative integer",
+            )
+    expected_command = [
+        "/run/megaplan-resident-recovery/launch-seed.json"
+        if value == "__RECOVERY_SEED_PATH__"
+        else value
+        for value in RESIDENT_ONLY_COMMAND
+    ]
+    derived_command_sha = hashlib.sha256(
+        json.dumps(expected_command, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    pinned_command_sha = validate_sha256(
+        expected_resident_command_sha256,
+        label="expected resident command SHA-256",
+    )
+    if pinned_command_sha != derived_command_sha:
+        raise CliError(
+            "resident_recovery_invalid",
+            "expected resident command digest does not match the fixed listener command",
+        )
+    custody_root = resident_custody_host_root(source_id)
+    seed_dir = validate_absolute_path(
+        expected_recovery_seed_host_dir,
+        label="expected recovery seed host directory",
+    )
+    expected_seed_dir = f"{custody_root}/{epoch}/seed"
+    if seed_dir != expected_seed_dir:
+        raise CliError(
+            "resident_recovery_invalid",
+            "recovery seed host directory must equal the exact custody epoch seed directory",
+        )
+    payload = {
+        "source_container": source,
+        "expected_source_container_id": source_id,
+        "expected_source_image_id": validate_image_id(expected_source_image_id),
+        "expected_resident_image_id": validate_image_id(
+            expected_resident_image_id,
+            label="expected resident image",
+        ),
+        "expected_resident_container_id": validate_container_id(
+            expected_resident_container_id,
+            label="expected resident container ID",
+        ),
+        "expected_resident_command": expected_command,
+        "expected_resident_command_sha256": pinned_command_sha,
+        "expected_resident_env_sha256": validate_sha256(
+            expected_resident_env_sha256,
+            label="expected resident environment SHA-256",
+        ),
+        "expected_recovery_seed_host_dir": seed_dir,
+        "expected_recovery_seed_sha256": validate_sha256(
+            expected_recovery_seed_sha256,
+            label="expected recovery seed SHA-256",
+        ),
+        "expected_runtime_path": runtime_path,
+        "expected_runtime_commit": validate_git_id(
+            expected_runtime_commit,
+            label="expected runtime commit",
+        ),
+        "expected_runtime_tree": validate_git_id(
+            expected_runtime_tree,
+            label="expected runtime tree",
+        ),
+        "expected_runtime_content_sha256": validate_sha256(
+            expected_runtime_content_sha256,
+            label="expected runtime content SHA-256",
+        ),
+        "expected_runtime_python_path": runtime_python,
+        "expected_runtime_python_sha256": validate_sha256(
+            expected_runtime_python_sha256,
+            label="expected runtime Python SHA-256",
+        ),
+        "expected_workspace_device": expected_workspace_device,
+        "expected_workspace_inode": expected_workspace_inode,
+        "workspace": validate_workspace_dir(workspace),
+        "outage_epoch": epoch,
+        "resident_container": resident_only_container_name(source),
+        "custody_host_parent": _CUSTODY_BASE,
+        "custody_host_root": custody_root,
+        "recovery_seed_schema": LISTENER_RECOVERY_SEED_SCHEMA,
+        "recovery_seed_fields": sorted(
+            {
+                "schema",
+                "outage_epoch",
+                "nonce",
+                "source_container_id",
+                "source_image_id",
+                "resident_image_id",
+                "workspace_host_path",
+                "workspace_identity",
+                "runtime_path",
+                "runtime_commit",
+                "runtime_tree",
+                "runtime_python_path",
+                "runtime_python_sha256",
+                "command_sha256",
+                "resident_env_sha256",
+                "container_id",
+            }
+        ),
+    }
+    return shlex.join(["python3", "-", _encoded_config(payload)]), _RECONCILE_SCRIPT
+
+
 def resident_down_command(
     *,
     source_container: str,
@@ -1104,6 +1389,7 @@ def resident_down_command(
     expected_resident_container_id: str,
     workspace: str,
     outage_epoch: str,
+    expected_reconcile_adoption_sha256: str | None = None,
 ) -> tuple[str, str]:
     source = validate_container_name(source_container)
     payload = {
@@ -1119,6 +1405,14 @@ def resident_down_command(
         "workspace": validate_workspace_dir(workspace),
         "outage_epoch": validate_outage_epoch(outage_epoch),
         "resident_container": resident_only_container_name(source),
+        "expected_reconcile_adoption_sha256": (
+            validate_sha256(
+                expected_reconcile_adoption_sha256,
+                label="expected reconciliation adoption SHA-256",
+            )
+            if expected_reconcile_adoption_sha256 is not None
+            else None
+        ),
     }
     return shlex.join(["python3", "-", _encoded_config(payload)]), _DOWN_SCRIPT
 
@@ -1271,17 +1565,139 @@ def parse_resident_down_receipt(stdout: str) -> dict[str, Any]:
     return value
 
 
+def parse_resident_reconcile_adoption_receipt(stdout: str) -> dict[str, Any]:
+    try:
+        value = json.loads(stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CliError(
+            "resident_reconcile_unknown",
+            "resident reconciliation adoption returned invalid JSON",
+        ) from exc
+    expected_fields = {
+        "schema",
+        "status",
+        "outage_epoch",
+        "source_container",
+        "source_container_id",
+        "source_image_id",
+        "resident_container",
+        "resident_container_id",
+        "resident_image_id",
+        "resident_command_sha256",
+        "resident_env_sha256",
+        "recovery_seed_host_dir",
+        "recovery_seed_sha256",
+        "runtime_path",
+        "runtime_commit",
+        "runtime_tree",
+        "runtime_content_sha256",
+        "runtime_python_path",
+        "runtime_python_sha256",
+        "workspace",
+        "workspace_identity",
+        "reconcile_intent_sha256",
+        "started_at",
+        "source_fence_rollback",
+    }
+    workspace_identity = value.get("workspace_identity") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected_fields
+        or value.get("schema") != RECONCILE_ADOPTION_SCHEMA
+        or value.get("status") != "adopted"
+        or not _CONTAINER_ID_RE.fullmatch(str(value.get("source_container_id") or ""))
+        or not _IMAGE_ID_RE.fullmatch(str(value.get("source_image_id") or ""))
+        or not _CONTAINER_ID_RE.fullmatch(str(value.get("resident_container_id") or ""))
+        or not _IMAGE_ID_RE.fullmatch(str(value.get("resident_image_id") or ""))
+        or any(
+            not re.fullmatch(r"[0-9a-f]{64}", str(value.get(key) or ""))
+            for key in (
+                "resident_command_sha256",
+                "resident_env_sha256",
+                "recovery_seed_sha256",
+                "runtime_content_sha256",
+                "runtime_python_sha256",
+                "reconcile_intent_sha256",
+            )
+        )
+        or not _GIT_ID_RE.fullmatch(str(value.get("runtime_commit") or ""))
+        or not _GIT_ID_RE.fullmatch(str(value.get("runtime_tree") or ""))
+        or not isinstance(workspace_identity, dict)
+        or set(workspace_identity) != {"st_dev", "st_ino"}
+        or any(type(workspace_identity[key]) is not int or workspace_identity[key] < 0 for key in workspace_identity)
+        or value.get("source_fence_rollback") != {"status": "not_applicable"}
+        or not isinstance(value.get("started_at"), str)
+        or not value["started_at"]
+    ):
+        raise CliError(
+            "resident_reconcile_unknown",
+            "resident reconciliation adoption receipt failed strict validation",
+        )
+    return value
+
+
+def parse_resident_reconcile_down_receipt(stdout: str) -> dict[str, Any]:
+    try:
+        value = json.loads(stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CliError(
+            "resident_reconcile_unknown",
+            "resident reconciliation down returned invalid JSON",
+        ) from exc
+    rollback = value.get("source_fence_rollback") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "schema",
+            "status",
+            "outage_epoch",
+            "resident_container",
+            "resident_container_id",
+            "removed",
+            "reconcile_adoption_sha256",
+            "source_fence_rollback",
+        }
+        or value.get("schema") != RECONCILE_DOWN_SCHEMA
+        or value.get("status") != "down"
+        or value.get("removed") is not True
+        or not _CONTAINER_ID_RE.fullmatch(str(value.get("resident_container_id") or ""))
+        or not re.fullmatch(r"[0-9a-f]{64}", str(value.get("reconcile_adoption_sha256") or ""))
+        or not isinstance(rollback, dict)
+        or set(rollback) != {"status", "source_container_id"}
+        or rollback.get("status") != "not_applicable"
+        or not _CONTAINER_ID_RE.fullmatch(str(rollback.get("source_container_id") or ""))
+    ):
+        raise CliError(
+            "resident_reconcile_unknown",
+            "resident reconciliation down receipt failed strict validation",
+        )
+    return value
+
+
+def resident_receipt_sha256(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 __all__ = [
     "DOWN_SCHEMA",
     "FENCE_SCHEMA",
     "HEALTH_SCHEMA",
     "RECOVER_SCHEMA",
+    "RECONCILE_ADOPTION_SCHEMA",
+    "RECONCILE_DOWN_SCHEMA",
     "RESIDENT_ONLY_COMMAND",
     "START_SCHEMA",
     "parse_resident_down_receipt",
+    "parse_resident_reconcile_adoption_receipt",
+    "parse_resident_reconcile_down_receipt",
     "parse_resident_recovery_receipt",
     "resident_down_command",
     "resident_custody_host_root",
     "resident_only_container_name",
+    "resident_receipt_sha256",
+    "resident_reconcile_adoption_command",
     "resident_recover_command",
 ]

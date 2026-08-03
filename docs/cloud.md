@@ -527,6 +527,55 @@ for w in arnold-repair-loop arnold-watchdog arnold-progress-auditor arnold-disco
 done
 ```
 
+## Reconcile an unreceipted resident-only listener
+
+Use cloud resident-reconcile-down only when a finite listener-only recovery
+container is live but its original launch transaction has no canonical
+fence/start receipt. The command is deliberately not a general container
+adoption API.
+
+The transaction has two durable phases. First it takes the host custody lock
+and proves the exact stopped predecessor, resident container and image,
+listener command, sanitized environment digest, seed directory and digest,
+runtime commit/tree/archive digest, runtime Python digest, workspace
+device/inode, consumed-seed marker, readiness log, singleton listener, mounts,
+security profile, and process argv. It then publishes an immutable truthful
+adoption receipt. It does not invent historical recovery, source-fence, start,
+or health receipts.
+
+Second, the command passes that adoption receipt to the ordinary resident-down
+exact-ID/name compare-and-swap removal path. A durable down intent precedes the
+stop, retries converge after stop/remove/receipt interruption, a name rebound
+is never touched, and source-fence rollback is recorded as not_applicable
+because no fence is fabricated.
+
+All values below are independent operator pins gathered read-only from the
+preserved host. Any mismatch fails before docker stop or docker rm.
+
+    python -m arnold_pipelines.megaplan cloud resident-reconcile-down \
+      --cloud-yaml /path/to/exact/cloud.yaml \
+      --outage-epoch <epoch> \
+      --expected-source-container-id <64-hex-source-id> \
+      --expected-source-image-id sha256:<64-hex> \
+      --expected-resident-image-id sha256:<64-hex> \
+      --expected-resident-container-id <64-hex-resident-id> \
+      --expected-resident-command-sha256 <64-hex> \
+      --expected-resident-env-sha256 <64-hex> \
+      --expected-recovery-seed-host-dir /var/lib/arnold/megaplan-resident-recovery/<source-id>/<epoch>/seed \
+      --expected-recovery-seed-sha256 <64-hex-canonical-seed-digest> \
+      --expected-runtime-path /workspace/runtime-candidates/<exact-runtime> \
+      --expected-runtime-commit <40-hex> \
+      --expected-runtime-tree <40-hex> \
+      --expected-runtime-content-sha256 <64-hex-git-archive-digest> \
+      --expected-runtime-python-path /absolute/image/python \
+      --expected-runtime-python-sha256 <64-hex> \
+      --expected-workspace-device <integer> \
+      --expected-workspace-inode <integer>
+
+Do not use this command when canonical recovery receipts exist; use
+resident-down for that case. Do not delete or rewrite a partial reconciliation
+receipt. A corrupt or mismatched receipt is an operator-review stop.
+
 ## Related Runbooks And Design Notes
 
 - **Cloud chain smoke**: [docs/ops/cloud-chain-smoke.md](ops/cloud-chain-smoke.md) — end-to-end smoke tests for cloud chain operations.
