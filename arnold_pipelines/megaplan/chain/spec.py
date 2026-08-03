@@ -3039,6 +3039,166 @@ _FINITE_CANARY_ROLES = {
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_OBJECT_RE = re.compile(r"[0-9a-f]{40}\Z")
 
+_FINITE_CANARY_OPERATIONAL_SUBSTRATES = [
+    {
+        "id": "cloud-observation-preflight-repair-v2",
+        "disposition": "CONSUMED_BOUNDED_SUBSTRATE",
+    },
+    {
+        "id": "t1.9-zero-recovery-launcher",
+        "disposition": "CONSUMED_ON_SUCCESS",
+    },
+]
+_FINITE_CANARY_DEFERRED_OBLIGATION_IDS = (
+    "F1.platform_capacity_storage_hardening",
+    "F1.physically_minimal_image",
+    "F1.cross_pipeline_model_isolation",
+    "F1.t1_5_monotonic_consumed_grant",
+    "F1.production_recovery_owner",
+    "F1.exact_occurrence_handoff",
+    "F1.notification_occurrence_version_custody",
+    "F1.t1_5_topology_retirement",
+    "F1.t1_7_transactional_storage",
+    "F1.t1_10_notification_policy",
+    "F2.t1_1_universal_admission",
+    "F2.t1_2_attempt_model_handling",
+    "F2.provider_attested_model_identity",
+    "F2.t1_3_transport_integration",
+    "F2.t1_4_t1_6_release_closure",
+)
+_FINITE_CANARY_DEFERRED_OBLIGATIONS = [
+    {
+        "id": obligation_id,
+        "phase": obligation_id.split(".", 1)[0],
+        "status": "DEFERRED_POST_CANARY",
+        "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+    }
+    for obligation_id in _FINITE_CANARY_DEFERRED_OBLIGATION_IDS
+]
+_FINITE_CANARY_CUSTODY_ITEM_STATUSES = {
+    "cloud-observation-preflight-rejected-v1":
+        "CLEAN_REJECTED_PENDING_BOUNDED_REPAIR_NOT_PREDEPLOY_AUTHORITY",
+    "cloud-observation-preflight-repair-v2":
+        "CLEAN_ACCEPTED_BOUNDED_SOURCE_INTEGRATION_NOT_PREDEPLOY_AUTHORITY",
+    "t1.2-partial-contract-bundles": "DIRTY_PRESERVED_4_PATHS",
+    "run-authority-containment": "CLEAN_LOCAL_INTEGRATION_ELIGIBLE_NOT_T0_COMPLETE",
+    "t1.1-admission": "DIRTY_PRESERVED_19_PATHS_6_PASS_1_FAIL",
+    "t1.7-storage": "DIRTY_PRESERVED_16_PATHS_STAGED_AND_UNSTAGED_79_PASS_1_FAIL",
+    "t1.10-notification-rejected": "CLEAN_REJECTED_EVIDENCE_ONLY",
+    "t1.5-oversized-rejected": "CLEAN_REJECTED_EVIDENCE_ONLY",
+    "t1.5-pass3-rejected": "CLEAN_HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+    "t1.8-bounded-release-component": "CLEAN_ACCEPTED_BOUNDED_LOCAL_STAGE_A_ONLY",
+    "t1.3-bounded-transport-component": "ACCEPTED_STAGE_A_COMPONENT_ONLY",
+    "t5.1-evidence-schema": "CLEAN_CANDIDATE_FOUR_OWNER_DECISIONS_OUTSTANDING",
+    "t1.4-prepared-empty-lane": "CLEAN_NO_EDITS_PREPARED_ONLY",
+    "t1.9-zero-recovery-launcher":
+        "IMPLEMENTED_FINITE_CANARY_LAUNCHER_PENDING_LIVE_ACCEPTANCE",
+}
+
+
+def _finite_canary_custody_contract(
+    custody: Any,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]] | None:
+    """Return the exact substrate/deferred contract, or fail closed.
+
+    Archival custody items are deliberately not the obligation universe.  The
+    two operational substrates and fifteen F1/F2 obligations are independent,
+    typed, duplicate-free collections with exact status semantics.
+    """
+    expected_fields = {
+        "schema", "captured_at", "empty_sha256", "canonical_checklist",
+        "live_cloud_evidence", "capacity_cut", "isolation_receipt_contract",
+        "model_evidence_contract", "dirty_snapshot_commits",
+        "dirty_capture_recipe", "operational_substrates",
+        "deferred_obligations", "items",
+    }
+    if (
+        not isinstance(custody, dict)
+        or set(custody) != expected_fields
+        or custody.get("schema")
+        != "arnold.critique_ledger.unfinished_work_custody.v2"
+    ):
+        return None
+    items = custody.get("items")
+    if not isinstance(items, list) or len(items) != len(
+        _FINITE_CANARY_CUSTODY_ITEM_STATUSES
+    ):
+        return None
+    item_ids: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        item_id = item.get("id")
+        if (
+            not isinstance(item_id, str)
+            or item_id not in _FINITE_CANARY_CUSTODY_ITEM_STATUSES
+            or item.get("status") != _FINITE_CANARY_CUSTODY_ITEM_STATUSES[item_id]
+        ):
+            return None
+        item_ids.append(item_id)
+    if len(item_ids) != len(set(item_ids)) or set(item_ids) != set(
+        _FINITE_CANARY_CUSTODY_ITEM_STATUSES
+    ):
+        return None
+
+    substrates = custody.get("operational_substrates")
+    obligations = custody.get("deferred_obligations")
+    if not isinstance(substrates, list) or not isinstance(obligations, list):
+        return None
+    if any(
+        not isinstance(entry, dict)
+        or set(entry) != {"id", "disposition"}
+        or not isinstance(entry.get("id"), str)
+        for entry in substrates
+    ) or any(
+        not isinstance(entry, dict)
+        or set(entry)
+        != {"id", "phase", "status", "operational_disposition"}
+        or not isinstance(entry.get("id"), str)
+        for entry in obligations
+    ):
+        return None
+    expected_substrates = _FINITE_CANARY_OPERATIONAL_SUBSTRATES
+    expected_obligations = _FINITE_CANARY_DEFERRED_OBLIGATIONS
+    if (
+        substrates != expected_substrates
+        or obligations != expected_obligations
+        or len({entry["id"] for entry in substrates}) != len(substrates)
+        or len({entry["id"] for entry in obligations}) != len(obligations)
+    ):
+        return None
+    return expected_substrates, expected_obligations
+
+
+def _finite_canary_completion_contract_is_valid(
+    substrates: Any,
+    obligations: Any,
+    *,
+    expected_substrates: list[dict[str, str]],
+    expected_obligations: list[dict[str, str]],
+) -> bool:
+    if not isinstance(substrates, list) or not isinstance(obligations, list):
+        return False
+    if any(
+        not isinstance(entry, dict)
+        or set(entry) != {"id", "disposition"}
+        or not isinstance(entry.get("id"), str)
+        for entry in substrates
+    ) or any(
+        not isinstance(entry, dict)
+        or set(entry)
+        != {"id", "phase", "status", "operational_disposition"}
+        or not isinstance(entry.get("id"), str)
+        for entry in obligations
+    ):
+        return False
+    return bool(
+        substrates == expected_substrates
+        and obligations == expected_obligations
+        and len({entry["id"] for entry in substrates}) == len(substrates)
+        and len({entry["id"] for entry in obligations}) == len(obligations)
+    )
+
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.endswith("Z"):
@@ -3398,7 +3558,7 @@ def _validate_finite_canary_receipt(
     required_fields = {
         "schema", "status", "phases", "terminal_state", "artifacts",
         "subject", "issued_at", "completed_at", "receipt_digest",
-        "not_consumed_operational_canary",
+        "operational_substrates", "deferred_obligations",
     }
     if not isinstance(payload, dict) or set(payload) != required_fields:
         raise CliError(
@@ -3551,21 +3711,15 @@ def _validate_finite_canary_receipt(
     )
     unfinished_path = artifacts_by_role["unfinished_work_ledger"][0]
     try:
-        unfinished_text = unfinished_path.read_text(encoding="utf-8")
+        unfinished_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise CliError(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: unfinished-work custody is unreadable",
         ) from exc
-    custody_items = custody.get("items") if isinstance(custody, dict) else None
-    expected_not_consumed = (
-        [
-            {"id": item.get("id"), "disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"}
-            for item in custody_items
-            if isinstance(item, dict)
-        ]
-        if isinstance(custody_items, list)
-        else None
+    custody_contract = _finite_canary_custody_contract(custody)
+    expected_substrates, expected_obligations = (
+        custody_contract if custody_contract is not None else (None, None)
     )
     superseded = supersession.get("superseded") if isinstance(supersession, dict) else None
     hard_fail_identities = (
@@ -3579,20 +3733,13 @@ def _validate_finite_canary_receipt(
         else set()
     )
     if (
-        not isinstance(custody, dict)
-        or custody.get("schema")
-        != "arnold.critique_ledger.unfinished_work_custody.v1"
-        or not isinstance(custody_items, list)
-        or not custody_items
-        or len(expected_not_consumed or []) != len(custody_items)
-        or any(
-            not isinstance(item.get("id"), str) or not item.get("id")
-            for item in custody_items
-            if isinstance(item, dict)
+        custody_contract is None
+        or not _finite_canary_completion_contract_is_valid(
+            payload.get("operational_substrates"),
+            payload.get("deferred_obligations"),
+            expected_substrates=expected_substrates,
+            expected_obligations=expected_obligations,
         )
-        or payload.get("not_consumed_operational_canary") != expected_not_consumed
-        or "Every item below is emitted as `NOT_CONSUMED_OPERATIONAL_CANARY`"
-        not in unfinished_text
         or not isinstance(operational_route, dict)
         or operational_route.get("schema")
         != "arnold.critique_ledger.finite_canary_operational_route.v1"
