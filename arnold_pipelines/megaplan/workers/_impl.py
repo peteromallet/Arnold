@@ -127,6 +127,9 @@ _ZERO_RECOVERY_MODEL_PATH = "/opt/zero-recovery-node/bin:/usr/local/bin:/usr/bin
 _ZERO_RECOVERY_SCHEMA_PATHS = tuple(
     f".megaplan/schemas/{filename}" for filename in sorted(SCHEMAS)
 )
+_WORKER_DISPATCH_BINDING: ContextVar[dict[str, Any] | None] = ContextVar(
+    "megaplan_worker_dispatch_binding", default=None
+)
 _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS = (
     ".megaplan/.state-locks/critique-ledger-cl2-planning-canary.lock",
     ".megaplan/epics/critique-ledger-cl2-planning-canary/events.jsonl",
@@ -4291,8 +4294,244 @@ def _codex_repair_input(
     model response.  The ``-o`` file is canonical whenever it is non-empty.
     """
 
-    repair_raw = canonical_output or raw_transport
+    # JSONL is evidence about the invocation, not a substitute response.  In
+    # particular, feeding it to semantic repair gives the model a truncated
+    # event stream instead of the object that failed the contract.
+    repair_raw = canonical_output
     return repair_raw, _json_decode_error_for_raw(repair_raw)
+
+
+def _codex_terminal_message_candidates(raw_transport: str) -> list[str]:
+    """Extract only terminal assistant-message bodies from Codex JSONL.
+
+    Tool results and event payloads can themselves contain arbitrary JSON.
+    Broad recursive candidate recovery therefore cannot establish which text
+    Codex selected as its final response.  This recognises only the documented
+    assistant-message event shapes and leaves an absent event as explicitly
+    unavailable evidence.
+    """
+
+    candidates: list[str] = []
+    for line in raw_transport.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("type")
+        item = event.get("item")
+        if event_type == "item.completed" and isinstance(item, dict):
+            if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                candidates.append(item["text"])
+            continue
+        if event_type == "agent_message" and isinstance(event.get("text"), str):
+            candidates.append(event["text"])
+            continue
+        if event_type in {"message.completed", "response.output_text.done"}:
+            text_value = event.get("text") or event.get("output_text")
+            if isinstance(text_value, str):
+                candidates.append(text_value)
+    return candidates
+
+
+def _select_codex_terminal_output(raw_transport: str, output_raw: str) -> str:
+    """Select the exact ``-o`` response and cross-check JSONL when possible."""
+
+    if not output_raw.strip():
+        raise ModelStructuralAuditError(
+            "Codex selected terminal output file is empty; JSONL transport is not a response fallback"
+        )
+    selected = output_raw.strip()
+    distinct = list(
+        dict.fromkeys(
+            candidate.strip()
+            for candidate in _codex_terminal_message_candidates(raw_transport)
+            if candidate.strip()
+        )
+    )
+    if len(distinct) > 1:
+        raise ModelStructuralAuditError(
+            "Codex JSONL contains multiple distinct terminal assistant messages; response selection is ambiguous"
+        )
+    if distinct and distinct[0] != selected:
+        raise ModelStructuralAuditError(
+            "Codex selected terminal output does not equal the JSONL terminal assistant message"
+        )
+    return output_raw
+
+
+def _new_response_occurrence(
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    step: str,
+) -> dict[str, Any]:
+    """Mint an occurrence identity bound to plan, invocation, phase and WBC."""
+
+    binding = _WORKER_DISPATCH_BINDING.get() or {}
+    active = state.get("active_step")
+    meta = state.get("meta")
+    invocation_id = None
+    if isinstance(active, dict):
+        invocation_id = active.get("invocation_id") or active.get("run_id")
+    if not invocation_id and isinstance(meta, dict):
+        invocation_id = meta.get("current_invocation_id")
+    material = {
+        "plan_name": str(state.get("name") or plan_dir.name),
+        "plan_dir": str(plan_dir.resolve()),
+        "phase": step,
+        "plan_iteration": int(state.get("iteration") or 0),
+        "invocation_id": str(invocation_id or "unavailable"),
+        "phase_wbc_attempt_id": str(
+            binding.get("phase_wbc_attempt_id") or "unavailable"
+        ),
+        "worker_wbc_attempt_id": str(
+            binding.get("worker_wbc_attempt_id") or "unavailable"
+        ),
+        "nonce": uuid.uuid4().hex,
+    }
+    material["occurrence_id"] = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return material
+
+
+def _response_output_path(
+    plan_dir: Path,
+    *,
+    step: str,
+    occurrence_id: str,
+    repair_ordinal: int,
+) -> Path:
+    """Return a fresh per-occurrence ``-o`` path; primary and repair never alias."""
+
+    safe_step = re.sub(r"[^a-zA-Z0-9_.-]", "-", step).strip(".-") or "step"
+    path = _project_local_tmp_dir(plan_dir) / (
+        f"response-{safe_step}-{occurrence_id}-r{repair_ordinal}.json"
+    )
+    if path.exists() or path.is_symlink():
+        raise CliError(
+            "local_response_contract",
+            "fresh per-occurrence Codex response output unexpectedly already exists",
+        )
+    return path
+
+
+def _write_response_evidence_blob(path: Path, data: bytes) -> None:
+    """Create one immutable content-addressed evidence blob."""
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        if path.read_bytes() != data:
+            raise CliError(
+                "local_response_contract",
+                "content-addressed Codex response evidence digest collision",
+            )
+        return
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _persist_codex_response_evidence(
+    plan_dir: Path,
+    *,
+    occurrence: dict[str, Any],
+    repair_ordinal: int,
+    raw_transport: str,
+    terminal_output: str,
+    output_path: Path,
+    model: str | None,
+    selection_error: Exception | None,
+) -> dict[str, Any]:
+    """Persist hash-addressed transport, terminal output and selection receipt."""
+
+    evidence_root = plan_dir / ".megaplan" / "model-response-evidence"
+    objects = evidence_root / "objects"
+
+    def _blob(value: str, suffix: str) -> dict[str, Any] | None:
+        data = value.encode("utf-8")
+        if not data:
+            return None
+        digest = hashlib.sha256(data).hexdigest()
+        blob_path = objects / f"{digest}.{suffix}"
+        _write_response_evidence_blob(blob_path, data)
+        return {
+            "sha256": f"sha256:{digest}",
+            "bytes": len(data),
+            "path": str(blob_path.relative_to(plan_dir)),
+        }
+
+    transport = _blob(raw_transport, "jsonl")
+    selected = _blob(terminal_output, "json")
+    receipt = {
+        "schema": "arnold.megaplan.codex-response-evidence.v1",
+        "occurrence": dict(occurrence),
+        "repair_ordinal": repair_ordinal,
+        "phase": occurrence["phase"],
+        "plan_name": occurrence["plan_name"],
+        "invocation_id": occurrence["invocation_id"],
+        "phase_wbc_attempt_id": occurrence["phase_wbc_attempt_id"],
+        "worker_wbc_attempt_id": occurrence["worker_wbc_attempt_id"],
+        "model": model,
+        "output_path": str(output_path),
+        "transport": transport,
+        "selected_terminal_output": selected,
+        "selection_status": "accepted" if selection_error is None else "rejected",
+        "selection_error": str(selection_error) if selection_error is not None else None,
+    }
+    receipt_path = (
+        evidence_root
+        / "occurrences"
+        / occurrence["occurrence_id"]
+        / f"repair-{repair_ordinal}.json"
+    )
+    if receipt_path.exists() or receipt_path.is_symlink():
+        raise CliError(
+            "local_response_contract",
+            "Codex response evidence receipt already exists for this occurrence ordinal",
+        )
+    atomic_write_json(receipt_path, receipt)
+    return {
+        "receipt_path": str(receipt_path.relative_to(plan_dir)),
+        "receipt_sha256": "sha256:"
+        + hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+        **receipt,
+    }
+
+
+def _build_response_contract_repair_prompt(
+    *,
+    step: str,
+    schema: dict[str, Any],
+    failure_reason: str,
+    selected_output: str,
+) -> str:
+    """Build one semantic repair from the full selected object and schema."""
+
+    return (
+        "Your previous selected response failed the canonical local response contract.\n"
+        f"Phase: {step}\n"
+        f"Structural audit: {failure_reason}\n\n"
+        "Return ONLY one corrected JSON object. Do not use Markdown, prose, NDJSON, "
+        "or an event stream. Preserve all valid content while fixing the exact contract "
+        "violations.\n\nCanonical JSON Schema (complete):\n"
+        + json.dumps(schema, sort_keys=True, ensure_ascii=False)
+        + "\n\nSelected response to repair (complete):\n"
+        + selected_output
+    )
 
 
 def _build_json_repair_prompt(error: json.JSONDecodeError, raw: str) -> str:
@@ -4967,6 +5206,62 @@ def _prepare_local_strict_artifact_handoff(
     }
 
 
+def _preflight_trusted_container_artifact_handoff(handoff: dict[str, Any]) -> None:
+    """Prove the trusted-container handoff supports atomic non-empty publish.
+
+    The environment flag remains an explicit operator assertion; this check
+    neither infers nor enables trust.  Once asserted, we fail before model
+    dispatch unless the exact handoff filesystem can create, fsync, rename,
+    read and remove a non-empty regular file without traversing symlinks.
+    """
+
+    if not _trusted_container():
+        raise CliError(
+            "local_response_contract",
+            "trusted-container artifact handoff preflight requires explicit MEGAPLAN_TRUSTED_CONTAINER",
+        )
+    root = Path(str(handoff.get("root") or ""))
+    candidate = Path(str(handoff.get("candidate_path") or ""))
+    if not root.is_absolute() or candidate.parent != root:
+        raise CliError(
+            "local_response_contract",
+            "trusted-container artifact handoff preflight received an invalid path binding",
+        )
+    probe_target = root / f".handoff-canary-{uuid.uuid4().hex}.json"
+    probe_tmp = root / f".{probe_target.name}.tmp-{uuid.uuid4().hex}"
+    payload = b'{"handoff":"atomic-nonempty"}\n'
+    try:
+        fd = os.open(probe_tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(probe_tmp, probe_target)
+        observed = os.lstat(probe_target)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or stat.S_ISLNK(observed.st_mode)
+            or observed.st_nlink != 1
+            or observed.st_size != len(payload)
+            or probe_target.read_bytes() != payload
+        ):
+            raise OSError("atomic handoff canary did not round-trip exactly")
+    except OSError as error:
+        raise CliError(
+            "local_response_contract",
+            "trusted-container filesystem cannot provide an atomic non-empty artifact handoff",
+            extra={"handoff_root": str(root), "pre_dispatch": True},
+        ) from error
+    finally:
+        for path in (probe_tmp, probe_target):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
 def _local_response_contract_error(
     *,
     step: str,
@@ -4974,6 +5269,8 @@ def _local_response_contract_error(
     reason: str,
     raw: str,
     attempts: int = 2,
+    occurrence: dict[str, Any] | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> CliError:
     """Return the terminal receipt after this occurrence used its one repair."""
 
@@ -4984,11 +5281,16 @@ def _local_response_contract_error(
         "canonical_schema_hash": schema_sha256(schema),
         "failure_class": "local_response_contract",
     }
-    occurrence_id = hashlib.sha256(
-        json.dumps(occurrence_material, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+    occurrence_id = str(
+        (occurrence or {}).get("occurrence_id")
+        or hashlib.sha256(
+            json.dumps(
+                {**occurrence_material, "nonce": uuid.uuid4().hex},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     material = {
         **occurrence_material,
         "reason": reason,
@@ -5012,6 +5314,10 @@ def _local_response_contract_error(
                 "exhausted": True,
                 "occurrence_id": occurrence_id,
                 "failure_fingerprint": fingerprint,
+                "occurrence": dict(occurrence or {}),
+                "evidence_receipt": (
+                    evidence.get("receipt_path") if isinstance(evidence, dict) else None
+                ),
             },
             "_external_error": {
                 "provider": "codex",
@@ -5043,6 +5349,7 @@ def _run_codex_step_uncapped(
     output_path: Path | None = None,
     repair_attempted: bool = False,
     free_text: bool = False,
+    response_occurrence: dict[str, Any] | None = None,
 ) -> WorkerResult:
     if read_only and step not in {"prep-triage", "prep-distill", "critique", "review"}:
         raise CliError(
@@ -5058,6 +5365,10 @@ def _run_codex_step_uncapped(
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
+    response_occurrence = response_occurrence or _new_response_occurrence(
+        state, plan_dir, step=step
+    )
+    repair_ordinal = 1 if repair_attempted else 0
     work_dir = resolve_work_dir(state)
     execution_env = resolve_execution_environment(root=root, state=state)
     sandbox_fingerprint = (
@@ -5129,14 +5440,25 @@ def _run_codex_step_uncapped(
                 "finite canary worker output already exists",
             )
     elif output_path is None:
-        out_handle = tempfile.NamedTemporaryFile(
-            "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(plan_dir))
+        output_path = _response_output_path(
+            plan_dir,
+            step=step,
+            occurrence_id=response_occurrence["occurrence_id"],
+            repair_ordinal=repair_ordinal,
         )
-        out_handle.close()
-        output_path = Path(out_handle.name)
     else:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.is_symlink():
+            raise CliError(
+                "local_response_contract",
+                "Codex response output path must not be a symlink",
+            )
+        if output_path.exists() and output_path.stat().st_size > 0:
+            raise CliError(
+                "local_response_contract",
+                "Codex response output path already contains evidence; overwriting it is forbidden",
+            )
     seam_tier = (
         ModelTier.NON_ENFORCED
         if persistent and session.get("id") and not fresh and not read_only
@@ -5182,11 +5504,13 @@ def _run_codex_step_uncapped(
         and response_contract.attestation.response_enforcement
         == ResponseEnforcement.LOCAL_STRICT_JSON.value
         and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and _trusted_container()
     ):
         local_strict_handoff = _prepare_local_strict_artifact_handoff(
             plan_dir,
             step=step,
         )
+        _preflight_trusted_container_artifact_handoff(local_strict_handoff)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -5435,10 +5759,28 @@ def _run_codex_step_uncapped(
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
     except CliError as error:
-        error.extra["raw_output"] = _merge_partial_output(
-            str(error.extra.get("raw_output", "")),
-            output_path,
+        transport_raw = str(error.extra.get("raw_output", ""))
+        try:
+            terminal_raw = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            terminal_raw = ""
+        try:
+            _select_codex_terminal_output(transport_raw, terminal_raw)
+            timeout_selection_error: Exception | None = None
+        except ModelStructuralAuditError as selection_error:
+            timeout_selection_error = selection_error
+        timeout_response_evidence = _persist_codex_response_evidence(
+            plan_dir,
+            occurrence=response_occurrence,
+            repair_ordinal=repair_ordinal,
+            raw_transport=transport_raw,
+            terminal_output=terminal_raw,
+            output_path=output_path,
+            model=model,
+            selection_error=timeout_selection_error,
         )
+        error.extra["raw_output"] = transport_raw
+        error.extra["response_evidence"] = timeout_response_evidence
         # Recover from a lost session: container restarted since the session was
         # created, codex's rollout store is gone, but megaplan still has the id.
         # Clear the stale session and retry once with fresh=True.
@@ -5536,51 +5878,6 @@ def _run_codex_step_uncapped(
                 read_only=read_only,
             )
         if error.code in {"worker_timeout", "worker_stall"}:
-            try:
-                capture_outcome = capture_step_output(
-                    StepInvocation(
-                        kind="model",
-                        metadata={
-                            "tier": seam_tier.value,
-                            "worker": "codex",
-                            "model": model,
-                            "normalized_model": model,
-                            "validation_step": step,
-                            "compatibility_validation_step": step,
-                            "schema": schema,
-                            "capture_schema": capture_schema,
-                            "response_enforcement_attestation": response_attestation,
-                            "capture_recovery": {
-                                "step": step,
-                                "plan_dir": str(plan_dir),
-                                "output_path": str(output_path),
-                                "prefer_output_file": False,
-                            },
-                        },
-                    ),
-                    str(error.extra.get("raw_output", "")),
-                )
-                recovered_payload = _normalize_step_payload_for_audit(
-                    step,
-                    dict(capture_outcome.legacy_payload),
-                )
-            except (json.JSONDecodeError, ModelStructuralAuditError):
-                recovered_payload = None
-            if recovered_payload is not None:
-                timeout_session_id = session.get("id") if persistent else None
-                if timeout_session_id is None:
-                    timeout_session_id = extract_session_id(str(error.extra.get("raw_output", "")))
-                return WorkerResult(
-                    payload=recovered_payload,
-                    raw_output=str(error.extra.get("raw_output", "")),
-                    duration_ms=0,
-                    cost_usd=0.0,
-                    session_id=timeout_session_id,
-                    trace_output=str(error.extra.get("raw_output", "")) if json_trace else None,
-                    rendered_prompt=prompt,
-                    worker_channel=_CODEX_WORKER_CHANNEL,
-                    response_enforcement_attestation=response_attestation,
-                )
             timeout_session_id = session.get("id") if persistent else None
             if timeout_session_id is None:
                 timeout_session_id = extract_session_id(error.extra.get("raw_output", ""))
@@ -5614,6 +5911,26 @@ def _run_codex_step_uncapped(
             ) from error
         raise
     raw = result.stdout + result.stderr
+    try:
+        output_raw = output_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        output_raw = ""
+    try:
+        selected_output = _select_codex_terminal_output(raw, output_raw)
+        selection_error = None
+    except ModelStructuralAuditError as error:
+        selected_output = ""
+        selection_error = error
+    response_evidence = _persist_codex_response_evidence(
+        plan_dir,
+        occurrence=response_occurrence,
+        repair_ordinal=repair_ordinal,
+        raw_transport=raw,
+        terminal_output=output_raw,
+        output_path=output_path,
+        model=model,
+        selection_error=selection_error,
+    )
     # Same rollout-missing recovery for the non-exception path (non-zero exit
     # without CliError being raised). See _is_rollout_missing for context.
     if (
@@ -5714,20 +6031,31 @@ def _run_codex_step_uncapped(
         and response_contract.transport_schema is not None
         and _is_codex_provider_schema_rejection(raw)
     ):
-        raise _codex_provider_contract_error(response_contract, raw)
+        contract_error = _codex_provider_contract_error(response_contract, raw)
+        contract_error.extra["response_evidence"] = response_evidence
+        raise contract_error
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
-        raise CliError(error_code, error_message, extra={"raw_output": raw})
+        raise CliError(
+            error_code,
+            error_message,
+            extra={"raw_output": raw, "response_evidence": response_evidence},
+        )
     if result.returncode != 0:
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
-        if error_code != "worker_error":
-            raise CliError(error_code, error_message, extra={"raw_output": raw})
-    try:
-        output_raw = output_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        output_raw = ""
+        raise CliError(
+            error_code,
+            error_message,
+            extra={"raw_output": raw, "response_evidence": response_evidence},
+        )
     if free_text:
-        text = output_raw or raw
+        if selection_error is not None:
+            raise CliError(
+                "local_response_contract",
+                str(selection_error),
+                extra={"response_evidence": response_evidence, "raw_output": raw},
+            ) from selection_error
+        text = selected_output
         payload: dict[str, Any] = {}
         if step == "plan":
             extracted = _extract_plan_capture_input(text)
@@ -5743,11 +6071,13 @@ def _run_codex_step_uncapped(
             rendered_prompt=prompt,
             worker_channel=_CODEX_WORKER_CHANNEL,
         )
-    capture_input: str | dict[str, Any] = raw
-    plan_text = output_raw or raw
+    capture_input: str | dict[str, Any] = selected_output
+    plan_text = selected_output
     if step == "plan":
         capture_input = _extract_plan_capture_input(plan_text)
     try:
+        if selection_error is not None:
+            raise selection_error
         capture_outcome = capture_step_output(
             StepInvocation(
                 kind="model",
@@ -5791,22 +6121,19 @@ def _run_codex_step_uncapped(
             output_raw = output_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             output_raw = ""
-        repair_raw, parse_error = _codex_repair_input(raw, output_raw)
+        repair_raw, _parse_error = _codex_repair_input(raw, output_raw)
         failure_reason = (
             str(capture_failure)
             if capture_failure is not None
             else "model output was not valid canonical JSON"
         )
         if not repair_attempted and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
-            if parse_error is not None:
-                repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
-            else:
-                repair_prompt = (
-                    "Your previous response failed the canonical local response contract: "
-                    f"{failure_reason}. Re-read the requested schema and return a corrected "
-                    "response. Return only the exact JSON object, or use the explicitly "
-                    "authorized artifact handoff described below for a large object."
-                )
+            repair_prompt = _build_response_contract_repair_prompt(
+                step=step,
+                schema=schema,
+                failure_reason=failure_reason,
+                selected_output=repair_raw,
+            )
             # _pre_dispatch_budget_check sentinel: budget guard for dispatch
             try:
                 render_step_message(StepInvocation(kind="model", metadata={
@@ -5819,6 +6146,12 @@ def _run_codex_step_uncapped(
                 }))
             except ModelBudgetError:
                 raise
+            repair_output_path = _response_output_path(
+                plan_dir,
+                step=step,
+                occurrence_id=response_occurrence["occurrence_id"],
+                repair_ordinal=repair_ordinal + 1,
+            )
             return run_codex_step(
                 step,
                 state,
@@ -5832,15 +6165,18 @@ def _run_codex_step_uncapped(
                 effort=effort,
                 model=model,
                 read_only=read_only,
-                output_path=output_path,
+                output_path=repair_output_path,
                 repair_attempted=True,
+                response_occurrence=response_occurrence,
             )
         raise _local_response_contract_error(
             step=step,
             schema=schema,
             reason=failure_reason,
-            raw=repair_raw or raw,
+            raw=repair_raw,
             attempts=2 if repair_attempted else 1,
+            occurrence=response_occurrence,
+            evidence=response_evidence,
         ) from capture_failure
     raw_session_id = extract_session_id(raw)
     session_id = session.get("id") if persistent and not fresh else None
@@ -5975,7 +6311,7 @@ def _run_codex_step_uncapped(
         rollout_sha256 = hashlib.sha256(rollout.read_bytes()).hexdigest()
     return WorkerResult(
         payload=payload,
-        raw_output=raw,
+        raw_output=selected_output,
         duration_ms=result.duration_ms,
         cost_usd=cost_usd,
         session_id=session_id,
@@ -6013,6 +6349,7 @@ def run_codex_step(
     output_path: Path | None = None,
     free_text: bool = False,
     repair_attempted: bool = False,
+    response_occurrence: dict[str, Any] | None = None,
 ) -> WorkerResult:
     # Non-execute supervision relies on stream-json to observe rollout/token
     # cadence.  Enforce it here as well as at dispatcher call sites so direct
@@ -6034,6 +6371,7 @@ def run_codex_step(
         output_path=output_path,
         free_text=free_text,
         repair_attempted=repair_attempted,
+        response_occurrence=response_occurrence,
     )
 
 
@@ -6858,33 +7196,49 @@ def run_step_with_worker(
             ledger_fallback_trigger=ledger_fallback_trigger,
         )
 
-    dispatch_result = wbc_dispatch.run(
-        lambda _start: _run_step_with_worker_legacy(
-            step,
-            state,
-            plan_dir,
-            args,
-            root=root,
-            resolved=resolved,
-            prompt_override=prompt_override,
-            prompt_kwargs=prompt_kwargs,
-            read_only=read_only,
-            output_path=output_path,
-            worker_options=worker_options,
-            record_routing=record_routing,
-            ledger_phase=ledger_phase,
-            ledger_step_label=ledger_step_label,
-            ledger_selected_spec=ledger_selected_spec,
-            ledger_tier=ledger_tier,
-            ledger_complexity=ledger_complexity,
-            ledger_tier_routing_active=ledger_tier_routing_active,
-            ledger_configured_specs=ledger_configured_specs,
-            ledger_attempt_index=ledger_attempt_index,
-            ledger_attempted_specs=ledger_attempted_specs,
-            ledger_failed_attempt_reasons=ledger_failed_attempt_reasons,
-            ledger_fallback_trigger=ledger_fallback_trigger,
+    def _dispatch_with_binding(_start: Any) -> tuple[WorkerResult, str, str, bool]:
+        artifacts_metadata = (
+            dict(wbc_dispatch.artifacts.metadata)
+            if wbc_dispatch.artifacts is not None
+            else {}
         )
-    )
+        token = _WORKER_DISPATCH_BINDING.set(
+            {
+                "worker_wbc_attempt_id": wbc_dispatch.attempt_id,
+                "phase_wbc_attempt_id": artifacts_metadata.get("phase_attempt_id"),
+                "phase_step": artifacts_metadata.get("phase_step") or step,
+            }
+        )
+        try:
+            return _run_step_with_worker_legacy(
+                step,
+                state,
+                plan_dir,
+                args,
+                root=root,
+                resolved=resolved,
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+                read_only=read_only,
+                output_path=output_path,
+                worker_options=worker_options,
+                record_routing=record_routing,
+                ledger_phase=ledger_phase,
+                ledger_step_label=ledger_step_label,
+                ledger_selected_spec=ledger_selected_spec,
+                ledger_tier=ledger_tier,
+                ledger_complexity=ledger_complexity,
+                ledger_tier_routing_active=ledger_tier_routing_active,
+                ledger_configured_specs=ledger_configured_specs,
+                ledger_attempt_index=ledger_attempt_index,
+                ledger_attempted_specs=ledger_attempted_specs,
+                ledger_failed_attempt_reasons=ledger_failed_attempt_reasons,
+                ledger_fallback_trigger=ledger_fallback_trigger,
+            )
+        finally:
+            _WORKER_DISPATCH_BINDING.reset(token)
+
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
     worker, agent, mode, refreshed = dispatch_result.worker_result
     metadata = dict(worker.auth_metadata) if isinstance(worker.auth_metadata, dict) else {}
     metadata["wbc_dispatch"] = {

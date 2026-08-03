@@ -447,7 +447,7 @@ def _capture_local_strict_artifact(
         )
     if not isinstance(receipt_sha, str) or re.fullmatch(r"[0-9a-f]{64}", receipt_sha) is None:
         raise ModelStructuralAuditError("local-strict artifact receipt sha256 is invalid")
-    if isinstance(receipt_bytes, bool) or not isinstance(receipt_bytes, int) or receipt_bytes < 0:
+    if isinstance(receipt_bytes, bool) or not isinstance(receipt_bytes, int) or receipt_bytes <= 0:
         raise ModelStructuralAuditError("local-strict artifact receipt bytes is invalid")
     configured_max = handoff.get("max_bytes", DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES)
     if isinstance(configured_max, bool) or not isinstance(configured_max, int) or configured_max <= 0:
