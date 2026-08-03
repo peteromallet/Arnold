@@ -1,0 +1,46 @@
+{
+  "schema": "arnold.cloud.capacity_reserve_remediation_fallback_intent.v1",
+  "status": "AUTHORIZED_PENDING_SINGLE_DISPATCH",
+  "operation_id": "critique-ledger-capacity-reserve-fallback-20260803-0350z",
+  "supersedes_failed_operation": "critique-ledger-capacity-reserve-remediation-20260803-0349z",
+  "supersession_reason": "python3 -m pip cache purge returned No module named pip before deleting cache; tune2fs was not dispatched",
+  "authority": {
+    "basis": "user-authorized bounded Critique Ledger cloud recovery and relaunch",
+    "launch_candidate_commit": "c0e5e745d796d01deb962129f834978127f3adc0",
+    "prior_authority_commit": "9f6cf24a47"
+  },
+  "admitted_effects_in_order": [
+    {
+      "argv": [
+        "find",
+        "/opt/megaplan-cloud/cache/pip",
+        "-depth",
+        "-mindepth",
+        "1",
+        "-delete"
+      ],
+      "maximum_dispatches": 1,
+      "scope_guard": "canonical root-owned non-symlink pip cache directory with observed size 4384727040 bytes"
+    },
+    {
+      "argv": [
+        "tune2fs",
+        "-r",
+        "262144",
+        "/dev/sda1"
+      ],
+      "maximum_dispatches": 1,
+      "filesystem_uuid": "2ab00f5c-7182-4670-998e-e4f142f71767"
+    }
+  ],
+  "preserved": [
+    "/opt/megaplan-cloud/cache/pip directory inode",
+    "/opt/megaplan-cloud/cache/npm",
+    "/opt/megaplan-cloud/workspace",
+    "/opt/megaplan-cloud/deploy",
+    "megaplan-cloud-agent container",
+    "Docker images",
+    "Docker volumes"
+  ],
+  "ambiguity_policy": "NO BLIND REDISPATCH; reconcile descendants, superblock reserve, capacity, containment, and durable host receipts"
+}

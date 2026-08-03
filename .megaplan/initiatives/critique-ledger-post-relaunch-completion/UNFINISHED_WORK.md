@@ -155,6 +155,12 @@ claim cannot discharge an obligation.
   blocks (1 GiB); workspace, deploy directory, npm cache, predecessor
   container, images and volumes remain preserved. Platform T0.3 must replace
   this emergency tuning with owned high/low watermarks and reserve policy.
+  The first admitted cache command failed before mutation because host Python
+  has no pip module; its failure receipt is preserved. The exact filesystem-
+  native fallback is separately authorized at
+  `evidence/capacity-reserve-remediation-fallback-intent-20260803.json` and may
+  delete only descendants of the canonical pip-cache directory while
+  preserving that directory inode.
 - [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
   reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
   corruption and crash behavior; define safe lifecycle retention and broad
