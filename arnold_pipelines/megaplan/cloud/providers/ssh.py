@@ -1337,8 +1337,7 @@ class SshProvider(Provider):
                 # active.  Its execution owner performs the terminal stop and
                 # workspace reseal.  A poll must never become a cancellation.
                 reconciled_stop = False
-                if payload["status"] == "unknown" and payload["receipt_count"] == 0:
-                    payload["status"] = "in_progress"
+                payload["status"] = "in_progress"
             else:
                 observation, reconciled_stop = (
                     self._reconcile_zero_recovery_canary_stop()

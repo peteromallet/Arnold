@@ -1747,6 +1747,139 @@ def test_status_poll_never_stops_running_canary_without_receipt() -> None:
     )
 
 
+def _valid_zero_recovery_status_receipt() -> bytes:
+    payload = {
+        "schema": "arnold.megaplan.finite_canary_run_receipt.v2",
+        "status": "passed",
+        "canary_id": "critique-ledger-safe-v3-canary",
+        "plan_name": "critique-ledger-cl2-planning-canary",
+        "phases": ["init", "plan", "critique", "gate", "finalize"],
+        "phase_results": [
+            {"phase": phase} for phase in ("init", "plan", "critique", "gate", "finalize")
+        ],
+        "terminal_state": "finalized",
+        "failure": None,
+        "started_at": "2026-08-03T00:00:00Z",
+        "completed_at": "2026-08-03T00:01:00Z",
+        "source_commit": "a" * 40,
+        "source_tree": "b" * 40,
+        "canary_spec_sha256": "c" * 64,
+        "launch_manifest_sha256": {},
+        "state_sha256": "d" * 64,
+        "gate_sha256": "e" * 64,
+        "dispatch_ledger_sha256": "f" * 64,
+        "dispatches": [],
+        "import_root": "/workspace/Arnold/arnold_pipelines/megaplan/__init__.py",
+        "dispatch_integrity": "complete",
+        "phase_commands": [],
+        "phase_receipt_sha256": [],
+        "phase_receipts_manifest_sha256": "1" * 64,
+        "repository_integrity": [],
+        "privilege_receipt_sha256": [],
+        "privilege_receipts_manifest_sha256": "2" * 64,
+    }
+    payload["receipt_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def test_running_receipt_is_nonterminal_until_stopped_and_resealed() -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    commands: list[str] = []
+    raw = _valid_zero_recovery_status_receipt()
+
+    def remote(command: str, **kwargs):
+        commands.append(command)
+        if command.startswith("python3 "):
+            envelope = {
+                "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+                "receipt_b64": base64.b64encode(raw).decode("ascii"),
+                "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+                "receipt_count": 1,
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(envelope), "")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    observations = iter(
+        [
+            {"status": "available", "container": provider._ssh.container, "lifecycle": "running"},
+            {"status": "available", "container": provider._ssh.container, "lifecycle": "stopped"},
+            {"status": "available", "container": provider._ssh.container, "lifecycle": "stopped"},
+        ]
+    )
+    provider._remote_run_compatible = remote
+    provider.observe_container = lambda: next(observations)
+    provider._observe_zero_recovery_canary_runtime = lambda **kwargs: {}
+    def reseal(_runtime):
+        receipt = {"status": "sealed"}
+        provider._zero_recovery_terminal_workspace_receipt = receipt
+        return receipt
+
+    provider._reseal_zero_recovery_workspace = reseal
+
+    running = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+    stopped = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert running["status"] == "in_progress"
+    assert running["receipt"]["status"] == "passed"
+    assert running["reconciled_stop"] is False
+    assert stopped["status"] == "available"
+    assert stopped["reconciled_stop"] is True
+    assert stopped["terminal_workspace"] == {"status": "sealed"}
+    assert sum(
+        shlex.split(command)[:2] == ["docker", "stop"] for command in commands
+    ) == 1
+
+
+@pytest.mark.parametrize(
+    "status_stdout",
+    [
+        "not-json",
+        json.dumps(
+            {
+                "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+                "receipt_b64": None,
+                "receipt_sha256": None,
+                "receipt_count": 2,
+            }
+        ),
+    ],
+)
+def test_running_malformed_or_duplicate_receipt_is_non_cancelling(
+    status_stdout: str,
+) -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    commands: list[str] = []
+    provider._remote_run_compatible = lambda command, **kwargs: (
+        commands.append(command)
+        or subprocess.CompletedProcess([], 0, status_stdout, "")
+    )
+    provider.observe_container = lambda: {
+        "status": "available",
+        "container": provider._ssh.container,
+        "lifecycle": "running",
+    }
+
+    payload = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert payload["status"] == "in_progress"
+    assert payload["reconciled_stop"] is False
+    assert not any(
+        shlex.split(command)[:2] == ["docker", "stop"] for command in commands
+    )
+
+
 def test_execute_attempts_exact_stop_even_when_first_observation_raises() -> None:
     provider = object.__new__(SshProvider)
     provider._spec = _spec()
