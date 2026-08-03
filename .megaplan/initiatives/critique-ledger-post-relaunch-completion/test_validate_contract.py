@@ -39,3 +39,23 @@ def test_live_validation_rejects_every_pending_gate() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     with pytest.raises(contract.ContractError, match="live gate is not accepted"):
         contract._validate_prelaunch_gates(custody, require_live=True)
+
+
+def test_global_marker_cannot_be_made_transaction_bound() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    marker = custody["trusted_host_control_state_contract"]["global_containment_marker"]
+    marker["exact_fields"] = [
+        "schema", "profile", "scope", "active", "transaction_id",
+    ]
+    marker["transaction_independent"] = False
+    with pytest.raises(contract.ContractError, match="global containment marker"):
+        contract._validate_host_control_state_contract(custody)
+
+
+def test_failure_evidence_cannot_claim_pre_intent_host_durability() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["trusted_host_control_state_contract"]["failure_evidence"]["pre_intent"] = (
+        "DURABLE_HOST_RECEIPT"
+    )
+    with pytest.raises(contract.ContractError, match="failure evidence authority split"):
+        contract._validate_host_control_state_contract(custody)

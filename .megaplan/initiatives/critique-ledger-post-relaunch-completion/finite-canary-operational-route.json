@@ -11,6 +11,7 @@
       "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/custody-manifest.json",
       "required_sections": [
         "prelaunch_release_gates",
+        "trusted_host_control_state_contract",
         "capacity_cut.prelaunch",
         "isolation_receipt_contract",
         "model_evidence_contract",
@@ -77,13 +78,18 @@
       },
       "writes": "dirfd_relative_no_follow_atomic_file_and_directory_fsync",
       "contains": [
-        "transaction_bound_marker",
-        "fence_receipts",
+        "transaction_independent_global_containment_marker_v2",
+        "per_attempt_transaction_intents",
+        "per_attempt_apply_and_verify_receipts",
         "bootstrap_success_and_failure_receipts",
         "reconciliation_receipts"
       ],
-      "marker_exact_fields": ["schema", "transaction_id", "transaction_digest", "active"],
-      "marker_mismatch": "HARD_NO_GO"
+      "global_marker_exact_fields": ["schema", "profile", "scope", "active"],
+      "global_marker_publication": "only_after_durable_unit_job_session_process_containment_proof",
+      "global_marker_reuse": "same_canonical_marker_after_fresh_durable_containment_reproof",
+      "per_attempt_record_exact_fields": ["transaction_id", "transaction_digest", "action"],
+      "fresh_retry": "new_supported_transaction_and_fresh_evidence",
+      "global_marker_mismatch": "HARD_NO_GO"
     },
     "bounded_fence_reclaim": {
       "status": "PRELAUNCH_REQUIRED",
@@ -93,7 +99,8 @@
       "systemd_jobs": "emitter_parser_exact_empty_recovery_set",
       "persistent_masks": "crash_safe_before_prune",
       "partial_failure": "typed_durable_reconcilable_no_redispatch",
-      "pre_intent_failure": "typed_durable_receipt",
+      "pre_intent_failure": "no_mutation_fail_closed_supported_caller_captured_typed_error",
+      "post_intent_failure": "durable_O_EXCL_host_failure_receipt",
       "built_image_four_phase_smoke": "REQUIRED_BEFORE_DEPLOY"
     },
     "stable_exit": {

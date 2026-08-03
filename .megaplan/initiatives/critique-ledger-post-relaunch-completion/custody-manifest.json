@@ -1,7 +1,7 @@
 {
   "schema": "arnold.critique_ledger.unfinished_work_custody.v3",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T02:29:40Z",
+  "contract_updated_at": "2026-08-03T02:36:02Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -92,6 +92,30 @@
       "evidence": {"path": null, "sha256": null, "status": "PENDING"}
     }
   ],
+  "trusted_host_control_state_contract": {
+    "global_containment_marker": {
+      "schema": "arnold.cloud.zero_recovery_global_containment_marker.v2",
+      "exact_fields": ["schema", "profile", "scope", "active"],
+      "transaction_independent": true,
+      "publish_after": [
+        "durable_unit_containment_proof",
+        "durable_systemd_job_containment_proof",
+        "durable_session_containment_proof",
+        "durable_process_containment_proof"
+      ],
+      "canonical_reuse": "ALLOWED_ONLY_AFTER_FRESH_DURABLE_CONTAINMENT_REPROOF",
+      "mismatch": "HARD_NO_GO"
+    },
+    "per_attempt_records": {
+      "records": ["intent", "apply", "verify", "failure"],
+      "exact_binding_fields": ["transaction_id", "transaction_digest", "action"],
+      "fresh_retry": "NEW_SUPPORTED_TRANSACTION_AND_FRESH_EVIDENCE"
+    },
+    "failure_evidence": {
+      "pre_intent": "NO_MUTATION_FAIL_CLOSED_SUPPORTED_CALLER_CAPTURED_TYPED_ERROR",
+      "post_intent_partial_post_prune": "DURABLE_O_EXCL_HOST_FAILURE_RECEIPT"
+    }
+  },
   "capacity_cut": {
     "prelaunch": {
       "task_id": "T0.3/scoped-prelaunch-capacity-reclaim",

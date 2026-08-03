@@ -39,7 +39,7 @@ direct prelaunch dependency.
 
 Corrected launch-route authority:
 `.megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json`
-(SHA-256 `834e9665cbe7e95308d62da92f2a5524ced0e4a14057080e415ecaee454deeea`).
+(SHA-256 `b7bd81ddf77642f5dc220b2977e5ee07865484189f6c9f97758105f6e3396478`).
 It consumes the earlier post-T1.5 shortest-route rationale only together with
 the newer non-root privilege, mount, resource, effect and honest model-evidence
 bindings. The rationale document alone has no launch authority.
@@ -140,6 +140,16 @@ durable failure/reconciliation evidence; the built-image four-phase smoke;
 fresh live capacity/predeploy authority; a finalized-then-stopped finite canary;
 and remotely anchored custody reconstructed from a fresh clone. Pending null
 evidence is deliberately non-authoritative and keeps the route closed.
+
+The global containment marker v2 is deliberately transaction-independent. It
+contains exactly `schema/profile/scope/active` and is published only after
+durable unit/job/session/process proof. The same canonical marker may support a
+fresh retry only after that containment is durably re-proved. Transaction
+identity belongs instead to each attempt's intent and apply/verify/failure
+receipts, which bind `transaction_id/transaction_digest/action`. Before the
+trusted directory opens and the intent persists, failure performs no mutation,
+fails closed and is captured by the supported caller error path; after intent,
+every partial or post-prune failure requires a durable O_EXCL host receipt.
 
 The follow-up chain may start only after both the strict finite-canary receipt
 and `stable-exit-receipt.json` exist. Stable exit means the exact v2 predecessor

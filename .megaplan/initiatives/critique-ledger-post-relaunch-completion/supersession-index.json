@@ -2,7 +2,7 @@
   "schema": "arnold.critique_ledger.supersession_index.v1",
   "current_operational_route": {
     "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json",
-    "sha256": "834e9665cbe7e95308d62da92f2a5524ced0e4a14057080e415ecaee454deeea",
+    "sha256": "b7bd81ddf77642f5dc220b2977e5ee07865484189f6c9f97758105f6e3396478",
     "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
     "reason": "composes the post-T1.5 shortest route with mandatory mount, privilege, resource, effect, honest model-evidence, trusted host control-state, bounded reclaim/fence, stable-exit custody, typed substrate and exact deferred-obligation bindings"
   },

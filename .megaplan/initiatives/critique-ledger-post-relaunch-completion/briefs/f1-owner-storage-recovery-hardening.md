@@ -64,6 +64,12 @@ safety, fence emitter/parser parity, bounded unit settlement, crash-safe
 persistent masks, partial-reclaim reconciliation and built-image smoke is T6.2
 **PRELAUNCH** scope. None of it may be deferred to this F1 platform-hardening
 milestone or satisfied by F1 evidence after launch.
+The T6.2 global containment marker is transaction-independent
+`schema/profile/scope/active` state published after durable containment proof;
+per-attempt intent/apply/verify/failure evidence—not the marker—owns
+`transaction_id/transaction_digest/action`. Pre-intent failures are no-mutation
+caller-captured failures; post-intent failures retain durable O_EXCL host
+receipts.
 
 ## Done criteria
 

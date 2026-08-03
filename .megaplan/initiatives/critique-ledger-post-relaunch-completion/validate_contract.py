@@ -153,6 +153,42 @@ def _validate_prelaunch_gates(custody: dict[str, Any], *, require_live: bool) ->
         raise ContractError("prelaunch gate set/uniqueness drift")
 
 
+def _validate_host_control_state_contract(custody: dict[str, Any]) -> None:
+    contract = custody.get("trusted_host_control_state_contract")
+    if not isinstance(contract, dict) or set(contract) != {
+        "global_containment_marker", "per_attempt_records", "failure_evidence",
+    }:
+        raise ContractError("trusted host control-state contract has an inexact schema")
+    marker = contract.get("global_containment_marker")
+    records = contract.get("per_attempt_records")
+    failures = contract.get("failure_evidence")
+    if marker != {
+        "schema": "arnold.cloud.zero_recovery_global_containment_marker.v2",
+        "exact_fields": ["schema", "profile", "scope", "active"],
+        "transaction_independent": True,
+        "publish_after": [
+            "durable_unit_containment_proof",
+            "durable_systemd_job_containment_proof",
+            "durable_session_containment_proof",
+            "durable_process_containment_proof",
+        ],
+        "canonical_reuse": "ALLOWED_ONLY_AFTER_FRESH_DURABLE_CONTAINMENT_REPROOF",
+        "mismatch": "HARD_NO_GO",
+    }:
+        raise ContractError("global containment marker contract drift")
+    if records != {
+        "records": ["intent", "apply", "verify", "failure"],
+        "exact_binding_fields": ["transaction_id", "transaction_digest", "action"],
+        "fresh_retry": "NEW_SUPPORTED_TRANSACTION_AND_FRESH_EVIDENCE",
+    }:
+        raise ContractError("per-attempt transaction record contract drift")
+    if failures != {
+        "pre_intent": "NO_MUTATION_FAIL_CLOSED_SUPPORTED_CALLER_CAPTURED_TYPED_ERROR",
+        "post_intent_partial_post_prune": "DURABLE_O_EXCL_HOST_FAILURE_RECEIPT",
+    }:
+        raise ContractError("failure evidence authority split drift")
+
+
 def _validate_route(route: dict[str, Any]) -> None:
     bindings = route.get("additional_bindings")
     if not isinstance(bindings, dict):
@@ -167,7 +203,12 @@ def _validate_route(route: dict[str, Any]) -> None:
         host.get("location") != "fixed_host_path_outside_all_historical_and_canary_workspaces"
         or identity != {"type": "directory", "uid": 0, "gid": 0, "mode": "0700", "symlink_free": True}
         or host.get("writes") != "dirfd_relative_no_follow_atomic_file_and_directory_fsync"
-        or host.get("marker_mismatch") != "HARD_NO_GO"
+        or host.get("global_marker_exact_fields") != ["schema", "profile", "scope", "active"]
+        or host.get("global_marker_publication") != "only_after_durable_unit_job_session_process_containment_proof"
+        or host.get("global_marker_reuse") != "same_canonical_marker_after_fresh_durable_containment_reproof"
+        or host.get("per_attempt_record_exact_fields") != ["transaction_id", "transaction_digest", "action"]
+        or host.get("fresh_retry") != "new_supported_transaction_and_fresh_evidence"
+        or host.get("global_marker_mismatch") != "HARD_NO_GO"
     ):
         raise ContractError("trusted host control-state contract drift")
     fence = bindings["bounded_fence_reclaim"]
@@ -175,6 +216,8 @@ def _validate_route(route: dict[str, Any]) -> None:
         fence.get("all_eight_units_before_prune") != "absent_or_inactive_and_masked"
         or fence.get("systemd_jobs") != "emitter_parser_exact_empty_recovery_set"
         or fence.get("persistent_masks") != "crash_safe_before_prune"
+        or fence.get("pre_intent_failure") != "no_mutation_fail_closed_supported_caller_captured_typed_error"
+        or fence.get("post_intent_failure") != "durable_O_EXCL_host_failure_receipt"
         or fence.get("built_image_four_phase_smoke") != "REQUIRED_BEFORE_DEPLOY"
     ):
         raise ContractError("bounded fence/reclaim contract drift")
@@ -251,7 +294,15 @@ def _validate_stable_exit_receipt(*, require_live: bool) -> None:
         or host.get("gid") != 0
         or host.get("mode") != "0700"
         or host.get("symlink_free") is not True
-        or host.get("marker_transaction_bound") is not True
+        or set(host) != {
+            "path", "uid", "gid", "mode", "symlink_free", "global_marker_v2",
+            "global_marker_transaction_independent", "containment_reproved_for_exit",
+            "per_attempt_receipts_transaction_bound",
+        }
+        or host.get("global_marker_v2") is not True
+        or host.get("global_marker_transaction_independent") is not True
+        or host.get("containment_reproved_for_exit") is not True
+        or host.get("per_attempt_receipts_transaction_bound") is not True
         or not isinstance(custody, dict)
         or set(custody) != {
             "follow_up_commit", "follow_up_tree", "remote_ref", "custody_anchor",
@@ -273,6 +324,7 @@ def validate(*, require_live: bool = False) -> None:
         raise ContractError("custody manifest schema must be v3")
     _validate_obligations(custody)
     _validate_prelaunch_gates(custody, require_live=require_live)
+    _validate_host_control_state_contract(custody)
     route_path = INITIATIVE / "finite-canary-operational-route.json"
     _validate_route(_load_json(route_path))
     proof_map = _load_json(INITIATIVE / "proof-map.json")

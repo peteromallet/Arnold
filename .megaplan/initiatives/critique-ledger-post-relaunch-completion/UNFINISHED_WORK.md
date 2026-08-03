@@ -61,15 +61,23 @@ machine-readable authority; the paths and counts below are operator guidance.
 - [ ] All marker, fence, bootstrap and reconciliation authority lives in one
   fixed `root:root 0700`, symlink-free host control-state directory outside
   poisoned and canary workspaces. Every write is safe dirfd-relative/no-follow,
-  atomically installed and file-plus-directory-fsynced; the active marker's
-  exact transaction ID and digest match the applying transaction. A mismatch is
-  a hard NO-GO.
+  atomically installed and file-plus-directory-fsynced. The transaction-
+  independent global containment marker v2 has exactly
+  `schema/profile/scope/active` and is published only after durable
+  unit/job/session/process containment proof. Per-attempt intent and
+  apply/verify/failure receipts bind exactly
+  `transaction_id/transaction_digest/action`. A global-marker mismatch is a
+  hard NO-GO; the same canonical marker is reusable by a fresh supported
+  transaction only after containment is durably re-proved.
 - [ ] All eight recovery units are absent or boundedly settled inactive and
   masked before any reclaim; failed units receive at most one bounded
   `reset-failed`, deactivating units have one shared deadline, recovery systemd
   jobs are observed and emitter/parser-bound, persistent masks are crash-safe
-  before prune, and every pre-intent or partial/post-prune failure has typed
-  durable, reconcilable evidence with no blind redispatch.
+  before prune, and every failure is honestly split by authority boundary:
+  pre-intent failure performs no mutation, fails closed and is captured through
+  the supported caller's typed/error evidence path; every post-intent,
+  partial or post-prune failure writes a durable O_EXCL host failure receipt
+  and is reconcilable with no blind redispatch.
 - [ ] One accepted built-image four-phase smoke, fresh inventory, bootstrap
   reclaim receipt, GO predeploy receipt, apply/verify fence receipts, finite
   run/conformance/completion receipt and terminal stop receipt bind the exact
