@@ -2229,10 +2229,11 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     assert "socket" not in source
     assert "urllib" not in source
     assert "requests" not in source
+    schema_name = "finalize_capture" if phase == "finalize" else phase
     output = tmp_path / f"{phase}.json"
     codex_home = tmp_path / "codex-home"
     ensure_runtime_layout(tmp_path)
-    schema = tmp_path / ".megaplan" / "schemas" / f"{phase}.json"
+    schema = tmp_path / ".megaplan" / "schemas" / f"{schema_name}.json"
     completed = subprocess.run(
         [
             "node",

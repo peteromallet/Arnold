@@ -80,8 +80,8 @@ function payload(schemaName) {
       tiebreaker_fuzzy_group_id: "",
     };
   }
-  if (schemaName === "finalize.json") {
-    return {
+  if (schemaName === "finalize.json" || schemaName === "finalize_capture.json") {
+    const captured = {
       tasks: [{
         id: "SMOKE-1",
         description: "Verify the offline finite-canary structural receipts.",
@@ -110,8 +110,14 @@ function payload(schemaName) {
       sense_checks: [],
       user_actions: [],
       meta_commentary: "Offline structural smoke only.",
-      critique_custody: {},
       critique_resolution_coverage: [],
+    };
+    if (schemaName === "finalize_capture.json") {
+      return captured;
+    }
+    return {
+      ...captured,
+      critique_custody: {},
       validation: {
         plan_steps_covered: [{
           plan_step_summary: "Verify receipts",
@@ -134,7 +140,7 @@ function main() {
   const output = argumentValue("-o");
   const schema = argumentValue("--output-schema");
   const schemaName = path.basename(schema);
-  const phase = path.parse(schema).name;
+  const phase = schemaName === "finalize_capture.json" ? "finalize" : path.parse(schema).name;
   const sessionId = crypto
     .createHash("sha256")
     .update(`${phase}-offline-smoke`)
