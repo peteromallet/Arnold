@@ -68,6 +68,14 @@ current subject. If more than one generation is plausibly active, publish
 typed degraded ambiguity and mutate nothing; never pick the newest filename or
 timestamp.
 
+During runtime rebind, a chain-state projection cursor may belong to the prior
+source epoch even when canonical state is healthy. For the observed 645→630 M7
+mismatch, preserve both canonical source and old projection, identify exact
+store/epoch/incarnation/runtime, and let the supported atomic rebuild supersede
+the cursor. If the regression is within one epoch, report typed degraded and
+mutate nothing. Never edit/delete/truncate/bump a cursor by hand, and never use
+a projection to authorize repair, relaunch, completion or publication.
+
 The historical M11 completion claim at
 `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` is invalidated pending
 dependency-closed revalidation. Its committed ownership record had four

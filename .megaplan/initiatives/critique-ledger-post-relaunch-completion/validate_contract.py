@@ -37,6 +37,9 @@ ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT = (
 M11_ACCEPTANCE_GAP_EVIDENCE = (
     "evidence/m11-acceptance-dependency-gap-20260803.json"
 )
+M7_RUNTIME_REBIND_PROJECTION_EVIDENCE = (
+    "evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json"
+)
 
 OBLIGATIONS = {
     "F1.platform_capacity_storage_hardening": "f1-owner-storage-recovery-hardening",
@@ -2092,6 +2095,12 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         not in f1_proofs
     ):
         raise ContractError("artifact archival/projection cleanup proof map drift")
+    if (
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        + M7_RUNTIME_REBIND_PROJECTION_EVIDENCE
+        not in f1_proofs
+    ):
+        raise ContractError("M7 runtime-rebind projection evidence proof map drift")
     if proof_map.get("f2a-launch-profile-artifact-drift-containment") != [
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
         "provider-policy-execution-binding-contract.json",
@@ -2167,6 +2176,103 @@ def _validate_r5_repair_control_incident(incident: dict[str, Any]) -> None:
         or follow_up.get("milestone") != "f1-owner-storage-recovery-hardening"
     ):
         raise ContractError("r5 immediate/deferred repair custody drift")
+
+
+def _validate_r5_m7_runtime_rebind_projection_cursor_mismatch(
+    evidence: dict[str, Any],
+) -> None:
+    if (
+        evidence.get("schema")
+        != "arnold.critique_ledger.r5_m7_runtime_rebind_projection_cursor_mismatch.v1"
+        or evidence.get("status")
+        != "NON_BLOCKING_FOLLOW_UP_INPUT_NOT_RUNTIME_ACCEPTANCE"
+        or evidence.get("authority") != "READ_ONLY_LIVE_OBSERVATION"
+        or evidence.get("owner_milestone")
+        != "f1-owner-storage-recovery-hardening"
+        or evidence.get("session")
+        != "critique-ledger-accountability-v3-r5-20260803"
+        or evidence.get("plan") != "cl2-wbc-backed-ledger-20260803-1357"
+    ):
+        raise ContractError("M7 runtime-rebind projection evidence identity drift")
+    rebind = evidence.get("runtime_rebind")
+    observation = evidence.get("observation")
+    if (
+        rebind
+        != {
+            "minimum_runtime_commit": "18b279f5ef6d2a4db693586a59de8d87d7b45ab5",
+            "event": "EXACT_18B_RUNTIME_REBIND_AND_RELAUNCH",
+            "live_mutation_authority_from_this_record": False,
+        }
+        or not isinstance(observation, dict)
+        or observation.get("projection") != "M7_CHAIN_STATE_PROJECTION"
+        or observation.get("persisted_projection_cursor_record_count") != 645
+        or observation.get("rebound_canonical_source_record_count") != 630
+        or observation.get("observed_transition") != "645_TO_630"
+        or observation.get("canonical_state") != "INTACT"
+        or observation.get("classification")
+        != "DERIVED_PROJECTION_CURSOR_MISMATCH_NON_BLOCKING_CANONICAL_STATE_INTACT"
+        or observation.get("must_not_be_inferred")
+        != [
+            "CANONICAL_STATE_LOSS",
+            "CHAIN_PRODUCT_FAILURE",
+            "RELAUNCH_FAILURE",
+            "AUTHORITY_TO_REPAIR_OR_RELAUNCH",
+        ]
+    ):
+        raise ContractError("exact M7 645-to-630 observation drift")
+    reconciliation = evidence.get("required_reconciliation_contract")
+    if (
+        not isinstance(reconciliation, dict)
+        or reconciliation.get("cursor_identity_fields")
+        != [
+            "subject",
+            "source_store_id",
+            "source_epoch",
+            "incarnation_id",
+            "runtime_revision",
+            "record_count",
+            "last_record_digest",
+            "projection_digest",
+        ]
+        or reconciliation.get("new_epoch_or_incarnation")
+        != "ATOMICALLY_SUPERSEDE_OLD_CURSOR_AND_REBUILD_FROM_CANONICAL_SOURCE"
+        or reconciliation.get("same_epoch_record_count_regression")
+        != "TYPED_DEGRADED_SOURCE_DISAGREEMENT_NO_PROJECTION_ADVANCE_NO_MUTATION"
+        or reconciliation.get("rebuild")
+        != "ATOMIC_CONTENT_ADDRESSED_IDEMPOTENT_FROM_CANONICAL_STATE_AND_EVENTS"
+        or reconciliation.get("crash_restart")
+        != "RESUME_OR_RESTART_REBUILD_WITHOUT_MIXING_EPOCHS_OR_DUPLICATING_ROWS"
+        or reconciliation.get("history")
+        != "PRESERVE_OLD_CURSOR_AND_PROJECTION_AS_SUPERSEDED_INSPECTABLE_EVIDENCE"
+        or reconciliation.get("authority_rule")
+        != "PROJECTION_AND_CURSOR_ARE_NEVER_MUTATION_COMPLETION_REPAIR_RELAUNCH_OR_PUBLICATION_AUTHORITY"
+        or reconciliation.get("operator_rule")
+        != "NO_HAND_EDIT_DELETE_TRUNCATE_OR_COUNTER_BUMP_TO_FORCE_CONVERGENCE"
+    ):
+        raise ContractError("M7 epoch-aware projection reconciliation drift")
+    if (
+        evidence.get("required_mutation_tests")
+        != [
+            "EXACT_645_TO_630_RUNTIME_REBIND_FIXTURE_REBUILDS_UNDER_NEW_EPOCH",
+            "SAME_EPOCH_645_TO_630_REGRESSION_RETURNS_TYPED_DEGRADED_WITHOUT_MUTATION",
+            "CRASH_BEFORE_CURSOR_SUPERSESSION_RESTARTS_IDEMPOTENTLY",
+            "CRASH_AFTER_SUPERSESSION_BEFORE_PROJECTION_PUBLISH_REBUILDS_ONCE",
+            "RUNTIME_RESTART_DOES_NOT_REUSE_OLD_EPOCH_CURSOR",
+            "OLD_AND_NEW_EPOCH_RECORDS_NEVER_MERGE_IN_ONE_PROJECTION",
+            "HAND_EDITED_CURSOR_IS_REJECTED_AND_REBUILT_FROM_CANONICAL_SOURCE",
+            "PROJECTION_CANNOT_AUTHORIZE_REPAIR_RELAUNCH_COMPLETION_OR_PUBLICATION",
+            "CANONICAL_STATE_BYTES_AND_EVENT_HISTORY_REMAIN_UNCHANGED",
+            "TWO_HUNDRED_UNCHANGED_POLLS_EMIT_ONE_DEGRADED_INCIDENT_MAXIMUM",
+        ]
+        or evidence.get("acceptance")
+        != {
+            "source_wheel_installed_cloud_parity": True,
+            "exact_fixture_required": True,
+            "independent_review_required": True,
+            "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
+        }
+    ):
+        raise ContractError("M7 projection mutation-test acceptance drift")
 
 
 def _validate_artifact_archival_projection_cleanup_contract(
@@ -3272,6 +3378,9 @@ def validate(*, require_live: bool = False) -> None:
     )
     _validate_m11_acceptance_dependency_gap(
         _load_json(INITIATIVE / M11_ACCEPTANCE_GAP_EVIDENCE)
+    )
+    _validate_r5_m7_runtime_rebind_projection_cursor_mismatch(
+        _load_json(INITIATIVE / M7_RUNTIME_REBIND_PROJECTION_EVIDENCE)
     )
     _validate_artifact_archival_projection_cleanup_contract(
         _load_json(INITIATIVE / ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT)

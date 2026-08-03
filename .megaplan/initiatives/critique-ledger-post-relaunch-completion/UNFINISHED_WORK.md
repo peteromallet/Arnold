@@ -304,7 +304,16 @@ deferred obligations.
 - [ ] **HARD — reconcile M7 projection cursors.** Make fresh-generation resets
   either advance or explicitly fork projection history. A cursor mismatch must
   be repaired from canonical state or become one actionable incident; it must
-  not repeat as a warning on every append.
+  not repeat as a warning on every append. Replay the live exact-`18b` runtime-
+  rebind fixture where the persisted chain-state projection cursor said 645
+  records and the rebound canonical source said 630 while canonical state
+  remained intact. Bind cursors to source store, epoch, incarnation, runtime,
+  count and digests. A new epoch atomically supersedes/rebuilds; a same-epoch
+  regression is typed degraded and mutates nothing. Crash/restart is idempotent,
+  old history remains inspectable, 200 polls dedupe the incident, and neither a
+  projection nor hand-edited cursor may authorize repair, relaunch, completion
+  or publication. Evidence:
+  `evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json`.
 - [ ] **VERY HARD — event-incarnation/checkpoint and status convergence.** Two
   legitimate fresh launches in one minute reused the minute-resolution plan ID
   and collapsed into one invalid journal (`0..9` followed by `0..N`), while

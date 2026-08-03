@@ -122,6 +122,59 @@ def _artifact_archival_projection_fixture() -> dict:
     )
 
 
+def _m7_runtime_rebind_projection_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name("evidence")
+        / "r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json"
+    )
+
+
+def test_m7_exact_runtime_rebind_record_counts_cannot_be_rewritten() -> None:
+    evidence = _m7_runtime_rebind_projection_fixture()
+    evidence["observation"]["persisted_projection_cursor_record_count"] = 630
+    with pytest.raises(
+        contract.ContractError,
+        match="exact M7 645-to-630 observation drift",
+    ):
+        contract._validate_r5_m7_runtime_rebind_projection_cursor_mismatch(evidence)
+
+
+def test_m7_same_epoch_regression_must_degrade_without_mutation() -> None:
+    evidence = _m7_runtime_rebind_projection_fixture()
+    evidence["required_reconciliation_contract"][
+        "same_epoch_record_count_regression"
+    ] = "HAND_EDIT_CURSOR"
+    with pytest.raises(
+        contract.ContractError,
+        match="M7 epoch-aware projection reconciliation drift",
+    ):
+        contract._validate_r5_m7_runtime_rebind_projection_cursor_mismatch(evidence)
+
+
+def test_m7_projection_cannot_gain_repair_or_relaunch_authority() -> None:
+    evidence = _m7_runtime_rebind_projection_fixture()
+    evidence["required_reconciliation_contract"]["authority_rule"] = (
+        "PROJECTION_AUTHORIZES_RELAUNCH"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="M7 epoch-aware projection reconciliation drift",
+    ):
+        contract._validate_r5_m7_runtime_rebind_projection_cursor_mismatch(evidence)
+
+
+def test_m7_crash_restart_and_hand_edit_mutations_remain_required() -> None:
+    evidence = _m7_runtime_rebind_projection_fixture()
+    evidence["required_mutation_tests"].remove(
+        "HAND_EDITED_CURSOR_IS_REJECTED_AND_REBUILT_FROM_CANONICAL_SOURCE"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="M7 projection mutation-test acceptance drift",
+    ):
+        contract._validate_r5_m7_runtime_rebind_projection_cursor_mismatch(evidence)
+
+
 @pytest.mark.parametrize(
     "receipt_name",
     ["critique_custody_v1.json", "critique_custody_v2.json"],

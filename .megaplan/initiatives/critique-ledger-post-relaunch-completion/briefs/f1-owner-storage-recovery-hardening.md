@@ -91,6 +91,13 @@ views must rebuild from lifecycle/supersession/incarnation authority so retired
 r2-r4 failures remain historical but only exact r5 appears current. The shared
 normative target is `artifact-archival-projection-cleanup-contract.json`.
 
+The exact-`18b` runtime rebind/relaunch also exposed an M7 chain-state
+projection mismatch: the persisted derived cursor recorded 645 rows while the
+rebound canonical source reported 630; canonical state remained intact. Treat
+this as a non-blocking projection epoch/incarnation reconciliation defect, not
+canonical loss or product failure. Exact read-only input evidence is
+`evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json`.
+
 F1 acceptance is also blocked on dependency-closed revalidation of the
 historical M11 completion claim. Commit
 `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` contained four ownership blockers
@@ -173,6 +180,10 @@ disabled fail closed. Exact audit evidence is
 - Current-attention projections contain at most one authority-selected active
   generation. Superseded attempts remain immutable history; projection cleanup
   may neither delete them nor allow r2-r4 to masquerade as current beside r5.
+- Projection record counts are meaningful only inside the exact source store,
+  epoch, incarnation and runtime identity. A runtime rebind may atomically
+  supersede and rebuild a derived cursor; it may not hand-edit, truncate or bump
+  a counter, and no projection can authorize control-plane or publication work.
 - Historical completion is not grandfathered around unmet dependencies. The
   M11 `d10b0fef...` claim stays invalidated until an append-only superseding Run
   Authority decision consumes the exact ownership/F01-F17 inputs, proves zero
@@ -320,6 +331,13 @@ receipts.
   separate recovery transition.
 - M7 projection history is reconciled or explicitly forked for a fresh
   generation; cursor mismatch cannot become an indefinitely repeated warning.
+- The exact runtime-rebind 645→630 fixture preserves canonical state/event
+  bytes. New-epoch replay atomically supersedes the old cursor and publishes one
+  content-addressed rebuild; same-epoch regression returns typed degraded with
+  zero mutation. Crash before/after supersession, process restart and 200 polls
+  prove idempotence, no mixed-epoch rows, inspectable superseded history and one
+  degraded incident maximum. Hand-edited cursors are rejected and projections
+  cannot authorize repair, relaunch, completion or publication.
 - The exact r5 two-incarnation event fixture (`0..9`, then `0..N`) is replayed.
   `introspect`, `trace`, plan status, doctor, cloud status and chain status all
   remain readable and converge on one lifecycle/active-phase tuple within a

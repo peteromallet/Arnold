@@ -127,6 +127,13 @@ unavailability—never silently present missing evidence as `$0`. Final acceptan
 must rerun the canary after deploying the exact final `18b279f5ef...` or
 descendant commit; an earlier `b168edbca0...` canary cannot satisfy the gate.
 
+That exact-`18b` runtime rebind also surfaced a non-blocking M7 projection
+defect: a stored chain-state cursor of 645 met a rebound canonical record count
+of 630 while canonical state remained intact. F1 now requires epoch/incarnation-
+aware atomic rebuild, crash/restart idempotence and projection non-authority;
+operators must not hand-edit counters. See
+[`evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json`](evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json).
+
 A separate historical audit invalidates the old M11 completion/promotion claim
 at commit `d10b0fef2b6dbc283639ca14adf6790153ebd2a6`. That commit contained
 `evidence/ownership-decision-record.json` with four blockers and
