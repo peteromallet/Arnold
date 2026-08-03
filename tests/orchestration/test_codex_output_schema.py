@@ -105,6 +105,18 @@ def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
         "suite_runs_ndjson_path",
     }.isdisjoint(properties)
     assert "critique_resolution_coverage" in properties
+    assert properties["task_contract_version"]["enum"] == [2]
+    assert properties["validation_jobs"]["maxItems"] == 0
+    task = properties["tasks"]["items"]
+    assert {
+        "objective",
+        "estimated_minutes",
+        "dependency_reasons",
+        "routing_group",
+        "write_set",
+        "narrow_tests",
+        "checkpoint",
+    }.issubset(task["properties"])
 
 
 def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() -> None:

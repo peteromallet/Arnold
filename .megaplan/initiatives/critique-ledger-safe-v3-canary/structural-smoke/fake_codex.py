@@ -82,10 +82,29 @@ function payload(schemaName) {
   }
   if (schemaName === "finalize.json" || schemaName === "finalize_capture.json") {
     const captured = {
+      task_contract_version: 2,
       tasks: [{
         id: "SMOKE-1",
+        objective: "Verify the bounded offline finite-canary structural receipt path.",
         description: "Verify the offline finite-canary structural receipts.",
+        estimated_minutes: 5,
         depends_on: [],
+        dependency_reasons: {},
+        routing_group: "",
+        write_set: {
+          paths: ["tests/cloud/test_zero_recovery_canary.py"],
+          complete: true,
+        },
+        narrow_tests: {
+          selectors: ["tests/cloud/test_zero_recovery_canary.py"],
+          max_seconds: 120,
+          max_runs: 2,
+        },
+        checkpoint: {
+          required: false,
+          max_interval_seconds: 300,
+          records: [],
+        },
         status: "pending",
         kind: "test",
         complexity: 1,
@@ -106,6 +125,7 @@ function payload(schemaName) {
           defense: "The bounded structural phase may complete.",
         },
       }],
+      validation_jobs: [],
       watch_items: [],
       sense_checks: [],
       user_actions: [],
