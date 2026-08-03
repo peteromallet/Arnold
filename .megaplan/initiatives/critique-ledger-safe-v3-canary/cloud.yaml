@@ -1,7 +1,7 @@
 provider: ssh
 zero_recovery_canary: true
 zero_recovery_predecessor_container: megaplan-cloud-agent
-zero_recovery_workspace_dir: /opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-10-20260803
+zero_recovery_workspace_dir: /opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-11-20260803
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: fix/critique-recovery-cloud-observation-preflight-20260802
@@ -13,10 +13,11 @@ codex:
   reasoning: high
 mode: idle
 megaplan:
-  ref: b9a7a2d2eacca529568b625e35525762a961eda5
+  ref: b8ffeb14ea408a2171ebcddc3bcda7b6188a36e5
   codex_auth: chatgpt
 resources:
   port: 8080
+  prelaunch_min_free_bytes: 1610612736
 ssh:
   host: 159.69.51.216
   user: root
@@ -24,5 +25,5 @@ ssh:
   remote_dir: /opt/megaplan-cloud/deploy
   workspace_dir: /opt/megaplan-cloud/workspace
   cache_dir: /opt/megaplan-cloud/cache
-  container: megaplan-cloud-agent-finite-canary-10
+  container: megaplan-cloud-agent-finite-canary-11
 secrets: []
