@@ -261,6 +261,7 @@ def _validate_zero_recovery_canary_spec(
         "schema", "implementation_commit", "implementation_tree",
         "launch_manifest_binding", "launch_manifest_parent",
         "canary_spec", "brief_source", "copied_brief", "fresh_workspace",
+        "predecessor_workspace", "workspace_bind_source",
         "predecessor_container", "canary_container",
     }
     if (
@@ -274,6 +275,10 @@ def _validate_zero_recovery_canary_spec(
         or trace.get("canary_spec") != str(path.relative_to(root))
         or trace.get("copied_brief") != payload["brief"]
         or trace.get("fresh_workspace") != spec.repo.workspace
+        or trace.get("predecessor_workspace")
+        != (spec.ssh.workspace_dir if spec.ssh else None)
+        or trace.get("workspace_bind_source")
+        != spec.zero_recovery_workspace_dir
         or trace.get("predecessor_container") != spec.zero_recovery_predecessor_container
         or trace.get("canary_container") != (spec.ssh.container if spec.ssh else None)
     ):
@@ -822,14 +827,33 @@ def _add_repo_override_args(parser: argparse.ArgumentParser) -> None:
 def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
     try:
         action = getattr(args, "cloud_action")
-        if action == "init":
-            return _run_init(root, args)
-        early_spec: CloudSpec | None = None
         selected_cloud = (
             Path(args.cloud_yaml).expanduser()
             if getattr(args, "cloud_yaml", None)
             else root / "cloud.yaml"
         )
+        if action == "init":
+            canonical_zero_recovery_cloud = (
+                root
+                / ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml"
+            ).resolve()
+            if selected_cloud.resolve() == canonical_zero_recovery_cloud:
+                raise CliError(
+                    "zero_recovery_action_denied",
+                    "cloud init cannot create or overwrite the canonical zero-recovery profile",
+                )
+            if selected_cloud.is_file():
+                try:
+                    existing_spec = _load_cloud_spec(root, args)
+                except CliError:
+                    existing_spec = None
+                if existing_spec is not None and existing_spec.zero_recovery_canary:
+                    raise CliError(
+                        "zero_recovery_action_denied",
+                        "cloud init cannot overwrite an admitted zero-recovery profile",
+                    )
+            return _run_init(root, args)
+        early_spec: CloudSpec | None = None
         if selected_cloud.is_file():
             early_spec = _load_cloud_spec(root, args)
             if (

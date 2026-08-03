@@ -224,7 +224,7 @@ def test_cloud_image_installs_pinned_railway_cli() -> None:
     ).read_text()
 
     assert "@railway/cli@4.12.0" in dockerfile
-    assert 'ln -sf "$NVBIN/railway" /usr/local/bin/railway' in dockerfile
+    assert "ln -sf /opt/zero-recovery-node/bin/railway /usr/local/bin/railway" in dockerfile
     assert "railway --version" in dockerfile
 
 

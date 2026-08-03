@@ -1,0 +1,73 @@
+{
+  "schema": "arnold.critique_ledger.finite_canary_operational_route.v1",
+  "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+  "base_route": {
+    "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/post-t1-5-fail-shortest-launch-route-luna.md",
+    "sha256": "abe9d64aeb0a35f81ec5fa72b804471a2b2307e34210b993163575a7090e2f47",
+    "scope": "historical shortest-route rationale, consumed only with every additional binding below"
+  },
+  "additional_bindings": {
+    "custody_contract": {
+      "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/custody-manifest.json",
+      "required_sections": [
+        "capacity_cut.prelaunch",
+        "isolation_receipt_contract",
+        "model_evidence_contract"
+      ]
+    },
+    "model_boundary": {
+      "trusted_runner_uid": 0,
+      "model_uid": 65532,
+      "model_gid": 65532,
+      "no_new_privileges": true,
+      "model_capability_sets": {
+        "effective": [],
+        "permitted": [],
+        "inheritable": [],
+        "ambient": [],
+        "bounding": []
+      },
+      "source_engine_state_auth_root_owned_nonwritable": true,
+      "fresh_phase_runtime": true,
+      "exact_precreated_same_inode_output_only": true,
+      "uid_processes_before_phase": 0,
+      "uid_processes_after_phase": 0
+    },
+    "host_and_container_isolation": {
+      "exact_host_bind_count": 1,
+      "host_bind_destination": "/workspace",
+      "host_bind_source": "fresh_never_reused_direct_child",
+      "host_bind_propagation": "rprivate",
+      "admitted_non_host_mounts": [
+        {
+          "type": "tmpfs",
+          "destination": "/run/megaplan-zero-recovery",
+          "size_bytes": 268435456,
+          "options": ["rw", "noexec", "nosuid", "nodev"]
+        }
+      ],
+      "forbidden": ["preserved_parent", "sibling_workspace", "shared_cache", "docker_socket", "persistent_volume"]
+    },
+    "resource_envelope": {
+      "container_pids_max": 256,
+      "container_memory_bytes": 4294967296,
+      "container_memory_swap_bytes": 4294967296,
+      "model_processes_max": 64,
+      "model_file_bytes_max": 67108864,
+      "core_bytes_max": 0,
+      "global_tmp_writable_by_model": false
+    },
+    "effects": {
+      "automatic_recovery": "DISABLED_FAIL_CLOSED",
+      "notifications": "DISABLED_FAIL_CLOSED",
+      "residents_watchdogs_timers": "ABSENT"
+    }
+  },
+  "model_evidence": {
+    "prelaunch_accepted_label": "codex_cli_turn_context",
+    "binds": ["exact_root_built_argv", "sealed_phase_local_rollout_digest", "phase", "dispatch_id", "source_commit", "source_tree"],
+    "does_not_claim": ["cryptographic_backend_identity", "provider_observed", "billing_model_identity"],
+    "provider_server_attestation": "DEFERRED_TO_F2"
+  },
+  "launch_rule": "Every binding is conjunctive and fail-closed; the base route alone has no launch authority."
+}

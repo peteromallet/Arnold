@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import stat
 import subprocess
 import warnings
 from dataclasses import dataclass, field
@@ -3026,9 +3027,14 @@ _FINITE_CANARY_ROLES = {
     "detached_reviewer_source",
     "dispatch_ledger",
     "phase_receipts_manifest",
+    "privilege_receipts_manifest",
     "plan_state",
     "gate_result",
     "cloud_spec",
+    "custody_manifest",
+    "unfinished_work_ledger",
+    "supersession_index",
+    "finite_canary_operational_route",
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_OBJECT_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -3168,6 +3174,209 @@ def _finite_canary_review_inputs_match(
     )
 
 
+def _finite_canary_repository_integrity_is_valid(
+    checkpoints: Any,
+    *,
+    source_commit: str,
+    source_tree: str,
+) -> bool:
+    expected_names = ["baseline"]
+    for phase in _FINITE_CANARY_PHASES:
+        expected_names.extend([f"pre:{phase}", f"post:{phase}"])
+    expected_names.append("final")
+    if not isinstance(checkpoints, list) or len(checkpoints) != len(expected_names):
+        return False
+    allowed_roots = (
+        "megaplan/initiatives/critique-ledger-safe-v3-canary/receipts/",
+        f"megaplan/plans/critique-ledger-cl2-planning-canary/",
+    )
+    admitted_source_digest: str | None = None
+    admitted_git_digest: str | None = None
+    for expected_name, checkpoint in zip(expected_names, checkpoints, strict=True):
+        if (
+            not isinstance(checkpoint, dict)
+            or set(checkpoint) != {
+                "schema", "checkpoint", "head", "tree", "tracked_clean",
+                "source_manifest_digest", "git_metadata_digest",
+                "runtime_delta", "runtime_delta_digest",
+            }
+            or checkpoint.get("schema")
+            != "arnold.megaplan.finite_canary_repository_integrity.v1"
+            or checkpoint.get("checkpoint") != expected_name
+            or checkpoint.get("head") != source_commit
+            or checkpoint.get("tree") != source_tree
+            or checkpoint.get("tracked_clean") is not True
+            or not isinstance(checkpoint.get("source_manifest_digest"), str)
+            or not _SHA256_RE.fullmatch(checkpoint["source_manifest_digest"])
+            or not isinstance(checkpoint.get("git_metadata_digest"), str)
+            or not _SHA256_RE.fullmatch(checkpoint["git_metadata_digest"])
+            or not isinstance(checkpoint.get("runtime_delta"), list)
+            or hashlib.sha256(
+                json.dumps(
+                    checkpoint.get("runtime_delta"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            != checkpoint.get("runtime_delta_digest")
+        ):
+            return False
+        if admitted_source_digest is None:
+            admitted_source_digest = checkpoint["source_manifest_digest"]
+            admitted_git_digest = checkpoint["git_metadata_digest"]
+        elif (
+            checkpoint["source_manifest_digest"] != admitted_source_digest
+            or checkpoint["git_metadata_digest"] != admitted_git_digest
+        ):
+            return False
+        for item in checkpoint["runtime_delta"]:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"path", "kind", "sha256"}
+                or item.get("kind") not in {"file", "symlink"}
+                or not isinstance(item.get("path"), str)
+                or not item["path"].startswith(".megaplan/")
+                or not item["path"][1:].startswith(allowed_roots)
+                or not isinstance(item.get("sha256"), str)
+                or not _SHA256_RE.fullmatch(item["sha256"])
+            ):
+                return False
+    return True
+
+
+def _finite_canary_privilege_receipt_is_valid(
+    payload: Any,
+    *,
+    phase: str,
+    plan_dir: Path,
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    fields = {
+        "schema", "status", "phase", "model_uid", "model_gid",
+        "uid_processes_before", "uid_processes_after", "privilege_observation",
+        "command_prefix", "environment_keys", "writable_roots", "global_scratch",
+        "limits", "output", "runtime", "recorded_at", "receipt_digest",
+    }
+    unsigned = dict(payload)
+    digest = unsigned.pop("receipt_digest", None)
+    output = payload.get("output")
+    runtime = payload.get("runtime")
+    privilege = payload.get("privilege_observation")
+    output_name = f".zero-recovery-{phase}-worker-output.json"
+    output_path = plan_dir / output_name
+    runtime_pattern = re.compile(
+        rf"/run/megaplan-zero-recovery/{re.escape(phase)}-[0-9a-f]{{32}}\Z"
+    )
+    expected_command_prefix = [
+        "/usr/bin/setpriv", "--reuid=65532", "--regid=65532",
+        "--clear-groups", "--no-new-privs", "--bounding-set=-all",
+        "--inh-caps=-all", "--ambient-caps=-all", "--",
+        "/usr/bin/prlimit", "--nproc=64", "--fsize=67108864",
+        "--core=0", "--",
+    ]
+    expected_env = sorted(
+        [
+            "LANG", "LC_ALL", "HOME", "CODEX_HOME", "TMPDIR",
+            "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "PATH", "USER", "LOGNAME",
+            "MEGAPLAN_TURN_ID", "PYTHONNOUSERSITE", "PYTHONDONTWRITEBYTECODE",
+            "GIT_CONFIG_NOSYSTEM",
+        ]
+    )
+    try:
+        output_stat = output_path.lstat()
+    except OSError:
+        return False
+    if not stat.S_ISREG(output_stat.st_mode) or output_stat.st_nlink != 1:
+        return False
+    return bool(
+        set(payload) == fields
+        and payload.get("schema")
+        == "arnold.megaplan.zero_recovery_privilege_receipt.v1"
+        and payload.get("status") == "sealed"
+        and payload.get("phase") == phase
+        and payload.get("model_uid") == 65532
+        and payload.get("model_gid") == 65532
+        and payload.get("uid_processes_before") == 0
+        and payload.get("uid_processes_after") == 0
+        and privilege
+        == {
+            "Uid": "65532\t65532\t65532\t65532",
+            "Gid": "65532\t65532\t65532\t65532",
+            "Groups": "",
+            "NoNewPrivs": "1",
+            "CapInh": "0000000000000000",
+            "CapPrm": "0000000000000000",
+            "CapEff": "0000000000000000",
+            "CapBnd": "0000000000000000",
+            "CapAmb": "0000000000000000",
+        }
+        and payload.get("command_prefix") == expected_command_prefix
+        and payload.get("environment_keys") == expected_env
+        and isinstance(runtime, dict)
+        and set(runtime)
+        == {
+            "path", "st_dev", "st_ino", "files", "bytes",
+            "sealed_uid", "sealed_gid", "mode",
+        }
+        and isinstance(runtime.get("path"), str)
+        and runtime_pattern.fullmatch(runtime["path"])
+        and payload.get("writable_roots") == [output_name, runtime["path"]]
+        and payload.get("global_scratch")
+        == {
+            "/tmp": "root_nonwritable",
+            "/var/tmp": "root_nonwritable",
+            "/dev/shm": "root_nonwritable",
+        }
+        and payload.get("limits")
+        == {
+            "nproc": 64,
+            "fsize_bytes": 67_108_864,
+            "runtime_max_files": 4096,
+            "runtime_max_bytes": 134_217_728,
+            "output_max_bytes": 16_777_216,
+        }
+        and isinstance(output, dict)
+        and set(output)
+        == {"path", "st_dev", "st_ino", "size", "sha256", "sealed_uid", "sealed_gid", "mode", "nlink"}
+        and output.get("path") == output_name
+        and output.get("sealed_uid") == 0
+        and output.get("sealed_gid") == 0
+        and output.get("mode") == "0600"
+        and output.get("nlink") == 1
+        and type(output.get("st_dev")) is int
+        and output["st_dev"] >= 0
+        and type(output.get("st_ino")) is int
+        and output["st_ino"] > 0
+        and type(output.get("size")) is int
+        and 0 <= output["size"] <= 16_777_216
+        and output.get("st_dev") == output_stat.st_dev
+        and output.get("st_ino") == output_stat.st_ino
+        and output.get("size") == output_stat.st_size
+        and output_stat.st_uid == 0
+        and output_stat.st_gid == 0
+        and stat.S_IMODE(output_stat.st_mode) == 0o600
+        and output.get("sha256") == _sha256_file(output_path)
+        and type(runtime.get("files")) is int
+        and 0 <= runtime["files"] <= 4096
+        and type(runtime.get("bytes")) is int
+        and 0 <= runtime["bytes"] <= 134_217_728
+        and type(runtime.get("st_dev")) is int
+        and runtime["st_dev"] >= 0
+        and type(runtime.get("st_ino")) is int
+        and runtime["st_ino"] > 0
+        and runtime.get("sealed_uid") == 0
+        and runtime.get("sealed_gid") == 0
+        and runtime.get("mode") == "0700"
+        and _parse_iso_datetime(payload.get("recorded_at")) is not None
+        and isinstance(digest, str)
+        and hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        == digest
+    )
+
+
 def _validate_finite_canary_receipt(
     precondition: LaunchPreconditionSpec,
     root: Path,
@@ -3189,6 +3398,7 @@ def _validate_finite_canary_receipt(
     required_fields = {
         "schema", "status", "phases", "terminal_state", "artifacts",
         "subject", "issued_at", "completed_at", "receipt_digest",
+        "not_consumed_operational_canary",
     }
     if not isinstance(payload, dict) or set(payload) != required_fields:
         raise CliError(
@@ -3213,6 +3423,7 @@ def _validate_finite_canary_receipt(
     cloud_fields = {
         "provider", "host", "port", "predecessor_container",
         "predecessor_container_id", "canary_container", "image_id", "workspace",
+        "predecessor_workspace", "workspace_bind_source",
     }
     issued = _parse_iso_datetime(payload.get("issued_at"))
     completed = _parse_iso_datetime(payload.get("completed_at"))
@@ -3249,6 +3460,18 @@ def _validate_finite_canary_receipt(
         raise CliError(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: finite canary subject, chronology, or digest is invalid",
+        )
+    predecessor_workspace = PurePosixPath(subject["cloud"]["predecessor_workspace"])
+    workspace_bind_source = PurePosixPath(subject["cloud"]["workspace_bind_source"])
+    if (
+        subject["cloud"]["workspace"] != "/workspace/Arnold"
+        or not predecessor_workspace.is_absolute()
+        or workspace_bind_source.parent != predecessor_workspace
+        or workspace_bind_source == predecessor_workspace
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: finite canary workspace isolation is invalid",
         )
     artifacts = payload.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
@@ -3315,6 +3538,97 @@ def _validate_finite_canary_receipt(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: finite canary artifact paths are duplicated",
         )
+    custody = _strict_json_document(
+        artifacts_by_role["custody_manifest"][0], label=label, spec_path=spec_path
+    )
+    operational_route = _strict_json_document(
+        artifacts_by_role["finite_canary_operational_route"][0],
+        label=label,
+        spec_path=spec_path,
+    )
+    supersession = _strict_json_document(
+        artifacts_by_role["supersession_index"][0], label=label, spec_path=spec_path
+    )
+    unfinished_path = artifacts_by_role["unfinished_work_ledger"][0]
+    try:
+        unfinished_text = unfinished_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: unfinished-work custody is unreadable",
+        ) from exc
+    custody_items = custody.get("items") if isinstance(custody, dict) else None
+    expected_not_consumed = (
+        [
+            {"id": item.get("id"), "disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"}
+            for item in custody_items
+            if isinstance(item, dict)
+        ]
+        if isinstance(custody_items, list)
+        else None
+    )
+    superseded = supersession.get("superseded") if isinstance(supersession, dict) else None
+    hard_fail_identities = (
+        {
+            (item.get("commit"), item.get("tree"))
+            for item in superseded
+            if isinstance(item, dict)
+            and item.get("status") == "HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY"
+        }
+        if isinstance(superseded, list)
+        else set()
+    )
+    if (
+        not isinstance(custody, dict)
+        or custody.get("schema")
+        != "arnold.critique_ledger.unfinished_work_custody.v1"
+        or not isinstance(custody_items, list)
+        or not custody_items
+        or len(expected_not_consumed or []) != len(custody_items)
+        or any(
+            not isinstance(item.get("id"), str) or not item.get("id")
+            for item in custody_items
+            if isinstance(item, dict)
+        )
+        or payload.get("not_consumed_operational_canary") != expected_not_consumed
+        or "Every item below is emitted as `NOT_CONSUMED_OPERATIONAL_CANARY`"
+        not in unfinished_text
+        or not isinstance(operational_route, dict)
+        or operational_route.get("schema")
+        != "arnold.critique_ledger.finite_canary_operational_route.v1"
+        or operational_route.get("profile")
+        != "ZERO_RECOVERY_NONROOT_FINITE_CANARY"
+        or operational_route.get("model_evidence", {}).get("prelaunch_accepted_label")
+        != "codex_cli_turn_context"
+        or operational_route.get("additional_bindings", {})
+        .get("custody_contract", {})
+        .get("path")
+        != artifacts_by_role["custody_manifest"][0].relative_to(root).as_posix()
+        or not isinstance(supersession, dict)
+        or supersession.get("schema")
+        != "arnold.critique_ledger.supersession_index.v1"
+        or supersession.get("current_operational_route", {}).get("path")
+        != artifacts_by_role["finite_canary_operational_route"][0]
+        .relative_to(root)
+        .as_posix()
+        or supersession.get("current_operational_route", {}).get("sha256")
+        != artifacts_by_role["finite_canary_operational_route"][1]
+        or hard_fail_identities
+        != {
+            (
+                "9642193a063d91a6be364f2d11a04b221eae30cf",
+                "27a3d61dff39a4c1a26a8a736dc85ce727c57b7c",
+            ),
+            (
+                "0c3d662024bc0497ed3979991a20b3b48ecf19cd",
+                "d4c10e167be87e1655704d1beeaf92d6c4e46526",
+            ),
+        }
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: stable-exit custody is incomplete or ambiguous",
+        )
     canary_spec_hash = artifacts_by_role["canary_spec"][1]
     if subject.get("canary_spec_sha256") != canary_spec_hash:
         raise CliError(
@@ -3364,6 +3678,10 @@ def _validate_finite_canary_receipt(
         or trace.get("launch_manifest_binding")
         != {"method": "derived_clean_head_at_admission"}
         or trace.get("fresh_workspace") != subject["cloud"].get("workspace")
+        or trace.get("predecessor_workspace")
+        != subject["cloud"].get("predecessor_workspace")
+        or trace.get("workspace_bind_source")
+        != subject["cloud"].get("workspace_bind_source")
         or trace.get("predecessor_container") != subject["cloud"].get("predecessor_container")
         or trace.get("canary_container") != subject["cloud"].get("canary_container")
     ):
@@ -3379,6 +3697,8 @@ def _validate_finite_canary_receipt(
         "source_tree", "canary_spec_sha256", "launch_manifest_sha256", "state_sha256", "gate_sha256", "receipt_digest",
         "dispatch_ledger_sha256", "dispatches", "dispatch_integrity", "import_root", "phase_commands",
         "phase_receipt_sha256", "phase_receipts_manifest_sha256",
+        "repository_integrity", "privilege_receipt_sha256",
+        "privilege_receipts_manifest_sha256",
     }
     run_unsigned = dict(run_payload) if isinstance(run_payload, dict) else {}
     run_digest = run_unsigned.pop("receipt_digest", None)
@@ -3412,10 +3732,21 @@ def _validate_finite_canary_receipt(
             artifacts_by_role["traceability"][0].relative_to(root).as_posix(): artifacts_by_role["traceability"][1],
         }
         or run_payload.get("dispatch_integrity") != "complete"
+        or not _finite_canary_repository_integrity_is_valid(
+            run_payload.get("repository_integrity"),
+            source_commit=str(subject.get("source_commit")),
+            source_tree=str(subject.get("source_tree")),
+        )
         or not isinstance(run_payload.get("dispatch_ledger_sha256"), str)
         or not _SHA256_RE.fullmatch(run_payload.get("dispatch_ledger_sha256"))
         or not isinstance(run_payload.get("dispatches"), list)
         or len(run_payload.get("dispatches")) != 8
+        or run_payload.get("privilege_receipt_sha256")
+        != [
+            run_payload["dispatches"][index].get("privilege_receipt_sha256")
+            for index in range(1, 8, 2)
+            if isinstance(run_payload["dispatches"][index], dict)
+        ]
         or [item.get("event") for item in run_payload.get("dispatches") if isinstance(item, dict)]
         != [value for _phase in _FINITE_CANARY_PHASES[1:] for value in ("start", "terminal")]
         or [item.get("phase") for item in run_payload.get("dispatches") if isinstance(item, dict)]
@@ -3437,7 +3768,29 @@ def _validate_finite_canary_receipt(
             or run_payload["dispatches"][index + 1].get("actual_agent") != "codex"
             or run_payload["dispatches"][index + 1].get("actual_model") != "gpt-5.6-sol"
             or run_payload["dispatches"][index + 1].get("model_evidence")
-            != "rollout_turn_context"
+            != "codex_cli_turn_context"
+            or run_payload["dispatches"][index + 1].get("privilege_receipt_path")
+            != f".zero-recovery-{run_payload['dispatches'][index + 1].get('phase')}-privilege-receipt.json"
+            or not isinstance(
+                run_payload["dispatches"][index + 1].get("privilege_receipt_sha256"),
+                str,
+            )
+            or not _SHA256_RE.fullmatch(
+                run_payload["dispatches"][index + 1]["privilege_receipt_sha256"]
+            )
+            or not isinstance(
+                run_payload["dispatches"][index + 1].get("rollout_path"), str
+            )
+            or not run_payload["dispatches"][index + 1]["rollout_path"].startswith("sessions/")
+            or ".." in PurePosixPath(
+                run_payload["dispatches"][index + 1]["rollout_path"]
+            ).parts
+            or not isinstance(
+                run_payload["dispatches"][index + 1].get("rollout_sha256"), str
+            )
+            or not _SHA256_RE.fullmatch(
+                run_payload["dispatches"][index + 1]["rollout_sha256"]
+            )
             or run_payload["dispatches"][index + 1].get("actual_effort") != "high"
             or run_payload["dispatches"][index + 1].get("result") != "returned"
             for index in range(0, 8, 2)
@@ -3478,6 +3831,8 @@ def _validate_finite_canary_receipt(
         != artifacts_by_role["dispatch_ledger"][1]
         or run_payload.get("phase_receipts_manifest_sha256")
         != artifacts_by_role["phase_receipts_manifest"][1]
+        or run_payload.get("privilege_receipts_manifest_sha256")
+        != artifacts_by_role["privilege_receipts_manifest"][1]
         or not isinstance(run_digest, str)
         or hashlib.sha256(json.dumps(run_unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() != run_digest
     ):
@@ -3523,16 +3878,99 @@ def _validate_finite_canary_receipt(
         if not phase_path.is_file() or _sha256_file(phase_path) != entry.get("sha256"):
             raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase receipt hash mismatch")
         phase_payload = _strict_json_document(phase_path, label=label, spec_path=spec_path)
+        expected_phase_fields = {
+            "schema", "phase", "status", "returncode", "state", "reason",
+            "argv", "state_sha256", "dispatch_ledger_sha256",
+            "privilege_receipt_sha256", "integrity_before", "integrity_after",
+            "completed_at",
+        }
+        expected_privilege_hash = (
+            None
+            if phase == "init"
+            else run_payload["privilege_receipt_sha256"][phase_index - 1]
+        )
         if (
             not isinstance(phase_payload, dict)
+            or set(phase_payload) != expected_phase_fields
             or phase_payload.get("schema") != "arnold.megaplan.finite_canary_phase_receipt.v2"
             or phase_payload.get("phase") != phase
             or phase_payload.get("status") != "passed"
             or phase_payload.get("returncode") != 0
             or phase_payload.get("state")
             != ["initialized", "planned", "critiqued", "gated", "finalized"][phase_index]
+            or phase_payload.get("integrity_before")
+            != run_payload["repository_integrity"][1 + phase_index * 2]
+            or phase_payload.get("integrity_after")
+            != run_payload["repository_integrity"][2 + phase_index * 2]
+            or phase_payload.get("privilege_receipt_sha256")
+            != expected_privilege_hash
+            or _parse_iso_datetime(phase_payload.get("completed_at")) is None
         ):
             raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase receipt semantics invalid")
+    privilege_manifest = _strict_json_document(
+        artifacts_by_role["privilege_receipts_manifest"][0],
+        label=label,
+        spec_path=spec_path,
+    )
+    privilege_entries = (
+        privilege_manifest.get("entries")
+        if isinstance(privilege_manifest, dict)
+        else None
+    )
+    expected_privilege_paths = [
+        f".megaplan/plans/critique-ledger-cl2-planning-canary/"
+        f".zero-recovery-{phase}-privilege-receipt.json"
+        for phase in _FINITE_CANARY_PHASES[1:]
+    ]
+    if (
+        not isinstance(privilege_manifest, dict)
+        or set(privilege_manifest) != {"schema", "entries"}
+        or privilege_manifest.get("schema")
+        != "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v1"
+        or not isinstance(privilege_entries, list)
+        or len(privilege_entries) != 4
+        or [entry.get("phase") for entry in privilege_entries if isinstance(entry, dict)]
+        != _FINITE_CANARY_PHASES[1:]
+        or [entry.get("path") for entry in privilege_entries if isinstance(entry, dict)]
+        != expected_privilege_paths
+        or [entry.get("sha256") for entry in privilege_entries if isinstance(entry, dict)]
+        != run_payload.get("privilege_receipt_sha256")
+    ):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: privilege receipt manifest is invalid",
+        )
+    for phase, expected_path, entry in zip(
+        _FINITE_CANARY_PHASES[1:],
+        expected_privilege_paths,
+        privilege_entries,
+        strict=True,
+    ):
+        if not isinstance(entry, dict) or set(entry) != {"phase", "path", "sha256"}:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: privilege receipt entry is ambiguous",
+            )
+        privilege_path = (root / expected_path).resolve()
+        _require_inside_root(privilege_path, root, label)
+        if (
+            not privilege_path.is_file()
+            or _sha256_file(privilege_path) != entry["sha256"]
+        ):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: privilege receipt hash mismatch",
+            )
+        privilege_payload = _strict_json_document(
+            privilege_path, label=label, spec_path=spec_path
+        )
+        if not _finite_canary_privilege_receipt_is_valid(
+            privilege_payload, phase=phase, plan_dir=privilege_path.parent
+        ):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: privilege receipt semantics invalid",
+            )
     state_payload = _strict_json_document(
         artifacts_by_role["plan_state"][0], label=label, spec_path=spec_path
     )
@@ -3587,7 +4025,7 @@ def _validate_finite_canary_receipt(
         or conformance.get("subject") != subject
         or conformance.get("run_receipt_sha256") != run_hash
         or conformance.get("checks")
-        != ["exact_phase_order", "single_dispatch_pairs", "terminal_finalized", "artifact_hashes", "zero_recovery_fence"]
+        != ["exact_phase_order", "single_dispatch_pairs", "terminal_finalized", "artifact_hashes", "zero_recovery_fence", "workspace_isolation"]
         or not _finite_canary_conformance_has_trust_evidence(conformance)
         or not _finite_canary_review_inputs_match(
             conformance, artifacts_by_role, root
@@ -3599,19 +4037,150 @@ def _validate_finite_canary_receipt(
         )
     terminal_path, _ = artifacts_by_role["v2_terminal_fence_receipt"]
     terminal = _strict_json_document(terminal_path, label=label, spec_path=spec_path)
+    expected_workspace_bind = {
+        "type": "bind",
+        "source": subject["cloud"].get("workspace_bind_source"),
+        "destination": "/workspace",
+        "rw": True,
+        "propagation": "rprivate",
+    }
+    expected_runtime_tmpfs = {
+        "/run/megaplan-zero-recovery":
+        "rw,noexec,nosuid,nodev,size=256m,mode=0711"
+    }
+    expected_mount_inventory = [
+        expected_workspace_bind,
+        {
+            "type": "tmpfs", "source": None,
+            "destination": "/run/megaplan-zero-recovery", "rw": True,
+            "options": "rw,noexec,nosuid,nodev,size=256m,mode=0711",
+        },
+    ]
+    workspace_creation = terminal.get("workspace_creation") if isinstance(terminal, dict) else None
+    initial_custody = workspace_creation.get("initial_custody") if isinstance(workspace_creation, dict) else None
+    runtime_access = workspace_creation.get("runtime_access") if isinstance(workspace_creation, dict) else None
+    terminal_workspace = terminal.get("terminal_workspace") if isinstance(terminal, dict) else None
+    terminal_transition = (
+        terminal_workspace.get("transition")
+        if isinstance(terminal_workspace, dict)
+        else None
+    )
     if (
         not isinstance(terminal, dict)
         or set(terminal)
         != {
             "schema", "status", "subject", "canary_lifecycle", "restart_policy",
             "host_units_masked", "forbidden_sessions", "forbidden_processes",
-            "predecessor_container_id", "completed_at",
+            "predecessor_container_id", "workspace_bind", "host_bind_count",
+            "runtime_tmpfs", "mount_inventory_sha256", "workspace_creation",
+            "terminal_workspace", "container_security",
+            "completed_at",
         }
         or terminal.get("schema") != "arnold.cloud.zero_recovery_terminal_fence.v1"
         or terminal.get("status") != "passed"
         or terminal.get("subject") != subject
         or terminal.get("canary_lifecycle") != "stopped"
         or terminal.get("restart_policy") != "no"
+        or terminal.get("workspace_bind") != expected_workspace_bind
+        or terminal.get("host_bind_count") != 1
+        or terminal.get("runtime_tmpfs") != expected_runtime_tmpfs
+        or terminal.get("mount_inventory_sha256")
+        != hashlib.sha256(
+            json.dumps(
+                expected_mount_inventory, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        or not isinstance(workspace_creation, dict)
+        or set(workspace_creation)
+        != {
+            "schema", "status", "parent", "parent_realpath", "bind_source",
+            "bind_source_realpath", "bind_destination", "initial_custody",
+            "runtime_access", "transition_digest", "created_empty", "never_reused",
+        }
+        or workspace_creation.get("schema")
+        != "arnold.cloud.zero_recovery_isolated_workspace.v1"
+        or workspace_creation.get("status") != "created"
+        or workspace_creation.get("parent")
+        != subject["cloud"].get("predecessor_workspace")
+        or workspace_creation.get("parent_realpath")
+        != subject["cloud"].get("predecessor_workspace")
+        or workspace_creation.get("bind_source")
+        != subject["cloud"].get("workspace_bind_source")
+        or workspace_creation.get("bind_source_realpath")
+        != subject["cloud"].get("workspace_bind_source")
+        or workspace_creation.get("bind_destination") != "/workspace"
+        or workspace_creation.get("created_empty") is not True
+        or workspace_creation.get("never_reused") is not True
+        or not isinstance(initial_custody, dict)
+        or set(initial_custody)
+        != {"mode", "uid", "gid", "st_dev", "st_ino", "empty"}
+        or initial_custody.get("mode") != "0700"
+        or initial_custody.get("uid") != 0
+        or initial_custody.get("gid") != 0
+        or initial_custody.get("empty") is not True
+        or not isinstance(runtime_access, dict)
+        or set(runtime_access) != {"mode", "uid", "gid", "st_dev", "st_ino"}
+        or runtime_access.get("mode") != "0750"
+        or runtime_access.get("uid") != 0
+        or runtime_access.get("gid") != 65532
+        or runtime_access.get("st_dev") != initial_custody.get("st_dev")
+        or runtime_access.get("st_ino") != initial_custody.get("st_ino")
+        or workspace_creation.get("transition_digest")
+        != hashlib.sha256(
+            json.dumps(
+                {"initial_custody": initial_custody, "runtime_access": runtime_access},
+                sort_keys=True, separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        or not isinstance(terminal_workspace, dict)
+        or set(terminal_workspace)
+        != {"schema", "status", "path", "access_transition_digest", "transition", "transition_digest"}
+        or terminal_workspace.get("schema")
+        != "arnold.cloud.zero_recovery_terminal_workspace.v1"
+        or terminal_workspace.get("status") != "sealed"
+        or terminal_workspace.get("path")
+        != subject["cloud"].get("workspace_bind_source")
+        or terminal_workspace.get("access_transition_digest")
+        != workspace_creation.get("transition_digest")
+        or not isinstance(terminal_transition, dict)
+        or set(terminal_transition) != {"before", "after"}
+        or not isinstance(terminal_transition.get("before"), dict)
+        or set(terminal_transition["before"])
+        != {"st_dev", "st_ino", "uid", "gid", "mode"}
+        or not isinstance(terminal_transition.get("after"), dict)
+        or set(terminal_transition["after"])
+        != {"st_dev", "st_ino", "uid", "gid", "mode"}
+        or terminal_transition.get("after")
+        != {
+            "st_dev": initial_custody.get("st_dev"),
+            "st_ino": initial_custody.get("st_ino"),
+            "uid": 0,
+            "gid": 0,
+            "mode": "0700",
+        }
+        or terminal_transition.get("before", {}).get("st_dev")
+        != initial_custody.get("st_dev")
+        or terminal_transition.get("before", {}).get("st_ino")
+        != initial_custody.get("st_ino")
+        or terminal_workspace.get("transition_digest")
+        != hashlib.sha256(
+            json.dumps(
+                terminal_transition, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        or terminal.get("container_security")
+        != {
+            "cap_drop": ["ALL"],
+            "cap_add": [
+                "CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"
+            ],
+            "security_opt": ["no-new-privileges:true"],
+            "ipc_mode": "none",
+            "pids_limit": 256,
+            "memory_limit": 4_294_967_296,
+            "memory_swap": 4_294_967_296,
+            "port_bindings": {},
+        }
         or terminal.get("host_units_masked") is not True
         or terminal.get("forbidden_sessions") != []
         or terminal.get("forbidden_processes") != []
@@ -3651,7 +4220,11 @@ def _validate_finite_canary_receipt(
         }
         or predeploy.get("schema") != "arnold.cloud.zero_recovery_predeploy.v1"
         or predeploy.get("target", {}).get("host") != subject["cloud"].get("host")
-        or predeploy.get("target", {}).get("workspace") != subject["cloud"].get("workspace")
+        or predeploy.get("target", {}).get("workspace")
+        != subject["cloud"].get("predecessor_workspace")
+        or predeploy.get("target", {}).get("canary_workspace")
+        != subject["cloud"].get("workspace_bind_source")
+        or predeploy.get("target", {}).get("container_workspace") != "/workspace"
         or predeploy.get("target", {}).get("container") != subject["cloud"].get("predecessor_container")
         or predeploy.get("target", {}).get("canary_container") != subject["cloud"].get("canary_container")
         or predeploy.get("capacity_observation", {}).get("verdict") != "GO"

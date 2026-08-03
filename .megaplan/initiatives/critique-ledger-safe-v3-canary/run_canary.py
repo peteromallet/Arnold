@@ -77,6 +77,82 @@ def git_object(root: Path, expression: str) -> str:
     return value
 
 
+def repository_integrity(
+    root: Path,
+    *,
+    source_commit: str,
+    source_tree: str,
+    checkpoint: str,
+) -> dict[str, Any]:
+    """Prove admitted Git identity and allow only exact canary runtime outputs."""
+    head = git_object(root, "HEAD")
+    tree = git_object(root, "HEAD^{tree}")
+    if head != source_commit or tree != source_tree:
+        raise RuntimeError(f"repository identity drift at {checkpoint}")
+    git_env = {"PATH": os.environ.get("PATH", "")}
+    for argv in (
+        ["git", "diff", "--quiet", "HEAD", "--"],
+        ["git", "diff", "--cached", "--quiet", "HEAD", "--"],
+    ):
+        result = subprocess.run(argv, cwd=root, env=git_env, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"tracked or index mutation at {checkpoint}")
+    allowed_roots = (
+        f".megaplan/plans/{PLAN_NAME}",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
+    )
+    runtime_delta: list[dict[str, Any]] = []
+    untracked: set[str] = set()
+    for argv in (
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+    ):
+        result = subprocess.run(
+            argv, cwd=root, env=git_env, capture_output=True, check=True
+        )
+        for raw_path in result.stdout.split(b"\0"):
+            if not raw_path:
+                continue
+            relative = raw_path.decode("utf-8", errors="strict")
+            normalized = Path(relative)
+            if (
+                normalized.is_absolute()
+                or ".." in normalized.parts
+                or normalized.as_posix() != relative
+            ):
+                raise RuntimeError(f"invalid Git runtime path at {checkpoint}")
+            untracked.add(relative)
+    for relative in sorted(untracked):
+        if not any(
+            relative == allowed or relative.startswith(allowed + "/")
+            for allowed in allowed_roots
+        ):
+            raise RuntimeError(f"forbidden untracked path at {checkpoint}: {relative}")
+        candidate = root / relative
+        if candidate.is_symlink():
+            identity = hashlib.sha256(os.readlink(candidate).encode()).hexdigest()
+            kind = "symlink"
+        elif candidate.is_file():
+            identity = sha(candidate)
+            kind = "file"
+        else:
+            raise RuntimeError(f"unsupported runtime path at {checkpoint}: {relative}")
+        runtime_delta.append({"path": relative, "kind": kind, "sha256": identity})
+    runtime_delta.sort(key=lambda item: str(item["path"]))
+    unsigned: dict[str, Any] = {
+        "schema": "arnold.megaplan.finite_canary_repository_integrity.v1",
+        "checkpoint": checkpoint,
+        "head": head,
+        "tree": tree,
+        "tracked_clean": True,
+        "runtime_delta": runtime_delta,
+    }
+    unsigned["runtime_delta_digest"] = hashlib.sha256(
+        canonical(runtime_delta)
+    ).hexdigest()
+    return unsigned
+
+
 def read_dispatch_records(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
@@ -121,7 +197,18 @@ def read_dispatch_ledger(path: Path, expected: tuple[str, ...]) -> list[dict[str
             or terminal.get("actual_agent") != "codex"
             or start.get("selected_model") != "gpt-5.6-sol"
             or terminal.get("actual_model") != "gpt-5.6-sol"
-            or terminal.get("model_evidence") != "rollout_turn_context"
+            or terminal.get("model_evidence") != "codex_cli_turn_context"
+            or terminal.get("privilege_receipt_path")
+            != f".zero-recovery-{phase}-privilege-receipt.json"
+            or not isinstance(terminal.get("privilege_receipt_sha256"), str)
+            or len(terminal["privilege_receipt_sha256"]) != 64
+            or sha(path.parent / terminal["privilege_receipt_path"])
+            != terminal["privilege_receipt_sha256"]
+            or not isinstance(terminal.get("rollout_path"), str)
+            or not terminal["rollout_path"].startswith("sessions/")
+            or ".." in Path(terminal["rollout_path"]).parts
+            or not isinstance(terminal.get("rollout_sha256"), str)
+            or len(terminal["rollout_sha256"]) != 64
             or start.get("selected_effort") != "high"
             or start.get("model_cli_argv") != ["-c", "model='gpt-5.6-sol'"]
             or terminal.get("actual_effort") != "high"
@@ -146,7 +233,19 @@ def phase_receipt(
     argv: list[str],
     state_path: Path,
     ledger_path: Path,
+    integrity_before: dict[str, Any] | None,
+    integrity_after: dict[str, Any] | None,
 ) -> None:
+    phase_terminals = [
+        record
+        for record in read_dispatch_records(ledger_path)
+        if record.get("event") == "terminal" and record.get("phase") == phase
+    ]
+    privilege_receipt_sha256 = (
+        phase_terminals[0].get("privilege_receipt_sha256")
+        if len(phase_terminals) == 1
+        else None
+    )
     payload: dict[str, object] = {
         "schema": "arnold.megaplan.finite_canary_phase_receipt.v2",
         "phase": phase,
@@ -157,6 +256,9 @@ def phase_receipt(
         "argv": argv,
         "state_sha256": sha(state_path) if state_path.is_file() else None,
         "dispatch_ledger_sha256": sha(ledger_path) if ledger_path.is_file() else None,
+        "privilege_receipt_sha256": privilege_receipt_sha256,
+        "integrity_before": integrity_before,
+        "integrity_after": integrity_after,
         "completed_at": now(),
     }
     write_once(receipt_dir / f"{index:02d}-{phase}.phase-receipt.json", payload)
@@ -181,17 +283,68 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         "MEGAPLAN_ZERO_RECOVERY_CANARY": "1",
         "MEGAPLAN_TRUSTED_CONTAINER": "1",
         "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
         "HOME": "/root",
         "PYTHONPATH": str(root),
     })
-    import arnold_pipelines.megaplan as megaplan
-    import_root = Path(megaplan.__file__).resolve()
-    if root not in import_root.parents:
-        raise RuntimeError("megaplan import escaped admitted checkout")
     source_commit = git_object(root, "HEAD")
     source_tree = git_object(root, "HEAD^{tree}")
     if source_commit != os.environ.get("ZERO_RECOVERY_SOURCE_COMMIT") or source_tree != os.environ.get("ZERO_RECOVERY_SOURCE_TREE"):
         raise RuntimeError("runner source identity differs from host admission")
+    # This is the sole Git-backed admission check. No Git command is trusted
+    # after a child process has run.
+    repository_integrity(
+        root,
+        source_commit=source_commit,
+        source_tree=source_tree,
+        checkpoint="pre-import-admission",
+    )
+    import arnold_pipelines.megaplan as megaplan
+    from arnold_pipelines.megaplan.workers._impl import (
+        _assert_zero_recovery_source_unchanged,
+        _zero_recovery_source_identity,
+    )
+    import_root = Path(megaplan.__file__).resolve()
+    if root not in import_root.parents:
+        raise RuntimeError("megaplan import escaped admitted checkout")
+    source_manifest = _zero_recovery_source_identity(root, plan_dir)
+    if source_manifest is None:
+        raise RuntimeError("direct source manifest was not enabled")
+
+    def direct_integrity(checkpoint: str) -> dict[str, Any]:
+        observed = _assert_zero_recovery_source_unchanged(
+            root, plan_dir, source_manifest
+        )
+        if observed is None:
+            raise RuntimeError("direct source verification was not enabled")
+        runtime_delta = [
+            {
+                "path": item["path"],
+                "kind": item["kind"],
+                "sha256": item["sha256"],
+            }
+            for item in observed["runtime_delta"]
+        ]
+        unsigned: dict[str, Any] = {
+            "schema": "arnold.megaplan.finite_canary_repository_integrity.v1",
+            "checkpoint": checkpoint,
+            "head": source_commit,
+            "tree": source_tree,
+            "tracked_clean": True,
+            "source_manifest_digest": hashlib.sha256(
+                canonical(source_manifest["tracked"])
+            ).hexdigest(),
+            "git_metadata_digest": hashlib.sha256(
+                canonical(source_manifest["git_metadata"])
+            ).hexdigest(),
+            "runtime_delta": runtime_delta,
+        }
+        unsigned["runtime_delta_digest"] = hashlib.sha256(
+            canonical(runtime_delta)
+        ).hexdigest()
+        return unsigned
+
+    integrity_checkpoints = [direct_integrity("baseline")]
     manifest_paths = (
         ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml",
         ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml",
@@ -233,15 +386,27 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
     status = "passed"
     ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
     for index, (phase, expected_state, argv) in enumerate(zip(PHASES, STATES, commands, strict=True)):
+        integrity_before = direct_integrity(f"pre:{phase}")
+        integrity_checkpoints.append(integrity_before)
         write_once(receipt_dir / f"{index:02d}-{phase}.started.json", {
             "schema": "arnold.megaplan.finite_canary_phase_checkpoint.v1",
-            "phase": phase, "argv": argv, "started_at": now(), "import_root": str(import_root),
+            "phase": phase, "argv": argv, "started_at": now(),
+            "import_root": str(import_root),
+            "repository_integrity": integrity_before,
         })
+        integrity_after: dict[str, Any] | None = None
         try:
-            completed = subprocess.run(
-                argv, cwd=root, env=child_env, text=True, capture_output=True,
-                check=False, timeout=3600,
-            )
+            try:
+                completed = subprocess.run(
+                    argv, cwd=root, env=child_env, text=True, capture_output=True,
+                    check=False, timeout=3600,
+                )
+            finally:
+                # This executes on success, nonzero exit, timeout, and signal.
+                # Do not parse child output before checkout identity and the
+                # complete runtime delta have been re-established.
+                integrity_after = direct_integrity(f"post:{phase}")
+                integrity_checkpoints.append(integrity_after)
             returncode = completed.returncode
             if completed.returncode != 0:
                 raise RuntimeError(f"nonzero_returncode:{returncode}")
@@ -256,7 +421,9 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             results.append({"phase": phase, "returncode": 0, "state": current_state})
             phase_receipt(receipt_dir, index, phase, status="passed", returncode=0,
                           state=str(current_state), reason=None, argv=argv,
-                          state_path=state_path, ledger_path=ledger_path)
+                          state_path=state_path, ledger_path=ledger_path,
+                          integrity_before=integrity_before,
+                          integrity_after=integrity_after)
         except subprocess.TimeoutExpired:
             returncode = 124
             reason = "timeout"
@@ -277,7 +444,10 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         results.append({"phase": phase, "returncode": returncode, "state": current_state})
         phase_receipt(receipt_dir, index, phase, status="failed", returncode=returncode,
                       state=str(current_state) if current_state is not None else None,
-                      reason=reason, argv=argv, state_path=state_path, ledger_path=ledger_path)
+                      reason=reason, argv=argv, state_path=state_path,
+                      ledger_path=ledger_path,
+                      integrity_before=integrity_before,
+                      integrity_after=integrity_after)
         break
 
     state_path = plan_dir / "state.json"
@@ -311,6 +481,24 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
     }
     phase_manifest_path = receipt_dir / "phase-receipts-manifest.json"
     write_once(phase_manifest_path, phase_manifest)
+    privilege_entries = [
+        {
+            "phase": record["phase"],
+            "path": str(
+                (plan_dir / record["privilege_receipt_path"]).relative_to(root)
+            ),
+            "sha256": record["privilege_receipt_sha256"],
+        }
+        for record in ledger_records
+        if record.get("event") == "terminal"
+    ]
+    privilege_manifest_path = receipt_dir / "privilege-receipts-manifest.json"
+    write_once(privilege_manifest_path, {
+        "schema": "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v1",
+        "entries": privilege_entries,
+    })
+    final_integrity = direct_integrity("final")
+    integrity_checkpoints.append(final_integrity)
     unsigned: dict[str, object] = {
         "schema": "arnold.megaplan.finite_canary_run_receipt.v2",
         "status": status,
@@ -335,6 +523,13 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         "phase_commands": commands,
         "phase_receipts_manifest_sha256": sha(phase_manifest_path),
         "phase_receipt_sha256": [entry["sha256"] for entry in phase_receipt_entries],
+        "privilege_receipt_sha256": [
+            record["privilege_receipt_sha256"]
+            for record in ledger_records
+            if record.get("event") == "terminal"
+        ],
+        "privilege_receipts_manifest_sha256": sha(privilege_manifest_path),
+        "repository_integrity": integrity_checkpoints,
     }
     return (0 if status == "passed" else 1), unsigned
 
@@ -392,6 +587,9 @@ def main() -> int:
             "phase_commands": context.get("phase_commands", []),
             "phase_receipts_manifest_sha256": None,
             "phase_receipt_sha256": [],
+            "privilege_receipt_sha256": [],
+            "privilege_receipts_manifest_sha256": None,
+            "repository_integrity": [],
         }
     unsigned["receipt_digest"] = hashlib.sha256(canonical(unsigned)).hexdigest()
     destination = receipt_dir / f"{unsigned['receipt_digest']}.run-receipt.json"
