@@ -20,6 +20,7 @@ from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from arnold_pipelines.megaplan.prompts import create_hermes_prompt
 from arnold_pipelines.megaplan.prompts._projection import check_prompt_size
 from arnold_pipelines.megaplan.workers._impl import (
+    STEP_CAPTURE_SCHEMA_FILENAMES,
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _check_mock_safe,
@@ -1858,13 +1859,13 @@ def run_hermes_step(
 
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
-    from arnold_pipelines.megaplan.schemas import get_execution_schema_key
+    from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
     schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
         if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, STEP_SCHEMA_FILENAMES[step])
     )
-    schema = read_json(schemas_root(root) / schema_name)
+    schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     normalized_worker_options = _normalize_worker_options(worker_options)
     from arnold_pipelines.megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)

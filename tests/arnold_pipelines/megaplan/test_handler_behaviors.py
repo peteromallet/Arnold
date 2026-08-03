@@ -366,6 +366,31 @@ class TestCritiqueScratchPromotion:
         assert status == "unmodified"
         assert payload == {"checks": [{"id": "c1"}], "flags": []}
 
+    def test_inline_worker_never_implicitly_adopts_valid_scratch(self, tmp_path: Path) -> None:
+        scratch = tmp_path / "critique_output.json"
+        scratch.write_text(
+            json.dumps({"checks": [{"id": "stale"}], "flags": []}),
+            encoding="utf-8",
+        )
+        worker = WorkerResult(
+            payload={"checks": [{"id": "receipted"}], "flags": []},
+            raw_output="",
+            duration_ms=0,
+            cost_usd=0.0,
+        )
+
+        status, payload = promote_scratch(
+            tmp_path,
+            "critique_output.json",
+            frozenset({"checks", "flags"}),
+            worker,
+            seed_json="{}",
+            file_fill_instructed=False,
+        )
+
+        assert status == "unmodified"
+        assert payload == worker.payload
+
 
 class TestGateOutcomeSemantics:
     def test_build_gate_route_signal_proceed_when_passed(self, tmp_path: Path) -> None:

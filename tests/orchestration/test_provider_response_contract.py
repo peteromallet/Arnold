@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from copy import deepcopy
 
 import pytest
 
 from arnold.execution.step_invocation import StepInvocation
-from arnold_pipelines.megaplan.model_seam import capture_step_output
+from arnold_pipelines.megaplan.model_seam import (
+    LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
+    capture_step_output,
+)
 from arnold.pipeline.model_seam import ModelStructuralAuditError
 from arnold_pipelines.megaplan.provider_response import (
     ProviderResponseContractError,
@@ -20,6 +25,13 @@ from arnold_pipelines.megaplan.workers._impl import (
     _codex_provider_contract_error,
     _codex_response_schema_args,
     _is_codex_provider_schema_rejection,
+    _local_response_contract_error,
+    _prepare_local_strict_artifact_handoff,
+)
+from arnold_pipelines.megaplan.auto import _is_retryable_external_error
+from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
+from arnold_pipelines.megaplan.orchestration.phase_result_classify import (
+    classify_external_error_payload,
 )
 
 
@@ -407,6 +419,180 @@ def test_local_strict_capture_rejects_schema_attestation_substitution(tmp_path) 
             invocation,
             '{"spec_updates":{},"next_action":"continue","reasoning":"ok"}',
         )
+
+
+def _artifact_handoff_invocation(tmp_path, candidate, *, max_bytes=1024 * 1024):
+    schema = strict_schema(deepcopy(SCHEMAS["loop_plan.json"]))
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="loop_plan"
+    )
+    return StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "validation_step": "loop_plan",
+            "compatibility_validation_step": "loop_plan",
+            "schema": schema,
+            "capture_schema": SCHEMAS["loop_plan.json"],
+            "response_enforcement_attestation": compiled.attestation.to_json(),
+            "capture_recovery": {
+                "artifact_handoff": {
+                    "schema": LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
+                    "root": str(candidate.parent),
+                    "candidate_path": str(candidate),
+                    "max_bytes": max_bytes,
+                }
+            },
+        },
+    )
+
+
+def _artifact_receipt(candidate, data: bytes) -> str:
+    return json.dumps(
+        {
+            "schema": LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
+            "path": str(candidate),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+        }
+    )
+
+
+def test_local_strict_artifact_handoff_round_trip_is_exact_and_schema_audited(tmp_path) -> None:
+    root = tmp_path / "handoff"
+    root.mkdir()
+    candidate = root / "unique.candidate.json"
+    payload = {
+        "spec_updates": {"large": "x" * 50_000},
+        "next_action": "continue",
+        "reasoning": "durable handoff",
+    }
+    data = json.dumps(payload, separators=(",", ":")).encode()
+    temporary = root / "write.tmp"
+    temporary.write_bytes(data)
+    os.replace(temporary, candidate)
+
+    captured = capture_step_output(
+        _artifact_handoff_invocation(tmp_path, candidate),
+        _artifact_receipt(candidate, data),
+    )
+
+    assert captured.legacy_payload == payload
+    assert "codex_capture:artifact_handoff" in captured.contract_result.provenance.sources
+
+
+@pytest.mark.parametrize("mutation", ["path", "digest", "size", "extra"])
+def test_local_strict_artifact_handoff_rejects_unbound_receipts(tmp_path, mutation) -> None:
+    root = tmp_path / "handoff"
+    root.mkdir()
+    candidate = root / "unique.candidate.json"
+    data = b'{"spec_updates":{},"next_action":"continue","reasoning":"ok"}'
+    candidate.write_bytes(data)
+    receipt = json.loads(_artifact_receipt(candidate, data))
+    if mutation == "path":
+        other = root / "stale.candidate.json"
+        other.write_bytes(data)
+        receipt["path"] = str(other)
+    elif mutation == "digest":
+        receipt["sha256"] = "0" * 64
+    elif mutation == "size":
+        receipt["bytes"] += 1
+    else:
+        receipt["nonce"] = "not-in-contract"
+
+    with pytest.raises(ModelStructuralAuditError):
+        capture_step_output(
+            _artifact_handoff_invocation(tmp_path, candidate),
+            json.dumps(receipt),
+        )
+
+
+def test_local_strict_artifact_handoff_rejects_symlink_and_path_escape(tmp_path) -> None:
+    outside = tmp_path / "outside.json"
+    data = b'{"spec_updates":{},"next_action":"continue","reasoning":"ok"}'
+    outside.write_bytes(data)
+    root = tmp_path / "handoff"
+    root.mkdir()
+    candidate = root / "unique.candidate.json"
+    candidate.symlink_to(outside)
+
+    with pytest.raises(ModelStructuralAuditError, match="non-symlink regular file"):
+        capture_step_output(
+            _artifact_handoff_invocation(tmp_path, candidate),
+            _artifact_receipt(candidate, data),
+        )
+
+    escaped = tmp_path / "escape.candidate.json"
+    escaped.write_bytes(data)
+    invocation = _artifact_handoff_invocation(tmp_path, escaped)
+    invocation.metadata["capture_recovery"]["artifact_handoff"]["root"] = str(root)
+    with pytest.raises(ModelStructuralAuditError, match="escapes"):
+        capture_step_output(invocation, _artifact_receipt(escaped, data))
+
+
+def test_local_strict_artifact_handoff_rejects_oversize_and_invalid_payload(tmp_path) -> None:
+    root = tmp_path / "handoff"
+    root.mkdir()
+    oversized = root / "large.candidate.json"
+    oversized_data = b'{' + b' ' * 64 + b'}'
+    oversized.write_bytes(oversized_data)
+    with pytest.raises(ModelStructuralAuditError, match="size limit"):
+        capture_step_output(
+            _artifact_handoff_invocation(tmp_path, oversized, max_bytes=16),
+            _artifact_receipt(oversized, oversized_data),
+        )
+
+    invalid = root / "invalid.candidate.json"
+    invalid_data = b'{"spec_updates":{},"next_action":"continue"}'
+    invalid.write_bytes(invalid_data)
+    with pytest.raises(ModelStructuralAuditError):
+        capture_step_output(
+            _artifact_handoff_invocation(tmp_path, invalid),
+            _artifact_receipt(invalid, invalid_data),
+        )
+
+
+def test_local_strict_handoff_paths_are_unique_and_replay_bound(tmp_path) -> None:
+    first = _prepare_local_strict_artifact_handoff(tmp_path, step="finalize")
+    second = _prepare_local_strict_artifact_handoff(tmp_path, step="finalize")
+    assert first["candidate_path"] != second["candidate_path"]
+    assert "local-strict-artifacts" in first["candidate_path"]
+    assert not first["candidate_path"].endswith("finalize_output.json")
+
+    first_path = first["candidate_path"]
+    data = b'{"spec_updates":{},"next_action":"continue","reasoning":"ok"}'
+    first_candidate = __import__("pathlib").Path(first_path)
+    first_candidate.write_bytes(data)
+    second_candidate = __import__("pathlib").Path(second["candidate_path"])
+    with pytest.raises(ModelStructuralAuditError, match="does not match"):
+        capture_step_output(
+            _artifact_handoff_invocation(tmp_path, second_candidate),
+            _artifact_receipt(first_candidate, data),
+        )
+
+
+def test_local_response_contract_exhaustion_is_nonretryable_and_bounded() -> None:
+    schema = strict_schema(deepcopy(SCHEMAS["loop_plan.json"]))
+    error = _local_response_contract_error(
+        step="loop_plan", schema=schema, reason="bad receipt", raw="{}"
+    )
+    budget = error.extra["local_response_contract"]
+    external = error.extra["_external_error"]
+    assert budget == {
+        "attempts": 2,
+        "repairs": 1,
+        "max_attempts": 2,
+        "exhausted": True,
+        "occurrence_id": budget["occurrence_id"],
+        "failure_fingerprint": budget["failure_fingerprint"],
+    }
+    assert external["nonretryable"] is True
+    assert external["failure_fingerprint"] == budget["failure_fingerprint"]
+    classified = classify_external_error_payload(error)
+    assert classified is not None
+    assert not _is_retryable_external_error(
+        "finalize", ExternalError.from_dict(classified)
+    )
 
 
 def test_unexpected_backend_schema_rejection_is_typed_and_stable() -> None:

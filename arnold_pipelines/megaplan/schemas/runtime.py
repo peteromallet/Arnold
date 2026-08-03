@@ -1308,6 +1308,31 @@ def _build_finalize_capture_schema() -> dict[str, Any]:
     return schema
 
 
+def _build_finalize_model_output_schema() -> dict[str, Any]:
+    """Return the model-owned contract with explicit unconstrained array items."""
+
+    schema = deepcopy(FINALIZE_MODEL_OUTPUT_SCHEMA)
+
+    def _complete_arrays(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "array":
+                node.setdefault("items", {})
+            for value in node.values():
+                _complete_arrays(value)
+        elif isinstance(node, list):
+            for value in node:
+                _complete_arrays(value)
+
+    _complete_arrays(schema)
+    return schema
+
+
+# The model-response boundary and the persisted finalize artifact are
+# deliberately distinct.  ``finalize_model_output.json`` is the exact object
+# a worker may author; ``finalize_capture.json`` remains the richer historical
+# projection used by compatibility/export consumers.  The handler alone adds
+# execution evidence before publishing ``finalize.json``.
+SCHEMAS["finalize_model_output.json"] = _build_finalize_model_output_schema()
 SCHEMAS["finalize_capture.json"] = _build_finalize_capture_schema()
 
 

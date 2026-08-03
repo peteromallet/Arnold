@@ -8,7 +8,8 @@ permissive schema changes.
 Decision records (SD1–SD3 from the plan):
   SD1: TemplateRegistration is separate from StepContract.
   SD2: File-fill applies only to Hermes/file-tool workers.
-  SD3: Missing/unmodified scratch → fallback to worker.payload;
+  SD3: Non-file-fill workers never inspect or adopt scratch. For instructed
+       file-fill workers, missing/unmodified scratch → worker.payload;
        modified+invalid scratch → hard fail *only* when the worker was
        instructed to fill the file.
 """
@@ -151,7 +152,7 @@ def promote_scratch(
         file_fill_instructed: Whether the worker was instructed to fill
             the scratch file.  When ``True``, a modified-but-invalid scratch
             file is a hard failure (raises :class:`ValueError`).  When
-            ``False``, falls back to ``worker.payload``.
+            ``False``, the scratch is not read and ``worker.payload`` is used.
         phase_identity: Optional phase identity (e.g. ``"finalize"``).
             When supplied, ``batch_assembly`` phases are rejected with a
             :class:`ValueError` before any file I/O.  ``markdown_exempt``
@@ -179,6 +180,19 @@ def promote_scratch(
         scratch_filename,
         file_fill_instructed,
     )
+
+    # Inline-output workers (Codex/Shannon) never receive authority to fill a
+    # scratch path.  Do not even inspect a pre-existing or model-written file:
+    # adopting it would be an implicit arbitrary in-place handoff outside the
+    # response contract.  ``unmodified`` preserves the established evidence
+    # vocabulary while accurately expressing that no authorized file-fill was
+    # eligible for promotion.
+    if not file_fill_instructed:
+        LOGGER.debug(
+            "promote_scratch: file fill was not instructed; ignoring scratch and "
+            "using worker.payload"
+        )
+        return "unmodified", worker.payload
 
     status, parsed = classify_scratch(plan_dir, scratch_filename, seed_json=seed_json)
 
