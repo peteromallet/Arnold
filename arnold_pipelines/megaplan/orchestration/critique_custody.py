@@ -31,6 +31,9 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.flags import synthesize_critique_flags
 from arnold_pipelines.megaplan.orchestration.task_feasibility import task_contract_hash
 from arnold_pipelines.megaplan.types import PlanState
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
+    query_worker_dispatch_manifest,
+)
 
 
 CUSTODY_SCHEMA_VERSION = "megaplan-critique-custody-v2"
@@ -122,6 +125,118 @@ def _producer_binding_issues(binding: object) -> list[str]:
             issues.append("filled file transport has invalid scratch byte count")
     if not isinstance(binding.get("output_path_attested"), bool):
         issues.append("producer output_path_attested must be boolean")
+    if transport == "parallel_reduce":
+        if not isinstance(binding.get("phase_attempt_id"), str) or not binding.get(
+            "phase_attempt_id"
+        ):
+            issues.append("parallel producer phase_attempt_id is missing")
+        manifest_artifact = binding.get("child_manifest_artifact")
+        if (
+            not isinstance(manifest_artifact, str)
+            or Path(manifest_artifact).name != manifest_artifact
+            or re.fullmatch(r"critique_parallel_manifest_v\d+\.json", manifest_artifact)
+            is None
+        ):
+            issues.append("parallel producer child manifest artifact is invalid")
+        for field in ("child_manifest_sha256", "child_manifest_digest"):
+            value = binding.get(field)
+            if not isinstance(value, str) or re.fullmatch(
+                r"(?:sha256:)?[0-9a-f]{64}", value
+            ) is None:
+                issues.append(f"parallel producer {field} is invalid")
+    return issues
+
+
+def _parallel_producer_binding_issues(
+    plan_dir: Path,
+    binding: Mapping[str, Any],
+) -> list[str]:
+    if binding.get("transport") != "parallel_reduce":
+        return []
+    issues: list[str] = []
+    name = binding.get("child_manifest_artifact")
+    if not isinstance(name, str) or Path(name).name != name:
+        return ["parallel child manifest reference is unsafe"]
+    path = plan_dir / name
+    if path.is_symlink() or not path.is_file():
+        return [f"parallel child manifest is missing or unsafe: {name}"]
+    if binding.get("child_manifest_sha256") != sha256_file(path):
+        issues.append("parallel child manifest artifact hash mismatch")
+    manifest = read_json(path)
+    unsigned = dict(manifest)
+    stored_digest = unsigned.pop("manifest_digest", None)
+    if stored_digest != _digest(unsigned):
+        issues.append("parallel child manifest content digest mismatch")
+    if binding.get("child_manifest_digest") != stored_digest:
+        issues.append("parallel producer does not bind the child manifest digest")
+    if manifest.get("invocation_id") != binding.get("invocation_id"):
+        issues.append("parallel child manifest invocation mismatch")
+    if manifest.get("phase_attempt_id") != binding.get("phase_attempt_id"):
+        issues.append("parallel child manifest phase attempt mismatch")
+    expected = manifest.get("expected_check_ids")
+    artifacts = manifest.get("producer_artifacts")
+    dispatches = manifest.get("dispatches")
+    if not isinstance(expected, list) or any(
+        not isinstance(item, str) or not item for item in expected
+    ) or len(set(expected)) != len(expected):
+        issues.append("parallel child manifest expected checks are invalid")
+        expected = []
+    if not isinstance(artifacts, list):
+        issues.append("parallel child manifest producer artifacts are missing")
+        artifacts = []
+    artifact_ids: list[str] = []
+    for row in artifacts:
+        if not isinstance(row, Mapping):
+            issues.append("parallel producer artifact row is malformed")
+            continue
+        check_id = row.get("check_id")
+        artifact = row.get("producer_artifact")
+        artifact_ids.append(str(check_id))
+        if not isinstance(artifact, str) or Path(artifact).name != artifact:
+            issues.append(f"parallel producer artifact is unsafe for {check_id!r}")
+            continue
+        artifact_path = plan_dir / artifact
+        if not artifact_path.is_file() or row.get("producer_sha256") != sha256_file(
+            artifact_path
+        ):
+            issues.append(f"parallel producer artifact hash mismatch for {check_id!r}")
+    if artifact_ids != expected:
+        issues.append("parallel producer artifacts do not cover expected checks in order")
+    if not isinstance(dispatches, list):
+        issues.append("parallel child dispatch manifest is missing")
+        dispatches = []
+    phase_attempt_id = manifest.get("phase_attempt_id")
+    if isinstance(phase_attempt_id, str) and phase_attempt_id:
+        try:
+            durable_dispatches = query_worker_dispatch_manifest(
+                plan_dir,
+                phase_attempt_id=phase_attempt_id,
+            )
+        except Exception as error:
+            issues.append(f"parallel child dispatch ledger is unreadable: {error}")
+        else:
+            if dispatches != durable_dispatches:
+                issues.append("parallel child manifest differs from durable dispatch ledger")
+    initial_keys = {
+        str(row.get("dispatch_key"))
+        for row in dispatches
+        if isinstance(row, Mapping)
+        and row.get("terminal_event") in {"completed", "failed", "cancelled"}
+    }
+    missing = [
+        check_id
+        for check_id in expected
+        if f"critique:{check_id}:initial" not in initial_keys
+    ]
+    if missing:
+        issues.append(f"parallel child dispatch custody missing checks {missing!r}")
+    attempt_ids = [
+        row.get("attempt_id") for row in dispatches if isinstance(row, Mapping)
+    ]
+    if any(not isinstance(item, str) or not item for item in attempt_ids) or len(
+        set(attempt_ids)
+    ) != len(attempt_ids):
+        issues.append("parallel child dispatch attempt identities are missing or duplicated")
     return issues
 
 
@@ -563,6 +678,7 @@ def write_critique_production_receipt(
 ) -> dict[str, Any]:
     """Persist immutable custody evidence for one canonical critique artifact."""
     producer_issues = _producer_binding_issues(producer_binding)
+    producer_issues.extend(_parallel_producer_binding_issues(plan_dir, producer_binding))
     if producer_issues:
         raise CritiqueCustodyError("critique_producer_binding_invalid", producer_issues)
     flags = prepare_critique_payload(payload, expected_check_ids=expected_check_ids)
@@ -701,6 +817,7 @@ def _validate_production_receipt(
         if isinstance(producer_binding, Mapping):
             if receipt.get("producer_binding_digest") != _digest(producer_binding):
                 issues.append("producer binding digest mismatch")
+            issues.extend(_parallel_producer_binding_issues(plan_dir, producer_binding))
     for field in ("plan_artifact", "critique_artifact"):
         name = receipt.get(field)
         if not isinstance(name, str) or not name or Path(name).name != name:

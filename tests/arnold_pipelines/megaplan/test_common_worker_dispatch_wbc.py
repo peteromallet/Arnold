@@ -573,6 +573,58 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
     assert {row["terminal_event"] for row in manifest} == {"completed"}
 
 
+def test_sequential_fallback_reuses_parallel_phase_without_minting_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "name": "plan-fallback",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-parallel"},
+        "active_step": {"phase": "critique", "run_id": "run-parallel"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="critique",
+        agent="hermes",
+    )
+    captured: dict[str, Any] = {}
+
+    @contextmanager
+    def guard(_plan_dir: Path):
+        yield
+
+    def run_worker(*args: Any, **kwargs: Any):
+        del args
+        captured["wbc_dispatch"] = kwargs.get("wbc_dispatch")
+        return _worker(), "hermes", "fresh", False
+
+    monkeypatch.setattr(shared_handlers, "apply_profile_expansion", lambda *a, **k: None)
+    monkeypatch.setattr(
+        shared_handlers,
+        "set_active_step",
+        lambda *a, **k: pytest.fail("fallback minted a second phase invocation"),
+    )
+    monkeypatch.setattr(shared_handlers, "save_state_merge_meta", lambda *a, **k: None)
+    monkeypatch.setattr(shared_handlers, "phase_result_guard", guard)
+    monkeypatch.setattr(shared_handlers.worker_module, "run_step_with_worker", run_worker)
+
+    shared_handlers._run_worker(
+        "critique",
+        state,  # type: ignore[arg-type]
+        tmp_path,
+        argparse.Namespace(phase_model=[]),
+        root=tmp_path,
+        resolved=("hermes", "fresh", False, "zhipu:glm-5.2"),
+        reuse_active_phase=True,
+    )
+
+    assert state["meta"]["current_invocation_id"] == "inv-parallel"
+    assert captured["wbc_dispatch"] is not None
+
+
 def test_run_step_with_worker_enriches_wbc_metadata_with_worker_and_fallback_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -24,6 +24,10 @@ from arnold_pipelines.megaplan.orchestration.critique_custody import (
     prepare_critique_payload,
     write_critique_production_receipt,
 )
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    activate_phase_wbc,
+    phase_wbc_state,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold_pipelines.megaplan.schema_projection import schema_property_names
@@ -57,7 +61,9 @@ from arnold_pipelines.megaplan._core import (
     read_json,
     record_step_failure,
     require_state,
+    save_state_merge_meta,
     scope_creep_flags,
+    set_active_step,
     sha256_file,
     workflow_includes_step,
 )
@@ -68,6 +74,7 @@ from arnold_pipelines.megaplan.handlers.plan import (
     _merge_imported_decision_criteria,
 )
 from arnold_pipelines.megaplan.handlers.shared import (
+    _active_step_fallback_fields,
     _agent_mode_parts,
     _append_to_meta,
     _finish_step,
@@ -198,6 +205,28 @@ def _critique_producer_binding(
             ["current critique invocation id is unavailable"],
         )
     attempt_index = int(worker.attempt_index)
+    parallel_evidence: Mapping[str, Any] | None = None
+    if parallel_reduced:
+        auth_metadata = worker.auth_metadata
+        if not isinstance(auth_metadata, Mapping) or not isinstance(
+            auth_metadata.get("parallel_critique"), Mapping
+        ):
+            raise CritiqueCustodyError(
+                "critique_producer_identity_missing",
+                ["parallel critique reducer has no child custody manifest"],
+            )
+        parallel_evidence = auth_metadata["parallel_critique"]
+        phase = phase_wbc_state(state, step="critique")
+        if (
+            phase is None
+            or phase.get("invocation_id") != invocation_id
+            or parallel_evidence.get("invocation_id") != invocation_id
+            or parallel_evidence.get("phase_attempt_id") != phase.get("attempt_id")
+        ):
+            raise CritiqueCustodyError(
+                "critique_producer_identity_missing",
+                ["parallel critique reducer is not bound to the active critique phase"],
+            )
     selected_spec: str | None = None
     if 0 <= attempt_index < len(worker.attempted_specs):
         candidate = worker.attempted_specs[attempt_index]
@@ -222,7 +251,7 @@ def _critique_producer_binding(
         "invocation_id": invocation_id,
         "attempt_index": attempt_index,
         "attempt_id": f"{invocation_id}:{attempt_index}",
-        "producer": agent,
+        "producer": "parallel_critique_reducer" if parallel_reduced else agent,
         "provider": provider,
         "selected_spec": selected_spec,
         "model_actual": worker.model_actual,
@@ -236,6 +265,20 @@ def _critique_producer_binding(
         # from mistaking the binding for stronger provider provenance.
         "output_path_attested": False,
     }
+    if parallel_evidence is not None:
+        binding.update(
+            {
+                "phase_attempt_id": parallel_evidence.get("phase_attempt_id"),
+                "child_manifest_artifact": parallel_evidence.get(
+                    "manifest_artifact"
+                ),
+                "child_manifest_sha256": parallel_evidence.get("manifest_sha256"),
+                "child_manifest_digest": parallel_evidence.get("manifest_digest"),
+                "child_dispatch_count": parallel_evidence.get(
+                    "child_dispatch_count"
+                ),
+            }
+        )
     if transport == "registered_file_fill" and scratch_status == "filled":
         scratch_path = plan_dir / scratch_filename
         if scratch_path.exists() and scratch_path.is_file():
@@ -879,6 +922,31 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         _seed_json: str | None = None
         _parallel_critique_reduced = False
         if len(active_checks) > 1:
+            # Parallel critique bypasses _run_worker, so establish the same
+            # phase/invocation custody boundary before any child is scattered.
+            # The reducer and every child dispatch must bind to this fresh
+            # invocation, never to the evaluator or a prior phase.
+            set_active_step(
+                state,
+                step="critique",
+                agent=agent_type,
+                mode=mode,
+                model=_critique_resolved_model,
+                **_active_step_fallback_fields(
+                    "critique",
+                    args,
+                    agent=agent_type,
+                    model=_critique_resolved_model,
+                    effort=_critique_effort,
+                ),
+            )
+            activate_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="critique",
+                agent=agent_type,
+            )
+            save_state_merge_meta(plan_dir, state)
             try:
                 worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks, effort=_critique_effort)
             except Exception as exc:
@@ -897,6 +965,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     root=root,
                     resolved=resolved,
                     prompt_kwargs=_seq_prompt_kwargs,
+                    reuse_active_phase=True,
                 )
             else:
                 agent = agent_type
