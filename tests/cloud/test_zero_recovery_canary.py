@@ -64,12 +64,27 @@ from arnold_pipelines.megaplan.cloud.spec import (
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.chain.spec import (
+    _finite_canary_global_scratch_is_valid,
     _finite_canary_completion_contract_is_valid,
     _finite_canary_custody_contract,
     _finite_canary_conformance_has_trust_evidence,
     _finite_canary_fence_is_valid,
     _finite_canary_review_inputs_match,
 )
+
+
+@pytest.mark.parametrize("dev_shm", ["root_nonwritable", "absent_ipc_none"])
+def test_finite_canary_receipt_accepts_only_safe_global_scratch(
+    dev_shm: str,
+) -> None:
+    value = {
+        "/tmp": "root_nonwritable",
+        "/var/tmp": "root_nonwritable",
+        "/dev/shm": dev_shm,
+    }
+    assert _finite_canary_global_scratch_is_valid(value)
+    value["/tmp"] = "writable"
+    assert not _finite_canary_global_scratch_is_valid(value)
 
 
 def _outer(*, error: str = "historic ENOSPC") -> dict[str, object]:
