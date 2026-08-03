@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import cloud_chain_status_payload
 from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
 from arnold_pipelines.megaplan.cloud.providers.ssh import (
+    SshProvider,
     _megaplan_status_module_command,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -23,6 +24,7 @@ from arnold_pipelines.megaplan.cloud.spec import (
     SshSpec,
 )
 from arnold_pipelines.megaplan.cloud.supervise import cloud_supervise_tick
+from arnold_pipelines.megaplan.types import CliError
 
 
 REMOTE_SPEC = "/workspace/demo/app/.megaplan/initiatives/demo/chain.yaml"
@@ -151,6 +153,19 @@ def test_ssh_status_command_can_never_select_native_arnold_cli() -> None:
     assert "python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance" in command
     assert "PYTHONPATH=/workspace/runtime-candidates/arnold-deadbeef" in command
     assert " arnold status" not in command
+
+
+def test_ssh_chain_status_does_not_fallback_when_session_runtime_is_unreadable() -> None:
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider.read_remote_file = lambda _path: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        CliError("provider_failed", "missing marker")
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        provider.status_payload(plan=PLAN, workspace=WORKSPACE, session=SESSION)
+
+    assert exc_info.value.code == "status_runtime_binding_unavailable"
 
 
 @pytest.mark.parametrize(

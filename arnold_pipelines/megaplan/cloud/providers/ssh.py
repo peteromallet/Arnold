@@ -2864,17 +2864,23 @@ class SshProvider(Provider):
             )
             try:
                 marker = json.loads(self.read_remote_file(marker_path))
-            except (CliError, OSError, json.JSONDecodeError):
-                marker = None
-            if marker is not None:
-                if not isinstance(marker, Mapping):
-                    raise CliError(
-                        "status_runtime_binding_invalid",
-                        "session marker must be a JSON object",
-                    )
-                selected = _status_runtime_binding_from_marker(marker)
-                if selected is not None:
-                    runtime_root, runtime_revision, runtime_source = selected
+            except (CliError, OSError, json.JSONDecodeError) as exc:
+                raise CliError(
+                    "status_runtime_binding_unavailable",
+                    "cannot read the selected session runtime binding",
+                ) from exc
+            if not isinstance(marker, Mapping):
+                raise CliError(
+                    "status_runtime_binding_invalid",
+                    "session marker must be a JSON object",
+                )
+            selected = _status_runtime_binding_from_marker(marker)
+            if selected is None:
+                raise CliError(
+                    "status_runtime_binding_unavailable",
+                    "session marker does not identify its selected runtime",
+                )
+            runtime_root, runtime_revision, runtime_source = selected
 
         command = _megaplan_status_module_command(
             workspace=workspace,
