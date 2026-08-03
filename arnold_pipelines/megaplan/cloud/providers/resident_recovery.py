@@ -287,7 +287,7 @@ def resident_identity(item):
         or item.get("Name") != "/" + cfg["resident_container"]
         or not isinstance(config, dict) or config.get("Entrypoint") != [capture["runtime_python_path"]]
         or config.get("User") != "0:0"
-        or config.get("WorkingDir") != capture["runtime_path"]
+        or config.get("WorkingDir") != cfg["resident_workdir"]
         or not isinstance(configured_env, list)
         or any(value.startswith("MEGAPLAN_RUNTIME_LAUNCH_SEED=") or value.startswith("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION=") for value in configured_env)
         or any(env_map.get(key) != value for key, value in secret_values.items())
@@ -658,7 +658,9 @@ if resident is None:
         "--restart", "no", "--init", "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges:true", "--pids-limit", "256",
         "--memory", "2g", "--memory-swap", "2g",
-        "--workdir", capture["runtime_path"],
+        # Megaplan initializes state relative to cwd.  Keep the exact code
+        # snapshot read-only and run from the resident's writable project root.
+        "--workdir", cfg["resident_workdir"],
         "--env-file", sanitized_env_path,
         "--env", "PYTHONPATH=" + capture["runtime_path"],
         "--env", "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0",
@@ -1075,6 +1077,7 @@ def resident_recover_command(
         "workspace": validate_workspace_dir(workspace),
         "outage_epoch": validate_outage_epoch(outage_epoch),
         "resident_container": resident_only_container_name(source),
+        "resident_workdir": "/workspace/arnold",
         "resident_argv_template": list(RESIDENT_ONLY_COMMAND),
         "resident_argv_template_sha256": hashlib.sha256(json.dumps(list(RESIDENT_ONLY_COMMAND), sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
         "listener_recovery_seed_schema": LISTENER_RECOVERY_SEED_SCHEMA,
