@@ -3072,7 +3072,21 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
 
     process_alive = False
     marker_pid = _as_int(marker.get("pid"))
-    if marker_pid is not None and _pid_is_live(marker_pid):
+    marker_pid_namespace = str(
+        marker.get("pid_namespace_id") or marker.get("runner_pid_namespace_id") or ""
+    )
+    try:
+        observer_pid_namespace = os.readlink("/proc/self/ns/pid")
+    except OSError:
+        observer_pid_namespace = ""
+    # A bare PID has meaning only in the namespace that recorded it.  PID
+    # collisions across containers are common and must not manufacture life.
+    if (
+        marker_pid is not None
+        and marker_pid_namespace
+        and marker_pid_namespace == observer_pid_namespace
+        and _pid_is_live(marker_pid)
+    ):
         process_alive = True
     needles = [value for value in (remote_spec, workspace, plan_name) if value]
     if needles:
