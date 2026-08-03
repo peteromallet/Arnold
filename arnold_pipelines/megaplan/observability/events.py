@@ -363,9 +363,13 @@ class EventWriter:
                 # (1) Read → increment → write seq counter.
                 try:
                     raw = os.read(seq_fd, 128)
-                    current = int(raw.strip()) if raw.strip() else -1
+                    current = (
+                        int(raw.strip())
+                        if raw.strip()
+                        else self._recover_durable_sequence()
+                    )
                 except (ValueError, FileNotFoundError):
-                    current = -1
+                    current = self._recover_durable_sequence()
                 new_seq = current + 1
                 os.lseek(seq_fd, 0, os.SEEK_SET)
                 os.write(seq_fd, str(new_seq).encode("ascii"))
@@ -418,6 +422,31 @@ class EventWriter:
                 self._write_init_ts(ts_utc)
 
         return event
+
+    def _recover_durable_sequence(self) -> int:
+        """Recover an absent/corrupt advisory counter from Store evidence."""
+        highest = -1
+        try:
+            for stored in self._store.events_for_plan(self._plan_dir.name):
+                seq = getattr(stored, "seq", None)
+                if isinstance(seq, int) and not isinstance(seq, bool):
+                    highest = max(highest, seq)
+        except (OSError, ValueError, TypeError):
+            # The compatibility projection is not authority, but is a safe
+            # monotonic floor when the Store adapter is temporarily unreadable:
+            # reusing an observed sequence can only make recovery less safe.
+            try:
+                with (self._plan_dir / _NDJSON_FILE).open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        try:
+                            seq = json.loads(line).get("seq")
+                        except (json.JSONDecodeError, AttributeError):
+                            continue
+                        if isinstance(seq, int) and not isinstance(seq, bool):
+                            highest = max(highest, seq)
+            except FileNotFoundError:
+                pass
+        return highest
 
     def _load_init_ts(self) -> Optional[datetime]:
         """Return the init timestamp cached in .events.init_ts, or None."""
