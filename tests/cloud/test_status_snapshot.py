@@ -8,6 +8,7 @@ single source every status consumer reads.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -512,6 +513,49 @@ def test_recent_execution_blocked_without_runner_is_attention_not_running(fx):
 
     assert entry["status"] == "attention"
     assert entry["operator_next"] == "alive_but_failed: current repairable failure receipt remains"
+    assert snap["summary"]["running"] == 0
+    assert snap["summary"]["attention"] == 1
+
+
+def test_recent_deterministic_critique_failure_is_attention_not_running(fx):
+    fx.add_session("critique-r5", plan_name="cl2-wbc-backed-ledger")
+    fx.add_chain_health(
+        "critique-r5",
+        current_plan_name="cl2-wbc-backed-ledger",
+        last_state="blocked",
+        updated_at=NOW - timedelta(seconds=30),
+    )
+    fx.add_plan_state(
+        "critique-r5",
+        "cl2-wbc-backed-ledger",
+        current_state="blocked",
+    )
+    state_path = (
+        fx.root
+        / "critique-r5"
+        / ".megaplan"
+        / "plans"
+        / "cl2-wbc-backed-ledger"
+        / "state.json"
+    )
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["resume_cursor"] = {
+        "phase": "critique",
+        "retry_strategy": "repair_phase_contract",
+    }
+    payload["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "critique",
+        "message": "critique contract failed three times",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": False})
+    entry = _by_session(snap, "critique-r5")
+
+    assert entry["status"] == "attention"
+    assert entry["operator_next"] == "alive_but_failed: current repairable failure receipt remains"
+    assert entry["runner"]["status"] == "stopped"
     assert snap["summary"]["running"] == 0
     assert snap["summary"]["attention"] == 1
 
@@ -1383,6 +1427,26 @@ def test_write_load_roundtrip_and_freshness(tmp_path, fx):
     assert stale is not None
     assert reason is not None
     assert "stale" in reason
+
+
+def test_write_enospc_preserves_last_complete_snapshot(tmp_path, monkeypatch):
+    target = tmp_path / "cloud-status.json"
+    previous = tmp_path / "cloud-status.previous.json"
+    original = {"generated_at": "2026-08-03T15:00:00Z", "summary": {"active": 1}}
+    ss.write_cloud_status_snapshot(original, path=target, previous_path=previous)
+
+    def fail_mkstemp(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(ss.tempfile, "mkstemp", fail_mkstemp)
+    with pytest.raises(OSError, match="No space left on device"):
+        ss.write_cloud_status_snapshot(
+            {"generated_at": "2026-08-03T15:01:00Z", "summary": {"active": 0}},
+            path=target,
+            previous_path=previous,
+        )
+
+    assert json.loads(target.read_text(encoding="utf-8")) == original
 
 
 def test_load_missing_snapshot_returns_degraded_reason(tmp_path):

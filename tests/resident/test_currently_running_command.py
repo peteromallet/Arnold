@@ -708,7 +708,7 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
     assert "`executing` · overall progress unavailable" in rendered
 
 
-def test_blocked_plan_state_is_used_when_display_state_is_absent_during_execute() -> None:
+def test_blocked_plan_state_does_not_treat_inferred_status_as_runner_liveness() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={
@@ -717,6 +717,8 @@ def test_blocked_plan_state_is_used_when_display_state_is_absent_during_execute(
                     {
                         "session": "blocked-plan",
                         "status": "running",
+                        "tmux": False,
+                        "process": False,
                         "latest_activity": "2026-07-14T12:00:00Z",
                         "progress": {
                             "active_phase": {"phase": "execute"},
@@ -732,7 +734,8 @@ def test_blocked_plan_state_is_used_when_display_state_is_absent_during_execute(
     assert "`blocked-plan`" in rendered
     assert "## ⛓️ Epics & chains · 0 active" in rendered
     assert "### ⚠️ Needs attention · 1" in rendered
-    assert "`blocked` · overall progress unavailable · runner running" in rendered
+    assert "`blocked` · overall progress unavailable" in rendered
+    assert "runner running" not in rendered
 
 
 def test_render_uses_epics_parent_and_nonempty_h3_status_subsections() -> None:
@@ -1077,6 +1080,30 @@ def test_degraded_status_is_labeled_without_hiding_available_canonical_items() -
 
     assert "Canonical epic/chain status is degraded: watchdog report missing." in rendered
     assert "`degraded-epic`\n  `planned` · 12% overall" in rendered
+
+
+def test_source_error_does_not_hide_already_collected_marker_truth() -> None:
+    report = CurrentlyRunningReport(
+        status_node={
+            "generated_at": "2026-08-03T15:00:00Z",
+            "sessions": [
+                {
+                    "session": "marker-backed-epic",
+                    "status": "running",
+                    "latest_activity": "2026-08-03T14:56:06Z",
+                    "progress": {"percent": 0, "display_state": "blocked"},
+                }
+            ],
+        },
+        managed_agents={"running": []},
+        status_error="watchdog report read failed (JSONDecodeError)",
+    )
+
+    rendered = render_currently_running(report)
+
+    assert "watchdog report read failed (JSONDecodeError)" in rendered
+    assert "Needs attention · 1" in rendered
+    assert "`marker-backed-epic`\n  `blocked` · 0% overall" in rendered
 
 
 def test_collection_uses_fresh_status_root_and_managed_agent_inventory(

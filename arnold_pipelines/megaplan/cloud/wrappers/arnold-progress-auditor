@@ -1014,6 +1014,25 @@ def _load_json(path):
     except Exception:
         return {}
 
+def _watchdog_report_health(path):
+    if not path.exists():
+        return {"status": "missing", "path": str(path), "size_bytes": None, "error_kind": ""}
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return {"status": "unreadable", "path": str(path), "size_bytes": None, "error_kind": type(exc).__name__}
+    if size == 0:
+        return {"status": "empty", "path": str(path), "size_bytes": 0, "error_kind": "JSONDecodeError"}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {"status": "unreadable", "path": str(path), "size_bytes": size, "error_kind": type(exc).__name__}
+    if not isinstance(payload, dict):
+        return {"status": "invalid_type", "path": str(path), "size_bytes": size, "error_kind": "TypeError"}
+    return {"status": "healthy", "path": str(path), "size_bytes": size, "error_kind": ""}
+
+WATCHDOG_REPORT_HEALTH = _watchdog_report_health(WATCHDOG_REPORT_PATH)
+
 def _redact_scalar(value):
     text = str(value or "").strip()
     return redact_text(text) if text else ""
@@ -4143,6 +4162,31 @@ def _watchdog_chain_health_disagreement_reason(ev):
         )
     return ""
 
+def _watchdog_publication_health_reason(ev):
+    health = ev.get("watchdog_report_health") if isinstance(ev, dict) else {}
+    if not isinstance(health, dict):
+        return ""
+    status = str(health.get("status") or "").strip().lower()
+    if status not in {"empty", "unreadable", "invalid_type"}:
+        return ""
+    return (
+        "watchdog_report_publication_degraded: canonical watchdog report is "
+        f"{status} ({health.get('error_kind') or 'unknown'}; size={health.get('size_bytes')}); "
+        "marker/chain truth must remain visible and this audit cannot be green"
+    )
+
+def _current_target_observation_degraded_reason(ev):
+    target = ev.get("current_target") if isinstance(ev, dict) else {}
+    cursors = target.get("event_cursors") if isinstance(target, dict) else {}
+    error = cursors.get("projection_error") if isinstance(cursors, dict) else {}
+    if not isinstance(error, dict) or not error:
+        return ""
+    return (
+        "current_target_observation_degraded: event checkpoint projection failed "
+        f"({error.get('kind') or 'unknown'}: {error.get('message') or 'unknown'}); "
+        "marker/chain/plan truth was retained"
+    )
+
 def _repair_data_ghost_running_reason(ev):
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
     if not isinstance(repair, dict) or not repair.get("exists"):
@@ -5548,6 +5592,7 @@ def _plan_evidence(entry):
         "prior_incident_refs": cross_refs.get("prior_incident_refs") or [],
         "prior_audit_refs": prior_audit_refs,
         "prior_watchdog_report_refs": prior_watchdog_report_refs,
+        "watchdog_report_health": WATCHDOG_REPORT_HEALTH,
         "persistent_finding_refs": persistent_finding_refs,
         "ticket_refs": ticket_refs,
         "commit_refs": commit_refs,
@@ -5693,6 +5738,8 @@ for entry in plans:
             f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
         )
     session_deterministic_reasons = (
+        _watchdog_publication_health_reason(ev),
+        _current_target_observation_degraded_reason(ev),
         _meta_record_no_verdict_reason(ev),
         _meta_repair_launch_failure_reason(ev),
         _watchdog_chain_health_disagreement_reason(ev),

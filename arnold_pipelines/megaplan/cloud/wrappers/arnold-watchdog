@@ -1853,13 +1853,16 @@ emit_report() {
   local items_path="$1"
   local markers="$2"
   local report_tmp
-  report_tmp="$(mktemp)"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_ENABLED" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
+  if ! report_tmp="$(mktemp)"; then
+    log "report publication skipped: unable to allocate summary temp file"
+    return 0
+  fi
+  if ! PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_ENABLED" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"; then
 import datetime as dt
 import json
 import os
-import shutil
 import sys
+import tempfile
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
@@ -1905,15 +1908,42 @@ payload = {
     "issues": issues,
 }
 payload = redact_payload(payload)
-os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
-with open(report_path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2, sort_keys=True)
-    handle.write("\n")
+encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+def atomic_publish(path, content):
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        dir_fd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+atomic_publish(report_path, encoded)
 if archive_path:
-    os.makedirs(archive_dir, exist_ok=True)
-    shutil.copyfile(report_path, archive_path)
+    try:
+        atomic_publish(archive_path, encoded)
+    except OSError as exc:
+        print(f"watchdog archive publication failed: {exc}", file=sys.stderr)
 print(json.dumps(payload, sort_keys=True))
 PY
+    log "report publication failed; retained last complete report"
+    rm -f "$report_tmp"
+    return 0
+  fi
   local summary
   summary="$(cat "$report_tmp")"
   log "report $summary"
@@ -8388,7 +8418,18 @@ launch_chain_tick() {
   fi
   if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_phase_failure" \
     && "${PLAN_STATUS_RETRY_STRATEGY:-}" == "repair_phase_contract" ]]; then
-    local phase_contract_dispatch_result
+    local phase_contract_dispatch_env phase_contract_dispatch_result
+    phase_contract_dispatch_env="$(
+      manual_review_dispatch_status_env \
+        "$session" "$workspace" "$remote_spec_path" "$run_kind" \
+        "${PLAN_STATUS_PLAN_NAME:-$plan_name}" \
+        2>>"${LOG:-/dev/null}" \
+        || authority_gap_continue "T29-BYPASS-203" \
+          "phase-contract repair identity projection failed closed"
+    )"
+    if [[ -n "$phase_contract_dispatch_env" ]]; then
+      eval "$phase_contract_dispatch_env"
+    fi
     phase_contract_dispatch_result=""
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
       phase_contract_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"

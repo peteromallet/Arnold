@@ -502,19 +502,51 @@ def write_cloud_status_snapshot(
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
 
-    # Rotate the previous snapshot before overwriting.
-    if previous is not None and target.exists():
-        try:
-            shutil.move(str(target), str(previous))
-        except OSError:
-            # Rotation is best-effort; the fresh write is what matters.
-            pass
-
     fd, tmp_name = tempfile.mkstemp(prefix=".cloud-status.", suffix=".json", dir=str(target.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        # Preserve the prior snapshot without removing the canonical file.
+        # In particular, ENOSPC while staging either file must leave the last
+        # complete snapshot readable at ``target``.
+        if previous is not None and target.exists():
+            previous.parent.mkdir(parents=True, exist_ok=True)
+            previous_fd: int | None = None
+            previous_tmp: str | None = None
+            try:
+                previous_fd, previous_tmp = tempfile.mkstemp(
+                    prefix=f".{previous.name}.", suffix=".tmp", dir=str(previous.parent)
+                )
+                with os.fdopen(previous_fd, "wb") as handle:
+                    previous_fd = None
+                    with target.open("rb") as source:
+                        shutil.copyfileobj(source, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(previous_tmp, previous)
+                previous_tmp = None
+            except OSError:
+                # Rotation is best-effort; target still contains the last
+                # complete snapshot and the staged replacement is intact.
+                pass
+            finally:
+                if previous_fd is not None:
+                    os.close(previous_fd)
+                if previous_tmp is not None:
+                    try:
+                        os.unlink(previous_tmp)
+                    except OSError:
+                        pass
+
         os.replace(tmp_name, target)
+        dir_fd = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     except BaseException:
         try:
             os.unlink(tmp_name)
@@ -2800,6 +2832,7 @@ def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> boo
     if current_state == "failed" and kind == "no_next_step":
         return True
     return current_state in {"blocked", "manual_review", "finalized", "failed"} and kind in {
+        "deterministic_phase_failure",
         "phase_failed",
         "step_failed",
         "handler_failed",
