@@ -115,6 +115,7 @@ def build_worker_dispatch_spec(
     failed_attempt_reasons: Iterable[str] = (),
     fallback_trigger: str | None = None,
     phase_step: str | None = None,
+    dispatch_key: str | None = None,
 ) -> CommonWorkerDispatchSpec | None:
     phase = phase_wbc_state(state, step=phase_step or step) or phase_wbc_state(state)
     if phase is None:
@@ -130,14 +131,29 @@ def build_worker_dispatch_spec(
     phase_name = str(phase.get("step") or step).strip() or step
     if not phase_attempt_id or not phase_source_version:
         return None
+    normalized_dispatch_key: str | None = None
+    if dispatch_key is not None:
+        normalized_dispatch_key = str(dispatch_key).strip()
+        if not normalized_dispatch_key:
+            raise ValueError("dispatch_key must be non-empty when provided")
 
-    expected_source_version = (
+    identity_parts = (
         f"{phase_source_version}:{route_kind}:{phase_name}:{selected_spec}:{int(attempt_index)}"
     )
+    expected_source_version = (
+        identity_parts
+        if normalized_dispatch_key is None
+        else f"{identity_parts}:{normalized_dispatch_key}"
+    )
+    attempt_identity = (
+        f"{phase_attempt_id}::{route_kind}::{phase_name}::{selected_spec}::{int(attempt_index)}"
+    )
+    if normalized_dispatch_key is not None:
+        attempt_identity = f"{attempt_identity}::{normalized_dispatch_key}"
     attempt_id = str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{phase_attempt_id}::{route_kind}::{phase_name}::{selected_spec}::{int(attempt_index)}",
+            attempt_identity,
         )
     )
     configured_specs_tuple = tuple(str(item) for item in configured_specs)
@@ -156,6 +172,8 @@ def build_worker_dispatch_spec(
         "fallback_trigger": fallback_trigger,
         "phase_attempt_id": phase_attempt_id,
     }
+    if normalized_dispatch_key is not None:
+        metadata["dispatch_key"] = normalized_dispatch_key
     facade = WbcRuntimeProducerFacade(
         SqliteAttemptLedgerStore(plan_dir / WORKER_DISPATCH_WBC_LEDGER_FILENAME),
         source_lookup=lambda key: _exact_source_record(
@@ -165,6 +183,7 @@ def build_worker_dispatch_spec(
             route_kind=route_kind,
             attempt_index=int(attempt_index),
             phase_step=phase_step,
+            dispatch_key=normalized_dispatch_key,
             lookup_key=key,
         ),
         promotion_mode=PromotionMode.ACTION_OFF,
@@ -185,6 +204,7 @@ def build_worker_dispatch_spec(
             route_kind=route_kind,
             selected_spec=selected_spec,
             dispatch_attempt_index=int(attempt_index),
+            dispatch_key=normalized_dispatch_key,
             sequence=1,
             event_type=AttemptEventType.STARTED,
             idempotency_suffix="started",
@@ -201,6 +221,7 @@ def build_worker_dispatch_spec(
             route_kind=route_kind,
             selected_spec=selected_spec,
             dispatch_attempt_index=int(attempt_index),
+            dispatch_key=normalized_dispatch_key,
             sequence=2,
             event_type=AttemptEventType.COMPLETED,
             idempotency_suffix="completed",
@@ -219,6 +240,7 @@ def build_worker_dispatch_spec(
             route_kind=route_kind,
             selected_spec=selected_spec,
             dispatch_attempt_index=int(attempt_index),
+            dispatch_key=normalized_dispatch_key,
             sequence=2,
             event_type=AttemptEventType.FAILED,
             idempotency_suffix="failed",
@@ -266,6 +288,7 @@ def build_worker_dispatch_spec(
             worker_step=step,
             route_kind=route_kind,
             attempt_index=int(attempt_index),
+            dispatch_key=normalized_dispatch_key,
             stage="start",
         ),
         success_source_lookup_key=_lookup_key(
@@ -273,6 +296,7 @@ def build_worker_dispatch_spec(
             worker_step=step,
             route_kind=route_kind,
             attempt_index=int(attempt_index),
+            dispatch_key=normalized_dispatch_key,
             stage="complete",
         ),
         failure_source_lookup_key=_lookup_key(
@@ -280,6 +304,7 @@ def build_worker_dispatch_spec(
             worker_step=step,
             route_kind=route_kind,
             attempt_index=int(attempt_index),
+            dispatch_key=normalized_dispatch_key,
             stage="failure",
         ),
     )
@@ -291,9 +316,13 @@ def _lookup_key(
     worker_step: str,
     route_kind: str,
     attempt_index: int,
+    dispatch_key: str | None,
     stage: str,
 ) -> str:
-    return f"{phase_step}:{worker_step}:{route_kind}:{attempt_index}:{stage}"
+    base = f"{phase_step}:{worker_step}:{route_kind}:{attempt_index}"
+    if dispatch_key is not None:
+        base = f"{base}:{dispatch_key}"
+    return f"{base}:{stage}"
 
 
 def _exact_source_record(
@@ -304,6 +333,7 @@ def _exact_source_record(
     route_kind: str,
     attempt_index: int,
     phase_step: str | None,
+    dispatch_key: str | None,
     lookup_key: str,
 ) -> ExactSourceRecord | None:
     phase = phase_wbc_state(state, step=phase_step or step) or phase_wbc_state(state)
@@ -315,19 +345,24 @@ def _exact_source_record(
     if not phase_source_version or not phase_attempt_id:
         return None
     version = f"{phase_source_version}:{route_kind}:{phase_name}:{selected_spec}:{attempt_index}"
+    if dispatch_key is not None:
+        version = f"{version}:{dispatch_key}"
+    metadata = {
+        "phase_step": phase_name,
+        "worker_step": step,
+        "selected_spec": selected_spec,
+        "route_kind": route_kind,
+        "attempt_index": attempt_index,
+        "phase_attempt_id": phase_attempt_id,
+    }
+    if dispatch_key is not None:
+        metadata["dispatch_key"] = dispatch_key
     return ExactSourceRecord(
         lookup_key=lookup_key,
         version=version,
         source_uri=f"plan://{phase_name}/{route_kind}/{step}",
         observed_at=_utcnow(),
-        metadata={
-            "phase_step": phase_name,
-            "worker_step": step,
-            "selected_spec": selected_spec,
-            "route_kind": route_kind,
-            "attempt_index": attempt_index,
-            "phase_attempt_id": phase_attempt_id,
-        },
+        metadata=metadata,
     )
 
 
@@ -338,13 +373,14 @@ def _identity(
     phase_step: str,
     worker_step: str,
     attempt_index: int,
+    dispatch_key: str | None,
 ) -> AttemptIdentity:
     invocation_id = str((state.get("meta") or {}).get("current_invocation_id") or "worker-dispatch")
     return AttemptIdentity(
         workflow_id="megaplan.worker_dispatch",
         run_id=str(state.get("name") or "megaplan-plan"),
         graph_revision=phase_step,
-        step_id=worker_step,
+        step_id=worker_step if dispatch_key is None else f"{worker_step}:{dispatch_key}",
         invocation_id=invocation_id,
         attempt_ordinal=max(attempt_index + 1, 1),
         attempt_id=attempt_id,
@@ -360,6 +396,7 @@ def _event(
     route_kind: str,
     selected_spec: str,
     dispatch_attempt_index: int,
+    dispatch_key: str | None,
     sequence: int,
     event_type: AttemptEventType,
     idempotency_suffix: str,
@@ -375,6 +412,7 @@ def _event(
             phase_step=phase_step,
             worker_step=worker_step,
             attempt_index=dispatch_attempt_index,
+            dispatch_key=dispatch_key,
         ),
         provenance=AttemptProvenance(
             actor_id="megaplan.worker_dispatch",
@@ -441,8 +479,64 @@ def _worker_result_summary(result: Any) -> dict[str, Any]:
     return summary
 
 
+def query_worker_dispatch_manifest(
+    plan_dir: Path,
+    *,
+    phase_attempt_id: str,
+) -> list[dict[str, Any]]:
+    """Return terminally evidenced child dispatches for one phase attempt."""
+    store = SqliteAttemptLedgerStore(plan_dir / WORKER_DISPATCH_WBC_LEDGER_FILENAME)
+    try:
+        rows = store.conn.execute(
+            "SELECT DISTINCT attempt_id FROM attempt_events ORDER BY attempt_id"
+        ).fetchall()
+        manifest: list[dict[str, Any]] = []
+        for (attempt_id,) in rows:
+            events = store.read_events(str(attempt_id))
+            if not events:
+                continue
+            start = events[0]
+            start_payload = dict(start.payload or {})
+            if start_payload.get("phase_attempt_id") != phase_attempt_id:
+                continue
+            terminal = events[-1]
+            if terminal.event_type not in {
+                AttemptEventType.COMPLETED,
+                AttemptEventType.FAILED,
+                AttemptEventType.CANCELLED,
+            }:
+                raise RuntimeError(
+                    f"worker dispatch {attempt_id} has no terminal custody event"
+                )
+            terminal_payload = dict(terminal.payload or {})
+            manifest.append(
+                {
+                    "attempt_id": str(attempt_id),
+                    "dispatch_key": start_payload.get("dispatch_key"),
+                    "worker_step": start_payload.get("worker_step"),
+                    "selected_spec": start_payload.get("selected_spec"),
+                    "attempt_index": start_payload.get("attempt_index"),
+                    "terminal_event": terminal.event_type.value,
+                    "terminal_status": terminal_payload.get("status"),
+                    "start_sequence": start.sequence,
+                    "terminal_sequence": terminal.sequence,
+                }
+            )
+        return sorted(
+            manifest,
+            key=lambda row: (
+                str(row.get("dispatch_key") or ""),
+                int(row.get("attempt_index") or 0),
+                str(row["attempt_id"]),
+            ),
+        )
+    finally:
+        store.close()
+
+
 __all__ = [
     "WORKER_DISPATCH_WBC_LEDGER_FILENAME",
     "build_worker_dispatch_spec",
+    "query_worker_dispatch_manifest",
     "register_worker_dispatch_wbc_writers",
 ]

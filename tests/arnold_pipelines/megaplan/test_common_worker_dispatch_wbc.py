@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,10 @@ from arnold_pipelines.megaplan.custody.common_worker_dispatch import (
 )
 from arnold_pipelines.megaplan.custody.controlled_writer_registry import Cohort, ControlledWriter, _clear_registry, register_writer
 from arnold_pipelines.megaplan.custody.phase_wbc import activate_phase_wbc
-from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
+    build_worker_dispatch_spec,
+    query_worker_dispatch_manifest,
+)
 from arnold_pipelines.megaplan.custody.contracts import CustodyLease, CustodyTargetKey
 from arnold_pipelines.megaplan.custody.outbox import OutboxRecord, OutboxRecordStatus, OutboxRecordType
 from arnold_pipelines.megaplan.custody.wbc_runtime import (
@@ -513,6 +517,60 @@ def test_auto_phase_worker_dispatch_rejects_stale_exact_source_before_provider_l
         spec.run(_dispatch)
 
     assert not called["dispatch"]
+
+
+def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    state = {
+        "name": "plan-fanout",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-fanout"},
+        "active_step": {"run_id": "run-fanout"},
+    }
+    phase = activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="critique",
+        agent="critic",
+    )
+    assert phase is not None
+    common = {
+        "plan_dir": tmp_path,
+        "state": state,
+        "step": "critique",
+        "agent": "hermes",
+        "selected_spec": "hermes:zhipu:glm-5.2",
+        "route_kind": "subprocess",
+    }
+    legacy = build_worker_dispatch_spec(**common)
+    first = build_worker_dispatch_spec(**common, dispatch_key="critique:scope:initial")
+    second = build_worker_dispatch_spec(**common, dispatch_key="critique:safety:initial")
+    assert legacy is not None and first is not None and second is not None
+
+    assert legacy.attempt_id == str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{phase['attempt_id']}::subprocess::critique::hermes:zhipu:glm-5.2::0",
+        )
+    )
+    assert len({legacy.attempt_id, first.attempt_id, second.attempt_id}) == 3
+    assert legacy.start_source_lookup_key == "critique:critique:subprocess:0:start"
+    assert first.start_source_lookup_key.endswith(":critique:scope:initial:start")
+    assert second.start_source_lookup_key.endswith(":critique:safety:initial:start")
+
+    first.run(lambda _start: _worker())
+    second.run(lambda _start: _worker())
+    manifest = query_worker_dispatch_manifest(
+        tmp_path,
+        phase_attempt_id=str(phase["attempt_id"]),
+    )
+    assert [row["dispatch_key"] for row in manifest] == [
+        "critique:safety:initial",
+        "critique:scope:initial",
+    ]
+    assert {row["terminal_event"] for row in manifest} == {"completed"}
 
 
 def test_run_step_with_worker_enriches_wbc_metadata_with_worker_and_fallback_identity(
