@@ -389,8 +389,17 @@ def classify_retryability(value: object | None) -> RetryabilityClass:
     status_code = _object_field(value, "status_code")
     retry_after_s = _object_field(value, "retry_after_s")
     retryable = _object_field(value, "retryable")
+    nonretryable = _object_field(value, "nonretryable")
+    error_kind = str(_object_field(value, "error_kind") or "").strip().lower()
+    error_layer = str(_object_field(value, "error_layer") or "").strip().lower()
     tokens = _normalized_tokens(value)
 
+    # A provider response-schema contract cannot become valid by changing
+    # model/provider.  It must be repaired at the compiler/adapter boundary.
+    if nonretryable is True or (
+        error_kind == "provider_contract" and error_layer == "schema_error"
+    ):
+        return "permanent"
     for token, classification in _NON_RETRYABLE_TOKEN_MAP:
         if token in tokens:
             return classification

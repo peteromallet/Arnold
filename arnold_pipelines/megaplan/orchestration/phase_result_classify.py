@@ -54,6 +54,28 @@ def classify_external_error_payload(
         if isinstance(raw, dict):
             return dict(raw)
 
+    # Provider contract compilers raise before a transport request exists, so
+    # there may be no HTTP status or SDK error wrapper to inspect.  Preserve
+    # the compiler's typed attributes directly rather than degrading this into
+    # a generic internal_error (which auto historically retried).
+    if (
+        getattr(exc, "error_kind", None) == "provider_contract"
+        and getattr(exc, "error_layer", None) == "schema_error"
+        and getattr(exc, "deterministic", None) is True
+        and getattr(exc, "nonretryable", None) is True
+    ):
+        fingerprint = str(getattr(exc, "failure_fingerprint", "") or "").strip()
+        if fingerprint:
+            return {
+                "provider": str(getattr(exc, "provider", provider) or provider),
+                "error_kind": "provider_contract",
+                "message": str(exc)[:500],
+                "error_layer": "schema_error",
+                "deterministic": True,
+                "nonretryable": True,
+                "failure_fingerprint": fingerprint,
+            }
+
     exc_name = type(exc).__name__
     message = str(exc)
     combined = f"{exc_name} {message}".lower()

@@ -139,6 +139,12 @@ class ExternalError:
     elapsed_s: float | None = None
     content_chunk_count: int | None = None
     reasoning_chunk_count: int | None = None
+    # Provider response-contract failures are deterministic launch failures,
+    # not transport failures.  Keep their routing authority on the canonical
+    # phase boundary instead of forcing auto.py to scrape stderr strings.
+    deterministic: bool | None = None
+    nonretryable: bool | None = None
+    failure_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -166,6 +172,12 @@ class ExternalError:
             payload["content_chunk_count"] = self.content_chunk_count
         if self.reasoning_chunk_count is not None:
             payload["reasoning_chunk_count"] = self.reasoning_chunk_count
+        if self.deterministic is not None:
+            payload["deterministic"] = self.deterministic
+        if self.nonretryable is not None:
+            payload["nonretryable"] = self.nonretryable
+        if self.failure_fingerprint is not None:
+            payload["failure_fingerprint"] = self.failure_fingerprint
         return payload
 
     @classmethod
@@ -223,6 +235,21 @@ class ExternalError:
             reasoning_chunk_count=(
                 int(payload["reasoning_chunk_count"])
                 if payload.get("reasoning_chunk_count") is not None
+                else None
+            ),
+            deterministic=(
+                bool(payload["deterministic"])
+                if isinstance(payload.get("deterministic"), bool)
+                else None
+            ),
+            nonretryable=(
+                bool(payload["nonretryable"])
+                if isinstance(payload.get("nonretryable"), bool)
+                else None
+            ),
+            failure_fingerprint=(
+                str(payload["failure_fingerprint"])
+                if payload.get("failure_fingerprint") is not None
                 else None
             ),
         )
@@ -591,6 +618,22 @@ def _validate_phase_result_structure(
                     "parse_error",
                     f"phase_result.external_error.{field_name} must be a string",
                 )
+        for field_name in ("deterministic", "nonretryable"):
+            if field_name in external_error and not isinstance(
+                external_error.get(field_name), bool
+            ):
+                raise CliError(
+                    "parse_error",
+                    f"phase_result.external_error.{field_name} must be a boolean",
+                )
+        if (
+            "failure_fingerprint" in external_error
+            and not isinstance(external_error.get("failure_fingerprint"), str)
+        ):
+            raise CliError(
+                "parse_error",
+                "phase_result.external_error.failure_fingerprint must be a string",
+            )
 
     # --- blocked_tasks ----------------------------------------------------
     bts = payload.get("blocked_tasks")

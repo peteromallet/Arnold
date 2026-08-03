@@ -99,6 +99,7 @@ EXTERNAL_PERMANENT_ERROR_KINDS: Final[frozenset[str]] = frozenset(
         "auth", "balance", "quota", "billing", "config",
         "bad_request", "invalid_request", "unsupported_model",
         "context_exhausted", "context_length", "rate_limit",
+        "provider_contract",
     }
 )
 
@@ -653,6 +654,8 @@ def _is_retryable_external_error(phase: str, external_error: Any) -> bool:
     error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
     message = str(getattr(external_error, "message", "") or "").lower()
 
+    if getattr(external_error, "nonretryable", None) is True:
+        return False
     if error_kind in EXTERNAL_PERMANENT_ERROR_KINDS:
         return False
     if retry_after_s is not None:
