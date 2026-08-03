@@ -49,23 +49,35 @@ function firstGateActions() {
   }));
 }
 
-function critiqueResolutionCoverage(output) {
-  const clearancePath = path.join(path.dirname(output), "critique_clearance.json");
+function critiqueResolutionCoverage(prompt) {
+  const clearanceHeader = "Critique custody clearance (handler-owned, immutable input):\n";
+  const headerIndex = prompt.lastIndexOf(clearanceHeader);
+  const clearanceStart = headerIndex + clearanceHeader.length;
+  const clearanceTail = prompt.slice(clearanceStart);
+  const outputHeaderIndex = clearanceTail.search(
+    /\n[ \t]*\n[ \t]*Your output template is at:/,
+  );
+  if (headerIndex < 0 || outputHeaderIndex < 0) {
+    throw new Error("fake codex finalize requires valid prompt critique clearance");
+  }
   let clearance;
   try {
-    clearance = JSON.parse(fs.readFileSync(clearancePath, "utf8"));
+    clearance = JSON.parse(clearanceTail.slice(0, outputHeaderIndex).trim());
   } catch (error) {
-    throw new Error(`fake codex finalize requires valid ${clearancePath}: ${error.message}`);
+    throw new Error(`fake codex finalize requires valid prompt critique clearance: ${error.message}`);
   }
-  const findingIds = clearance.finding_ids;
+  const findingIds = clearance && clearance.finding_ids;
   if (
-    clearance.admitted !== true
+    typeof clearance !== "object"
+    || clearance === null
+    || Array.isArray(clearance)
+    || clearance.admitted !== true
     || !Array.isArray(findingIds)
-    || findingIds.some((findingId) => typeof findingId !== "string" || findingId.length === 0)
+    || findingIds.some((findingId) => typeof findingId !== "string" || findingId.trim().length === 0)
     || new Set(findingIds).size !== findingIds.length
     || clearance.finding_count !== findingIds.length
   ) {
-    throw new Error(`fake codex finalize requires valid ${clearancePath}`);
+    throw new Error("fake codex finalize requires valid prompt critique clearance");
   }
   return findingIds.map((findingId) => ({
     finding_id: findingId,
@@ -74,7 +86,7 @@ function critiqueResolutionCoverage(output) {
   }));
 }
 
-function payload(schemaName, output) {
+function payload(schemaName, output, prompt) {
   if (schemaName === "plan.json") {
     return {
       plan: "# Offline Structural Smoke\n\n## Overview\nExercise the finite canary boundary without provider contact.\n\n## Step 1: Verify receipts\nRun the exact bounded receipt path.\n\n## Execution Order\n1. Step 1.",
@@ -233,7 +245,7 @@ function payload(schemaName, output) {
       sense_checks: [],
       user_actions: [],
       meta_commentary: "Offline structural smoke only.",
-      critique_resolution_coverage: critiqueResolutionCoverage(output),
+      critique_resolution_coverage: critiqueResolutionCoverage(prompt),
     };
     if (schemaName === "finalize_capture.json") {
       return captured;
@@ -275,6 +287,7 @@ function main() {
   const schema = argumentValue("--output-schema");
   const schemaName = path.basename(schema);
   const phase = schemaName === "finalize_capture.json" ? "finalize" : path.parse(schema).name;
+  const prompt = phase === "finalize" ? fs.readFileSync(0, "utf8") : "";
   const sessionId = crypto
     .createHash("sha256")
     .update(`${phase}-offline-smoke`)
@@ -290,7 +303,7 @@ function main() {
     );
     orphan.unref();
   }
-  fs.writeFileSync(output, JSON.stringify(payload(schemaName, output)), "utf8");
+  fs.writeFileSync(output, JSON.stringify(payload(schemaName, output, prompt)), "utf8");
   const rolloutDir = path.join(
     process.env.CODEX_HOME,
     "sessions",
