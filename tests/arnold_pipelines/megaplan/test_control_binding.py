@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from arnold_pipelines.megaplan.control_interface import DECLARED_OVERRIDE_POLICY_TARGETS
+from arnold_pipelines.megaplan.control_interface import (
+    DECLARED_OVERRIDE_POLICY_TARGETS,
+    apply_transition,
+)
 from arnold_pipelines.megaplan.planning.control_binding import (
     planning_control_binding,
     planning_run_state_view,
@@ -221,6 +225,105 @@ def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(monkey
     }
     assert config_delta.value["prep_model_resolver_trace"]["flat_prep_input"] is None
     assert config_delta.value["prep_model_resolver_trace"]["explicit_prep_models"] == {}
+
+
+def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custody(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    cancellation = {
+        "step": "finalize",
+        "result": "cancelled",
+        "attempt": 8,
+        "phase_wbc_attempt_id": "attempt-8",
+        "invocation_id": "invocation-8",
+        "run_id": "run-8",
+    }
+    state = {
+        "name": "demo",
+        "current_state": "gated",
+        "iteration": 2,
+        "config": {
+            "project_dir": str(tmp_path),
+            "profile": "partnered-5-glm",
+            "depth": "high",
+            "phase_model": [
+                "finalize=codex:gpt-5.6-sol:high",
+                "execute=hermes:zhipu:glm-5.2",
+            ],
+            "tier_models": {
+                "execute": {
+                    str(tier): "hermes:deepseek:deepseek-v4-pro"
+                    for tier in range(1, 11)
+                }
+            },
+        },
+        "history": [cancellation],
+        "latest_failure": {"kind": "superseded_attempt", "phase": "finalize"},
+        "meta": {"overrides": []},
+        "_state_meta": {"versions": {"config": 0, "meta": 0}},
+    }
+    state_path = plan_dir / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    chain_path = tmp_path / ".megaplan" / "plans" / ".chains" / "chain.json"
+    chain_path.parent.mkdir(parents=True)
+    chain_before = b'{"last_state":"paused","operator_pause":{"active":true}}\n'
+    chain_path.write_bytes(chain_before)
+    phase_wbc_path = plan_dir / ".phase_wbc_attempts.sqlite3"
+    phase_wbc_before = b"immutable-attempt-8-ledger"
+    phase_wbc_path.write_bytes(phase_wbc_before)
+    transition = ControlTransition(
+        op="override",
+        target_id="set-profile",
+        payload={
+            "profile": "partnered-5-glm",
+            "reason": "refresh persisted GLM-only Execute routing",
+        },
+    )
+
+    result = apply_transition(
+        planning_run_state_view(state),
+        transition,
+        "megaplan",
+        plan_dir=plan_dir,
+    )
+
+    assert result.accepted is True
+    receipt = result.artifacts["profile_refresh_receipt"]
+    assert receipt["same_profile_refresh"] is True
+    assert receipt["from_routing_sha256"] != receipt["to_routing_sha256"]
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    execute_tiers = persisted["config"]["tier_models"]["execute"]
+    assert set(execute_tiers) == {str(tier) for tier in range(1, 11)}
+    assert all(
+        "glm" in json.dumps(spec).lower()
+        and "deepseek" not in json.dumps(spec).lower()
+        and "codex" not in json.dumps(spec).lower()
+        for spec in execute_tiers.values()
+    )
+    assert "finalize=codex:gpt-5.6-sol:high" in persisted["config"]["phase_model"]
+    assert "execute=hermes:zhipu:glm-5.2" in persisted["config"]["phase_model"]
+    assert persisted["current_state"] == "gated"
+    assert persisted["history"] == [cancellation]
+    assert "active_step" not in persisted
+    override_receipt = persisted["meta"]["overrides"][-1]
+    assert override_receipt["same_profile_refresh"] is True
+    assert override_receipt["to_routing_sha256"] == receipt["to_routing_sha256"]
+    assert chain_path.read_bytes() == chain_before
+    assert phase_wbc_path.read_bytes() == phase_wbc_before
+
+    stale = apply_transition(
+        planning_run_state_view(state),
+        transition,
+        "megaplan",
+        plan_dir=plan_dir,
+    )
+    assert stale.accepted is False
+    assert stale.reason == "control_transition_conflict"
+    assert stale.artifacts["conflict"]["key"] == "config"
+    assert chain_path.read_bytes() == chain_before
+    assert phase_wbc_path.read_bytes() == phase_wbc_before
 
 
 def test_set_model_replaces_encoded_chain_with_scalar_spec() -> None:

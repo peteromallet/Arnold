@@ -330,7 +330,14 @@ def _build_override_action_output(
             state=state["current_state"],
             route_signal=route_signal,
             next_step=next_steps[0] if next_steps else None,
-            extras=(("previous_profile", previous_profile), ("profile", new_profile)),
+            extras=(
+                ("previous_profile", previous_profile),
+                ("profile", new_profile),
+                (
+                    "profile_refresh_receipt",
+                    (artifacts or {}).get("profile_refresh_receipt"),
+                ),
+            ),
         )
     if action in {"set-model", "set-vendor"}:
         meta = state.get("meta")
