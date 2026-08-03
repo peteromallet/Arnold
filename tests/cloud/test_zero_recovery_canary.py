@@ -1926,6 +1926,23 @@ def test_zero_recovery_global_scratch_still_requires_tmp_and_var_tmp(
         _zero_recovery_global_scratch_observation()
 
 
+def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() -> None:
+    source = Path("arnold_pipelines/megaplan/workers/_impl.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("def _prepare_zero_recovery_model_runtime(")
+    end = source.index("\ndef _reclaim_zero_recovery_tree", start)
+    prepare = source[start:end]
+    seed = prepare.index("_zero_recovery_copy_private_file(")
+    handoff = prepare.index(
+        "os.chown(directory, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)"
+    )
+    runtime_handoff = prepare.index(
+        "os.chown(runtime, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)"
+    )
+    assert seed < handoff < runtime_handoff
+
+
 def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "canary@example.test"], cwd=root, check=True)
