@@ -61,6 +61,115 @@ _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT = (
     "{{json .HostConfig.PortBindings}}"
 )
 
+_ISOLATED_CHAIN_RUNNER_ENTRYPOINT = "/root/.pyenv/versions/3.11.11/bin/python3"
+_ISOLATED_CHAIN_RUNNER_HEALTH_CODE = """import http.server
+import os
+import socketserver
+
+if os.environ.get("MEGAPLAN_ISOLATED_CHAIN_RUNNER") != "1":
+    raise SystemExit(64)
+port = int(os.environ.get("PORT", "8080"))
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"OK - megaplan isolated chain runner alive\\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+with socketserver.ThreadingTCPServer(("0.0.0.0", port), Handler) as httpd:
+    httpd.serve_forever()
+"""
+_ISOLATED_CHAIN_RUNNER_COMMAND = (
+    "-I",
+    "-S",
+    "-c",
+    _ISOLATED_CHAIN_RUNNER_HEALTH_CODE,
+)
+_ISOLATED_CHAIN_RUNNER_FORBIDDEN_ENV_NAMES = frozenset(
+    {
+        "BASH_ENV",
+        "ENV",
+        "GCONV_PATH",
+        "HOSTALIASES",
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "LOCPATH",
+        "NLSPATH",
+        "PYTHONHOME",
+        "PYTHONINSPECT",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+    }
+)
+
+
+def _strict_env_mapping(raw: object) -> dict[str, str] | None:
+    if not isinstance(raw, list):
+        return None
+    result: dict[str, str] = {}
+    for item in raw:
+        if not isinstance(item, str) or "=" not in item:
+            return None
+        name, value = item.split("=", 1)
+        if not name or name in result:
+            return None
+        result[name] = value
+    return result
+
+
+def _isolated_env_name_is_forbidden(name: str) -> bool:
+    return (
+        name in _ISOLATED_CHAIN_RUNNER_FORBIDDEN_ENV_NAMES
+        or name.startswith("BASH_FUNC_")
+        or name.startswith("LD_")
+        or name.startswith("PYTHON")
+    )
+_ISOLATED_CHAIN_RUNNER_RUNTIME_FORMAT = (
+    "{{json .State}}\n{{json .Config.Env}}\n{{json .Config.Entrypoint}}\n"
+    "{{json .Config.Cmd}}\n{{json .Image}}\n{{json .Config.Image}}\n"
+    "{{json .HostConfig.RestartPolicy}}\n{{json .Mounts}}\n{{json .Id}}\n"
+    "{{json .HostConfig.Privileged}}\n{{json .HostConfig.Devices}}\n"
+    "{{json .HostConfig.DeviceRequests}}\n{{json .HostConfig.CapDrop}}\n"
+    "{{json .HostConfig.CapAdd}}\n{{json .HostConfig.SecurityOpt}}\n"
+    "{{json .HostConfig.NetworkMode}}\n{{json .HostConfig.PidMode}}\n"
+    "{{json .HostConfig.IpcMode}}\n{{json .HostConfig.Init}}\n"
+    "{{json .HostConfig.PidsLimit}}\n{{json .HostConfig.Memory}}\n"
+    "{{json .HostConfig.MemorySwap}}\n{{json .HostConfig.PortBindings}}\n"
+    "{{json .Config.Healthcheck}}"
+)
+_DOCKER_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_ISOLATED_CHAIN_RUNNER_CAP_ADD = (
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+    "KILL",
+    "SETGID",
+    "SETUID",
+)
+_ISOLATED_CHAIN_RUNNER_MEMORY_BYTES = 8 * 1024 * 1024 * 1024
+_ISOLATED_CHAIN_RUNNER_PIDS_LIMIT = 1024
+
+
+def _isolated_chain_runner_runtime_command(container: str) -> str:
+    return shlex.join(
+        [
+            "docker",
+            "inspect",
+            "--type=container",
+            "--format",
+            _ISOLATED_CHAIN_RUNNER_RUNTIME_FORMAT,
+            validate_container_name(container),
+        ]
+    )
+
 
 def _normalized_docker_cap_add(value: object) -> object:
     """Normalize Docker's daemon-dependent CAP_ display prefix."""
@@ -481,6 +590,299 @@ class SshProvider(Provider):
             stderr=self._redact_failure_text(result.stderr or ""),
             expected_container=self._ssh.container,
         )
+
+    def _resolve_isolated_chain_runner_image_id(self) -> str:
+        configured = self._spec.isolated_chain_runner_image_id
+        if configured is None or not _DOCKER_IMAGE_ID_RE.fullmatch(configured):
+            raise CliError(
+                "isolated_chain_runner_image_pin_required",
+                "isolated chain-runner requires an exact configured sha256 image ID",
+            )
+        result = self._remote_run_compatible(
+            shlex.join(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .Id}}",
+                    configured,
+                ]
+            ),
+            surface="isolated_chain_runner_image_resolve",
+        )
+        try:
+            image_id = json.loads((result.stdout or "").strip())
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "isolated_chain_runner_image_unknown",
+                "isolated chain-runner image identity was not strict JSON",
+            ) from exc
+        if result.returncode != 0 or image_id != configured:
+            raise CliError(
+                "isolated_chain_runner_image_unknown",
+                "isolated chain-runner image identity was unavailable or malformed",
+            )
+        env_result = self._remote_run_compatible(
+            shlex.join(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .Config.Env}}",
+                    image_id,
+                ]
+            ),
+            surface="isolated_chain_runner_image_env_observe",
+        )
+        try:
+            raw_env = json.loads((env_result.stdout or "").strip())
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "isolated_chain_runner_image_env_unknown",
+                "isolated chain-runner immutable image environment was not strict JSON",
+            ) from exc
+        image_env = _strict_env_mapping(raw_env)
+        if (
+            env_result.returncode != 0
+            or image_env is None
+            or "PORT" in image_env
+            or "MEGAPLAN_ISOLATED_CHAIN_RUNNER" in image_env
+            or any(_isolated_env_name_is_forbidden(name) for name in image_env)
+        ):
+            raise CliError(
+                "isolated_chain_runner_image_env_rejected",
+                "isolated chain-runner immutable image environment was unsafe or malformed",
+            )
+        self._isolated_chain_runner_image_env = image_env
+        return image_id
+
+    def _observe_isolated_chain_runner_runtime(
+        self,
+        *,
+        expected_image_id: str,
+        target: str,
+        expected_container_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = self._remote_run_compatible(
+            _isolated_chain_runner_runtime_command(target),
+            surface="isolated_chain_runner_runtime_observe",
+        )
+        try:
+            lines = (result.stdout or "").splitlines()
+            if len(lines) != 24:
+                raise ValueError("expected twenty-four docker inspect fields")
+            (
+                state,
+                env,
+                entrypoint,
+                command,
+                image_id,
+                image_ref,
+                restart_policy,
+                mounts,
+                container_id,
+                privileged,
+                devices,
+                device_requests,
+                cap_drop,
+                cap_add,
+                security_opt,
+                network_mode,
+                pid_mode,
+                ipc_mode,
+                init,
+                pids_limit,
+                memory,
+                memory_swap,
+                port_bindings,
+                healthcheck,
+            ) = (json.loads(line) for line in lines)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise CliError(
+                "isolated_chain_runner_runtime_unknown",
+                "isolated chain-runner runtime evidence was malformed",
+            ) from exc
+
+        observed_env = _strict_env_mapping(env)
+        image_env = getattr(self, "_isolated_chain_runner_image_env", None)
+        expected_env = (
+            {
+                **image_env,
+                "PORT": str(self._spec.resources.port),
+                "MEGAPLAN_ISOLATED_CHAIN_RUNNER": "1",
+            }
+            if isinstance(image_env, dict)
+            else None
+        )
+        expected_mounts = {
+            (
+                "bind",
+                self._ssh.workspace_dir,
+                "/workspace",
+                True,
+            ),
+            (
+                "bind",
+                f"{self._ssh.cache_dir}/pip",
+                "/root/.cache/pip",
+                True,
+            ),
+            (
+                "bind",
+                f"{self._ssh.cache_dir}/npm",
+                "/root/.npm",
+                True,
+            ),
+        }
+        observed_mounts = (
+            {
+                (
+                    item.get("Type"),
+                    item.get("Source"),
+                    item.get("Destination"),
+                    item.get("RW"),
+                )
+                for item in mounts
+                if isinstance(item, Mapping)
+            }
+            if isinstance(mounts, list)
+            else set()
+        )
+        valid = (
+            result.returncode == 0
+            and isinstance(state, Mapping)
+            and state.get("Status") == "running"
+            and state.get("Running") is True
+            and state.get("Paused") is False
+            and state.get("Restarting") is False
+            and observed_env is not None
+            and expected_env is not None
+            and observed_env == expected_env
+            and not any(
+                _isolated_env_name_is_forbidden(name) for name in observed_env
+            )
+            and entrypoint == [_ISOLATED_CHAIN_RUNNER_ENTRYPOINT]
+            and command == list(_ISOLATED_CHAIN_RUNNER_COMMAND)
+            and image_id == expected_image_id
+            and image_ref == expected_image_id
+            and restart_policy == {"Name": "unless-stopped", "MaximumRetryCount": 0}
+            and privileged is False
+            and devices == []
+            and device_requests in (None, [])
+            and _normalized_docker_cap_add(cap_drop) == ["ALL"]
+            and _normalized_docker_cap_add(cap_add)
+            == list(_ISOLATED_CHAIN_RUNNER_CAP_ADD)
+            and security_opt == ["no-new-privileges:true"]
+            and network_mode == "bridge"
+            and pid_mode == ""
+            and ipc_mode == "private"
+            and init is True
+            and pids_limit == _ISOLATED_CHAIN_RUNNER_PIDS_LIMIT
+            and memory == _ISOLATED_CHAIN_RUNNER_MEMORY_BYTES
+            and memory_swap == _ISOLATED_CHAIN_RUNNER_MEMORY_BYTES
+            and port_bindings
+            == {
+                f"{self._spec.resources.port}/tcp": [
+                    {"HostIp": "", "HostPort": str(self._spec.resources.port)}
+                ]
+            }
+            and healthcheck == {"Test": ["NONE"]}
+            and isinstance(mounts, list)
+            and len(mounts) == len(expected_mounts)
+            and len(observed_mounts) == len(mounts)
+            and observed_mounts == expected_mounts
+            and isinstance(container_id, str)
+            and bool(re.fullmatch(r"[0-9a-f]{64}", container_id))
+            and (
+                expected_container_id is None
+                or container_id == expected_container_id
+            )
+        )
+        if not valid:
+            raise CliError(
+                "isolated_chain_runner_runtime_mismatch",
+                "isolated chain-runner image, command, marker, lifecycle, or workspace binding mismatched",
+            )
+        observation = {
+            "schema": "arnold.cloud.isolated_chain_runner_runtime.v1",
+            "status": "available",
+            "lifecycle": "running",
+            "container": self._ssh.container,
+            "container_id": container_id,
+            "image_id": image_id,
+            "image_ref": image_ref,
+            "entrypoint": entrypoint,
+            "command": command,
+            "mounts": [
+                {
+                    "type": mount_type,
+                    "source": source,
+                    "destination": destination,
+                    "rw": rw,
+                }
+                for mount_type, source, destination, rw in sorted(expected_mounts)
+            ],
+            "restart_policy": restart_policy,
+            "host_config": {
+                "privileged": privileged,
+                "devices": devices,
+                "device_requests": device_requests,
+                "cap_drop": _normalized_docker_cap_add(cap_drop),
+                "cap_add": _normalized_docker_cap_add(cap_add),
+                "security_opt": security_opt,
+                "network_mode": network_mode,
+                "pid_mode": pid_mode,
+                "ipc_mode": ipc_mode,
+                "init": init,
+                "pids_limit": pids_limit,
+                "memory": memory,
+                "memory_swap": memory_swap,
+                "port_bindings": port_bindings,
+                "healthcheck": healthcheck,
+            },
+        }
+        self._isolated_chain_runner_deploy_observation = observation
+        self._isolated_chain_runner_container_id = container_id
+        return observation
+
+    def attest_isolated_chain_runner_runtime(self) -> dict[str, Any]:
+        if not self._spec.isolated_chain_runner:
+            raise CliError(
+                "isolated_chain_runner_attestation_unavailable",
+                "isolated chain-runner profile is required",
+            )
+        expected_image_id = self._resolve_isolated_chain_runner_image_id()
+        first = self.observe_container()
+        container_id = first.get("container_id")
+        if (
+            first.get("status") != "available"
+            or first.get("lifecycle") != "running"
+            or not isinstance(container_id, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", container_id)
+        ):
+            raise CliError(
+                "isolated_chain_runner_not_deployed",
+                "exact isolated chain-runner deployment is not running",
+            )
+        observation = self._observe_isolated_chain_runner_runtime(
+            expected_image_id=expected_image_id,
+            target=container_id,
+            expected_container_id=container_id,
+        )
+        second = self.observe_container()
+        if (
+            second.get("status") != "available"
+            or second.get("lifecycle") != "running"
+            or second.get("container_id") != container_id
+        ):
+            self._isolated_chain_runner_container_id = None
+            raise CliError(
+                "isolated_chain_runner_name_replaced",
+                "isolated chain-runner name changed during runtime attestation",
+            )
+        return observation
 
     def observe_zero_recovery_predecessor(self) -> dict[str, Any]:
         predecessor = self._spec.zero_recovery_predecessor_container
@@ -1682,6 +2084,12 @@ class SshProvider(Provider):
         del deploy_dir
         transaction: dict[str, Any] | None = None
         launch_container = True
+        isolated_image_id: str | None = None
+        if self._spec.isolated_chain_runner and (self._spec.secrets or secrets):
+            raise CliError(
+                "isolated_chain_runner_secrets_denied",
+                "isolated chain-runner deploy requires an empty startup secret environment",
+            )
         if self._spec.zero_recovery_canary:
             if predeploy_transaction is None:
                 raise CliError(
@@ -1743,6 +2151,22 @@ class SshProvider(Provider):
                     "zero_recovery_canary_collision",
                     "canary target name exists with an unknown or mismatched identity",
                 )
+        if self._spec.isolated_chain_runner:
+            isolated_image_id = self._resolve_isolated_chain_runner_image_id()
+            existing = self.observe_container()
+            if existing.get("lifecycle") == "missing":
+                launch_container = True
+            elif (
+                existing.get("status") == "available"
+                and existing.get("lifecycle") == "running"
+            ):
+                self.attest_isolated_chain_runner_runtime()
+                launch_container = False
+            else:
+                raise CliError(
+                    "isolated_chain_runner_collision",
+                    "isolated chain-runner target exists without an exact running attestation",
+                )
         env_path = f"{self._ssh.remote_dir}/.env"
         env_lines = [f"PORT={self._spec.resources.port}"]
         if self._spec.zero_recovery_canary:
@@ -1774,12 +2198,15 @@ class SshProvider(Provider):
                     f"{shlex.quote(f'{self._ssh.cache_dir}/npm')}",
                     surface="deploy_prepare",
                 )
-            self._remote_run_compatible(
-                f"cat > {shlex.quote(env_path)}",
-                input="\n".join(env_lines) + "\n",
-                surface="deploy_env",
-            )
-        if not self._spec.zero_recovery_canary:
+            if not self._spec.isolated_chain_runner:
+                self._remote_run_compatible(
+                    f"cat > {shlex.quote(env_path)}",
+                    input="\n".join(env_lines) + "\n",
+                    surface="deploy_env",
+                )
+        if not self._spec.zero_recovery_canary and (
+            not self._spec.isolated_chain_runner
+        ):
             self._remote_run_compatible(
                 f"docker rm -f {shlex.quote(self._ssh.container)} >/dev/null 2>&1 || true",
                 surface="deploy_remove_existing",
@@ -1814,6 +2241,35 @@ class SshProvider(Provider):
                     ),
                     *(
                         [
+                            f"-e PORT={self._spec.resources.port}",
+                            "-e MEGAPLAN_ISOLATED_CHAIN_RUNNER=1",
+                        ]
+                        if self._spec.isolated_chain_runner
+                        else []
+                    ),
+                    *(
+                        [
+                            "--entrypoint",
+                            shlex.quote(_ISOLATED_CHAIN_RUNNER_ENTRYPOINT),
+                            "--no-healthcheck",
+                            "--init",
+                            "--cap-drop ALL",
+                            *(
+                                f"--cap-add {capability}"
+                                for capability in _ISOLATED_CHAIN_RUNNER_CAP_ADD
+                            ),
+                            "--security-opt no-new-privileges:true",
+                            "--network bridge",
+                            "--ipc private",
+                            f"--pids-limit {_ISOLATED_CHAIN_RUNNER_PIDS_LIMIT}",
+                            "--memory 8g",
+                            "--memory-swap 8g",
+                        ]
+                        if self._spec.isolated_chain_runner
+                        else []
+                    ),
+                    *(
+                        [
                             "--cap-drop ALL",
                             "--cap-add CHOWN",
                             "--cap-add DAC_READ_SEARCH",
@@ -1831,7 +2287,11 @@ class SshProvider(Provider):
                         if self._spec.zero_recovery_canary
                         else []
                     ),
-                    f"--env-file {shlex.quote(env_path)}",
+                    *(
+                        []
+                        if self._spec.isolated_chain_runner
+                        else [f"--env-file {shlex.quote(env_path)}"]
+                    ),
                     *(
                         []
                         if self._spec.zero_recovery_canary
@@ -1839,13 +2299,25 @@ class SshProvider(Provider):
                     ),
                     f"-v {shlex.quote(workspace_mount)}:/workspace",
                     *cache_mounts,
-                    shlex.quote(self._ssh.container),
+                    shlex.quote(isolated_image_id or self._ssh.container),
+                    *(
+                        [shlex.quote(item) for item in _ISOLATED_CHAIN_RUNNER_COMMAND]
+                        if self._spec.isolated_chain_runner
+                        else []
+                    ),
                 ]
                 ),
                 surface="deploy_run",
             )
             if self._spec.zero_recovery_canary:
                 self._observe_zero_recovery_canary_runtime()
+            if self._spec.isolated_chain_runner:
+                if isolated_image_id is None:  # pragma: no cover - defensive invariant
+                    raise CliError(
+                        "isolated_chain_runner_image_unknown",
+                        "isolated chain-runner image identity was not resolved",
+                    )
+                self.attest_isolated_chain_runner_runtime()
         if transaction is not None:
             verify_fence = self._remote_run_compatible(
                 fence_command(
@@ -1864,48 +2336,67 @@ class SshProvider(Provider):
             )
         return 0
 
+    def _container_io_target(self) -> str:
+        if not self._spec.isolated_chain_runner:
+            return self._ssh.container
+        container_id = getattr(self, "_isolated_chain_runner_container_id", None)
+        if not isinstance(container_id, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", container_id
+        ):
+            raise CliError(
+                "isolated_chain_runner_attestation_required",
+                "isolated container I/O requires a fresh exact runtime attestation",
+            )
+        return container_id
+
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        target = self._container_io_target()
         return self._remote_run(
-            f"docker exec {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(command)}",
+            f"docker exec {shlex.quote(target)} bash -lc {shlex.quote(command)}",
             surface="ssh_exec",
         )
 
     def upload_file(self, src: Path, dest: str) -> None:
+        target = self._container_io_target()
         payload = base64.b64encode(src.read_bytes()).decode("ascii")
         parent = Path(dest).parent.as_posix()
         inner = f"mkdir -p {shlex.quote(parent)} && base64 -d > {shlex.quote(dest)}"
         self._remote_run(
-            f"docker exec -i {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(inner)}",
+            f"docker exec -i {shlex.quote(target)} bash -lc {shlex.quote(inner)}",
             input=payload,
             surface="upload_file",
         )
 
     def upload_archive(self, src: Path, dest_dir: str) -> None:
+        target = self._container_io_target()
         payload = base64.b64encode(src.read_bytes()).decode("ascii")
         inner = f"mkdir -p {shlex.quote(dest_dir)} && base64 -d | tar -xzf - -C {shlex.quote(dest_dir)}"
         self._remote_run(
-            f"docker exec -i {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(inner)}",
+            f"docker exec -i {shlex.quote(target)} bash -lc {shlex.quote(inner)}",
             input=payload,
             surface="upload_archive",
         )
 
     def read_remote_file(self, path: str) -> str:
+        target = self._container_io_target()
         result = self._remote_run(
-            f"docker exec {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(f'cat {shlex.quote(path)}')}",
+            f"docker exec {shlex.quote(target)} bash -lc {shlex.quote(f'cat {shlex.quote(path)}')}",
             surface="read_remote_file",
         )
         return result.stdout
 
     def attach(self) -> int:
+        target = self._container_io_target()
         self._remote_run(
-            f"docker exec -it {shlex.quote(self._ssh.container)} tmux attach -t agent",
+            f"docker exec -it {shlex.quote(target)} tmux attach -t agent",
             capture_output=False,
             surface="attach",
         )
         return 0
 
     def logs(self, *, follow: bool = True) -> int:
-        argv = f"docker logs {'-f ' if follow else '--tail 200 '}{shlex.quote(self._ssh.container)}"
+        target = self._container_io_target()
+        argv = f"docker logs {'-f ' if follow else '--tail 200 '}{shlex.quote(target)}"
         if follow:
             return _logs_follow(
                 [*self._ssh_destination_argv(), argv.strip()],

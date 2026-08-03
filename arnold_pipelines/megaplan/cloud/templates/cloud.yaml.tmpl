@@ -67,6 +67,19 @@ codex:
 #   container drops to idle instead of crashing so you can upload files manually.
 mode: idle
 
+# isolated_chain_runner:
+#   SSH+idle-only runner containment for one explicitly launched `cloud chain`.
+#   The container entrypoint runs only the health server: it never boots an
+#   agent shell, chain, heartbeat, watchdog, auditor, repair loop, resident, or
+#   notification sweep. Launch work later through supported `cloud preflight`
+#   and `cloud chain --fresh` commands. Requires `secrets: []`; Codex OAuth is
+#   seeded through the separate file-based credential path.
+isolated_chain_runner: false
+# Required by deploy and every later container-touching isolated action. Build
+# may run before this digest is known; record the exact built image ID before
+# deploy/preflight/sync/chain/status/logs/chains.
+# isolated_chain_runner_image_id: sha256:<64 lowercase hex>
+
 # zero_recovery_canary:
 #   SSH+idle-only finite-canary containment. The entrypoint runs only the
 #   health server; deploy requires a fresh host predeploy transaction and

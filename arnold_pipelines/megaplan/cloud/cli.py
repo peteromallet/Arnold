@@ -55,6 +55,20 @@ _ZERO_RECOVERY_CLOUD_ACTIONS = {
     "zero-recovery-canary-status",
     "zero-recovery-preflight",
 }
+_ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS = {
+    "build",
+    "deploy",
+    "preflight",
+    "sync-megaplan",
+    "chain",
+    "status",
+    "logs",
+    "chains",
+    "capacity-inventory",
+}
+_ISOLATED_CHAIN_RUNNER_PIN_REQUIRED_ACTIONS = (
+    _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS - {"build", "capacity-inventory"}
+)
 
 # Cloud deployments always drive phases via subprocess (remote SSH exec);
 # the substrate is pinned here so the cloud CLI explicitly declares its
@@ -851,11 +865,17 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                     existing_spec = _load_cloud_spec(root, args)
                 except CliError:
                     existing_spec = None
-                if existing_spec is not None and existing_spec.zero_recovery_canary:
-                    raise CliError(
-                        "zero_recovery_action_denied",
-                        "cloud init cannot overwrite an admitted zero-recovery profile",
-                    )
+                if existing_spec is not None:
+                    if existing_spec.zero_recovery_canary:
+                        raise CliError(
+                            "zero_recovery_action_denied",
+                            "cloud init cannot overwrite an admitted zero-recovery profile",
+                        )
+                    if existing_spec.isolated_chain_runner:
+                        raise CliError(
+                            "isolated_chain_runner_action_denied",
+                            "cloud init cannot overwrite an isolated chain-runner profile",
+                        )
             return _run_init(root, args)
         early_spec: CloudSpec | None = None
         if selected_cloud.is_file():
@@ -867,6 +887,14 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 raise CliError(
                     "zero_recovery_action_denied",
                     f"cloud {action} is not available in the zero-recovery profile",
+                )
+            if (
+                early_spec.isolated_chain_runner
+                and action not in _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS
+            ):
+                raise CliError(
+                    "isolated_chain_runner_action_denied",
+                    f"cloud {action} is not available in the isolated chain-runner profile",
                 )
         if action == "quickstart":
             return _run_quickstart(root, args)
@@ -882,6 +910,39 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 "zero_recovery_action_denied",
                 f"cloud {action} is not available in the zero-recovery profile",
             )
+        if (
+            spec.isolated_chain_runner
+            and action not in _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS
+        ):
+            raise CliError(
+                "isolated_chain_runner_action_denied",
+                f"cloud {action} is not available in the isolated chain-runner profile",
+            )
+        if spec.isolated_chain_runner:
+            if (
+                action in _ISOLATED_CHAIN_RUNNER_PIN_REQUIRED_ACTIONS
+                and spec.isolated_chain_runner_image_id is None
+            ):
+                raise CliError(
+                    "isolated_chain_runner_image_pin_required",
+                    f"cloud {action} requires isolated_chain_runner_image_id: sha256:<64 hex>",
+                )
+            if action in {"chain", "sync-megaplan"} and bool(
+                getattr(args, "on_box", False)
+            ):
+                raise CliError(
+                    "isolated_chain_runner_action_denied",
+                    f"cloud {action} --on-box bypasses the isolated SSH launch boundary",
+                )
+            if (
+                action == "chain"
+                and not bool(getattr(args, "prepare_only", False))
+                and not bool(getattr(args, "fresh", False))
+            ):
+                raise CliError(
+                    "isolated_chain_runner_fresh_required",
+                    "isolated cloud chain launches require --fresh",
+                )
         canary_admission: dict[str, Any] | None = None
         if spec.zero_recovery_canary:
             raw_canary_spec = getattr(args, "canary_spec", None) or (
@@ -891,6 +952,19 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 root, raw_canary_spec, getattr(args, "cloud_yaml", None), spec
             )
         provider = _provider_for_action(spec, args)
+        if spec.isolated_chain_runner and (
+            action in {"chain", "sync-megaplan", "status", "logs", "chains"}
+            or (action == "preflight" and not bool(getattr(args, "skip_remote", False)))
+        ):
+            attest_runtime = getattr(
+                provider, "attest_isolated_chain_runner_runtime", None
+            )
+            if attest_runtime is None:
+                raise CliError(
+                    "isolated_chain_runner_attestation_unavailable",
+                    "provider lacks isolated chain-runner runtime attestation",
+                )
+            attest_runtime()
 
         if action == "chain":
             with _materialized_deploy_dir(spec):
