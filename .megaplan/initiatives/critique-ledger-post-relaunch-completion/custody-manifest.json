@@ -1,7 +1,7 @@
 {
   "schema": "arnold.critique_ledger.unfinished_work_custody.v4",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T06:30:49Z",
+  "contract_updated_at": "2026-08-03T06:39:47Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -368,6 +368,18 @@
       "independent_review": {"path": null, "sha256": null, "status": "PENDING"},
       "live_gate": "PENDING",
       "stable_exit_gate": "PENDING"
+    },
+    {
+      "repair": {"id": "A36", "commit": "b9a7a2d2eacca529568b625e35525762a961eda5", "tree": "d9384fb3b9114e3d02dd4b5f66e191975819efa8"},
+      "launch": {"id": "B36", "commit": "a3288a6364fb51776f816577a5857bdebab8aa74", "tree": "7ceb34a0a2cdd0973563d5f0c42eb4864ad85791"},
+      "change": "RUNNING_STATUS_IS_NON_CANCELLING_IN_PROGRESS_AND_CLI_SUCCESS",
+      "regression_tests": "ADDED_COUNT_NOT_SUPPLIED",
+      "retry_isolation": {
+        "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-10-20260803",
+        "container": "megaplan-cloud-agent-finite-canary-10",
+        "preserves_attempt": "B35-live-attempt-9"
+      },
+      "gates": {"offline": "PENDING", "independent": "PENDING", "live": "PENDING", "stable_exit": "PENDING"}
     }
   ],
   "live_deploy_attempts": [
@@ -526,6 +538,45 @@
       "workspace": {"path": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-4-20260803"},
       "reconciliation": "TERMINAL_RECONCILED_REMOTE_RECEIPT_IMPORT_PENDING",
       "repair": {"id": "A31", "commit": "5ae02bb84b98d784cd230e69b633e89f77c95462", "tree": "3a42a1bb942d977dfa35705b23e26b2aaa1655aa"}
+    },
+    {
+      "id": "B35-live-attempt-9",
+      "candidate": {"id": "B35", "commit": "665851a8af14c895545a0b9f8d67251e0958f3c8", "tree": "2d5e49eab5e5f27ab522accb37b97039ae1e3988"},
+      "status": "terminated_by_overlapping_status_poll",
+      "terminal_state": "failed",
+      "run_receipt": {"path": null, "sha256": null, "digest": null, "status": "ABSENT"},
+      "phase_evidence": {
+        "init_receipt_sha256": "bec8be741aee9444926843a251cd53027de80a5c5a9eac010219d4f841c85623",
+        "plan_started_sha256": "de51ef7812468e8da192e2fed7e404647eec783d7f33e607a9e14a1858a347c2",
+        "dispatch_ledger_sha256": "f2d24e7bf3640145dcc15d70361ccb13469318acdec3b06e74b226b613f52bc7",
+        "output": "EMPTY"
+      },
+      "container": {
+        "name": "megaplan-cloud-agent-finite-canary-9",
+        "id": "acf086d75ef2ffd678117e09236819d3387298112b522dbc0e98ed2e4e7e2381",
+        "stopped": true,
+        "exit_code": 137,
+        "oom_killed": false,
+        "restart_count": 0,
+        "reconciled_stop": true
+      },
+      "workspace": {
+        "path": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-9-20260803",
+        "sealed": true,
+        "owner": "root",
+        "mode": "0700",
+        "transition_digest_prefix": "f513d54d",
+        "transition_digest_full": null
+      },
+      "timeline": {
+        "status_began": "06:30:25.420",
+        "docker_stop_sigterm": "06:30:26.882",
+        "run_exited_137": "06:30:36.876"
+      },
+      "definitive_cause": "STATUS_POLL_OVERLAPPED_LIVE_RUN_AND_FINALLY_UNCONDITIONALLY_STOPPED_AND_RESEALED",
+      "classification": "NOT_MODEL_OR_RUNTIME_FAILURE",
+      "reconciliation": "TERMINAL_RECONCILED_NO_RUN_RECEIPT",
+      "repair": {"id": "A36", "commit": "b9a7a2d2eacca529568b625e35525762a961eda5", "tree": "d9384fb3b9114e3d02dd4b5f66e191975819efa8"}
     }
   ],
   "prelaunch_release_gates": [

@@ -26,8 +26,9 @@
       "B22-smoke", "B23-smoke", "B24-smoke", "B25-smoke"
     ],
     "passing_successor": "B35-production-acceptance-smoke",
+    "pending_successor": "B36",
     "accepted_successor": "B26-smoke",
-    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_PRODUCTION_SMOKE_PASS_PENDING_INDEPENDENT_AND_LIVE",
+    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_B36_ALL_GATES_PENDING",
     "rule": "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
   },
   "superseded": [

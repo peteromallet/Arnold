@@ -12,7 +12,7 @@ The follow-up chain remains closed while any prelaunch gate is pending, any
 historical operation lacks an effective terminal reconciliation, B11-B25 remain
 failed history, transaction `404dd858567d48ffbe8cb7c27d85185a` lacks imported
 failure bytes, the terminal B27-B30 live receipts lack imported bytes, B35
-remains independently unaccepted, or F0 has not admitted the exact stable-exit
+attempt 9 has no run receipt, B36 gates remain pending, or F0 has not admitted the exact stable-exit
 handoff. There is intentionally no launch command in this runbook until an accepted installed
 authority path and its exact invocation are committed and independently
 reviewed. A generic command is not a fallback.
@@ -49,12 +49,13 @@ backdated or reconstructed receipt.
 4. Preserve B26's independent Sol GO, B27-B30's offline and terminal
    failed-live evidence, and B31-B34's diagnostic/rejected schema-access
    history. Then copy and independently review B35's diagnostic and production
-   acceptance smokes. B8-B10 build failures and B10-B25 smoke failures remain
-   immutable evidence.
+   acceptance smokes and attempt 9's poll-induced stop. B8-B10 build failures
+   and B10-B25 smoke failures remain immutable evidence.
 5. Import and reconcile transaction `404dd858567d48ffbe8cb7c27d85185a`'s
    durable failure receipt and import B27-B30's already-terminal run receipts.
-   Only after B35 is independently accepted: bind the fresh predeploy GO to
-   exact imported evidence, run a new supported live transaction, apply
+   Only after B36 passes offline and independent gates: run status as a
+   non-cancelling observation, bind fresh predeploy authority, run a new
+   supported live transaction, apply
    and verify the fence, run the one finite canary, record conformance and
    completion, stop it, and prove stable exit. Neither prior failure grants
    reusable launch authority.

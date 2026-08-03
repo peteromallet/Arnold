@@ -360,17 +360,44 @@ deliberately pending import; it is not permission to recreate a receipt.
 - [ ] Import the outstanding failed-fence and B27-B30 live receipt bytes; no
   missing receipt may be synthesized. B27-B30 outcomes are already
   terminal/reconciled.
-- [ ] Obtain B35 independent acceptance and run a fresh live canary only after
-  its exact evidence is complete. Live and stable-exit gates remain pending.
+- [ ] Preserve B35 live attempt 9 as terminal/reconciled without inventing a
+  run receipt. Container `megaplan-cloud-agent-finite-canary-9`, exact ID
+  `acf086d75ef2ffd678117e09236819d3387298112b522dbc0e98ed2e4e7e2381`,
+  stopped exit 137, OOM false, restart count 0. Its attempt-9 workspace is
+  sealed root:0700; only transition-digest prefix `f513d54d` was supplied.
+- [ ] Import attempt 9's phase evidence: init receipt SHA-256
+  `bec8be741aee9444926843a251cd53027de80a5c5a9eac010219d4f841c85623`,
+  plan-started SHA-256
+  `de51ef7812468e8da192e2fed7e404647eec783d7f33e607a9e14a1858a347c2`,
+  and dispatch-ledger SHA-256
+  `f2d24e7bf3640145dcc15d70361ccb13469318acdec3b06e74b226b613f52bc7`.
+  Output was empty and no run receipt exists.
+- [ ] Preserve the definitive attempt-9 cause as an operator-status collision,
+  not a model/runtime failure: process-adapter status began `06:30:25.420`,
+  Docker stop sent SIGTERM at `06:30:26.882`, and the run exited 137 at
+  `06:30:36.876`. Status cleanup unconditionally stopped and resealed the
+  concurrently running canary.
+- [ ] Preserve A36/B36 lineage: repair
+  `b9a7a2d2eacca529568b625e35525762a961eda5` / tree
+  `d9384fb3b9114e3d02dd4b5f66e191975819efa8` makes running status
+  non-cancelling, reports `in_progress` and returns CLI success, with regression
+  coverage; launch `a3288a6364fb51776f816577a5857bdebab8aa74` / tree
+  `7ceb34a0a2cdd0973563d5f0c42eb4864ad85791` binds fresh attempt-10 workspace
+  and `megaplan-cloud-agent-finite-canary-10` while preserving attempt 9.
+- [ ] Reconcile B35's still-pending independent review. It cannot authorize
+  B36 or erase attempt 9.
+- [ ] Obtain B36 offline and independent acceptance before any live attempt.
+  B36 live and stable-exit gates remain pending.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B35 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B36 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
   offline history, B27-B30 are terminal failed-live history, B31-B34 are
-  diagnostic/rejected history, and B35 is the latest passing production-smoke
-  candidate pending independent acceptance and live execution. No missing
-  receipt may be synthesized.
+  diagnostic/rejected history, B35 is the latest passing production-smoke
+  candidate with terminal attempt-9 history, and B36 is the pending successor
+  with no accepted offline/live authority. No missing receipt may be
+  synthesized.
 
 ## Exact deferred-obligation contract
 

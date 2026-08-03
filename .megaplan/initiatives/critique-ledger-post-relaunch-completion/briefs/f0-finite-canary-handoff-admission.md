@@ -17,8 +17,10 @@ Verify all of the following from committed evidence bytes:
 - failed live transaction `404dd858567d48ffbe8cb7c27d85185a` is imported and
   reconciled as no-marker/no-canary evidence before any fresh live retry;
 - A31-B34's schema-access diagnostic/rejected history remains preserved, and
-  B35's passing diagnostic and production acceptance receipts are independently
-  accepted before B35 becomes the launch candidate;
+  B35's passing diagnostic/production-smoke evidence plus attempt 9's terminal
+  status-poll collision remain preserved;
+- B36's offline and independent evidence is accepted before it becomes the
+  launch candidate, and live/stable-exit evidence remains independently bound;
 - every immutable operation intent has one independently reviewed effective
   terminal outcome in `operation-reconciliation-manifest.json`, with no effect
   dispatched more than its declared maximum and no ambiguous operation left

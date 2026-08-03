@@ -126,14 +126,21 @@ def test_b30_pass_cannot_drift_into_unreviewed_acceptance() -> None:
 def test_b34_independent_no_go_cannot_be_erased() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["schema_access_recovery_history"][3]["outcome"]["status"] = "ACCEPTED"
-    with pytest.raises(contract.ContractError, match="A31-B35 schema-access recovery history drift"):
+    with pytest.raises(contract.ContractError, match="A31-B36 schema-access recovery history drift"):
         contract._validate_schema_access_recovery_history(custody, require_live=False)
 
 
 def test_b35_prefix_evidence_cannot_be_promoted_to_full_digest() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["schema_access_recovery_history"][4]["production_acceptance_smoke"]["digest_full"] = "8" * 64
-    with pytest.raises(contract.ContractError, match="A31-B35 schema-access recovery history drift"):
+    with pytest.raises(contract.ContractError, match="A31-B36 schema-access recovery history drift"):
+        contract._validate_schema_access_recovery_history(custody, require_live=False)
+
+
+def test_b36_pending_offline_gate_cannot_be_promoted_without_evidence() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["schema_access_recovery_history"][5]["gates"]["offline"] = "ACCEPTED"
+    with pytest.raises(contract.ContractError, match="A31-B36 schema-access recovery history drift"):
         contract._validate_schema_access_recovery_history(custody, require_live=False)
 
 
@@ -169,6 +176,13 @@ def test_b30_failed_live_attempt_cannot_claim_running_container() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["live_canary_attempts"][3]["container"]["stopped"] = False
     with pytest.raises(contract.ContractError, match="B30 live canary terminal binding drift"):
+        contract._validate_live_canary_attempts(custody)
+
+
+def test_b35_status_poll_failure_cannot_be_relabelled_model_failure() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["live_canary_attempts"][4]["classification"] = "MODEL_FAILURE"
+    with pytest.raises(contract.ContractError, match="B35 live canary terminal binding drift"):
         contract._validate_live_canary_attempts(custody)
 
 

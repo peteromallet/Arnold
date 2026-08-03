@@ -72,9 +72,9 @@ Machine-readable custody is frozen in [`custody-manifest.json`](custody-manifest
 including immutable B8-B25 failure history, B26's independent Sol GO, the
 failed no-canary fence transaction, B27's terminal/reconciled failed live
 canary, B28-B30's terminal/reconciled failed live retries, the full A31-B35
-schema-access recovery lineage, and B35's passing production smoke pending
-independent acceptance. Historical operation and remote receipt import remain
-pending.
+schema-access recovery lineage, B35 attempt 9's status-poll-induced terminal
+stop, and A36/B36's pending non-cancelling retry. Historical operation and
+remote receipt import remain pending.
 Conflicting or stale launch instructions are retired by
 [`supersession-index.json`](supersession-index.json). Human prose never
 overrides those typed dispositions.

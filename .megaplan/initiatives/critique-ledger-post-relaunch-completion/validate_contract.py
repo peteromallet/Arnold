@@ -214,6 +214,18 @@ SCHEMA_ACCESS_RECOVERY_HISTORY = [
         "live_gate": "PENDING",
         "stable_exit_gate": "PENDING",
     },
+    {
+        "repair": {"id": "A36", "commit": "b9a7a2d2eacca529568b625e35525762a961eda5", "tree": "d9384fb3b9114e3d02dd4b5f66e191975819efa8"},
+        "launch": {"id": "B36", "commit": "a3288a6364fb51776f816577a5857bdebab8aa74", "tree": "7ceb34a0a2cdd0973563d5f0c42eb4864ad85791"},
+        "change": "RUNNING_STATUS_IS_NON_CANCELLING_IN_PROGRESS_AND_CLI_SUCCESS",
+        "regression_tests": "ADDED_COUNT_NOT_SUPPLIED",
+        "retry_isolation": {
+            "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-10-20260803",
+            "container": "megaplan-cloud-agent-finite-canary-10",
+            "preserves_attempt": "B35-live-attempt-9",
+        },
+        "gates": {"offline": "PENDING", "independent": "PENDING", "live": "PENDING", "stable_exit": "PENDING"},
+    },
 ]
 
 FAILED_LIVE_TRANSACTION_ID = "404dd858567d48ffbe8cb7c27d85185a"
@@ -709,14 +721,14 @@ def _validate_live_deploy_attempts(custody: dict[str, Any]) -> None:
 def _validate_schema_access_recovery_history(custody: dict[str, Any], *, require_live: bool) -> None:
     history = custody.get("schema_access_recovery_history")
     if history != SCHEMA_ACCESS_RECOVERY_HISTORY:
-        raise ContractError("A31-B35 schema-access recovery history drift")
+        raise ContractError("A31-B36 schema-access recovery history drift")
     if require_live:
-        raise ContractError("B35 production acceptance smoke lacks independent acceptance")
+        raise ContractError("B36 offline gate is pending")
 
 
 def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
     attempts = custody.get("live_canary_attempts")
-    if not isinstance(attempts, list) or len(attempts) != 4:
+    if not isinstance(attempts, list) or len(attempts) != 5:
         raise ContractError("live canary attempt history is incomplete")
     expected_b27 = {
         "id": "B27-live-attempt-1",
@@ -863,6 +875,45 @@ def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
         "reconciliation": "TERMINAL_RECONCILED_REMOTE_RECEIPT_IMPORT_PENDING",
         "repair": SCHEMA_ACCESS_RECOVERY_HISTORY[0]["repair"],
     }
+    expected_b35 = {
+        "id": "B35-live-attempt-9",
+        "candidate": SCHEMA_ACCESS_RECOVERY_HISTORY[4]["launch"],
+        "status": "terminated_by_overlapping_status_poll",
+        "terminal_state": "failed",
+        "run_receipt": {"path": None, "sha256": None, "digest": None, "status": "ABSENT"},
+        "phase_evidence": {
+            "init_receipt_sha256": "bec8be741aee9444926843a251cd53027de80a5c5a9eac010219d4f841c85623",
+            "plan_started_sha256": "de51ef7812468e8da192e2fed7e404647eec783d7f33e607a9e14a1858a347c2",
+            "dispatch_ledger_sha256": "f2d24e7bf3640145dcc15d70361ccb13469318acdec3b06e74b226b613f52bc7",
+            "output": "EMPTY",
+        },
+        "container": {
+            "name": "megaplan-cloud-agent-finite-canary-9",
+            "id": "acf086d75ef2ffd678117e09236819d3387298112b522dbc0e98ed2e4e7e2381",
+            "stopped": True,
+            "exit_code": 137,
+            "oom_killed": False,
+            "restart_count": 0,
+            "reconciled_stop": True,
+        },
+        "workspace": {
+            "path": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-9-20260803",
+            "sealed": True,
+            "owner": "root",
+            "mode": "0700",
+            "transition_digest_prefix": "f513d54d",
+            "transition_digest_full": None,
+        },
+        "timeline": {
+            "status_began": "06:30:25.420",
+            "docker_stop_sigterm": "06:30:26.882",
+            "run_exited_137": "06:30:36.876",
+        },
+        "definitive_cause": "STATUS_POLL_OVERLAPPED_LIVE_RUN_AND_FINALLY_UNCONDITIONALLY_STOPPED_AND_RESEALED",
+        "classification": "NOT_MODEL_OR_RUNTIME_FAILURE",
+        "reconciliation": "TERMINAL_RECONCILED_NO_RUN_RECEIPT",
+        "repair": SCHEMA_ACCESS_RECOVERY_HISTORY[5]["repair"],
+    }
     if attempts[0] != expected_b27:
         raise ContractError("B27 live canary terminal binding drift")
     if attempts[1] != expected_b28:
@@ -871,6 +922,8 @@ def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
         raise ContractError("B29 live canary terminal binding drift")
     if attempts[3] != expected_b30:
         raise ContractError("B30 live canary terminal binding drift")
+    if attempts[4] != expected_b35:
+        raise ContractError("B35 live canary terminal binding drift")
 
 
 def _validate_operation_reconciliation(*, require_live: bool) -> None:
@@ -1124,6 +1177,7 @@ def _validate_supersession(*, require_live: bool) -> None:
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
         or attempts.get("passing_successor") != "B35-production-acceptance-smoke"
+        or attempts.get("pending_successor") != "B36"
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
@@ -1134,7 +1188,7 @@ def _validate_supersession(*, require_live: bool) -> None:
         if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
             raise ContractError("strictly later smoke is not accepted")
     elif accepted == B26_PASS["id"]:
-        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_PRODUCTION_SMOKE_PASS_PENDING_INDEPENDENT_AND_LIVE":
+        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_B36_ALL_GATES_PENDING":
             raise ContractError("latest passing smoke pending disposition drift")
     elif accepted != "B35-production-acceptance-smoke" or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")
