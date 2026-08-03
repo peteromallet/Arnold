@@ -380,6 +380,173 @@ config = b'preferred_auth_method = "chatgpt"\nforced_login_method = "chatgpt"\nm
 atomic_install(root_codex, "config.toml", config)
 """.strip()
 
+_ISOLATED_GIT_CREDENTIAL_INSTALL_SCRIPT = r"""
+import json, os, stat, sys, urllib.parse
+
+home = sys.argv[1]
+if home != "/root":
+    raise RuntimeError("isolated git credential home rejected")
+token = sys.stdin.buffer.read()
+if (
+    not token
+    or len(token) > 4096
+    or any(byte < 0x21 or byte > 0x7e for byte in token)
+):
+    raise RuntimeError("isolated git credential token rejected")
+
+def require_directory(path, mode):
+    try:
+        current = os.lstat(path)
+    except FileNotFoundError:
+        os.mkdir(path, mode)
+        current = os.lstat(path)
+    if not stat.S_ISDIR(current.st_mode) or stat.S_ISLNK(current.st_mode):
+        raise RuntimeError("isolated git credential directory rejected")
+    if current.st_uid != 0 or current.st_gid != 0:
+        raise RuntimeError("isolated git credential directory custody rejected")
+    os.chmod(path, mode, follow_symlinks=False)
+
+def atomic_replace(parent, name, data):
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = "." + name + ".isolated-new"
+    try:
+        try:
+            existing = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and (
+            not stat.S_ISREG(existing.st_mode)
+            or existing.st_uid != 0
+            or existing.st_gid != 0
+        ):
+            raise RuntimeError("isolated git credential destination rejected")
+        try:
+            stale = os.stat(temporary, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            stale = None
+        if stale is not None:
+            if (
+                not stat.S_ISREG(stale.st_mode)
+                or stale.st_uid != 0
+                or stale.st_gid != 0
+            ):
+                raise RuntimeError("isolated git credential temporary rejected")
+            os.unlink(temporary, dir_fd=parent_fd)
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        installed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(installed.st_mode)
+            or stat.S_IMODE(installed.st_mode) != 0o600
+            or installed.st_uid != 0
+            or installed.st_gid != 0
+        ):
+            raise RuntimeError("isolated git credential install verification failed")
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        os.close(parent_fd)
+
+config_root = os.path.join(home, ".config")
+credential_root = os.path.join(config_root, "megaplan")
+gh_root = os.path.join(config_root, "gh")
+require_directory(config_root, 0o700)
+require_directory(credential_root, 0o700)
+require_directory(gh_root, 0o700)
+gh_hosts = os.path.join(gh_root, "hosts.yml")
+try:
+    prior_gh = os.lstat(gh_hosts)
+except FileNotFoundError:
+    prior_gh = None
+if prior_gh is not None:
+    if (
+        not stat.S_ISREG(prior_gh.st_mode)
+        or prior_gh.st_uid != 0
+        or prior_gh.st_gid != 0
+    ):
+        raise RuntimeError("isolated gh credential destination rejected")
+    os.unlink(gh_hosts)
+credential_path = os.path.join(credential_root, "git-credentials")
+encoded = urllib.parse.quote_from_bytes(token, safe="")
+credential = ("https://x-access-token:" + encoded + "@github.com\n").encode("ascii")
+git_config = (
+    "[credential]\n"
+    "\thelper = store --file " + credential_path + "\n"
+    "\tuseHttpPath = false\n"
+    "[user]\n"
+    "\tname = Arnold Megaplan\n"
+    "\temail = megaplan@arnold.invalid\n"
+).encode("utf-8")
+atomic_replace(credential_root, "git-credentials", credential)
+atomic_replace(home, ".gitconfig", git_config)
+print(json.dumps({
+    "schema": "arnold.cloud.isolated_chain_runner_git_auth.v1",
+    "status": "seeded",
+    "credential_file_mode": "0600",
+    "config_file_mode": "0600",
+    "credential_scope": "github.com",
+    "credential_helper": "store",
+    "user_name": "Arnold Megaplan",
+    "user_email": "megaplan@arnold.invalid",
+}, sort_keys=True, separators=(",", ":")))
+""".strip()
+
+_ISOLATED_GH_AUTH_ATTEST_SCRIPT = r"""
+import json, os, stat
+
+def require_root_file(path):
+    current = os.lstat(path)
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or stat.S_ISLNK(current.st_mode)
+        or current.st_uid != 0
+        or current.st_gid != 0
+        or stat.S_IMODE(current.st_mode) != 0o600
+    ):
+        raise RuntimeError("isolated auth file custody rejected")
+
+hosts = "/root/.config/gh/hosts.yml"
+git_config = "/root/.gitconfig"
+credential = "/root/.config/megaplan/git-credentials"
+require_root_file(hosts)
+require_root_file(git_config)
+require_root_file(credential)
+expected_config = (
+    "[credential]\n"
+    "\thelper = store --file /root/.config/megaplan/git-credentials\n"
+    "\tuseHttpPath = false\n"
+    "[user]\n"
+    "\tname = Arnold Megaplan\n"
+    "\temail = megaplan@arnold.invalid\n"
+)
+with open(git_config, "r", encoding="utf-8") as stream:
+    if stream.read() != expected_config:
+        raise RuntimeError("isolated git config identity or helper changed")
+print(json.dumps({
+    "schema": "arnold.cloud.isolated_chain_runner_gh_auth.v1",
+    "status": "authenticated",
+    "hostname": "github.com",
+    "config_file_mode": "0600",
+}, sort_keys=True, separators=(",", ":")))
+""".strip()
+
 
 def _zero_recovery_canary_runtime_command(container: str) -> str:
     """Build the exact fixed inspect argv; ``container`` is never positional."""
@@ -883,6 +1050,157 @@ class SshProvider(Provider):
                 "isolated chain-runner name changed during runtime attestation",
             )
         return observation
+
+    def seed_isolated_chain_runner_git_credentials(
+        self, token: str
+    ) -> dict[str, str]:
+        """Install GitHub push auth in the exact attested isolated container.
+
+        The token crosses both the local SSH boundary and the Docker exec
+        boundary only on stdin.  The fixed installer emits no output and
+        atomically replaces root-custodied credential/config files.
+        """
+        if not self._spec.isolated_chain_runner:
+            raise CliError(
+                "isolated_chain_runner_git_auth_invalid",
+                "isolated chain-runner profile is required for Git auth seeding",
+            )
+        encoded = token.encode("utf-8")
+        if (
+            not token
+            or len(encoded) > 4096
+            or any(byte < 0x21 or byte > 0x7E for byte in encoded)
+        ):
+            raise CliError(
+                "isolated_chain_runner_git_auth_invalid",
+                "local GitHub auth token was empty or malformed",
+            )
+        before = self.attest_isolated_chain_runner_runtime()
+        container_id = before["container_id"]
+        command = shlex.join(
+            [
+                "docker",
+                "exec",
+                "-i",
+                container_id,
+                _ISOLATED_CHAIN_RUNNER_ENTRYPOINT,
+                "-I",
+                "-S",
+                "-c",
+                _ISOLATED_GIT_CREDENTIAL_INSTALL_SCRIPT,
+                "/root",
+            ]
+        )
+        install = self._remote_run_compatible(
+            command,
+            input=token,
+            surface="isolated_chain_runner_git_auth_seed",
+        )
+        expected_receipt = {
+            "schema": "arnold.cloud.isolated_chain_runner_git_auth.v1",
+            "status": "seeded",
+            "credential_file_mode": "0600",
+            "config_file_mode": "0600",
+            "credential_scope": "github.com",
+            "credential_helper": "store",
+            "user_name": "Arnold Megaplan",
+            "user_email": "megaplan@arnold.invalid",
+        }
+        try:
+            install_receipt = json.loads((install.stdout or "").strip())
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "isolated_chain_runner_git_auth_failed",
+                "isolated Git credential receipt was malformed",
+            ) from exc
+        if install_receipt != expected_receipt:
+            raise CliError(
+                "isolated_chain_runner_git_auth_failed",
+                "isolated Git credential modes, helper, or identity were not attested",
+            )
+        self._remote_run_compatible(
+            shlex.join(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    container_id,
+                    "gh",
+                    "auth",
+                    "login",
+                    "--hostname",
+                    "github.com",
+                    "--git-protocol",
+                    "https",
+                    "--with-token",
+                    "--insecure-storage",
+                ]
+            ),
+            input=token,
+            surface="isolated_chain_runner_gh_auth_seed",
+        )
+        self._remote_run_compatible(
+            shlex.join(
+                [
+                    "docker",
+                    "exec",
+                    container_id,
+                    "gh",
+                    "auth",
+                    "status",
+                    "--hostname",
+                    "github.com",
+                ]
+            ),
+            surface="isolated_chain_runner_gh_auth_status",
+        )
+        gh_attestation_result = self._remote_run_compatible(
+            shlex.join(
+                [
+                    "docker",
+                    "exec",
+                    container_id,
+                    _ISOLATED_CHAIN_RUNNER_ENTRYPOINT,
+                    "-I",
+                    "-S",
+                    "-c",
+                    _ISOLATED_GH_AUTH_ATTEST_SCRIPT,
+                ]
+            ),
+            surface="isolated_chain_runner_gh_auth_attest",
+        )
+        expected_gh_attestation = {
+            "schema": "arnold.cloud.isolated_chain_runner_gh_auth.v1",
+            "status": "authenticated",
+            "hostname": "github.com",
+            "config_file_mode": "0600",
+        }
+        try:
+            gh_attestation = json.loads(
+                (gh_attestation_result.stdout or "").strip()
+            )
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "isolated_chain_runner_git_auth_failed",
+                "isolated gh auth receipt was malformed",
+            ) from exc
+        if gh_attestation != expected_gh_attestation:
+            raise CliError(
+                "isolated_chain_runner_git_auth_failed",
+                "isolated gh auth status or root custody was not attested",
+            )
+        after = self.attest_isolated_chain_runner_runtime()
+        if after.get("container_id") != container_id:
+            raise CliError(
+                "isolated_chain_runner_name_replaced",
+                "isolated chain-runner changed during Git auth seeding",
+            )
+        return {
+            **expected_receipt,
+            "gh_auth_status": "authenticated",
+            "gh_config_file_mode": "0600",
+            "container_id": container_id,
+        }
 
     def observe_zero_recovery_predecessor(self) -> dict[str, Any]:
         predecessor = self._spec.zero_recovery_predecessor_container

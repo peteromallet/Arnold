@@ -24,7 +24,10 @@ from typing import Any, Mapping
 
 import yaml
 
-from arnold_pipelines.megaplan.cloud.auth import seed_codex_oauth
+from arnold_pipelines.megaplan.cloud.auth import (
+    seed_codex_oauth,
+    seed_isolated_git_credentials,
+)
 from arnold_pipelines.megaplan.cloud.providers.base import (
     DeployReport,
     DeployStepReport,
@@ -1152,6 +1155,23 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                         metadata=seed_result,
                     )
                 )
+                if spec.isolated_chain_runner:
+                    git_seed_messages: list[str] = []
+                    git_seed_result = seed_isolated_git_credentials(
+                        spec,
+                        provider,
+                        required=False,
+                        writer=git_seed_messages.append,
+                    )
+                    report.steps.append(
+                        DeployStepReport(
+                            name="seed isolated Git auth",
+                            status="ok",
+                            detail=_oauth_seed_detail(git_seed_result),
+                            stderr="".join(git_seed_messages),
+                            metadata=git_seed_result,
+                        )
+                    )
             _emit_deploy_report(report, secret_names=spec.secrets, env=os.environ)
             return report.exit_code
 
@@ -4998,6 +5018,8 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             },
         )
 
+    if spec.isolated_chain_runner:
+        seed_isolated_git_credentials(spec, provider, required=True)
     _ensure_repo_checkout(launch_spec, provider, relay=False)
     required_commands = list(preflight_summary.get("runtime_commands", []))
     missing_commands = _run_remote_dependency_check(provider, required_commands)
