@@ -2029,6 +2029,11 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     assert '".megaplan/worker_tmp"' in source
     assert "any surviving" in source
 
+    reclaim_start = source.index("def _reclaim_zero_recovery_tree(")
+    reclaim_end = source.index("\ndef _zero_recovery_runtime_usage", reclaim_start)
+    reclaim = source[reclaim_start:reclaim_end]
+    assert reclaim.index("os.chown(path, 0, 0") < reclaim.index("with os.scandir(path)")
+
 
 def test_zero_recovery_runtime_accounts_for_and_seals_inert_unix_socket(
     monkeypatch: pytest.MonkeyPatch,
@@ -2080,7 +2085,11 @@ def test_zero_recovery_runtime_accounts_for_and_unlinks_ephemeral_symlink(
     assert target.read_text(encoding="utf-8") == "trusted"
 
 
-def test_zero_recovery_runtime_still_rejects_fifo(tmp_path: Path) -> None:
+def test_zero_recovery_runtime_still_rejects_fifo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(os, "chown", lambda *_args, **_kwargs: None)
     runtime = tmp_path / "runtime"
     runtime.mkdir()
     fifo = runtime / "fifo"
