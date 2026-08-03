@@ -19,17 +19,15 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     acquire_repair_lock,
     inspect_repair_lock,
     occurrence_scoped_lock_dir,
-    release_repair_lock,
     owner_metadata_path,
+    process_owner_identity,
+    release_repair_lock,
 )
 from arnold_pipelines.megaplan.cloud.repair_recurrence import (
     ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS,
-    EXTENDED_PROBLEM_SIGNATURE_FIELDS,
     PROBLEM_SIGNATURE_FIELDS,
-    build_acceptance_predicate_signature,
 )
 from arnold_pipelines.megaplan.custody.contracts import (
-    CustodyLeaseEvent,
     CustodyTargetKey,
     RepairOccurrenceKey,
     F01_REPAIR_OCCURRENCE_FIELDS,
@@ -1785,7 +1783,7 @@ def bind_managed_run_to_active_claim(
             return False
         owner.update(
             {
-                "pid": int(new_owner_pid),
+                **process_owner_identity(int(new_owner_pid)),
                 "managed_agent_run_id": normalized_run_id,
                 "managed_manifest_path": str(managed_manifest_path),
                 "managed_agent_bound_at": utc_now(),
@@ -1931,7 +1929,7 @@ def _settle_owner_write_race(
         ("owner_metadata_missing",),
         ("owner_metadata_invalid",),
     }
-    if not result.stale or tuple(reasons or ()) not in transient_owner_reasons:
+    if result.status not in {"stale", "unknown"} or tuple(reasons or ()) not in transient_owner_reasons:
         return result
     # The mkdir winner can be descheduled before its atomic owner write while
     # many same-process contenders are inspecting the new directory.  Allow a
@@ -1941,7 +1939,7 @@ def _settle_owner_write_race(
         inspected = inspect_repair_lock(result.lock_dir, now=now, is_pid_live=is_pid_live)
         inspected_reasons = (inspected.stale_evidence or {}).get("reasons")
         if (
-            inspected.status != "stale"
+            inspected.status not in {"stale", "unknown"}
             or tuple(inspected_reasons or ()) not in transient_owner_reasons
         ):
             return inspected
@@ -1965,6 +1963,12 @@ def _reclaim_stale_claim(
     is_pid_live: Any | None,
 ) -> RepairLockResult:
     if not result.stale:
+        return result
+    reasons = set((result.stale_evidence or {}).get("reasons") or ())
+    if not reasons.intersection({"owner_pid_not_live", "owner_process_mismatch"}):
+        # Timeout/identity/projection drift is not proof that the current owner
+        # is gone.  Only namespace-bound process-incarnation evidence may enter
+        # the stale-claim release path.
         return result
     owner = result.owner if isinstance(result.owner, dict) else None
     expected_pid = owner.get("pid") if isinstance(owner, dict) and isinstance(owner.get("pid"), int) else None
@@ -2314,7 +2318,6 @@ def persist_failure_occurrence(
     """
     from arnold_pipelines.megaplan.cloud.recovery_events import (
         RecoveryEventBuilder,
-        RecoveryEventKind,
     )
 
     ts = created_at or utc_now()
@@ -2417,7 +2420,6 @@ def enqueue_occurrence_bound_repair_request(
     success, or a typed rejection dict on identity failure.
     """
     from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
-        CALLER_KINDS,
         emit_zero_authority_rejection,
     )
 

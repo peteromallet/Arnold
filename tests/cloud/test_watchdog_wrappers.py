@@ -4726,7 +4726,7 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
     assert not pidfile.exists()
 
 
-def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
+def test_repair_loop_preserves_unbound_pidfile_and_uses_durable_lock(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_root = tmp_path / "repair-root"
     workspace = tmp_path / "ws"
@@ -4791,10 +4791,13 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
         text=True,
         env=env,
     )
+    lock_owner_path = marker_dir / "demo-session.repair-loop.lock" / "owner.json"
     try:
         for _ in range(300):
-            if stale_pidfile.exists() and stale_pidfile.read_text(encoding="utf-8").strip() == str(proc.pid):
-                break
+            if lock_owner_path.exists():
+                owner = json.loads(lock_owner_path.read_text(encoding="utf-8"))
+                if owner.get("pid") == proc.pid:
+                    break
             time.sleep(0.05)
         if proc.poll() is not None:
             stdout, stderr = proc.communicate()
@@ -4802,14 +4805,13 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
                 f"repair loop exited before claiming pidfile rc={proc.returncode} "
                 f"stdout={stdout!r} stderr={stderr!r}"
             )
-        assert stale_pidfile.read_text(encoding="utf-8").strip() == str(proc.pid)
+        assert json.loads(lock_owner_path.read_text(encoding="utf-8"))["pid"] == proc.pid
+        assert stale_pidfile.read_text(encoding="utf-8").strip() == "999999"
     finally:
         proc.terminate()
         stdout, stderr = proc.communicate(timeout=15)
 
-    combined = f"{stdout}\n{stderr}"
-    assert "stale repair pidfile detected; reclaiming" in combined
-    assert not stale_pidfile.exists()
+    assert stale_pidfile.read_text(encoding="utf-8").strip() == "999999"
 
 
 def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Path) -> None:
@@ -4885,11 +4887,15 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
         assert pidfile.exists(), "kill -9 should leave a stale pidfile for recovery"
 
         second = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        lock_owner_path = marker_dir / "demo-session.repair-loop.lock" / "owner.json"
         for _ in range(300):
-            if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(second.pid):
-                break
+            if lock_owner_path.exists():
+                owner = json.loads(lock_owner_path.read_text(encoding="utf-8"))
+                if owner.get("pid") == second.pid:
+                    break
             time.sleep(0.05)
-        assert pidfile.read_text(encoding="utf-8").strip() == str(second.pid)
+        assert json.loads(lock_owner_path.read_text(encoding="utf-8"))["pid"] == second.pid
+        assert pidfile.read_text(encoding="utf-8").strip() == str(first.pid)
     finally:
         if second is not None:
             if second.poll() is None:
@@ -4962,7 +4968,7 @@ def test_repair_loop_busy_directory_lock_exits_without_mutating_repair_data(tmp_
         repair_lock.release_repair_lock(lock_dir, expected_pid=holder.pid)
 
     assert result.returncode == 75
-    assert "another repair loop is already active" in f"{result.stdout}\n{result.stderr}"
+    assert "another repair loop owns or may own the repair" in f"{result.stdout}\n{result.stderr}"
     assert not (marker_dir / "repair-data" / "demo-session.repair-data.json").exists()
     assert not (marker_dir / "demo-session.repair-loop.pid").exists()
 
@@ -9916,8 +9922,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
     assert 'log "stale repair lock detected; leaving evidence in place session=$SESSION lock_dir=$REPAIR_LOCK_DIR"' in text
     assert 'log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"' in text
-    assert 'another repair loop is already active after stale lock recovery' in text
-    assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
+    assert 'repair lock was not safely reclaimable' in text
+    assert 'legacy pidfile left untouched; namespace-bound durable lock owns admission' in text
     assert "guard_against_recursive_repair_loop()" in text
     assert 'export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1' in text
     assert 'log "repair loop recursion blocked; parent repair loop already active' in text
