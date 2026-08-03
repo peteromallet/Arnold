@@ -15,11 +15,14 @@ the primary evidence and made repair provenance ambiguous.
 The fixed contract now requires every `user_actions[]` item to contain exactly
 the canonical human-only reason field and a canonical phase. Each primary and
 repair dispatch has a distinct output path. The selected `-o` response must be
-non-empty and, when a terminal assistant message is present in JSONL, equal to
-that message. Transport and selected response are stored as hash-addressed
-evidence with the plan, phase, invocation, phase-WBC attempt, worker-WBC
-attempt, occurrence, and repair ordinal. A semantic repair receives the full
-selected object, full canonical schema, and actual structural-audit failure.
+non-empty and, when assistant messages are present in JSONL, equal to the last
+message (earlier progress messages before tool calls are valid). Transport and
+selected response are stored as hash-addressed evidence with the plan, phase,
+invocation, phase-WBC attempt, worker-WBC attempt, occurrence, and repair
+ordinal. A semantic repair receives the full
+selected object—including the authenticated candidate rather than its receipt
+when artifact handoff is used—the full canonical schema, and the actual
+structural-audit failure.
 
 ## Required pre-dispatch checks
 
@@ -43,12 +46,12 @@ selected object, full canonical schema, and actual structural-audit failure.
    `.megaplan/model-response-evidence/occurrences/<occurrence>/repair-*.json`.
    Each receipt must bind the live plan/invocation/WBC IDs, have non-zero
    selected-output bytes, and hash to the referenced immutable object. If a
-   JSONL terminal assistant message exists, selection must be `accepted` and
-   equal to the selected-output object.
+   JSONL assistant message exists, selection must be `accepted` and equal to
+   the last assistant message.
 7. Accept Finalize only if the new WBC is `COMPLETED`, the canonical
    `finalize.json` passes handler validation, state is `finalized`, and the next
    step is `execute`. A timeout, stall, non-zero Codex exit, empty output,
-   mismatch, ambiguity, or exhausted repair remains terminal; never salvage a
+   mismatch or exhausted repair remains terminal; never salvage a
    partial live artifact post hoc.
 
 ## Focused verification
@@ -61,5 +64,6 @@ python -m pytest tests/orchestration/test_provider_response_contract.py tests/or
 
 The regression corpus includes the Attempt 9 legacy user-action shape, exact
 missing-field repair, primary/repair non-overwrite, response selection
-empty/mismatch/ambiguity rejection, hash-addressed WBC binding, zero-byte
+empty/last-message mismatch rejection, intermediate-message tolerance,
+hash-addressed WBC binding, zero-byte
 receipt rejection, and the trusted-container filesystem canary.

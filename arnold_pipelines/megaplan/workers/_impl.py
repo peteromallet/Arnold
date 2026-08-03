@@ -95,6 +95,7 @@ from arnold_pipelines.megaplan.model_seam import (
     ModelStructuralAuditError,
     audit_step_payload,
     capture_step_output,
+    local_strict_repair_input,
     render_prompt_for_dispatch,
     render_step_message,
     schema_audits_step_payload,
@@ -4343,20 +4344,18 @@ def _select_codex_terminal_output(raw_transport: str, output_raw: str) -> str:
             "Codex selected terminal output file is empty; JSONL transport is not a response fallback"
         )
     selected = output_raw.strip()
-    distinct = list(
-        dict.fromkeys(
-            candidate.strip()
-            for candidate in _codex_terminal_message_candidates(raw_transport)
-            if candidate.strip()
-        )
-    )
-    if len(distinct) > 1:
+    # Tool-using Codex turns legitimately emit intermediate agent_message
+    # items before commands.  The CLI's ``-o/--output-last-message`` contract
+    # selects the last assistant message, so cross-check that ordered terminal
+    # value rather than treating earlier progress messages as ambiguity.
+    candidates = [
+        candidate.strip()
+        for candidate in _codex_terminal_message_candidates(raw_transport)
+        if candidate.strip()
+    ]
+    if candidates and candidates[-1] != selected:
         raise ModelStructuralAuditError(
-            "Codex JSONL contains multiple distinct terminal assistant messages; response selection is ambiguous"
-        )
-    if distinct and distinct[0] != selected:
-        raise ModelStructuralAuditError(
-            "Codex selected terminal output does not equal the JSONL terminal assistant message"
+            "Codex selected terminal output does not equal the last JSONL assistant message"
         )
     return output_raw
 
@@ -4373,10 +4372,16 @@ def _new_response_occurrence(
     active = state.get("active_step")
     meta = state.get("meta")
     invocation_id = None
-    if isinstance(active, dict):
-        invocation_id = active.get("invocation_id") or active.get("run_id")
-    if not invocation_id and isinstance(meta, dict):
+    # The phase and worker WBC identities are minted from the canonical
+    # invocation stored in state.meta.  ``active_step.run_id`` is only the
+    # process-liveness fence and must not be mislabeled as that invocation.
+    if isinstance(meta, dict):
         invocation_id = meta.get("current_invocation_id")
+    if not invocation_id and isinstance(active, dict):
+        orphan_fence = active.get("orphan_fence")
+        if isinstance(orphan_fence, dict):
+            invocation_id = orphan_fence.get("invocation_id")
+        invocation_id = invocation_id or active.get("invocation_id") or active.get("run_id")
     material = {
         "plan_name": str(state.get("name") or plan_dir.name),
         "plan_dir": str(plan_dir.resolve()),
@@ -5298,10 +5303,16 @@ def _local_response_contract_error(
     fingerprint = hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    message = (
-        f"Codex {step} output failed the local response contract after the "
-        "single occurrence-scoped repair; repeating the unchanged phase is forbidden"
-    )
+    if attempts <= 1:
+        message = (
+            f"Codex {step} output failed the local response custody contract; "
+            "semantic repair is forbidden because no unambiguous selected response exists"
+        )
+    else:
+        message = (
+            f"Codex {step} output failed the local response contract after the "
+            "single occurrence-scoped repair; repeating the unchanged phase is forbidden"
+        )
     return CliError(
         "local_response_contract",
         message,
@@ -6071,39 +6082,48 @@ def _run_codex_step_uncapped(
             rendered_prompt=prompt,
             worker_channel=_CODEX_WORKER_CHANNEL,
         )
+    if selection_error is not None:
+        raise _local_response_contract_error(
+            step=step,
+            schema=schema,
+            reason=str(selection_error),
+            raw=output_raw,
+            attempts=1,
+            occurrence=response_occurrence,
+            evidence=response_evidence,
+        ) from selection_error
     capture_input: str | dict[str, Any] = selected_output
     plan_text = selected_output
     if step == "plan":
         capture_input = _extract_plan_capture_input(plan_text)
     try:
-        if selection_error is not None:
-            raise selection_error
-        capture_outcome = capture_step_output(
-            StepInvocation(
-                kind="model",
-                metadata={
-                    "tier": seam_tier.value,
-                    "worker": "codex",
-                    "model": model,
-                    "normalized_model": model,
-                    "validation_step": step,
-                    "compatibility_validation_step": step,
-                    "schema": schema,
-                    "capture_schema": capture_schema,
-                    "response_enforcement_attestation": response_attestation,
-                    "capture_recovery": {
-                        "step": step,
-                        "plan_dir": str(plan_dir),
-                        "output_path": str(output_path),
-                        "prefer_output_file": True,
-                        **(
-                            {"artifact_handoff": local_strict_handoff}
-                            if local_strict_handoff is not None
-                            else {}
-                        ),
-                    },
+        capture_invocation = StepInvocation(
+            kind="model",
+            metadata={
+                "tier": seam_tier.value,
+                "worker": "codex",
+                "model": model,
+                "normalized_model": model,
+                "validation_step": step,
+                "compatibility_validation_step": step,
+                "schema": schema,
+                "capture_schema": capture_schema,
+                "response_enforcement_attestation": response_attestation,
+                "capture_recovery": {
+                    "step": step,
+                    "plan_dir": str(plan_dir),
+                    "output_path": str(output_path),
+                    "prefer_output_file": True,
+                    **(
+                        {"artifact_handoff": local_strict_handoff}
+                        if local_strict_handoff is not None
+                        else {}
+                    ),
                 },
-            ),
+            },
+        )
+        capture_outcome = capture_step_output(
+            capture_invocation,
             capture_input,
         )
         payload = _normalize_step_payload_for_audit(
@@ -6121,7 +6141,8 @@ def _run_codex_step_uncapped(
             output_raw = output_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             output_raw = ""
-        repair_raw, _parse_error = _codex_repair_input(raw, output_raw)
+        repair_selected = local_strict_repair_input(capture_invocation, output_raw)
+        repair_raw, _parse_error = _codex_repair_input(raw, repair_selected)
         failure_reason = (
             str(capture_failure)
             if capture_failure is not None
