@@ -79,6 +79,19 @@ surface and a durable supervisor that publishes version-keyed status results
 after interaction acknowledgement without using observation as mutation
 authority.
 
+F1 acceptance is also blocked on dependency-closed revalidation of the
+historical M11 completion claim. Commit
+`d10b0fef2b6dbc283639ca14adf6790153ebd2a6` contained four ownership blockers
+and a provisional/action-off F01-F17 index, but its acceptance generator did
+not consume either authoritative file. Preserve that commit and its evidence as
+history; append a superseding Run Authority invalidation and replace it only
+with a zero-blocker, exact-head/source-bound, controlled-live and negative-
+control proof. Reuse existing Run Authority/Custody/WBC/acceptance records—no
+parallel M11 authority store. Until the revalidation completion manifest is
+green, legacy repair-loop and managed-child automatic-repair paths remain
+disabled fail closed. Exact audit evidence is
+`evidence/m11-acceptance-dependency-gap-20260803.json`.
+
 ## Locked decisions
 
 - The eventual independently accepted and installed Stage-A route is preserved
@@ -141,6 +154,15 @@ authority.
 - Status collection is observe-only. One canonical content-addressed report
   feeds CLI, cloud and Discord views; an interaction timeout cannot cancel the
   durable collector or cause duplicate publication.
+- Historical completion is not grandfathered around unmet dependencies. The
+  M11 `d10b0fef...` claim stays invalidated until an append-only superseding Run
+  Authority decision consumes the exact ownership/F01-F17 inputs, proves zero
+  blockers and non-provisional live/negative-control evidence, and binds exact
+  candidate head/tree/source/runtime hashes.
+- No legacy repair-loop, managed-child automatic repair, watchdog direct repair
+  fallback or meta-repair loop may be re-enabled while M11 revalidation is
+  missing, stale, provisional, action-off or non-green. A status projection or
+  manual toggle cannot waive this gate.
 - The installed-source trampoline checks the snapshot guard before exec. Every
   repair snapshot has bounded lifetime and non-overwritten `finally`/trap
   cleanup across success, failure, timeout, signal and cancellation.
@@ -252,6 +274,17 @@ receipts.
   result after completion across client timeout, resident restart and 200
   unchanged polls. Supervisor crash/restart resumes collection without
   relaunching, cancelling, reclaiming or repairing the observed subject.
+- A superseding Run Authority invalidation retires the authority of the old M11
+  completion claim without rewriting commit `d10b0fef...`. Revalidation proves
+  ownership blocker count zero; accepted dependency closure; exact HEAD/tree,
+  source/runtime and evidence hashes; a controlled live canary with one intended
+  effect; F01-F17 non-provisional proof; negative controls with zero bypass,
+  duplicate or unowned effects; and independent current-authority rereads. The
+  new content-addressed manifest explicitly consumes both formerly omitted
+  files and is a hard F1 acceptance prerequisite.
+- Source, wheel, installed and cloud tests prove every forbidden legacy repair/
+  managed-child path remains unreachable before that exact green manifest, and
+  that no projection/manual override can enable it.
 - An injected resident exit is detected and recovered through one bounded safe
   restart with receipts. ENOSPC blocks restart until a bounded reclaim and
   accepted capacity proof complete.

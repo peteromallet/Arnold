@@ -1,0 +1,99 @@
+{
+  "schema": "arnold.critique_ledger.m11_acceptance_dependency_gap.v1",
+  "captured_on": "2026-08-03",
+  "authority": "READ_ONLY_GIT_AND_COMMITTED_EVIDENCE_AUDIT",
+  "historical_promotion": {
+    "commit": "d10b0fef2b6dbc283639ca14adf6790153ebd2a6",
+    "tree": "f1938d0de2127226ba23a0a48a6130ca0528ed52",
+    "parent": "88f1f39c8f06832e155501ff13dd4e00a1522f94",
+    "subject": "feat(megaplan): complete custody M11 acceptance and recovery control plane",
+    "historical_claim": "M11_COMPLETION_PROMOTED",
+    "current_authority": "INVALIDATED_PENDING_DEPENDENCY_CLOSED_REVALIDATION",
+    "authority_scope": "THIS_EPIC_REFUSES_CONSUMPTION_NOW_APPEND_ONLY_RUN_AUTHORITY_SUPERSESSION_IS_A_PENDING_P0_ACTION",
+    "history_rule": "APPEND_SUPERSEDING_RUN_AUTHORITY_DECISION_NEVER_REWRITE_OR_DELETE_THE_HISTORICAL_COMMIT"
+  },
+  "unconsumed_blocking_evidence": {
+    "ownership_decision_record": {
+      "path": "evidence/ownership-decision-record.json",
+      "sha256_at_promoted_commit": "aea9ba9c5e9f5f753d8d962af2c6d9e038968184b6e3b1c26b461610c13888fc",
+      "schema": "m6.ownership-decision-record.v1",
+      "blocker_count": 4,
+      "global_blocker_ids": [
+        "OWNERSHIP-BLOCKER-001",
+        "OWNERSHIP-BLOCKER-002",
+        "OWNERSHIP-BLOCKER-003",
+        "OWNERSHIP-BLOCKER-004"
+      ],
+      "m11_blocking_ids": [
+        "OWNERSHIP-BLOCKER-001",
+        "OWNERSHIP-BLOCKER-003"
+      ],
+      "composite_hash": "92353205726e83ce4d379983fdf477c664a1bf5b3594838a788395529dcb5bb4"
+    },
+    "f01_f17_completion_index": {
+      "path": "evidence/f01-f17-completion-index.json",
+      "sha256_at_promoted_commit": "20cbef1a1e1d4c4cca5667ebbf9c3d39a79ea1e1a5fefb783e1a44b29dda598c",
+      "schema": "m10.f01-f17-completion-index.v1",
+      "status": "reconciled",
+      "effective_status": "reconciled",
+      "provisional": true,
+      "scenarios_completed_count": 17,
+      "scenarios_action_off_count": 17,
+      "reconciliation_target": "M11 genuine-block candidate execution",
+      "classification": "PROVISIONAL_ACTION_OFF_IS_NOT_LIVE_COMPLETION_PROOF"
+    }
+  },
+  "acceptance_consumption_gap": {
+    "acceptance_generator_path": "scripts/generate_m11_acceptance_receipt.py",
+    "acceptance_generator_sha256_at_promoted_commit": "666bc0adfe0a7962b035f225f86fe3cc509d05b64001eb0fde12c477524820d3",
+    "m11_acceptance_module_path": "arnold_pipelines/megaplan/orchestration/m11_acceptance.py",
+    "m11_acceptance_module_sha256_at_promoted_commit": "a0a586c1f1258c55c702f45a5d60682ed18cbf3c9780a5ee73b691b36bd441d0",
+    "fixed_acceptance_evidence_names": [
+      "full_suite",
+      "no_debt",
+      "runtime",
+      "audit",
+      "genuine_block",
+      "recovery",
+      "route",
+      "wbc"
+    ],
+    "required_but_unconsumed_paths": [
+      "evidence/ownership-decision-record.json",
+      "evidence/f01-f17-completion-index.json"
+    ],
+    "source_reference_observation": "NEITHER_REQUIRED_PATH_IS_REFERENCED_BY_THE_ACCEPTANCE_GENERATOR_MODULE_OR_M11_ACCEPTANCE_TEST_SURFACE_AT_THE_PROMOTED_COMMIT",
+    "root_defect": "ACCEPTANCE_WAS_NOT_DEPENDENCY_CLOSED_GREEN_LOCAL_AGGREGATES_COULD_PROMOTE_WHILE_AUTHORITATIVE_PREDECESSOR_BLOCKERS_REMAINED"
+  },
+  "dependency_closed_revalidation": {
+    "owner_milestone": "f1-owner-storage-recovery-hardening",
+    "gate": "P0_REQUIRED_BEFORE_F1_ACCEPTANCE",
+    "authority_reuse": [
+      "EXISTING_RUN_AUTHORITY_APPEND_ONLY_DECISION",
+      "EXISTING_CUSTODY_AND_WBC_ATTEMPT_EFFECT_RECORDS",
+      "EXISTING_M11_ACCEPTANCE_AND_PROOF_MAP_SURFACES"
+    ],
+    "forbidden_silo": "NO_NEW_M11_STATUS_STORE_PROJECTION_OR_PARALLEL_ACCEPTANCE_AUTHORITY",
+    "requirements": [
+      "OWNERSHIP_DECISION_BLOCKER_COUNT_ZERO_AND_EVERY_PREDECESSOR_DEPENDENCY_ACCEPTED",
+      "F01_F17_EACH_HAS_NON_PROVISIONAL_ACTION_ON_CONTROLLED_LIVE_PROOF_OR_AN_EXPLICITLY_INAPPLICABLE_NEGATIVE_CONTROL",
+      "NO_ACTION_OFF_SHADOW_OR_SYNTHETIC_STATUS_MAY_SUBSTITUTE_FOR_LIVE_PROOF",
+      "EVERY_RECEIPT_BINDS_EXACT_CANDIDATE_HEAD_TREE_SOURCE_RUNTIME_AND_EVIDENCE_FILE_SHA256",
+      "CONTROLLED_LIVE_CANARY_PROVES_ONE_ADMITTED_EFFECT_AND_NEGATIVE_CONTROLS_PROVE_ZERO_BYPASS_DUPLICATE_OR_UNOWNED_EFFECTS",
+      "INDEPENDENT_VERIFIER_REREADS_CURRENT_RUN_AUTHORITY_CUSTODY_WBC_AND_BOUND_SOURCE_BYTES",
+      "A_NEW_CONTENT_ADDRESSED_COMPLETION_MANIFEST_CONSUMES_BOTH_FORMERLY_OMITTED_FILES_AND_ALL_DEPENDENCIES"
+    ],
+    "completion_transition": "ONLY_A_NEW_GREEN_SUPERSEDING_RUN_AUTHORITY_DECISION_MAY_RETIRE_THE_INVALIDATION"
+  },
+  "automatic_repair_hold": {
+    "state": "DISABLED_FAIL_CLOSED_UNTIL_REVALIDATION_GREEN",
+    "forbidden_reenablements": [
+      "LEGACY_REPAIR_LOOP",
+      "MANAGED_CHILD_AUTOMATIC_REPAIR",
+      "WATCHDOG_DIRECT_REPAIR_FALLBACK",
+      "META_REPAIR_LOOP"
+    ],
+    "release_gate": "EXACT_DEPENDENCY_CLOSED_M11_REVALIDATION_COMPLETION_MANIFEST_AND_SUPERSEDING_RUN_AUTHORITY_DECISION",
+    "manual_or_projection_override": "FORBIDDEN"
+  }
+}

@@ -65,6 +65,57 @@ def test_r5_phantom_launch_cannot_be_promoted_to_a_real_managed_run() -> None:
         contract._validate_r5_repair_control_incident(incident)
 
 
+def _m11_gap_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name("evidence")
+        / "m11-acceptance-dependency-gap-20260803.json"
+    )
+
+
+def test_m11_historical_four_blockers_cannot_be_rewritten_green() -> None:
+    evidence = _m11_gap_fixture()
+    evidence["unconsumed_blocking_evidence"]["ownership_decision_record"][
+        "blocker_count"
+    ] = 0
+    with pytest.raises(
+        contract.ContractError,
+        match="committed blocker/provisional evidence drift",
+    ):
+        contract._validate_m11_acceptance_dependency_gap(evidence)
+
+
+def test_m11_provisional_action_off_index_cannot_count_as_live_proof() -> None:
+    evidence = _m11_gap_fixture()
+    evidence["unconsumed_blocking_evidence"]["f01_f17_completion_index"][
+        "provisional"
+    ] = False
+    with pytest.raises(
+        contract.ContractError,
+        match="committed blocker/provisional evidence drift",
+    ):
+        contract._validate_m11_acceptance_dependency_gap(evidence)
+
+
+def test_m11_revalidation_must_consume_both_omitted_authority_files() -> None:
+    evidence = _m11_gap_fixture()
+    evidence["acceptance_consumption_gap"]["required_but_unconsumed_paths"].pop()
+    with pytest.raises(
+        contract.ContractError,
+        match="acceptance-consumption gap drift",
+    ):
+        contract._validate_m11_acceptance_dependency_gap(evidence)
+
+
+def test_legacy_automatic_repair_stays_disabled_until_m11_green() -> None:
+    evidence = _m11_gap_fixture()
+    evidence["automatic_repair_hold"]["state"] = "ENABLED"
+    with pytest.raises(
+        contract.ContractError,
+        match="revalidation/automation hold drift",
+    ):
+        contract._validate_m11_acceptance_dependency_gap(evidence)
+
+
 def _provider_policy_fixture() -> tuple[dict, dict]:
     root = Path(__file__).parent
     policy = contract._load_json(

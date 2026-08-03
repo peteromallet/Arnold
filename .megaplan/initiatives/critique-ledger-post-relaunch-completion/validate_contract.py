@@ -30,6 +30,9 @@ R5_REPAIR_CONTROL_EVIDENCE = (
     "evidence/r5-cl2-repair-control-incident-20260803.json"
 )
 PROVIDER_POLICY_BINDING_CONTRACT = "provider-policy-execution-binding-contract.json"
+M11_ACCEPTANCE_GAP_EVIDENCE = (
+    "evidence/m11-acceptance-dependency-gap-20260803.json"
+)
 
 OBLIGATIONS = {
     "F1.platform_capacity_storage_hardening": "f1-owner-storage-recovery-hardening",
@@ -2073,6 +2076,12 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         raise ContractError("resident availability proof map drift")
     if R5_REPAIR_CONTROL_EVIDENCE not in f1_proofs:
         raise ContractError("r5 repair-control incident proof map drift")
+    if (
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        + M11_ACCEPTANCE_GAP_EVIDENCE
+        not in f1_proofs
+    ):
+        raise ContractError("M11 acceptance dependency-gap proof map drift")
     if proof_map.get("f2a-launch-profile-artifact-drift-containment") != [
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
         "provider-policy-execution-binding-contract.json",
@@ -2312,6 +2321,144 @@ def _validate_provider_policy_binding_contract(
         raise ContractError("F2A all-pipeline conformance drift")
 
 
+def _validate_m11_acceptance_dependency_gap(evidence: dict[str, Any]) -> None:
+    historical = evidence.get("historical_promotion")
+    if (
+        evidence.get("schema")
+        != "arnold.critique_ledger.m11_acceptance_dependency_gap.v1"
+        or evidence.get("captured_on") != "2026-08-03"
+        or evidence.get("authority")
+        != "READ_ONLY_GIT_AND_COMMITTED_EVIDENCE_AUDIT"
+        or not isinstance(historical, dict)
+        or historical.get("commit")
+        != "d10b0fef2b6dbc283639ca14adf6790153ebd2a6"
+        or historical.get("tree")
+        != "f1938d0de2127226ba23a0a48a6130ca0528ed52"
+        or historical.get("parent")
+        != "88f1f39c8f06832e155501ff13dd4e00a1522f94"
+        or historical.get("current_authority")
+        != "INVALIDATED_PENDING_DEPENDENCY_CLOSED_REVALIDATION"
+        or historical.get("authority_scope")
+        != "THIS_EPIC_REFUSES_CONSUMPTION_NOW_APPEND_ONLY_RUN_AUTHORITY_SUPERSESSION_IS_A_PENDING_P0_ACTION"
+        or historical.get("history_rule")
+        != "APPEND_SUPERSEDING_RUN_AUTHORITY_DECISION_NEVER_REWRITE_OR_DELETE_THE_HISTORICAL_COMMIT"
+    ):
+        raise ContractError("M11 historical promotion invalidation drift")
+
+    blocking = evidence.get("unconsumed_blocking_evidence")
+    ownership = blocking.get("ownership_decision_record") if isinstance(blocking, dict) else None
+    fault_index = blocking.get("f01_f17_completion_index") if isinstance(blocking, dict) else None
+    if (
+        not isinstance(ownership, dict)
+        or ownership.get("path") != "evidence/ownership-decision-record.json"
+        or ownership.get("sha256_at_promoted_commit")
+        != "aea9ba9c5e9f5f753d8d962af2c6d9e038968184b6e3b1c26b461610c13888fc"
+        or ownership.get("blocker_count") != 4
+        or ownership.get("global_blocker_ids")
+        != [
+            "OWNERSHIP-BLOCKER-001",
+            "OWNERSHIP-BLOCKER-002",
+            "OWNERSHIP-BLOCKER-003",
+            "OWNERSHIP-BLOCKER-004",
+        ]
+        or ownership.get("m11_blocking_ids")
+        != ["OWNERSHIP-BLOCKER-001", "OWNERSHIP-BLOCKER-003"]
+        or not isinstance(fault_index, dict)
+        or fault_index.get("path") != "evidence/f01-f17-completion-index.json"
+        or fault_index.get("sha256_at_promoted_commit")
+        != "20cbef1a1e1d4c4cca5667ebbf9c3d39a79ea1e1a5fefb783e1a44b29dda598c"
+        or fault_index.get("provisional") is not True
+        or fault_index.get("scenarios_completed_count") != 17
+        or fault_index.get("scenarios_action_off_count") != 17
+        or fault_index.get("classification")
+        != "PROVISIONAL_ACTION_OFF_IS_NOT_LIVE_COMPLETION_PROOF"
+    ):
+        raise ContractError("M11 committed blocker/provisional evidence drift")
+    if (
+        _sha256(ROOT / ownership["path"])
+        != ownership["sha256_at_promoted_commit"]
+        or _sha256(ROOT / fault_index["path"])
+        != fault_index["sha256_at_promoted_commit"]
+    ):
+        raise ContractError("M11 bound evidence file hash drift")
+
+    gap = evidence.get("acceptance_consumption_gap")
+    required_omissions = [
+        "evidence/ownership-decision-record.json",
+        "evidence/f01-f17-completion-index.json",
+    ]
+    if (
+        not isinstance(gap, dict)
+        or gap.get("acceptance_generator_sha256_at_promoted_commit")
+        != "666bc0adfe0a7962b035f225f86fe3cc509d05b64001eb0fde12c477524820d3"
+        or gap.get("m11_acceptance_module_sha256_at_promoted_commit")
+        != "a0a586c1f1258c55c702f45a5d60682ed18cbf3c9780a5ee73b691b36bd441d0"
+        or gap.get("fixed_acceptance_evidence_names")
+        != [
+            "full_suite",
+            "no_debt",
+            "runtime",
+            "audit",
+            "genuine_block",
+            "recovery",
+            "route",
+            "wbc",
+        ]
+        or gap.get("required_but_unconsumed_paths") != required_omissions
+        or gap.get("root_defect")
+        != "ACCEPTANCE_WAS_NOT_DEPENDENCY_CLOSED_GREEN_LOCAL_AGGREGATES_COULD_PROMOTE_WHILE_AUTHORITATIVE_PREDECESSOR_BLOCKERS_REMAINED"
+    ):
+        raise ContractError("M11 acceptance-consumption gap drift")
+    if (
+        _sha256(ROOT / gap["acceptance_generator_path"])
+        != gap["acceptance_generator_sha256_at_promoted_commit"]
+        or _sha256(ROOT / gap["m11_acceptance_module_path"])
+        != gap["m11_acceptance_module_sha256_at_promoted_commit"]
+    ):
+        raise ContractError("M11 acceptance source hash drift")
+
+    revalidation = evidence.get("dependency_closed_revalidation")
+    automation = evidence.get("automatic_repair_hold")
+    required_revalidation = [
+        "OWNERSHIP_DECISION_BLOCKER_COUNT_ZERO_AND_EVERY_PREDECESSOR_DEPENDENCY_ACCEPTED",
+        "F01_F17_EACH_HAS_NON_PROVISIONAL_ACTION_ON_CONTROLLED_LIVE_PROOF_OR_AN_EXPLICITLY_INAPPLICABLE_NEGATIVE_CONTROL",
+        "NO_ACTION_OFF_SHADOW_OR_SYNTHETIC_STATUS_MAY_SUBSTITUTE_FOR_LIVE_PROOF",
+        "EVERY_RECEIPT_BINDS_EXACT_CANDIDATE_HEAD_TREE_SOURCE_RUNTIME_AND_EVIDENCE_FILE_SHA256",
+        "CONTROLLED_LIVE_CANARY_PROVES_ONE_ADMITTED_EFFECT_AND_NEGATIVE_CONTROLS_PROVE_ZERO_BYPASS_DUPLICATE_OR_UNOWNED_EFFECTS",
+        "INDEPENDENT_VERIFIER_REREADS_CURRENT_RUN_AUTHORITY_CUSTODY_WBC_AND_BOUND_SOURCE_BYTES",
+        "A_NEW_CONTENT_ADDRESSED_COMPLETION_MANIFEST_CONSUMES_BOTH_FORMERLY_OMITTED_FILES_AND_ALL_DEPENDENCIES",
+    ]
+    if (
+        not isinstance(revalidation, dict)
+        or revalidation.get("owner_milestone")
+        != "f1-owner-storage-recovery-hardening"
+        or revalidation.get("gate") != "P0_REQUIRED_BEFORE_F1_ACCEPTANCE"
+        or revalidation.get("authority_reuse")
+        != [
+            "EXISTING_RUN_AUTHORITY_APPEND_ONLY_DECISION",
+            "EXISTING_CUSTODY_AND_WBC_ATTEMPT_EFFECT_RECORDS",
+            "EXISTING_M11_ACCEPTANCE_AND_PROOF_MAP_SURFACES",
+        ]
+        or revalidation.get("forbidden_silo")
+        != "NO_NEW_M11_STATUS_STORE_PROJECTION_OR_PARALLEL_ACCEPTANCE_AUTHORITY"
+        or revalidation.get("requirements") != required_revalidation
+        or not isinstance(automation, dict)
+        or automation.get("state")
+        != "DISABLED_FAIL_CLOSED_UNTIL_REVALIDATION_GREEN"
+        or automation.get("forbidden_reenablements")
+        != [
+            "LEGACY_REPAIR_LOOP",
+            "MANAGED_CHILD_AUTOMATIC_REPAIR",
+            "WATCHDOG_DIRECT_REPAIR_FALLBACK",
+            "META_REPAIR_LOOP",
+        ]
+        or automation.get("release_gate")
+        != "EXACT_DEPENDENCY_CLOSED_M11_REVALIDATION_COMPLETION_MANIFEST_AND_SUPERSEDING_RUN_AUTHORITY_DECISION"
+        or automation.get("manual_or_projection_override") != "FORBIDDEN"
+    ):
+        raise ContractError("M11 dependency-closed revalidation/automation hold drift")
+
+
 def _validate_supersession(*, require_live: bool) -> None:
     index = _load_json(INITIATIVE / "supersession-index.json")
     if index.get("schema") != "arnold.critique_ledger.supersession_index.v2":
@@ -2527,6 +2674,9 @@ def validate(*, require_live: bool = False) -> None:
     proof_map = _load_json(INITIATIVE / "proof-map.json")
     _validate_r5_repair_control_incident(
         _load_json(INITIATIVE / "evidence/r5-cl2-repair-control-incident-20260803.json")
+    )
+    _validate_m11_acceptance_dependency_gap(
+        _load_json(INITIATIVE / M11_ACCEPTANCE_GAP_EVIDENCE)
     )
     chain_path = INITIATIVE / "chain.yaml"
     chain = yaml.safe_load(chain_path.read_text(encoding="utf-8"))

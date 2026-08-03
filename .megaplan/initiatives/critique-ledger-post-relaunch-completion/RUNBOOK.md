@@ -53,6 +53,19 @@ collection or publish the same report twice. Until that surface exists, treat
 `/whats-cooking` timeout as an availability/observation failure and inspect the
 subject separately—never as automatic evidence of a product stall.
 
+The historical M11 completion claim at
+`d10b0fef2b6dbc283639ca14adf6790153ebd2a6` is invalidated pending
+dependency-closed revalidation. Its committed ownership record had four
+blockers and its F01-F17 index was entirely provisional/action-off; M11
+acceptance consumed neither file. Preserve the historical commit. Append the
+invalidation and any eventual green supersession through existing Run
+Authority/Custody/WBC records only. F1 cannot be accepted until a new manifest
+binds zero blockers, exact candidate/head/source hashes, non-provisional F01-F17
+evidence, a controlled live canary and negative controls. Until then, keep the
+legacy repair loop, managed-child automatic repair, watchdog direct-repair
+fallback and meta-repair loop disabled. Do not use a manual toggle, status
+projection or synthetic receipt to bypass the hold.
+
 ## Complete fresh restart/relaunch procedure
 
 Use this only after the current generation is terminal or positively proven

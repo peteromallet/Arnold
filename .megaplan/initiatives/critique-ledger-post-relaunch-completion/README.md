@@ -101,6 +101,20 @@ only patch. See
 and
 [`briefs/f2a-launch-profile-artifact-drift-containment.md`](briefs/f2a-launch-profile-artifact-drift-containment.md).
 
+A separate historical audit invalidates the old M11 completion/promotion claim
+at commit `d10b0fef2b6dbc283639ca14adf6790153ebd2a6`. That commit contained
+`evidence/ownership-decision-record.json` with four blockers and
+`evidence/f01-f17-completion-index.json` with all seventeen scenarios still
+provisional/action-off, while its acceptance generator consumed neither file.
+The commit remains immutable history, but this epic refuses to consume its
+completion status. P0/F1 must append the authoritative dependency-closed
+superseding Run Authority decision with zero blockers, exact head/source hashes,
+controlled live canary and negative controls before F1 can be accepted. Until
+that proof is green, no legacy repair-loop, managed-child automatic repair,
+watchdog repair fallback or meta-repair loop may be re-enabled. Exact evidence
+is in
+[`evidence/m11-acceptance-dependency-gap-20260803.json`](evidence/m11-acceptance-dependency-gap-20260803.json).
+
 Discord resident availability is separately restored. Recovery epoch
 `discord-enospc-20260803-r7` created healthy container
 `a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`

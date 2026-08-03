@@ -68,6 +68,45 @@ supervision of the live Critique run.
   is not a product failure; intervention still requires dead process/tmux,
   terminal plan failure, vanished workers with no output, or a real stall.
 
+### P0 — invalidate and dependency-close the historical M11 acceptance
+
+Commit `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` was promoted as M11
+completion while its own committed `evidence/ownership-decision-record.json`
+had `blocker_count=4` and its `evidence/f01-f17-completion-index.json` kept all
+seventeen scenarios provisional and action-off. The acceptance generator's
+fixed evidence set consumed neither file. Preserve the commit as immutable
+history, but its completion/promotion claim is invalid until dependency-closed
+revalidation passes. Exact source hashes and the acceptance-consumption gap are
+frozen in `evidence/m11-acceptance-dependency-gap-20260803.json`.
+
+- [ ] **P0/F1 PREREQUISITE — append the invalidation.** Reuse the existing Run
+  Authority append-only decision mechanism to supersede the old completion
+  claim. Do not edit/delete the commit, rewrite the evidence files, create a new
+  status store, or let a projection assert invalidation/acceptance.
+- [ ] **VERY HARD — zero-blocker dependency closure.** Regenerate the ownership
+  decision from exact current sources and require zero blockers plus accepted
+  predecessor dependencies. Bind candidate HEAD/tree, source/runtime revision,
+  acceptance/proof-map inputs and both formerly omitted evidence files by exact
+  SHA-256. Any mismatch or missing dependency is typed NO-GO.
+- [ ] **VERY HARD — replace provisional/action-off with real proof.** Every
+  F01-F17 row must carry non-provisional controlled-live evidence or an exact
+  independently justified inapplicable negative control. Shadow, synthetic,
+  action-off, mocked status, process liveness and test success alone never
+  substitute for a live authority/effect receipt.
+- [ ] **VERY HARD — controlled canary plus negative controls.** Run one narrowly
+  admitted live canary through existing Run Authority/Custody/WBC, prove the
+  intended effect exactly once, and prove negative controls produce zero bypass,
+  duplicate, unowned or stale-generation effects. An independent verifier
+  rereads current owner records and exact source bytes.
+- [ ] **F1 ACCEPTANCE GATE — publish the superseding completion proof.** A new
+  content-addressed M11 revalidation manifest must consume the entire dependency
+  closure, including both formerly omitted files. Only its green superseding
+  Run Authority decision retires the invalidation and permits F1 acceptance.
+- [ ] **AUTOMATION HOLD — fail closed until green.** Do not re-enable any legacy
+  repair-loop, managed-child automatic repair, watchdog direct repair fallback
+  or meta-repair loop before the exact revalidation manifest and superseding
+  decision pass. Manual toggles and projection-only overrides are forbidden.
+
 ### P0.5 — later r5 CL2 failure: immediate repair versus deferred hardening
 
 The previous live-handoff observation was superseded later on 2026-08-03. CL2
