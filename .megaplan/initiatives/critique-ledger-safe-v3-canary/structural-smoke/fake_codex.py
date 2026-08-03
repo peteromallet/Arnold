@@ -43,7 +43,27 @@ function payload(schemaName) {
     };
   }
   if (schemaName === "critique.json") {
-    return {checks: [], flags: [], verified_flag_ids: [], disputed_flag_ids: []};
+    const questions = {
+      issue_hints: "Did the work fully address the issue hints and approved requirements?",
+      correctness: "Are the proposed changes technically correct?",
+      scope: "Is the work scoped to the complete underlying problem?",
+      all_locations: "Does the change cover every required location and integration?",
+      callers: "Do the proposed changes account for all callers?",
+      prerequisite_ordering: "Are dependent tasks safe when a precondition only partly holds?",
+    };
+    const checks = Object.entries(questions).map(([id, question]) => ({
+      id,
+      question,
+      findings: [{
+        detail: `The deterministic offline fixture exercised the ${id} audit contract without identifying a production claim.`,
+        flagged: false,
+        category: "completeness",
+        severity_hint: "uncertain",
+        evidence: "Offline structural payload; model/provider behavior is explicitly out of scope.",
+        finding_id: `offline-${id}-1`,
+      }],
+    }));
+    return {checks, flags: [], verified_flag_ids: [], disputed_flag_ids: []};
   }
   if (schemaName === "gate.json") {
     return {
