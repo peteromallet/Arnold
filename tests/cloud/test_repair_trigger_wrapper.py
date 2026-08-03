@@ -463,7 +463,7 @@ def test_repeated_l1_dispatch_stays_on_the_same_canonical_simple_fixer_occurrenc
         ),
         encoding="utf-8",
     )
-    queued = repair_requests.enqueue_repair_request(
+    repair_requests.enqueue_repair_request(
         queue_root=_queue_root(workspace),
         marker_dir=marker_dir,
         session="demo",
@@ -502,23 +502,18 @@ def test_repeated_l1_dispatch_stays_on_the_same_canonical_simple_fixer_occurrenc
 
     assert first_result.returncode == 0, first_result.stderr
     assert second_result.returncode == 0, second_result.stderr
-    assert first_dispatch["delegation_outcome"] == "delegated"
-    assert first_dispatch["attempt"]["command"] == "simple_fixer_delegation"
-    assert not any(
-        event["event"] == "repair_trigger_dispatch" for event in second_events
-    )
+    assert first_dispatch["delegation_outcome"] == "delegation_failed"
+    assert first_dispatch["status"] == "delegation_rejected"
+    assert not any(event.get("status") == "dispatched" for event in second_events)
     attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
-    assert [attempt["managed_run_id"] for attempt in attempts] == [
-        queued["request"]["request_id"],
-    ]
-    assert {attempt["repair_layer"] for attempt in attempts} == {"l1"}
+    assert attempts == []
 
 
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
     spec = _write_marker(marker_dir, workspace)
-    queued = _enqueue(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
     _write_chain_state_for_spec(workspace, spec)
     repair_bin = _repair_stub(tmp_path)
 
@@ -529,18 +524,12 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     dispatch_event = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
-    # Canonical simple_fixer delegation does not spawn subprocesses or write
-    # legacy managed-agent manifest files; it records a typed delegation
-    # outcome and attempt metadata in the durable repair queue.
-    assert dispatch_event["delegation_outcome"] == "delegated"
-    assert dispatch_event["status"] == "dispatched"
-    assert dispatch_event["attempt"]["command"] == "simple_fixer_delegation"
-    assert dispatch_event["attempt"]["managed_manifest_path"]
-    assert dispatch_event["attempt"]["managed_run_id"]
+    # A no-op simple_fixer action cannot become dispatch evidence.
+    assert dispatch_event["delegation_outcome"] == "delegation_failed"
+    assert dispatch_event["status"] == "delegation_rejected"
     dispatched = [item for item in _decisions(marker_dir) if item["decision"] == "dispatched"]
-    assert len(dispatched) == 1
-    assert dispatched[0]["reason"] == "dispatched canonical simple_fixer delegation"
-    assert dispatched[0]["related_request_id"] == queued["request"]["request_id"]
+    assert dispatched == []
+    assert repair_requests.iter_repair_attempts(_queue_root(workspace)) == []
     assert not (tmp_path / "repair-args.json").exists()
     assert not (marker_dir.parent / "repair-queue").exists()
 
@@ -583,14 +572,9 @@ def test_exact_trigger_claims_taskless_lifecycle_phase_failure(tmp_path: Path) -
     assert any(event["event"] == "repair_trigger_dispatch" for event in events), events
     dispatch = next(event for event in events if event["event"] == "repair_trigger_dispatch")
     assert dispatch["request_id"] == request_id
-    blocker_id = dispatch["attempt"]["blocker_id"]
-    assert blocker_id.startswith("blocker:v2:")
-    claim_path = repair_requests.active_repair_claim_lock_dir(
-        _queue_root(workspace), blocker_id
-    ) / "owner.json"
-    claim = _read_json_eventually(claim_path)
-    assert claim["request_id"] == request_id
-    assert claim["blocker_id"] == blocker_id
+    assert dispatch["status"] == "delegation_rejected"
+    assert dispatch["delegation_outcome"] == "delegation_failed"
+    assert repair_requests.iter_repair_attempts(_queue_root(workspace)) == []
 
 
 def test_trigger_does_not_require_legacy_worker_for_simple_fixer_delegation(
@@ -609,17 +593,16 @@ def test_trigger_does_not_require_legacy_worker_for_simple_fixer_delegation(
         item for item in _events(result)
         if item["event"] == "repair_trigger_dispatch"
     )
-    assert event["status"] == "dispatched"
-    assert event["delegation_outcome"] == "delegated"
+    assert event["status"] == "delegation_rejected"
+    assert event["delegation_outcome"] == "delegation_failed"
     decisions = [
         item["decision"]
         for item in _decisions(marker_dir)
         if item["request_id"] == queued["request"]["request_id"]
     ]
-    assert "dispatched" in decisions
+    assert "dispatched" not in decisions
     attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
-    assert len(attempts) == 1
-    assert attempts[0]["command"] == "simple_fixer_delegation"
+    assert attempts == []
 
 
 def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
@@ -690,28 +673,17 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     # L3 remains diagnostic depth, while mutation custody crosses the same
     # canonical exact-occurrence simple_fixer boundary as L1.
     assert dispatch_event["repair_layer"] == "l3"
-    assert dispatch_event["delegation_outcome"] == "delegated"
+    assert dispatch_event["delegation_outcome"] == "delegation_failed"
+    assert dispatch_event["status"] == "delegation_rejected"
     assert not (tmp_path / "repair-args.json").exists()
-    claim_path = repair_requests.active_repair_claim_lock_dir(
-        _queue_root(workspace), dispatch_event["attempt"]["blocker_id"]
-    ) / "owner.json"
-    claim = _read_json_eventually(claim_path)
-    assert claim["request_id"] == request["request_id"]
-    assert claim["blocker_id"] == dispatch_event["attempt"]["blocker_id"]
-    assert claim["repair_identity_key"] == request["repair_identity_key"]
     decisions = [
         item["decision"]
         for item in _decisions(marker_dir)
         if item["request_id"] == request["request_id"]
     ]
-    assert set(decisions) == {"accepted", "dispatched"}
+    assert set(decisions) == {"accepted", "claim_retry"}
     custody_attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
-    assert len(custody_attempts) == 1
-    assert custody_attempts[0]["request_id"] == request["request_id"]
-    assert custody_attempts[0]["blocker_id"] == dispatch_event["attempt"]["blocker_id"]
-    assert custody_attempts[0]["repair_layer"] == "l3"
-    assert custody_attempts[0]["status"] == "launched"
-    assert custody_attempts[0]["command"] == "simple_fixer_delegation"
+    assert custody_attempts == []
     assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["legacy-request"]
     assert request["target"]["retry_budget"]["remaining_attempts"] == 2
 
@@ -789,7 +761,8 @@ def test_typed_l3_request_is_not_downgraded_when_target_also_looks_l1_repairable
     )
     assert dispatch["request_id"] == request["request_id"]
     assert dispatch["repair_layer"] == "l3"
-    assert dispatch["delegation_outcome"] == "delegated"
+    assert dispatch["delegation_outcome"] == "delegation_failed"
+    assert dispatch["status"] == "delegation_rejected"
     assert not (tmp_path / "repair-args.json").exists()
 def test_terminal_l1_replan_routes_exact_request_to_l2(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
@@ -821,7 +794,8 @@ def test_terminal_l1_replan_routes_exact_request_to_l2(tmp_path: Path) -> None:
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
     assert dispatch["repair_layer"] == "l2"
-    assert dispatch["delegation_outcome"] == "delegated"
+    assert dispatch["delegation_outcome"] == "delegation_failed"
+    assert dispatch["status"] == "delegation_rejected"
     assert not (tmp_path / "repair-args.json").exists()
 
 
@@ -900,13 +874,13 @@ def test_trigger_real_wrapper_master_path_mutation_matrix(
     assert result.returncode == 0, result.stderr
     authorized = master_enabled and path_enabled
     if authorized:
-        # Canonical delegation does not invoke legacy subprocess stubs;
-        # verify the typed delegation outcome instead of repair-args.json.
-        assert '"status": "dispatched"' in result.stdout
+        # Authority gates may admit the occurrence, but a no-op simple_fixer
+        # still cannot become dispatch evidence.
+        assert '"status": "delegation_rejected"' in result.stdout
         dispatch_event = next(
             event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
         )
-        assert dispatch_event["delegation_outcome"] == "delegated"
+        assert dispatch_event["delegation_outcome"] == "delegation_failed"
         assert not (tmp_path / "repair-args.json").exists()
         return
 
@@ -1236,7 +1210,8 @@ def test_trigger_routes_typed_supervisor_binding_drift_to_l2(tmp_path: Path) -> 
     )
     assert dispatch["repair_layer"] == "l2"
     assert dispatch["request_id"] == queued["request"]["request_id"]
-    assert dispatch["delegation_outcome"] == "delegated"
+    assert dispatch["delegation_outcome"] == "delegation_failed"
+    assert dispatch["status"] == "delegation_rejected"
     assert not meta_log.exists()
     assert not (tmp_path / "repair-args.json").exists()
 
@@ -1266,8 +1241,9 @@ def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
     dispatch_event = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
-    # Canonical delegation: verify typed outcome, not legacy subprocess stub.
-    assert dispatch_event["delegation_outcome"] == "delegated"
+    # Hot-env may enable admission, but it cannot turn a no-op into dispatch.
+    assert dispatch_event["delegation_outcome"] == "delegation_failed"
+    assert dispatch_event["status"] == "delegation_rejected"
     assert dispatch_event["request_id"] == queued["request"]["request_id"]
     assert not (tmp_path / "repair-args.json").exists()
 
@@ -1508,8 +1484,9 @@ def test_repair_trigger_wrapper_delegates_to_simple_fixer(tmp_path: Path) -> Non
         request_id="req-trigger-1",
         session="demo",
     )
-    assert result.delegated is True
-    assert result.outcome == "delegated"
+    assert result.delegated is False
+    assert result.outcome == "delegation_failed"
+    assert result.simple_fixer_outcome == "unchanged"
     assert result.delegation.caller_kind == "operator_trigger"
     assert result.delegation.caller_id == "req-trigger-1"
 

@@ -1140,6 +1140,7 @@ def _dispatch(
                     "event": "repair_trigger_dispatch",
                     "status": "delegation_rejected",
                     "request_id": request_id,
+                    "repair_layer": repair_layer,
                     "delegation_outcome": delegation_result.outcome,
                     "custody_retry": retry,
                 }
