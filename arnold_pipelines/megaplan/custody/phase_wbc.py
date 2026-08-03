@@ -664,42 +664,58 @@ def cancel_phase_wbc(
         step=step,
         invocation_id=expected_invocation_id,
     )
-    if tuple(event.event_type for event in events) != (AttemptEventType.STARTED,):
+    event_types = tuple(event.event_type for event in events)
+    fresh_cancel = event_types == (AttemptEventType.STARTED,)
+    replayed_cancel = event_types == (
+        AttemptEventType.STARTED,
+        AttemptEventType.CANCELLED,
+    )
+    if not fresh_cancel and not replayed_cancel:
         raise RuntimeError(
             f"phase WBC attempt {expected_attempt_id} is not uniquely cancellable from STARTED"
         )
-
-    spec = _PHASE_WBC_SPEC_BY_STEP[step]
-    source_version = str(metadata["source_version"])
-    event = _event(
-        state=state,
-        attempt_id=expected_attempt_id,
-        step=step,
-        invocation_id=expected_invocation_id,
-        sequence=2,
-        event_type=AttemptEventType.CANCELLED,
-        outcome=AttemptOutcome.CANCELLED,
-        agent=agent,
-        payload={
-            "phase": step,
-            "status": "cancelled",
-            "invocation_id": expected_invocation_id,
-            "reason": str(reason).strip() or "operator_cancelled",
-        },
-    )
-    artifacts = ImmutableAttemptArtifacts(
-        attempt_id=expected_attempt_id,
-        metadata={"phase": step, "invocation_id": expected_invocation_id},
-    )
-    _phase_facade(plan_dir).cancel_attempt(
-        attempt_id=expected_attempt_id,
-        event=event,
-        writer_id=spec.writer_id,
-        surface_name=spec.surface_name,
-        source_lookup_key=f"{step}:{expected_invocation_id}:terminal",
-        expected_source_version=source_version,
-        artifacts=artifacts,
-    )
+    if replayed_cancel:
+        terminal = events[-1]
+        if (
+            terminal.identity.attempt_id != expected_attempt_id
+            or terminal.identity.invocation_id != expected_invocation_id
+            or terminal.outcome is not AttemptOutcome.CANCELLED
+        ):
+            raise RuntimeError(
+                "phase WBC cancellation replay does not match the expected terminal identity"
+            )
+    else:
+        spec = _PHASE_WBC_SPEC_BY_STEP[step]
+        source_version = str(metadata["source_version"])
+        event = _event(
+            state=state,
+            attempt_id=expected_attempt_id,
+            step=step,
+            invocation_id=expected_invocation_id,
+            sequence=2,
+            event_type=AttemptEventType.CANCELLED,
+            outcome=AttemptOutcome.CANCELLED,
+            agent=agent,
+            payload={
+                "phase": step,
+                "status": "cancelled",
+                "invocation_id": expected_invocation_id,
+                "reason": str(reason).strip() or "operator_cancelled",
+            },
+        )
+        artifacts = ImmutableAttemptArtifacts(
+            attempt_id=expected_attempt_id,
+            metadata={"phase": step, "invocation_id": expected_invocation_id},
+        )
+        _phase_facade(plan_dir).cancel_attempt(
+            attempt_id=expected_attempt_id,
+            event=event,
+            writer_id=spec.writer_id,
+            surface_name=spec.surface_name,
+            source_lookup_key=f"{step}:{expected_invocation_id}:terminal",
+            expected_source_version=source_version,
+            artifacts=artifacts,
+        )
 
     # In-memory compare-and-remove: even after the durable terminal event, a
     # replacement custody record must not be erased by this older operation.
@@ -722,6 +738,7 @@ def cancel_phase_wbc(
         "outcome": AttemptOutcome.CANCELLED.value,
         "sequence": 2,
         "active_step_preserved": True,
+        "replayed": replayed_cancel,
     }
 
 
