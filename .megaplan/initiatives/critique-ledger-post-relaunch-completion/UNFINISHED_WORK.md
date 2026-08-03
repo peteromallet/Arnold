@@ -286,19 +286,53 @@ deliberately pending import; it is not permission to recreate a receipt.
   `sha256:ddec86ad159adc1c464a7373292ab3ee7bd0cb08555418167f619096d81ef64e`,
   and derived image is
   `sha256:231c9ff9bfdcd1a1b54b305ca8c74ab7df63067b4501e4c33923cb6a4bc319fe`.
+  Sol acceptance remains unrecorded; its later failed live run does not satisfy
+  the independent gate.
+- [ ] Import B29 live attempt 3's already-terminal/reconciled receipt. Declared
+  file SHA-256 is
+  `81295354cb68fe743c952f64c332d4d34a883daed6cacc68062904ad7584cb11`
+  and digest is
+  `243d9ee2d979a296235983faa6058e94142e674b3c12045f1d44fd229e5df89c`;
+  no local path was supplied. It progressed past socket/symlink classification
+  but plan exited nonzero. Exact primary raw evidence is
+  `finite model boundary failed: PermissionError:[Errno 13] Permission denied: '/run/.../home/.codex/tmp/arg0/codex-arg0O2caQy/codex-execve-wrapper'`.
+  Reclaim attempted unlink while the parent remained model-owned mode 0700;
+  trusted root intentionally lacks `DAC_OVERRIDE`.
+- [ ] Preserve B29 containment: container
+  `megaplan-cloud-agent-finite-canary-3`, ID prefix `940c`, stopped and
+  reconciled with OOM false; the attempt-3 workspace is sealed.
+- [ ] Preserve A30 at `c717f693dbff0c1775a3f4ee06d203a9996aa5ec` /
+  tree `e3dbec62223898005e57bdf03a3e2f97d023c66d`. After finite-UID process
+  emptiness proof, it takes trusted ownership/mode of a directory before
+  recursing, while preserving the minimal capability set and continuing to
+  omit `DAC_OVERRIDE`. Its recorded suite result is 172 passed and 1 skipped.
+- [ ] Copy and obtain Sol's independent acceptance for B30 at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b30-offline-smoke.json`.
+  Launch `0bc07ba280d8832e72b6859b20ddec38060954c6` / tree
+  `da191a1a9261d1b8e37bce648a7549a82c6901fb` passed all five exact phases
+  with four privilege receipts. File SHA-256 is
+  `068100927d60dc3b5b9c8fba4f7f814ca0548dbb4ceb8a4aebe791fd8dfd2d95`,
+  receipt digest is
+  `9440f30306ef63895199aa70db7ba249c634780c3a241ac99ad096fa1767fed9`,
+  verifier digest is
+  `0a1378cb3cbe1040f76665ec0bae29591c23e768ce9dcb4bb14334190fe7e9d3`,
+  production image is
+  `sha256:375ccaca36c9727cffd9ce8dab6615bbb163a5f0f62f17b06784c8044e266f6f`,
+  and derived image is
+  `sha256:f3d8df941bb2bb6d35e23aa3e61c10b3f16de4bd53f4edeeb28161dc40833ccb`.
   Independent and live gates remain pending.
-- [ ] Run B29 only as a fresh supported live attempt in workspace
-  `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-3-20260803`
-  and container `megaplan-cloud-agent-finite-canary-3`; preserve B27/B28.
-- [ ] Import the outstanding failed-fence, B27 live, B28 live and future B29
-  live receipt bytes; no missing receipt may be synthesized. B27/B28 outcomes
-  are already terminal/reconciled, while B29 live execution remains pending.
+- [ ] Run B30 only as a fresh supported live attempt in workspace
+  `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-4-20260803`
+  and container `megaplan-cloud-agent-finite-canary-4`; preserve B27-B29.
+- [ ] Import the outstanding failed-fence, B27-B29 live and future B30 live
+  receipt bytes; no missing receipt may be synthesized. B27-B29 outcomes are
+  already terminal/reconciled, while B30 live execution remains pending.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B29 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B30 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
-  offline history, B27/B28 are terminal failed-live history, B29 is the latest
+  offline history, B27-B29 are terminal failed-live history, B30 is the latest
   passing offline candidate pending Sol acceptance and live execution, and no
   missing receipt may be synthesized.
 

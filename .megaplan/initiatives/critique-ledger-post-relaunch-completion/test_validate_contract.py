@@ -85,7 +85,7 @@ def test_known_failed_attempt_cannot_be_relabelled_accepted() -> None:
 
 def test_b26_sol_go_cannot_drift() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
-    b26 = custody["prelaunch_attempts"][-4]
+    b26 = custody["prelaunch_attempts"][-5]
     b26["independent_review"]["decision"] = "NO_GO"
     with pytest.raises(contract.ContractError, match="B26 passing smoke binding drift"):
         contract._validate_attempt_history(custody)
@@ -93,7 +93,7 @@ def test_b26_sol_go_cannot_drift() -> None:
 
 def test_b27_pass_cannot_drift_into_unreviewed_acceptance() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
-    b27 = custody["prelaunch_attempts"][-3]
+    b27 = custody["prelaunch_attempts"][-4]
     b27["status"] = "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
     with pytest.raises(contract.ContractError, match="B27 passing smoke binding drift"):
         contract._validate_attempt_history(custody)
@@ -101,7 +101,7 @@ def test_b27_pass_cannot_drift_into_unreviewed_acceptance() -> None:
 
 def test_b28_pass_cannot_drift_into_unreviewed_acceptance() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
-    b28 = custody["prelaunch_attempts"][-2]
+    b28 = custody["prelaunch_attempts"][-3]
     b28["status"] = "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
     with pytest.raises(contract.ContractError, match="B28 passing smoke binding drift"):
         contract._validate_attempt_history(custody)
@@ -109,9 +109,17 @@ def test_b28_pass_cannot_drift_into_unreviewed_acceptance() -> None:
 
 def test_b29_pass_cannot_drift_into_unreviewed_acceptance() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
-    b29 = custody["prelaunch_attempts"][-1]
+    b29 = custody["prelaunch_attempts"][-2]
     b29["status"] = "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
     with pytest.raises(contract.ContractError, match="B29 passing smoke binding drift"):
+        contract._validate_attempt_history(custody)
+
+
+def test_b30_pass_cannot_drift_into_unreviewed_acceptance() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    b30 = custody["prelaunch_attempts"][-1]
+    b30["status"] = "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
+    with pytest.raises(contract.ContractError, match="B30 passing smoke binding drift"):
         contract._validate_attempt_history(custody)
 
 
@@ -133,6 +141,13 @@ def test_b28_failed_live_attempt_cannot_claim_oom() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["live_canary_attempts"][1]["container"]["oom_killed"] = True
     with pytest.raises(contract.ContractError, match="B28 live canary terminal binding drift"):
+        contract._validate_live_canary_attempts(custody)
+
+
+def test_b29_failed_live_attempt_cannot_claim_dac_override() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    custody["live_canary_attempts"][2]["root_evidence"]["trusted_root"]["dac_override"] = True
+    with pytest.raises(contract.ContractError, match="B29 live canary terminal binding drift"):
         contract._validate_live_canary_attempts(custody)
 
 
