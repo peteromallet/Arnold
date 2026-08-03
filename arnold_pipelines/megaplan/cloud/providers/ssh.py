@@ -739,6 +739,13 @@ class SshProvider(Provider):
             stdout=result.stdout or "",
             transaction_id=transaction["transaction_id"],
             transaction_digest=transaction["transaction_digest"],
+            proposal_inventory_digest=hashlib.sha256(
+                json.dumps(
+                    transaction["capacity_inventory"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
         )
 
     def seed_zero_recovery_codex_oauth(self, auth_json: str) -> None:
