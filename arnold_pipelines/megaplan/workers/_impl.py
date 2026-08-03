@@ -2323,21 +2323,11 @@ def run_command(
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        stdin_path = None
         stdin_file = None
         try:
-            if stdin_text is not None:
-                # Large prompts written to a PIPE can deadlock: the producer
-                # blocks when the pipe buffer fills before the consumer has
-                # started draining stdin. Writing the prompt to a temp file and
-                # letting the child read that file via stdin avoids the race.
-                stdin_handle = tempfile.NamedTemporaryFile(
-                    "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(cwd))
-                )
-                stdin_handle.write(stdin_text)
-                stdin_handle.flush()
-                stdin_handle.close()
-                stdin_path = Path(stdin_handle.name)
+            if stdin_path is not None:
+                # Reuse the single sealed prompt file created above. Creating a
+                # second file here leaked the first on every streaming call.
                 stdin_file = open(stdin_path, "rb")
 
             process = spawn(

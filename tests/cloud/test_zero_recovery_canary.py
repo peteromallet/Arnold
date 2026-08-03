@@ -43,6 +43,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     _codex_step_cost,
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
+    run_command,
     _zero_recovery_global_scratch_observation,
     _zero_recovery_plan_snapshot,
     _zero_recovery_source_identity,
@@ -1951,6 +1952,23 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     )
     assert '".megaplan/worker_tmp"' in source
     assert "any surviving" in source
+
+
+def test_streaming_run_command_reuses_and_removes_its_single_stdin_file(
+    tmp_path: Path,
+) -> None:
+    result = run_command(
+        ["/bin/cat", "-"],
+        cwd=tmp_path,
+        stdin_text="sealed prompt\n",
+        activity_guard=lambda _kind, _text: None,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "sealed prompt\n"
+    worker_tmp = tmp_path / ".megaplan/worker_tmp"
+    assert worker_tmp.is_dir()
+    assert list(worker_tmp.iterdir()) == []
 
 
 def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
