@@ -23,6 +23,7 @@ from typing import Callable
 import pytest
 from jsonschema import validate
 
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan._core.io import ensure_runtime_layout
 from arnold_pipelines.megaplan.workers import _impl as worker_impl
 from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
@@ -74,6 +75,7 @@ from arnold_pipelines.megaplan.cloud.spec import (
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
+from arnold_pipelines.megaplan.model_seam import capture_step_output
 from arnold_pipelines.megaplan.finite_canary_policy import (
     ALLOWED_SUCCESS_ROUTES,
     finite_canary_policy_allows_route,
@@ -3660,6 +3662,78 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     assert len(rollout) == 1
     assert rollout[0].name.endswith(f"-{thread['thread_id']}.jsonl")
     assert _read_codex_observed_model(rollout[0]) == "gpt-5.6-sol"
+
+
+@pytest.mark.parametrize(
+    ("output_name", "recommendation", "action_count"),
+    [
+        (".zero-recovery-03-gate-i1-worker-output.json", "ITERATE", 8),
+        (".zero-recovery-06-gate-i2-worker-output.json", "PROCEED", 0),
+    ],
+)
+def test_offline_structural_smoke_gate_routes_survive_real_codex_capture(
+    tmp_path: Path,
+    output_name: str,
+    recommendation: str,
+    action_count: int,
+) -> None:
+    fake = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+        "structural-smoke/fake_codex.py"
+    )
+    schema_path = Path(".megaplan/schemas/gate.json").resolve()
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output = plan_dir / output_name
+    codex_home = tmp_path / "codex-home"
+    completed = subprocess.run(
+        [
+            "node",
+            str(fake),
+            "exec",
+            "-o",
+            str(output),
+            "--output-schema",
+            str(schema_path),
+            "-",
+        ],
+        env={"CODEX_HOME": str(codex_home), "PATH": os.environ["PATH"]},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    outcome = capture_step_output(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "validation_step": "gate",
+                "compatibility_validation_step": "gate",
+                "schema": schema,
+                "capture_schema": schema,
+                "capture_recovery": {
+                    "step": "gate",
+                    "plan_dir": str(plan_dir),
+                    "output_path": str(output),
+                    "prefer_output_file": True,
+                },
+            },
+        ),
+        completed.stdout + completed.stderr,
+    )
+
+    gate = outcome.legacy_payload
+    assert gate["recommendation"] == recommendation
+    assert len(gate["north_star_actions"]) == action_count
+    assert all(
+        action["question_id"] and action["question"]
+        for action in gate["north_star_actions"]
+    )
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
 
 
 def test_custody_contract_separates_two_consumed_substrates_and_15_deferred() -> None:

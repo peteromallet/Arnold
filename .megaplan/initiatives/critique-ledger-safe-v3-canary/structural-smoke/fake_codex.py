@@ -36,6 +36,8 @@ const FIRST_GATE_REQUIRED_CHANGES = [
 function firstGateActions() {
   return FIRST_GATE_REQUIRED_CHANGES.map((requiredChange, index) => ({
     id: `A40-${index + 1}`,
+    question_id: `locked-attempt-13-gate-action-${index + 1}`,
+    question: `Does the revised plan satisfy locked attempt-13 gate action ${index + 1}?`,
     concern: `Locked attempt-13 gate action ${index + 1}`,
     category: "correctness",
     action_type: index === 0 || index === 7 ? "add_gate" : "change_plan",
