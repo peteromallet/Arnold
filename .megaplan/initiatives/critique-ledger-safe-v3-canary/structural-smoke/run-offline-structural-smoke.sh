@@ -236,6 +236,11 @@ chown root:65532 /workspace
 chmod 0750 /workspace
 chown -R root:root /workspace/Arnold
 chmod -R go-w /workspace/Arnold
+# The real canary creates /workspace/Arnold with git clone (root-owned 0755).
+# The smoke pre-creates that destination as 0700 before cp -a, so normalize
+# only its top-level traversal mode to the production clone boundary. Source
+# remains immutable to the finite-model UID.
+chmod 0755 /workspace/Arnold
 install -d -o root -g root -m 0700 /root/.codex
 printf '%s\n' '{"auth_mode":"offline_structural_smoke","tokens":null}' > /root/.codex/auth.json
 printf '%s\n' 'model = "gpt-5.6-sol"' 'model_reasoning_effort = "high"' > /root/.codex/config.toml

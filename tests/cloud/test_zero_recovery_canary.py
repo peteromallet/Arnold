@@ -2482,6 +2482,7 @@ def test_offline_structural_smoke_harness_seeds_dummy_root_auth_and_has_no_netwo
     assert '--build-arg "PRODUCTION_IMAGE=$production_image"' in source
     assert '--build-arg "PRODUCTION_IMAGE=$production_image_id"' not in source
     assert 'cp -a "$repo_root/." "$workspace_child/Arnold/"' in source
+    assert "chmod 0755 /workspace/Arnold" in source
     assert "docker cp" not in source
     assert "/root/.codex/auth.json" in source
     assert "/root/.codex/config.toml" in source
