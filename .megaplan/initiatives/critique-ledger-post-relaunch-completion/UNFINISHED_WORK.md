@@ -161,6 +161,14 @@ claim cannot discharge an obligation.
   `evidence/capacity-reserve-remediation-fallback-intent-20260803.json` and may
   delete only descendants of the canonical pip-cache directory while
   preserving that directory inode.
+- [ ] Preserve the two failed real image-build receipts (`groupadd` resolution,
+  then final-layer ENOSPC) and the exact failed-build reset authority at
+  `evidence/failed-build-capacity-reset-intent-20260803.json`. The reset may
+  prune only build cache, images referenced by no container, npm-cache
+  descendants, and reduce root reserve from 1 GiB to 512 MiB. It must preserve
+  the predecessor container and referenced image, workspace, deploy directory,
+  volumes, trusted host receipts and archived unit definitions. Platform T0.3
+  owns eliminating this repeated build/cache pressure permanently.
 - [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
   reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
   corruption and crash behavior; define safe lifecycle retention and broad
