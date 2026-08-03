@@ -235,6 +235,8 @@ def phase_receipt(
     ledger_path: Path,
     integrity_before: dict[str, Any] | None,
     integrity_after: dict[str, Any] | None,
+    stdout: str,
+    stderr: str,
 ) -> None:
     phase_terminals = [
         record
@@ -259,6 +261,10 @@ def phase_receipt(
         "privilege_receipt_sha256": privilege_receipt_sha256,
         "integrity_before": integrity_before,
         "integrity_after": integrity_after,
+        "stdout_sha256": hashlib.sha256(stdout.encode()).hexdigest(),
+        "stderr_sha256": hashlib.sha256(stderr.encode()).hexdigest(),
+        "stdout_tail": stdout[-4096:],
+        "stderr_tail": stderr[-4096:],
         "completed_at": now(),
     }
     write_once(receipt_dir / f"{index:02d}-{phase}.phase-receipt.json", payload)
@@ -415,12 +421,16 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             "repository_integrity": integrity_before,
         })
         integrity_after: dict[str, Any] | None = None
+        phase_stdout = ""
+        phase_stderr = ""
         try:
             try:
                 completed = subprocess.run(
                     argv, cwd=root, env=child_env, text=True, capture_output=True,
                     check=False, timeout=3600,
                 )
+                phase_stdout = completed.stdout or ""
+                phase_stderr = completed.stderr or ""
             finally:
                 # This executes on success, nonzero exit, timeout, and signal.
                 # Do not parse child output before checkout identity and the
@@ -443,8 +453,19 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
                           state=str(current_state), reason=None, argv=argv,
                           state_path=state_path, ledger_path=ledger_path,
                           integrity_before=integrity_before,
-                          integrity_after=integrity_after)
-        except subprocess.TimeoutExpired:
+                          integrity_after=integrity_after,
+                          stdout=phase_stdout, stderr=phase_stderr)
+        except subprocess.TimeoutExpired as exc:
+            raw_stdout = exc.stdout or ""
+            raw_stderr = exc.stderr or ""
+            phase_stdout = (
+                raw_stdout.decode("utf-8", errors="replace")
+                if isinstance(raw_stdout, bytes) else raw_stdout
+            )
+            phase_stderr = (
+                raw_stderr.decode("utf-8", errors="replace")
+                if isinstance(raw_stderr, bytes) else raw_stderr
+            )
             returncode = 124
             reason = "timeout"
         except BaseException as exc:
@@ -467,7 +488,8 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
                       reason=reason, argv=argv, state_path=state_path,
                       ledger_path=ledger_path,
                       integrity_before=integrity_before,
-                      integrity_after=integrity_after)
+                      integrity_after=integrity_after,
+                      stdout=phase_stdout, stderr=phase_stderr)
         break
 
     state_path = plan_dir / "state.json"
