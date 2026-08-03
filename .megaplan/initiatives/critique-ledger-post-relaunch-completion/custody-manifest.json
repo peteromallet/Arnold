@@ -1,6 +1,7 @@
 {
-  "schema": "arnold.critique_ledger.unfinished_work_custody.v2",
+  "schema": "arnold.critique_ledger.unfinished_work_custody.v3",
   "captured_at": "2026-08-02T23:15:00+02:00",
+  "contract_updated_at": "2026-08-03T02:40:21Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -25,6 +26,96 @@
       "status": "SUPERSEDED_PRE_PRIVILEGE_REVIEW_DESIGN_EVIDENCE_ONLY"
     }
   ],
+  "prelaunch_release_gates": [
+    {
+      "id": "accepted_finite_canary_candidate",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary release operator and independent exact-commit reviewer",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "trusted_host_control_state",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "bounded_fence_reclaim",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "durable_failure_reconciliation",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "built_image_four_phase_smoke",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary release operator",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "live_capacity_and_predeploy",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary release operator through the typed SSH zero-recovery provider",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "finite_canary_and_stable_exit",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "finite-canary runner and independent conformance reviewer",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    },
+    {
+      "id": "remote_custody_and_fresh_clone",
+      "blocking_phase": "T6.2_PRELAUNCH",
+      "owner": "release custody operator and independent reconstruction reviewer",
+      "status": "PENDING",
+      "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+      "evidence": {"path": null, "sha256": null, "status": "PENDING"}
+    }
+  ],
+  "trusted_host_control_state_contract": {
+    "global_containment_marker": {
+      "schema": "arnold.cloud.zero_recovery_marker.v2",
+      "exact_fields": ["schema", "profile", "scope", "active"],
+      "transaction_independent": true,
+      "publish_after": [
+        "durable_unit_containment_proof",
+        "durable_systemd_job_containment_proof",
+        "durable_session_containment_proof",
+        "durable_process_containment_proof"
+      ],
+      "canonical_reuse": "ALLOWED_ONLY_AFTER_FRESH_DURABLE_CONTAINMENT_REPROOF",
+      "mismatch": "HARD_NO_GO"
+    },
+    "per_attempt_records": {
+      "records": ["intent", "apply", "verify", "failure"],
+      "exact_binding_fields": ["transaction_id", "transaction_digest", "action"],
+      "fresh_retry": "NEW_SUPPORTED_TRANSACTION_AND_FRESH_EVIDENCE"
+    },
+    "failure_evidence": {
+      "pre_intent": "NO_MUTATION_FAIL_CLOSED_SUPPORTED_CALLER_CAPTURED_TYPED_ERROR",
+      "post_intent_partial_post_prune": "DURABLE_O_EXCL_HOST_FAILURE_RECEIPT"
+    }
+  },
   "capacity_cut": {
     "prelaunch": {
       "task_id": "T0.3/scoped-prelaunch-capacity-reclaim",
@@ -172,91 +263,151 @@
       "id": "F1.platform_capacity_storage_hardening",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.platform_capacity_storage_hardening"
     },
     {
       "id": "F1.physically_minimal_image",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.physically_minimal_image"
     },
     {
       "id": "F1.cross_pipeline_model_isolation",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.cross_pipeline_model_isolation"
     },
     {
       "id": "F1.t1_5_monotonic_consumed_grant",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_5_monotonic_consumed_grant"
     },
     {
       "id": "F1.production_recovery_owner",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.production_recovery_owner"
     },
     {
       "id": "F1.exact_occurrence_handoff",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.exact_occurrence_handoff"
     },
     {
       "id": "F1.notification_occurrence_version_custody",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.notification_occurrence_version_custody"
     },
     {
       "id": "F1.t1_5_topology_retirement",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_5_topology_retirement"
     },
     {
       "id": "F1.t1_7_transactional_storage",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_7_transactional_storage"
     },
     {
       "id": "F1.t1_10_notification_policy",
       "phase": "F1",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f1-owner-storage-recovery-hardening",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f1-owner-storage-recovery-hardening",
+      "required_claim_id": "F1.t1_10_notification_policy"
     },
     {
       "id": "F2.t1_1_universal_admission",
       "phase": "F2",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_1_universal_admission"
     },
     {
       "id": "F2.t1_2_attempt_model_handling",
       "phase": "F2",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_2_attempt_model_handling"
     },
     {
       "id": "F2.provider_attested_model_identity",
       "phase": "F2",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.provider_attested_model_identity"
     },
     {
       "id": "F2.t1_3_transport_integration",
       "phase": "F2",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_3_transport_integration"
     },
     {
       "id": "F2.t1_4_t1_6_release_closure",
       "phase": "F2",
       "status": "DEFERRED_POST_CANARY",
-      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+      "owner_milestone": "f2-admission-model-effect-release-closure",
+      "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+      "evidence_ref": "proof-map.json#/f2-admission-model-effect-release-closure",
+      "required_claim_id": "F2.t1_4_t1_6_release_closure"
     }
   ],
   "items": [

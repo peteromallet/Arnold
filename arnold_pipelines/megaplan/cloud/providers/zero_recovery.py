@@ -719,40 +719,86 @@ def safe_unit_observations():
     return observed
 
 def write_failure_receipt(exc_type, exc):
-    name = authority_filename(".bootstrap-fence-reclaim-failure.json")
-    path = authority_root / name
-    receipt = {
-        "schema": "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_failure.v1",
-        "status": "failed",
-        "transaction_id": config["transaction_id"],
-        "transaction_digest": config["transaction_digest"],
-        "stage": failure_stage,
-        "error_type": exc_type.__name__,
-        "error": str(exc),
-        "prune_started": prune_started,
-        "units_observed": safe_unit_observations(),
-        "settle_observations": settle_observations,
-        "systemd_jobs": last_systemd_jobs,
-        "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "receipt_path": str(path),
-    }
-    receipt["receipt_digest"] = hashlib.sha256(
-        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    emitted = dict(receipt)
+    receipt = None
+    durable = False
+    durable_error = "authority_directory_unavailable"
     try:
-        write_authority_file(
-            name,
-            (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+        name = authority_filename(".bootstrap-fence-reclaim-failure.json")
+        path = authority_root / name
+        try:
+            observed_units = safe_unit_observations()
+        except BaseException as observation_exc:
+            observed_units = [{
+                "observation_error": type(observation_exc).__name__
+                + ":" + str(observation_exc)
+            }]
+        receipt = {
+            "schema": "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_failure.v1",
+            "status": "failed",
+            "transaction_id": config.get("transaction_id"),
+            "transaction_digest": config.get("transaction_digest"),
+            "stage": failure_stage,
+            "error_type": getattr(exc_type, "__name__", type(exc).__name__),
+            "error": str(exc),
+            "prune_started": prune_started,
+            "units_observed": observed_units,
+            "settle_observations": settle_observations,
+            "systemd_jobs": last_systemd_jobs,
+            "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "receipt_path": str(path),
+        }
+        receipt["receipt_digest"] = hashlib.sha256(
+            json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if type(authority_dir_fd) is int:
+            try:
+                write_authority_file(
+                    name,
+                    (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+                )
+                durable = True
+                durable_error = None
+            except BaseException as receipt_exc:
+                durable_error = (
+                    type(receipt_exc).__name__ + ":" + str(receipt_exc)
+                )
+    except BaseException as envelope_exc:
+        durable_error = (
+            "failure_envelope_build_failed:" + type(envelope_exc).__name__
+            + ":" + str(envelope_exc)
         )
-        emitted["durable_receipt_written"] = True
-    except Exception as receipt_exc:
-        emitted["durable_receipt_written"] = False
-        emitted["durable_receipt_error"] = type(receipt_exc).__name__ + ":" + str(receipt_exc)
-    print(json.dumps(emitted, sort_keys=True), file=sys.stderr)
+    envelope = {
+        "schema": "arnold.cloud.zero_recovery_bootstrap_failure_envelope.v1",
+        "status": "failed",
+        "stage": failure_stage,
+        "transaction_id": config.get("transaction_id"),
+        "transaction_digest": config.get("transaction_digest"),
+        "error_type": getattr(exc_type, "__name__", type(exc).__name__),
+        "error": str(exc),
+        "durable_receipt_written": durable,
+        "durable_receipt_error": durable_error,
+        "failure_receipt": receipt,
+    }
+    try:
+        print(
+            json.dumps(envelope, sort_keys=True, separators=(",", ":")),
+            file=sys.stderr,
+            flush=True,
+        )
+    except BaseException:
+        try:
+            os.write(
+                2,
+                b'{"schema":"arnold.cloud.zero_recovery_bootstrap_failure_envelope.v1","status":"failed","durable_receipt_written":false}\n',
+            )
+        except BaseException:
+            pass
 
 def failure_excepthook(exc_type, exc, traceback):
-    write_failure_receipt(exc_type, exc)
+    try:
+        write_failure_receipt(exc_type, exc)
+    except BaseException:
+        pass
 
 def observe_container():
     result = run([
@@ -859,6 +905,7 @@ def observe_inventory():
 
 # All evidence is rechecked in this one fixed remote program immediately before
 # its O_EXCL intent reservation and first containment mutation.
+sys.excepthook = failure_excepthook
 container_pre = observe_container()
 if observe_inventory() != expected_inventory:
     raise RuntimeError("capacity_inventory_changed")
@@ -866,7 +913,6 @@ if observe_inventory() != expected_inventory:
 authority_dir_fd = open_authority_directory()
 intent_name = authority_filename(".bootstrap-fence-reclaim.intent")
 write_authority_file(intent_name, (config["transaction_digest"] + "\n").encode())
-sys.excepthook = failure_excepthook
 
 failure_stage = "observe_units_before_fence"
 before = [show_unit(unit) for unit in units]
@@ -1533,47 +1579,94 @@ def safe_fence_unit_observations():
     return observed
 
 def write_fence_failure_receipt(exc_type, exc):
-    name = (
-        config["transaction_id"] + ".host-zero-recovery-fence-" + action
-        + "-failure.json"
-    )
-    path = authority_root / name
-    receipt = {
-        "schema": "arnold.cloud.zero_recovery_host_fence_failure.v1",
+    receipt = None
+    durable = False
+    durable_error = "authority_directory_unavailable"
+    try:
+        transaction_id = config.get("transaction_id")
+        name = (
+            str(transaction_id) + ".host-zero-recovery-fence-" + str(action)
+            + "-failure.json"
+        )
+        path = authority_root / name
+        try:
+            observed_units = safe_fence_unit_observations()
+        except BaseException as observation_exc:
+            observed_units = [{
+                "observation_error": type(observation_exc).__name__
+                + ":" + str(observation_exc)
+            }]
+        receipt = {
+            "schema": "arnold.cloud.zero_recovery_host_fence_failure.v1",
+            "status": "failed",
+            "stage": failure_stage,
+            "action": action,
+            "transaction_id": transaction_id,
+            "transaction_digest": config.get("transaction_digest"),
+            "marker_published": marker_published,
+            "error_type": getattr(exc_type, "__name__", type(exc).__name__),
+            "error": str(exc),
+            "units_observed": observed_units,
+            "systemd_jobs": last_fence_jobs,
+            "receipt_path": str(path),
+            "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        receipt["receipt_digest"] = hashlib.sha256(
+            json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if type(authority_dir_fd) is int:
+            try:
+                write_authority_file(
+                    authority_dir_fd,
+                    name,
+                    (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+                )
+                durable = True
+                durable_error = None
+            except BaseException as receipt_exc:
+                durable_error = (
+                    type(receipt_exc).__name__ + ":" + str(receipt_exc)
+                )
+    except BaseException as envelope_exc:
+        durable_error = (
+            "failure_envelope_build_failed:" + type(envelope_exc).__name__
+            + ":" + str(envelope_exc)
+        )
+    envelope = {
+        "schema": "arnold.cloud.zero_recovery_host_fence_failure_envelope.v1",
         "status": "failed",
         "stage": failure_stage,
         "action": action,
-        "transaction_id": config["transaction_id"],
-        "transaction_digest": config["transaction_digest"],
-        "marker_published": marker_published,
-        "error_type": exc_type.__name__,
+        "transaction_id": config.get("transaction_id"),
+        "transaction_digest": config.get("transaction_digest"),
+        "error_type": getattr(exc_type, "__name__", type(exc).__name__),
         "error": str(exc),
-        "units_observed": safe_fence_unit_observations(),
-        "systemd_jobs": last_fence_jobs,
-        "receipt_path": str(path),
-        "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "durable_receipt_written": durable,
+        "durable_receipt_error": durable_error,
+        "failure_receipt": receipt,
     }
-    receipt["receipt_digest"] = hashlib.sha256(
-        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    emitted = dict(receipt)
     try:
-        write_authority_file(
-            authority_dir_fd,
-            name,
-            (json.dumps(receipt, sort_keys=True) + "\n").encode(),
+        print(
+            json.dumps(envelope, sort_keys=True, separators=(",", ":")),
+            file=sys.stderr,
+            flush=True,
         )
-        emitted["durable_receipt_written"] = True
-    except Exception as receipt_exc:
-        emitted["durable_receipt_written"] = False
-        emitted["durable_receipt_error"] = (
-            type(receipt_exc).__name__ + ":" + str(receipt_exc)
-        )
-    print(json.dumps(emitted, sort_keys=True), file=sys.stderr)
+    except BaseException:
+        try:
+            os.write(
+                2,
+                b'{"schema":"arnold.cloud.zero_recovery_host_fence_failure_envelope.v1","status":"failed","durable_receipt_written":false}\n',
+            )
+        except BaseException:
+            pass
 
 def fence_failure_excepthook(exc_type, exc, traceback):
-    write_fence_failure_receipt(exc_type, exc)
+    try:
+        write_fence_failure_receipt(exc_type, exc)
+    except BaseException:
+        pass
 
+sys.excepthook = fence_failure_excepthook
 if action not in {"apply", "verify"}:
     raise RuntimeError("unsupported_fence_action")
 authority_dir_fd = open_authority_directory(action == "apply")
@@ -1591,7 +1684,6 @@ intent_name = (
 persist_or_require_exact(
     authority_dir_fd, intent_name, intent_raw, "existing_fence_intent"
 )
-sys.excepthook = fence_failure_excepthook
 failure_stage = "observe_units_before_fence"
 
 before = [show_unit(unit) for unit in units]

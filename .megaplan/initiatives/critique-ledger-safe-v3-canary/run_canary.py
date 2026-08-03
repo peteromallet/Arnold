@@ -304,19 +304,26 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         _assert_zero_recovery_source_unchanged,
         _zero_recovery_source_identity,
     )
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
     import_root = Path(megaplan.__file__).resolve()
     if root not in import_root.parents:
         raise RuntimeError("megaplan import escaped admitted checkout")
+    # Init rewrites these ignored projections from tracked canonical schemas.
+    # Establish and bind them before the direct-source baseline so post:init
+    # verification admits only the exact unchanged schema set.
+    ensure_runtime_layout(root)
     source_manifest = _zero_recovery_source_identity(root, plan_dir)
     if source_manifest is None:
         raise RuntimeError("direct source manifest was not enabled")
 
     def direct_integrity(checkpoint: str) -> dict[str, Any]:
+        nonlocal source_manifest
         observed = _assert_zero_recovery_source_unchanged(
             root, plan_dir, source_manifest
         )
         if observed is None:
             raise RuntimeError("direct source verification was not enabled")
+        source_manifest = observed
         runtime_delta = [
             {
                 "path": item["path"],
@@ -325,6 +332,18 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             }
             for item in observed["runtime_delta"]
         ]
+        engine_runtime = {
+            name: (
+                {
+                    key: value
+                    for key, value in record.items()
+                    if key != "_raw"
+                }
+                if record is not None
+                else None
+            )
+            for name, record in observed["engine_runtime"].items()
+        }
         unsigned: dict[str, Any] = {
             "schema": "arnold.megaplan.finite_canary_repository_integrity.v1",
             "checkpoint": checkpoint,
@@ -338,6 +357,7 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
                 canonical(source_manifest["git_metadata"])
             ).hexdigest(),
             "runtime_delta": runtime_delta,
+            "engine_runtime": engine_runtime,
         }
         unsigned["runtime_delta_digest"] = hashlib.sha256(
             canonical(runtime_delta)

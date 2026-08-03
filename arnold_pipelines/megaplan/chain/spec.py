@@ -46,6 +46,7 @@ from arnold_pipelines.megaplan.profiles import (
     VALID_DEPTH_CHOICES,
     normalize_robustness,
 )
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.anchors import resolve_anchor_path, validate_anchor_source
 
@@ -3075,6 +3076,121 @@ _FINITE_CANARY_DEFERRED_OBLIGATIONS = [
     }
     for obligation_id in _FINITE_CANARY_DEFERRED_OBLIGATION_IDS
 ]
+_FINITE_CANARY_DEFERRED_OWNERS = {
+    "F1": "f1-owner-storage-recovery-hardening",
+    "F2": "f2-admission-model-effect-release-closure",
+}
+_FINITE_CANARY_CUSTODY_OBLIGATIONS = [
+    {
+        **obligation,
+        "owner_milestone": _FINITE_CANARY_DEFERRED_OWNERS[obligation["phase"]],
+        "acceptance_gate": "INDEPENDENT_COMPLETION_MANIFEST_REQUIRED",
+        "evidence_ref": (
+            "proof-map.json#/"
+            + _FINITE_CANARY_DEFERRED_OWNERS[obligation["phase"]]
+        ),
+        "required_claim_id": obligation["id"],
+    }
+    for obligation in _FINITE_CANARY_DEFERRED_OBLIGATIONS
+]
+_FINITE_CANARY_PRELAUNCH_GATE_OWNERS = (
+    (
+        "accepted_finite_canary_candidate",
+        "finite-canary release operator and independent exact-commit reviewer",
+    ),
+    ("trusted_host_control_state", "typed SSH zero-recovery provider"),
+    ("bounded_fence_reclaim", "typed SSH zero-recovery provider"),
+    ("durable_failure_reconciliation", "typed SSH zero-recovery provider"),
+    ("built_image_four_phase_smoke", "finite-canary release operator"),
+    (
+        "live_capacity_and_predeploy",
+        "finite-canary release operator through the typed SSH zero-recovery provider",
+    ),
+    (
+        "finite_canary_and_stable_exit",
+        "finite-canary runner and independent conformance reviewer",
+    ),
+    (
+        "remote_custody_and_fresh_clone",
+        "release custody operator and independent reconstruction reviewer",
+    ),
+)
+_FINITE_CANARY_PENDING_PRELAUNCH_GATES = [
+    {
+        "id": gate_id,
+        "blocking_phase": "T6.2_PRELAUNCH",
+        "owner": owner,
+        "status": "PENDING",
+        "acceptance_gate": "INDEPENDENT_EXACT_EVIDENCE_REQUIRED",
+        "evidence": {"path": None, "sha256": None, "status": "PENDING"},
+    }
+    for gate_id, owner in _FINITE_CANARY_PRELAUNCH_GATE_OWNERS
+]
+_FINITE_CANARY_HOST_CONTROL_STATE_CONTRACT = {
+    "global_containment_marker": {
+        "schema": "arnold.cloud.zero_recovery_marker.v2",
+        "exact_fields": ["schema", "profile", "scope", "active"],
+        "transaction_independent": True,
+        "publish_after": [
+            "durable_unit_containment_proof",
+            "durable_systemd_job_containment_proof",
+            "durable_session_containment_proof",
+            "durable_process_containment_proof",
+        ],
+        "canonical_reuse": (
+            "ALLOWED_ONLY_AFTER_FRESH_DURABLE_CONTAINMENT_REPROOF"
+        ),
+        "mismatch": "HARD_NO_GO",
+    },
+    "per_attempt_records": {
+        "records": ["intent", "apply", "verify", "failure"],
+        "exact_binding_fields": [
+            "transaction_id", "transaction_digest", "action",
+        ],
+        "fresh_retry": "NEW_SUPPORTED_TRANSACTION_AND_FRESH_EVIDENCE",
+    },
+    "failure_evidence": {
+        "pre_intent": (
+            "NO_MUTATION_FAIL_CLOSED_SUPPORTED_CALLER_CAPTURED_TYPED_ERROR"
+        ),
+        "post_intent_partial_post_prune": (
+            "DURABLE_O_EXCL_HOST_FAILURE_RECEIPT"
+        ),
+    },
+}
+_FINITE_CANARY_ROUTE_HOST_CONTROL_STATE = {
+    "status": "PRELAUNCH_REQUIRED",
+    "location": (
+        "fixed_host_path_outside_all_historical_and_canary_workspaces"
+    ),
+    "directory_identity": {
+        "type": "directory",
+        "uid": 0,
+        "gid": 0,
+        "mode": "0700",
+        "symlink_free": True,
+    },
+    "writes": "dirfd_relative_no_follow_atomic_file_and_directory_fsync",
+    "contains": [
+        "transaction_independent_global_containment_marker_v2",
+        "per_attempt_transaction_intents",
+        "per_attempt_apply_and_verify_receipts",
+        "bootstrap_success_and_failure_receipts",
+        "reconciliation_receipts",
+    ],
+    "global_marker_exact_fields": ["schema", "profile", "scope", "active"],
+    "global_marker_publication": (
+        "only_after_durable_unit_job_session_process_containment_proof"
+    ),
+    "global_marker_reuse": (
+        "same_canonical_marker_after_fresh_durable_containment_reproof"
+    ),
+    "per_attempt_record_exact_fields": [
+        "transaction_id", "transaction_digest", "action",
+    ],
+    "fresh_retry": "new_supported_transaction_and_fresh_evidence",
+    "global_marker_mismatch": "HARD_NO_GO",
+}
 _FINITE_CANARY_CUSTODY_ITEM_STATUSES = {
     "cloud-observation-preflight-rejected-v1":
         "CLEAN_REJECTED_PENDING_BOUNDED_REPAIR_NOT_PREDEPLOY_AUTHORITY",
@@ -3110,13 +3226,19 @@ def _finite_canary_custody_contract(
         "live_cloud_evidence", "capacity_cut", "isolation_receipt_contract",
         "model_evidence_contract", "dirty_snapshot_commits",
         "dirty_capture_recipe", "operational_substrates",
-        "deferred_obligations", "items",
+        "deferred_obligations", "items", "contract_updated_at",
+        "prelaunch_release_gates", "trusted_host_control_state_contract",
     }
     if (
         not isinstance(custody, dict)
         or set(custody) != expected_fields
         or custody.get("schema")
-        != "arnold.critique_ledger.unfinished_work_custody.v2"
+        != "arnold.critique_ledger.unfinished_work_custody.v3"
+        or _parse_iso_datetime(custody.get("contract_updated_at")) is None
+        or custody.get("prelaunch_release_gates")
+        != _FINITE_CANARY_PENDING_PRELAUNCH_GATES
+        or custody.get("trusted_host_control_state_contract")
+        != _FINITE_CANARY_HOST_CONTROL_STATE_CONTRACT
     ):
         return None
     items = custody.get("items")
@@ -3150,19 +3272,13 @@ def _finite_canary_custody_contract(
         or set(entry) != {"id", "disposition"}
         or not isinstance(entry.get("id"), str)
         for entry in substrates
-    ) or any(
-        not isinstance(entry, dict)
-        or set(entry)
-        != {"id", "phase", "status", "operational_disposition"}
-        or not isinstance(entry.get("id"), str)
-        for entry in obligations
     ):
         return None
     expected_substrates = _FINITE_CANARY_OPERATIONAL_SUBSTRATES
     expected_obligations = _FINITE_CANARY_DEFERRED_OBLIGATIONS
     if (
         substrates != expected_substrates
-        or obligations != expected_obligations
+        or obligations != _FINITE_CANARY_CUSTODY_OBLIGATIONS
         or len({entry["id"] for entry in substrates}) != len(substrates)
         or len({entry["id"] for entry in obligations}) != len(obligations)
     ):
@@ -3382,15 +3498,24 @@ def _finite_canary_repository_integrity_is_valid(
         "megaplan/initiatives/critique-ledger-safe-v3-canary/receipts/",
         f"megaplan/plans/critique-ledger-cl2-planning-canary/",
     )
+    schema_paths = {
+        f".megaplan/schemas/{filename}" for filename in SCHEMAS
+    }
+    engine_runtime_paths = {
+        ".megaplan/.state-locks/critique-ledger-cl2-planning-canary.lock",
+        ".megaplan/epics/critique-ledger-cl2-planning-canary/events.jsonl",
+    }
     admitted_source_digest: str | None = None
     admitted_git_digest: str | None = None
+    admitted_schema_runtime: dict[str, str] | None = None
+    previous_engine_runtime: dict[str, Any] | None = None
     for expected_name, checkpoint in zip(expected_names, checkpoints, strict=True):
         if (
             not isinstance(checkpoint, dict)
             or set(checkpoint) != {
                 "schema", "checkpoint", "head", "tree", "tracked_clean",
                 "source_manifest_digest", "git_metadata_digest",
-                "runtime_delta", "runtime_delta_digest",
+                "runtime_delta", "runtime_delta_digest", "engine_runtime",
             }
             or checkpoint.get("schema")
             != "arnold.megaplan.finite_canary_repository_integrity.v1"
@@ -3421,6 +3546,9 @@ def _finite_canary_repository_integrity_is_valid(
             or checkpoint["git_metadata_digest"] != admitted_git_digest
         ):
             return False
+        schema_runtime: dict[str, str] = {}
+        seen_runtime_paths: set[str] = set()
+        runtime_by_path: dict[str, dict[str, Any]] = {}
         for item in checkpoint["runtime_delta"]:
             if (
                 not isinstance(item, dict)
@@ -3428,11 +3556,94 @@ def _finite_canary_repository_integrity_is_valid(
                 or item.get("kind") not in {"file", "symlink"}
                 or not isinstance(item.get("path"), str)
                 or not item["path"].startswith(".megaplan/")
-                or not item["path"][1:].startswith(allowed_roots)
                 or not isinstance(item.get("sha256"), str)
                 or not _SHA256_RE.fullmatch(item["sha256"])
             ):
                 return False
+            path = item["path"]
+            if path in seen_runtime_paths:
+                return False
+            seen_runtime_paths.add(path)
+            runtime_by_path[path] = item
+            if path in schema_paths:
+                if item["kind"] != "file" or path in schema_runtime:
+                    return False
+                schema_runtime[path] = item["sha256"]
+            elif path in engine_runtime_paths:
+                if item["kind"] != "file":
+                    return False
+            elif not path[1:].startswith(allowed_roots):
+                return False
+        if set(schema_runtime) != schema_paths:
+            return False
+        if admitted_schema_runtime is None:
+            admitted_schema_runtime = schema_runtime
+        elif schema_runtime != admitted_schema_runtime:
+            return False
+        engine_runtime = checkpoint.get("engine_runtime")
+        if not isinstance(engine_runtime, dict) or set(engine_runtime) != {
+            "lock", "events",
+        }:
+            return False
+        lock = engine_runtime.get("lock")
+        events = engine_runtime.get("events")
+        if expected_name in {"baseline", "pre:init"}:
+            if lock is not None or events is not None:
+                return False
+        else:
+            if (
+                not isinstance(lock, dict)
+                or set(lock)
+                != {"path", "st_dev", "st_ino", "size", "sha256"}
+                or lock.get("path")
+                != ".megaplan/.state-locks/critique-ledger-cl2-planning-canary.lock"
+                or type(lock.get("st_dev")) is not int
+                or type(lock.get("st_ino")) is not int
+                or lock["st_dev"] < 0
+                or lock["st_ino"] <= 0
+                or lock.get("size") != 0
+                or lock.get("sha256") != hashlib.sha256(b"").hexdigest()
+                or not isinstance(events, dict)
+                or set(events)
+                != {
+                    "path", "st_dev", "st_ino", "size", "sha256",
+                    "transaction_count", "last_seq",
+                }
+                or events.get("path")
+                != ".megaplan/epics/critique-ledger-cl2-planning-canary/events.jsonl"
+                or type(events.get("st_dev")) is not int
+                or type(events.get("st_ino")) is not int
+                or events["st_dev"] < 0
+                or events["st_ino"] <= 0
+                or type(events.get("size")) is not int
+                or events["size"] <= 0
+                or not isinstance(events.get("sha256"), str)
+                or not _SHA256_RE.fullmatch(events["sha256"])
+                or type(events.get("transaction_count")) is not int
+                or events["transaction_count"] <= 0
+                or events.get("last_seq")
+                != events["transaction_count"] - 1
+                or runtime_by_path.get(lock["path"], {}).get("sha256")
+                != lock["sha256"]
+                or runtime_by_path.get(events["path"], {}).get("sha256")
+                != events["sha256"]
+            ):
+                return False
+            if previous_engine_runtime is not None:
+                previous_lock = previous_engine_runtime["lock"]
+                previous_events = previous_engine_runtime["events"]
+                if (
+                    (lock["st_dev"], lock["st_ino"])
+                    != (previous_lock["st_dev"], previous_lock["st_ino"])
+                    or (events["st_dev"], events["st_ino"])
+                    != (previous_events["st_dev"], previous_events["st_ino"])
+                    or events["size"] < previous_events["size"]
+                    or events["transaction_count"]
+                    < previous_events["transaction_count"]
+                    or events["last_seq"] < previous_events["last_seq"]
+                ):
+                    return False
+            previous_engine_runtime = engine_runtime
     return True
 
 
@@ -3774,7 +3985,7 @@ def _validate_finite_canary_receipt(
         )
         or not isinstance(operational_route, dict)
         or operational_route.get("schema")
-        != "arnold.critique_ledger.finite_canary_operational_route.v1"
+        != "arnold.critique_ledger.finite_canary_operational_route.v2"
         or operational_route.get("profile")
         != "ZERO_RECOVERY_NONROOT_FINITE_CANARY"
         or operational_route.get("model_evidence", {}).get("prelaunch_accepted_label")
@@ -3783,6 +3994,10 @@ def _validate_finite_canary_receipt(
         .get("custody_contract", {})
         .get("path")
         != artifacts_by_role["custody_manifest"][0].relative_to(root).as_posix()
+        or operational_route.get("additional_bindings", {}).get(
+            "trusted_host_control_state"
+        )
+        != _FINITE_CANARY_ROUTE_HOST_CONTROL_STATE
         or not isinstance(supersession, dict)
         or supersession.get("schema")
         != "arnold.critique_ledger.supersession_index.v1"

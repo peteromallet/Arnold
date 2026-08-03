@@ -58,8 +58,51 @@ machine-readable authority; the paths and counts below are operator guidance.
   `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`. Omissions,
   additions, duplicates, phase drift, status drift, and disposition drift fail
   the T6.2 completion gate.
+- [ ] All marker, fence, bootstrap and reconciliation authority lives in one
+  fixed `root:root 0700`, symlink-free host control-state directory outside
+  poisoned and canary workspaces. Every write is safe dirfd-relative/no-follow,
+  atomically installed and file-plus-directory-fsynced. The transaction-
+  independent global containment marker v2 has exactly
+  `schema/profile/scope/active` and is published only after durable
+  unit/job/session/process containment proof. Per-attempt intent and
+  apply/verify/failure receipts bind exactly
+  `transaction_id/transaction_digest/action`. A global-marker mismatch is a
+  hard NO-GO; the same canonical marker is reusable by a fresh supported
+  transaction only after containment is durably re-proved.
+- [ ] All eight recovery units are absent or boundedly settled inactive and
+  masked before any reclaim; failed units receive at most one bounded
+  `reset-failed`, deactivating units have one shared deadline, recovery systemd
+  jobs are observed and emitter/parser-bound, persistent masks are crash-safe
+  before prune, and every failure is honestly split by authority boundary:
+  pre-intent failure performs no mutation, fails closed and is captured through
+  the supported caller's typed/error evidence path; every post-intent,
+  partial or post-prune failure writes a durable O_EXCL host failure receipt
+  and is reconcilable with no blind redispatch.
+- [ ] One accepted built-image four-phase smoke, fresh inventory, bootstrap
+  reclaim receipt, GO predeploy receipt, apply/verify fence receipts, finite
+  run/conformance/completion receipt and terminal stop receipt bind the exact
+  accepted finite-canary implementation commit/tree, manifest commit/tree and
+  image. Candidate generation names never enter the gate ID; exact accepted
+  identities live only in its evidence triple.
+  Until live acceptance these identities and receipts remain typed `PENDING`;
+  no placeholder is success evidence.
+- [ ] Stable exit proves v2 stopped, preserved and persistently fenced; all
+  recovery units absent or inactive+persistently masked; no relevant systemd
+  job, tmux session or process; v3 `finalized` and stopped; and no notifier,
+  fixer, resident, watchdog or timer remains.
+- [ ] The follow-up authority files are updated with exact live identities,
+  committed and pushed. One namespaced custody anchor, prelaunch and postcanary
+  tags, and runnable integration ref preserve every accepted, rejected and
+  dirty-snapshot identity; a fresh clone recomputes every hash and passes the
+  same handoff checks.
 
 ## Exact deferred-obligation contract
+
+Every row below also carries, in `custody-manifest.json`, an exact
+`owner_milestone`, `INDEPENDENT_COMPLETION_MANIFEST_REQUIRED` gate,
+`proof-map.json` evidence reference and same-ID required claim. Those fields are
+part of the closed schema; prose or milestone completion without the exact
+claim cannot discharge an obligation.
 
 - [ ] `F1.platform_capacity_storage_hardening` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
 - [ ] `F1.physically_minimal_image` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
@@ -104,7 +147,10 @@ machine-readable authority; the paths and counts below are operator guidance.
   current SQLite owner is explicitly test-only. The production owner must issue
   the occurrence target/ref, monotonic accepted state version, quiet transition,
   due-selection result, authenticated effect receipt, and exact-once consumed
-  grant.
+  grant. The `F1.production_recovery_owner` claim also owns the remaining T1.8
+  generation-owner and T1.9 production launch/store generalization; it does not
+  reclassify the finite T1.9 launcher, which is consumed only by a passing
+  canary receipt.
 - [ ] Fix exact-occurrence handoff: immediate/reconcile wrappers must receive the
   owner-issued occurrence ID rather than calling owner operations with zero
   arguments. Preserve the retired four-line watchdog tombstone; do not revive
