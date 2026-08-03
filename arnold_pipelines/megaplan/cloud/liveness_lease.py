@@ -315,6 +315,8 @@ def observe_liveness_lease(
         "reason": "fresh identity-bound runner lease",
         "runner_container_id": raw.get("runner_container_id"),
         "pid_namespace_id": raw.get("pid_namespace_id"),
+        "target_pid": raw.get("target_pid"),
+        "target_process_start_identity": raw.get("target_process_start_identity"),
         "lease_id": raw.get("lease_id"),
         "sequence": raw.get("sequence"),
         "expires_at": raw.get("expires_at"),

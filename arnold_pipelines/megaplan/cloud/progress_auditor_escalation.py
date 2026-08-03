@@ -492,6 +492,11 @@ def _process_evidence(finding: Mapping[str, Any]) -> dict[str, Any]:
         tmux,
         active,
         watchdog_statuses,
+        bound_observation=(
+            target.get("current_target_liveness")
+            if isinstance(target.get("current_target_liveness"), Mapping)
+            else None
+        ),
     )
     return {
         "present": liveness["known"],
@@ -951,6 +956,10 @@ def classify_true_stall(
         and _text(repair_goal.get("control_action")).lower() == "preserve_live"
     )
     healthy_live_process = process.get("live") is True
+    runner_liveness_unknown = bool(
+        isinstance(_mapping(finding.get("current_target")).get("current_target_liveness"), Mapping)
+        and process.get("state") == "unknown"
+    )
     intentional_wait = bool(explicit_pause or human_gate or external.get("intentional_wait"))
 
     repair = _mapping(finding.get("repair_data_summary"))
@@ -1035,6 +1044,8 @@ def classify_true_stall(
         blocks.append("preserve_live_repair_goal")
     if healthy_live_process and not goal_actionable:
         blocks.append("healthy_live_process")
+    if runner_liveness_unknown:
+        blocks.append("runner_liveness_unknown")
     if not intent_allowed:
         blocks.append("resolver_did_not_authorize_machine_action")
     if chain.get("terminal") or plan.get("terminal"):

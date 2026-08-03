@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import os
-import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -13,6 +10,10 @@ from typing import Any, Callable, Mapping
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json
 from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    liveness_from_current_target,
+    observe_current_target_liveness,
+)
 from arnold_pipelines.megaplan.cloud.session_markers import (
     canonical_sidecar_suffix,
     is_canonical_session_marker_path,
@@ -45,21 +46,7 @@ _MISSING_EVIDENCE_KINDS = {
 
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
-
-def _pid_is_live(pid: int, probe: PidLiveProbe | None = None) -> bool:
-    if pid <= 0:
-        return False
-    if probe is not None:
-        return bool(probe(pid))
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+ProcessStartProbe = Callable[[int], str | None]
 
 def _fingerprint(path: Path) -> str:
     """Return hex digest of file content, or empty string when unavailable."""
@@ -104,6 +91,8 @@ def resolve_current_target(
     workspace_hint: str | Path | None = None,
     session_is_live: SessionLiveProbe | None = None,
     pid_is_live: PidLiveProbe | None = None,
+    process_start_identity: ProcessStartProbe | None = None,
+    observer_pid_namespace_id: str | None = None,
     source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a stable evidence record for the current repair target.
@@ -142,6 +131,7 @@ def resolve_current_target(
             "chain_state": {},
             "event_cursors": {},
             "tmux_process": {},
+            "current_target_liveness": liveness_from_current_target(None),
             "needs_human": {},
             "repair_progress": {"present": False, "items": []},
             "chain_log": {},
@@ -178,7 +168,26 @@ def resolve_current_target(
     needs_human = _safe_load_dict(needs_human_path)
     needs_human_plans = _collect_needs_human_plan_refs(needs_human)
     repair_progress = _collect_sidecar_status(markers_root, session)
-    tmux_process = _collect_tmux_process_evidence(marker, session, session_is_live, pid_is_live)
+    current_target_liveness = observe_current_target_liveness(
+        marker,
+        marker_dir=markers_root,
+        active_step=(
+            plan_state.get("active_step")
+            if isinstance(plan_state.get("active_step"), Mapping)
+            else None
+        ),
+        session_is_live=session_is_live,
+        pid_is_live=pid_is_live,
+        process_start_identity=process_start_identity,
+        observer_pid_namespace_id=observer_pid_namespace_id,
+    )
+    tmux_process = _collect_tmux_process_evidence(
+        marker,
+        session,
+        current_target_liveness,
+        session_is_live=session_is_live,
+        pid_is_live=pid_is_live,
+    )
     siblings = _collect_sibling_sessions(
         markers_root,
         session=session,
@@ -187,7 +196,11 @@ def resolve_current_target(
     )
     event_cursors = _collect_event_cursors(plan_state_path, plan_state)
     chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
-    active_step_heartbeat = _collect_active_step_heartbeat(plan_state, pid_is_live=pid_is_live)
+    active_step_heartbeat = _collect_active_step_heartbeat(
+        plan_state,
+        current_target_liveness=current_target_liveness,
+        pid_is_live=pid_is_live,
+    )
     current_phase = _resolve_current_phase(plan_state, active_step_heartbeat)
     resume_authority_failure = _collect_resume_authority_failure(
         plan_state_path,
@@ -480,6 +493,7 @@ def resolve_current_target(
         },
         "event_cursors": event_cursors,
         "tmux_process": tmux_process,
+        "current_target_liveness": current_target_liveness,
         "needs_human": {
             "path": str(needs_human_path),
             "present": needs_human_path.exists(),
@@ -797,17 +811,37 @@ def _collect_resume_authority_failure(
 def _collect_tmux_process_evidence(
     marker: Mapping[str, Any],
     session: str,
-    session_is_live: SessionLiveProbe | None,
-    pid_is_live: PidLiveProbe | None,
+    current_target_liveness: Mapping[str, Any],
+    *,
+    session_is_live: SessionLiveProbe | None = None,
+    pid_is_live: PidLiveProbe | None = None,
 ) -> dict[str, Any]:
+    """Compatibility projection of the canonical bound liveness view."""
+
     pid = marker.get("pid")
     if not isinstance(pid, int):
         pid = marker.get("pane_pid")
-    pid_live = _pid_is_live(pid, pid_is_live) if isinstance(pid, int) else None
-    session_live = session_is_live(session) if session_is_live is not None else None
-    if session_live is True or pid_live is True:
+    state = _safe_text(current_target_liveness.get("state"))
+    source = _safe_text(current_target_liveness.get("source"))
+    local_bound = source == "matched_local_process_identity"
+    pid_live = (state == "live") if local_bound else (False if local_bound and state == "dead" else None)
+    session_live: bool | None = None
+    if state == "unknown":
+        if isinstance(pid, int) and pid_is_live is not None:
+            pid_live = pid_is_live(pid)
+        if session_is_live is not None:
+            session_live = session_is_live(session)
+    # Legacy booleans remain a diagnostic projection for readers that have not
+    # cut over. They never alter ``current_target_liveness`` or control gates.
+    legacy_live = session_live is True or pid_live is True
+    legacy_dead = session_live is False or pid_live is False
+    if state == "live":
         live_status = "alive"
-    elif session_live is False or pid_live is False:
+    elif state == "dead":
+        live_status = "stopped"
+    elif legacy_live:
+        live_status = "alive"
+    elif legacy_dead:
         live_status = "stopped"
     else:
         live_status = "unknown"
@@ -817,6 +851,7 @@ def _collect_tmux_process_evidence(
         "pid_live": pid_live,
         "session_live": session_live,
         "live_status": live_status,
+        "bound_liveness_source": source,
     }
 
 
@@ -864,14 +899,20 @@ def _collect_sibling_sessions(
             continue
         other_run_kind = _safe_text(payload.get("run_kind")) or "unknown"
         other_plan_name = _safe_plan_name(payload.get("plan_name"))
-        live = session_is_live(other_session) if session_is_live is not None else None
+        sibling_liveness = observe_current_target_liveness(
+            payload,
+            marker_dir=marker_dir,
+            session_is_live=session_is_live,
+        )
+        sibling_state = _safe_text(sibling_liveness.get("state")) or "unknown"
         siblings.append(
             {
                 "session": other_session,
                 "marker_path": str(path),
                 "run_kind": other_run_kind,
                 "plan_name": other_plan_name,
-                "live_status": "alive" if live is True else "stopped" if live is False else "unknown",
+                "live_status": "alive" if sibling_state == "live" else "stopped" if sibling_state == "dead" else "unknown",
+                "current_target_liveness": sibling_liveness,
             }
         )
     siblings.sort(key=lambda item: (item["live_status"] != "alive", item["session"]))
@@ -1014,6 +1055,7 @@ def _collect_chain_log_evidence(
 def _collect_active_step_heartbeat(
     plan_state: Mapping[str, Any],
     *,
+    current_target_liveness: Mapping[str, Any] | None = None,
     pid_is_live: PidLiveProbe | None = None,
 ) -> dict[str, Any]:
     """Extract active-step heartbeat evidence from plan state.
@@ -1028,10 +1070,23 @@ def _collect_active_step_heartbeat(
     worker_pid = _safe_text(raw_worker_pid)
     if not worker_pid and isinstance(raw_worker_pid, int):
         worker_pid = str(raw_worker_pid)
+    bound = (
+        current_target_liveness
+        if isinstance(current_target_liveness, Mapping)
+        else {}
+    )
+    identity = bound.get("identity") if isinstance(bound.get("identity"), Mapping) else {}
+    identity_worker_pid = _safe_text(identity.get("pid"))
+    identity_is_active_step = _safe_text(identity.get("source")) == "active_step"
     pid_live: bool | None = None
-    if worker_pid:
+    if identity_is_active_step and identity_worker_pid == worker_pid:
+        if bound.get("state") == "live":
+            pid_live = True
+        elif bound.get("state") == "dead":
+            pid_live = False
+    elif worker_pid and pid_is_live is not None:
         try:
-            pid_live = _pid_is_live(int(worker_pid), pid_is_live)
+            pid_live = pid_is_live(int(worker_pid))
         except (TypeError, ValueError):
             pid_live = False
     return {

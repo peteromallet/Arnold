@@ -36,6 +36,9 @@ import subprocess
 from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
 from arnold_pipelines.megaplan.cloud import feature_flags
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    liveness_from_current_target,
+)
 from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
     render_process_custody_policy,
 )
@@ -830,6 +833,24 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
+    if (
+        isinstance(current_target_observation, Mapping)
+        and "current_target_liveness" in current_target_observation
+    ):
+        target_liveness = liveness_from_current_target(current_target_observation)
+        if target_liveness.get("known") is not True:
+            rationale.append(
+                "current-target liveness is UNKNOWN; diagnosis may continue but "
+                "meta-repair dispatch, escalation, and retrigger are forbidden"
+            )
+            return MetaRepairClassification(
+                session=session,
+                trigger=None,
+                rationale=tuple(rationale),
+                evidence=deepcopy(dict(evidence)) if evidence else {},
+                attempted_at=now.isoformat(),
+            )
+
     # --- 1. Discord delivery failure (TRUE_BLOCKER gate) --------------------
     if discord_delivery_failed and discord_escalation_is_true_blocker:
         rationale.append(
@@ -1288,22 +1309,21 @@ def stale_repair_evidence_reason(
 
 
 def _current_target_has_runtime_proof(current_target_observation: Mapping[str, Any]) -> bool:
+    # Durable plan/chain files and bare heartbeat PIDs outlive process
+    # incarnations.  Only the shared identity-bound view is runtime proof.
+    if "current_target_liveness" in current_target_observation:
+        return liveness_from_current_target(current_target_observation).get("live") is True
+    # Read-only compatibility for historical persisted observations. New
+    # resolver records always carry ``current_target_liveness`` and cannot use
+    # this branch to authorize control.
     active_step = current_target_observation.get("active_step_heartbeat")
     if isinstance(active_step, Mapping) and bool(active_step.get("active")):
         return True
-
-    tmux_process = current_target_observation.get("tmux_process")
-    if isinstance(tmux_process, Mapping) and _meta_safe_text(tmux_process.get("live_status")) == "alive":
-        return True
-
-    for key in ("plan_state", "chain_state"):
-        record = current_target_observation.get(key)
-        if isinstance(record, Mapping) and bool(record.get("present")):
-            return True
-
-    # Historical logs can survive after the target is gone; do not treat them
-    # as proof that another repair/meta-repair attempt is warranted.
-    return False
+    return any(
+        isinstance(current_target_observation.get(key), Mapping)
+        and bool(current_target_observation[key].get("present"))
+        for key in ("plan_state", "chain_state")
+    )
 
 
 def _failure_context_is_mechanical_redrive_only(

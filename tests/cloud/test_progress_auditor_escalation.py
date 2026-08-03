@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
+
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     AUDIT_REVIEW_EVIDENCE_MAX_BYTES,
     DEEP_REPAIR_DIFFICULTY,
@@ -28,6 +30,21 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
 
 
 NOW = datetime(2026, 7, 13, 22, 0, tzinfo=timezone.utc)
+
+
+def test_canonical_unknown_liveness_blocks_l3_escalation() -> None:
+    finding = _true_stall()
+    finding["current_target"]["current_target_liveness"] = {
+        "schema": SCHEMA,
+        "state": "unknown",
+        "known": False,
+        "source": "foreign_namespace",
+    }
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is False
+    assert "runner_liveness_unknown" in gate["blocks"]
 
 
 def _true_stall() -> dict:

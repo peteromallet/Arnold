@@ -1446,11 +1446,20 @@ def _build_session_entry(
     if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
         plan_state_label = None
     latest_activity = _latest_activity(chain_health, marker, plan_state_doc)
+    bound_liveness = (
+        current_target_record.get("current_target_liveness")
+        if isinstance(current_target_record, Mapping)
+        and isinstance(current_target_record.get("current_target_liveness"), Mapping)
+        else {}
+    )
     liveness = _augment_liveness_with_plan_state(
         _safe_liveness(liveness_probe, marker, marker_dir=marker_dir),
         chain_health=chain_health,
         plan_state=plan_state_doc,
     )
+    # Display remains backward compatible, while every control consumer reads
+    # this bound tri-state record rather than the injected diagnostic probe.
+    liveness["bound"] = dict(bound_liveness)
     superseding_sibling = _find_superseding_sibling(
         marker,
         marker_dir=marker_dir,
