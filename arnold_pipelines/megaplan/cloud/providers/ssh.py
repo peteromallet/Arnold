@@ -36,6 +36,13 @@ from .ssh_preflight import (
     workspace_prelaunch_command,
     validate_container_name,
 )
+from .resident_recovery import (
+    parse_resident_down_receipt,
+    parse_resident_recovery_receipt,
+    resident_down_command,
+    resident_only_container_name,
+    resident_recover_command,
+)
 from .zero_recovery import (
     bootstrap_reclaim_command,
     build_bootstrap_reclaim_transaction,
@@ -1417,6 +1424,165 @@ class SshProvider(Provider):
             stderr=self._redact_failure_text(result.stderr or ""),
             expected_paths=paths,
         )
+
+    def _resident_recovery_source_container(self) -> str:
+        """Return the only source container admitted by the loaded profile."""
+        return validate_container_name(
+            self._spec.zero_recovery_predecessor_container or self._ssh.container
+        )
+
+    def _observe_resident_recovery_source(self) -> dict[str, Any]:
+        source = self._resident_recovery_source_container()
+        if source == self._ssh.container:
+            return self.observe_container()
+        return self.observe_zero_recovery_predecessor()
+
+    def _observe_resident_recovery_capacity(self) -> dict[str, Any]:
+        if self._spec.zero_recovery_predecessor_container:
+            return self.observe_zero_recovery_predecessor_capacity()
+        return self.observe_prelaunch_capacity()
+
+    def _require_resident_recovery_source(
+        self,
+        *,
+        expected_source_container_id: str,
+        expected_source_image_id: str,
+    ) -> dict[str, Any]:
+        observation = self._observe_resident_recovery_source()
+        expected_mount = {
+            "status": "present",
+            "type": "bind",
+            "source": validate_workspace_dir(self._ssh.workspace_dir),
+            "destination": "/workspace",
+            "rw": True,
+        }
+        if (
+            observation.get("status") != "available"
+            or observation.get("lifecycle") != "stopped"
+            or observation.get("container_id") != expected_source_container_id
+            or observation.get("image_id") != expected_source_image_id
+            or observation.get("workspace_bind") != expected_mount
+        ):
+            raise CliError(
+                "resident_recovery_source_mismatch",
+                "preserved source container failed stopped identity/image/workspace compare-and-swap",
+            )
+        return observation
+
+    def resident_recover(
+        self,
+        *,
+        outage_epoch: str,
+        expected_source_container_id: str,
+        expected_source_image_id: str,
+        health_timeout_seconds: int = 45,
+    ) -> dict[str, Any]:
+        """Start one finite, listener-only Discord resident transaction."""
+        self._require_resident_recovery_source(
+            expected_source_container_id=expected_source_container_id,
+            expected_source_image_id=expected_source_image_id,
+        )
+        capacity = self._observe_resident_recovery_capacity()
+        if capacity.get("status") != "go" or capacity.get("verdict") != "GO":
+            raise CliError(
+                "resident_recovery_capacity_no_go",
+                "workspace capacity did not meet the configured byte/inode/receipt floors",
+            )
+        command, script = resident_recover_command(
+            source_container=self._resident_recovery_source_container(),
+            expected_source_container_id=expected_source_container_id,
+            expected_source_image_id=expected_source_image_id,
+            workspace=self._ssh.workspace_dir,
+            outage_epoch=outage_epoch,
+            min_free_bytes=self._spec.resources.prelaunch_min_free_bytes,
+            min_free_inodes=self._spec.resources.prelaunch_min_free_inodes,
+            receipt_reserve_bytes=self._spec.resources.prelaunch_receipt_reserve_bytes,
+            health_timeout_seconds=health_timeout_seconds,
+        )
+        result = self._remote_run_compatible(
+            command,
+            input=script,
+            surface="resident_only_recover",
+        )
+        payload = parse_resident_recovery_receipt(result.stdout or "")
+        start = payload["start_receipt"]
+        health = payload["health_receipt"]
+        fence = payload["source_fence_receipt"]
+        expected_resident = resident_only_container_name(
+            self._resident_recovery_source_container()
+        )
+        receipt_prefix = (
+            f"{self._ssh.workspace_dir}/.megaplan/resident-only-recovery/"
+            f"{outage_epoch}"
+        )
+        if (
+            payload.get("outage_epoch") != outage_epoch
+            or fence.get("outage_epoch") != outage_epoch
+            or fence.get("source_container_id") != expected_source_container_id
+            or fence.get("source_image_id") != expected_source_image_id
+            or fence.get("workspace") != self._ssh.workspace_dir
+            or start.get("source_container_id") != expected_source_container_id
+            or start.get("source_image_id") != expected_source_image_id
+            or start.get("workspace") != self._ssh.workspace_dir
+            or start.get("resident_container") != expected_resident
+            or health.get("outage_epoch") != outage_epoch
+            or health.get("resident_container") != expected_resident
+            or health.get("resident_container_id")
+            != start.get("resident_container_id")
+            or payload.get("receipt_paths")
+            != {
+                "fence_intent": receipt_prefix + ".fence.intent.json",
+                "fence": receipt_prefix + ".fence.json",
+                "intent": receipt_prefix + ".intent.json",
+                "start": receipt_prefix + ".start.json",
+                "health": receipt_prefix + ".health.json",
+            }
+        ):
+            raise CliError(
+                "resident_recovery_unknown",
+                "resident recovery receipt did not match the admitted transaction",
+            )
+        return payload
+
+    def resident_down(
+        self,
+        *,
+        outage_epoch: str,
+        expected_source_container_id: str,
+        expected_source_image_id: str,
+        expected_resident_container_id: str,
+    ) -> dict[str, Any]:
+        """Stop/remove only the resident identity minted for one outage epoch."""
+        command, script = resident_down_command(
+            source_container=self._resident_recovery_source_container(),
+            expected_source_container_id=expected_source_container_id,
+            expected_source_image_id=expected_source_image_id,
+            expected_resident_container_id=expected_resident_container_id,
+            workspace=self._ssh.workspace_dir,
+            outage_epoch=outage_epoch,
+        )
+        result = self._remote_run_compatible(
+            command,
+            input=script,
+            surface="resident_only_down",
+        )
+        payload = parse_resident_down_receipt(result.stdout or "")
+        if (
+            payload.get("outage_epoch") != outage_epoch
+            or payload.get("resident_container")
+            != resident_only_container_name(self._resident_recovery_source_container())
+            or payload.get("resident_container_id")
+            != expected_resident_container_id
+            or payload.get("source_fence_rollback", {}).get(
+                "source_container_id"
+            )
+            != expected_source_container_id
+        ):
+            raise CliError(
+                "resident_down_unknown",
+                "resident down receipt did not match the admitted transaction",
+            )
+        return payload
 
     def _zero_recovery_isolated_workspace(self) -> str:
         configured = self._spec.zero_recovery_workspace_dir

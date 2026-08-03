@@ -200,6 +200,11 @@ def register_discord_application_commands(tree: Any, service: Any) -> tuple[str,
 
     registered: list[str] = []
     for command in DISCORD_APPLICATION_COMMANDS:
+        if (
+            getattr(service, "listener_only", False)
+            and command.name == RESTART_RESIDENT_COMMAND
+        ):
+            continue
         handler = getattr(service, command.handler_name)
         callback = callback_for(command, handler)
         tree.command(name=command.name, description=command.description)(callback)
@@ -1449,6 +1454,7 @@ class ResidentDiscordService:
         transcriber: AudioTranscriber | None = None,
         attachment_downloader: AttachmentDownloader | None = None,
         restart_operation: Callable[[], Mapping[str, Any]] | None = None,
+        listener_only: bool = False,
     ) -> None:
         if not token:
             raise ValueError("Discord token is required")
@@ -1459,6 +1465,7 @@ class ResidentDiscordService:
         self.transcriber = transcriber or OpenAICompatibleAudioTranscriber(runtime.config)
         self.attachment_downloader = attachment_downloader or DiscordAttachmentDownloader()
         self.restart_operation = restart_operation or restart_discord_resident
+        self.listener_only = listener_only
         self._scheduler_task: asyncio.Task[None] | None = None
         self._command_tree: Any | None = None
         self._commands_synced = False
@@ -1506,14 +1513,7 @@ class ResidentDiscordService:
                         len(synced),
                         ",".join(command.name for command in DISCORD_APPLICATION_COMMANDS),
                     )
-            try:
-                process_identity = await asyncio.wait_for(
-                    asyncio.to_thread(resident_process_identity), timeout=3.0
-                )
-                restart_reconciliation = reconcile_prepared_reset_notifications(
-                    current_identity=process_identity
-                )
-            except Exception:
+            if self.listener_only:
                 process_identity = None
                 restart_reconciliation = {
                     "scanned": 0,
@@ -1521,16 +1521,38 @@ class ResidentDiscordService:
                     "failed": 0,
                     "in_progress": 0,
                 }
-                LOGGER.exception("Resident restart transaction reconciliation failed")
-            try:
-                queue_reconciliation = await asyncio.to_thread(
-                    reconcile_managed_subagent_queues,
-                    project_root=Path.cwd(),
-                )
-            except Exception:
+            else:
+                try:
+                    process_identity = await asyncio.wait_for(
+                        asyncio.to_thread(resident_process_identity), timeout=3.0
+                    )
+                    restart_reconciliation = reconcile_prepared_reset_notifications(
+                        current_identity=process_identity
+                    )
+                except Exception:
+                    process_identity = None
+                    restart_reconciliation = {
+                        "scanned": 0,
+                        "succeeded": 0,
+                        "failed": 0,
+                        "in_progress": 0,
+                    }
+                    LOGGER.exception("Resident restart transaction reconciliation failed")
+            if self.listener_only:
                 queue_reconciliation = None
-                LOGGER.exception("Resident managed successor reconciliation failed")
-            if self.runtime.config.allows_operational_discord_delivery:
+            else:
+                try:
+                    queue_reconciliation = await asyncio.to_thread(
+                        reconcile_managed_subagent_queues,
+                        project_root=Path.cwd(),
+                    )
+                except Exception:
+                    queue_reconciliation = None
+                    LOGGER.exception("Resident managed successor reconciliation failed")
+            if (
+                not self.listener_only
+                and self.runtime.config.allows_operational_discord_delivery
+            ):
                 completion_delivery = await sweep_managed_agent_deliveries(
                     outbound=self.runtime.outbound,
                     project_root=Path.cwd(),
@@ -1546,30 +1568,35 @@ class ResidentDiscordService:
             else:
                 completion_delivery = None
                 reset_delivery = None
-            try:
-                restart_replayed = (
-                    await self.runtime.recover_restart_interrupted_turns(process_identity)
-                    if process_identity is not None
-                    else 0
-                )
-                recovered = await self.runtime.recover_abandoned_turns()
-            except Exception:
+            if self.listener_only:
                 restart_replayed = 0
                 recovered = 0
-                LOGGER.exception(
-                    "Resident abandoned-turn recovery failed; operational outboxes were swept independently"
-                )
-            if isinstance(outbound, DiscordOutboundSink):
+            else:
+                try:
+                    restart_replayed = (
+                        await self.runtime.recover_restart_interrupted_turns(process_identity)
+                        if process_identity is not None
+                        else 0
+                    )
+                    recovered = await self.runtime.recover_abandoned_turns()
+                except Exception:
+                    restart_replayed = 0
+                    recovered = 0
+                    LOGGER.exception(
+                        "Resident abandoned-turn recovery failed; operational outboxes were swept independently"
+                    )
+            if not self.listener_only and isinstance(outbound, DiscordOutboundSink):
                 reaction_delivery = await outbound.reconcile_reactions()
             else:
                 reaction_delivery = None
             self._log_transcription_readiness()
-            self._seed_special_requests_job()
-            self._ensure_scheduler_started(client)
+            if not self.listener_only:
+                self._seed_special_requests_job()
+                self._ensure_scheduler_started(client)
             user = getattr(client, "user", None)
             guilds = getattr(client, "guilds", ())
             LOGGER.info(
-                "Resident Discord service ready user_id=%s guild_count=%s recovered_turns=%s "
+                "Resident Discord service ready user_id=%s guild_count=%s listener_only=%s recovered_turns=%s "
                 "restart_replayed_turns=%s restart_reconciled_succeeded=%s "
                 "restart_reconciled_failed=%s restart_reconcile_in_progress=%s "
                 "completion_delivery_scanned=%s completion_delivered=%s "
@@ -1581,6 +1608,7 @@ class ResidentDiscordService:
                 "reaction_effects_retry_pending=%s",
                 getattr(user, "id", None),
                 len(guilds),
+                self.listener_only,
                 recovered,
                 restart_replayed,
                 restart_reconciliation["succeeded"],
@@ -1701,6 +1729,13 @@ class ResidentDiscordService:
 
     async def handle_restart_resident_interaction(self, interaction: Any) -> None:
         """Authorize and hand ``/restart-resident`` to the guarded lifecycle API."""
+
+        if getattr(self, "listener_only", False):
+            await interaction.response.send_message(
+                "Resident restart is unavailable while listener-only recovery is active.",
+                ephemeral=True,
+            )
+            return
 
         user_id = _optional_snowflake(
             getattr(getattr(interaction, "user", None), "id", None)

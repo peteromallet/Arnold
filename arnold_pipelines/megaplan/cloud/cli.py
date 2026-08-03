@@ -59,6 +59,8 @@ _ZERO_RECOVERY_CLOUD_ACTIONS = {
     "run-zero-recovery-canary",
     "zero-recovery-canary-status",
     "zero-recovery-preflight",
+    "resident-recover",
+    "resident-down",
 }
 _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS = {
     "build",
@@ -371,6 +373,26 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Issue a fresh read-only zero-recovery predeploy transaction",
     )
     zero_preflight_parser.add_argument("canary_spec")
+    resident_recover_parser = cloud_sub.add_parser(
+        "resident-recover",
+        parents=[shared],
+        help="Start one CAS-bound listener-only Discord resident from a preserved SSH container",
+    )
+    resident_recover_parser.add_argument("--outage-epoch", required=True)
+    resident_recover_parser.add_argument("--expected-source-container-id", required=True)
+    resident_recover_parser.add_argument("--expected-source-image-id", required=True)
+    resident_recover_parser.add_argument(
+        "--health-timeout-seconds", type=int, default=45
+    )
+    resident_down_parser = cloud_sub.add_parser(
+        "resident-down",
+        parents=[shared],
+        help="Stop/remove the exact resident-only container for one durable outage epoch",
+    )
+    resident_down_parser.add_argument("--outage-epoch", required=True)
+    resident_down_parser.add_argument("--expected-source-container-id", required=True)
+    resident_down_parser.add_argument("--expected-source-image-id", required=True)
+    resident_down_parser.add_argument("--expected-resident-container-id", required=True)
 
     quickstart_parser = cloud_sub.add_parser(
         "quickstart",
@@ -1118,6 +1140,48 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                     "provider lacks zero-recovery preflight",
                 )
             sys.stdout.write(json.dumps(prepare(), indent=2) + "\n")
+            return 0
+
+        if action == "resident-recover":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "resident_recovery_unavailable",
+                    "resident-only recovery is available only through the SSH provider",
+                )
+            recover = getattr(provider, "resident_recover", None)
+            if recover is None:
+                raise CliError(
+                    "resident_recovery_unavailable",
+                    "SSH provider does not expose resident-only recovery",
+                )
+            payload = recover(
+                outage_epoch=args.outage_epoch,
+                expected_source_container_id=args.expected_source_container_id,
+                expected_source_image_id=args.expected_source_image_id,
+                health_timeout_seconds=args.health_timeout_seconds,
+            )
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0 if payload.get("status") == "healthy" else 1
+
+        if action == "resident-down":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "resident_down_unavailable",
+                    "resident-only down is available only through the SSH provider",
+                )
+            down = getattr(provider, "resident_down", None)
+            if down is None:
+                raise CliError(
+                    "resident_down_unavailable",
+                    "SSH provider does not expose resident-only down",
+                )
+            payload = down(
+                outage_epoch=args.outage_epoch,
+                expected_source_container_id=args.expected_source_container_id,
+                expected_source_image_id=args.expected_source_image_id,
+                expected_resident_container_id=args.expected_resident_container_id,
+            )
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
             return 0
 
         if action == "deploy":
