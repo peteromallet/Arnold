@@ -565,6 +565,19 @@ def run(argv, timeout_seconds=None):
         timeout = 300 if argv[:4] == ["docker", "builder", "prune", "-f"] else 30
     return subprocess.run(argv, text=True, capture_output=True, check=False, timeout=timeout)
 
+def observe_tmux_sessions():
+    result = run(["tmux", "list-sessions", "-F", "#S"])
+    if result.returncode == 0:
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    stderr = result.stderr.lower()
+    socket_absent = (
+        "no such file or directory" in stderr
+        and ("error connecting to" in stderr or "failed to connect to" in stderr)
+    )
+    if result.returncode == 1 and ("no server running" in stderr or socket_absent):
+        return []
+    raise RuntimeError("tmux_observation_unknown")
+
 def show_unit(unit, timeout_seconds=None):
     result = run(["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=UnitFileState", "--value"], timeout_seconds=timeout_seconds)
     values = result.stdout.splitlines()
@@ -942,13 +955,7 @@ persistent_units_before_prune, systemd_jobs_before_prune = (
 )
 
 failure_stage = "verify_no_recovery_sessions_before_prune"
-tmux_before = run(["tmux", "list-sessions", "-F", "#S"])
-if tmux_before.returncode == 0:
-    sessions_before = [line.strip() for line in tmux_before.stdout.splitlines() if line.strip()]
-elif tmux_before.returncode == 1 and "no server running" in tmux_before.stderr.lower():
-    sessions_before = []
-else:
-    raise RuntimeError("tmux_observation_unknown")
+sessions_before = observe_tmux_sessions()
 if set(sessions_before) & set(config["sessions"]):
     raise RuntimeError("forbidden_recovery_session_before_prune")
 failure_stage = "verify_no_recovery_processes_before_prune"
@@ -979,13 +986,7 @@ for item in after:
         raise RuntimeError("unit_still_available:" + item["unit"])
 
 container_after = observe_container()
-tmux = run(["tmux", "list-sessions", "-F", "#S"])
-if tmux.returncode == 0:
-    sessions = [line.strip() for line in tmux.stdout.splitlines() if line.strip()]
-elif tmux.returncode == 1 and "no server running" in tmux.stderr.lower():
-    sessions = []
-else:
-    raise RuntimeError("tmux_observation_unknown")
+sessions = observe_tmux_sessions()
 forbidden_sessions = sorted(set(sessions) & set(config["sessions"]))
 ps = run(["ps", "-eo", "pid=,args="])
 if ps.returncode != 0:
@@ -1456,6 +1457,19 @@ def run(argv, timeout_seconds=30):
         argv, text=True, capture_output=True, check=False, timeout=timeout_seconds,
     )
 
+def observe_tmux_sessions():
+    result = run(["tmux", "list-sessions", "-F", "#S"])
+    if result.returncode == 0:
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    stderr = result.stderr.lower()
+    socket_absent = (
+        "no such file or directory" in stderr
+        and ("error connecting to" in stderr or "failed to connect to" in stderr)
+    )
+    if result.returncode == 1 and ("no server running" in stderr or socket_absent):
+        return []
+    raise RuntimeError("tmux_observation_unknown")
+
 def show_unit(unit, timeout_seconds=30):
     result = run(
         ["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=UnitFileState", "--value"],
@@ -1761,13 +1775,7 @@ failure_stage = "verify_no_recovery_unit_jobs"
 systemd_jobs = observe_recovery_unit_jobs()
 
 failure_stage = "verify_no_recovery_sessions"
-tmux = run(["tmux", "list-sessions", "-F", "#S"])
-if tmux.returncode == 0:
-    sessions = [line.strip() for line in tmux.stdout.splitlines() if line.strip()]
-elif tmux.returncode == 1 and "no server running" in tmux.stderr.lower():
-    sessions = []
-else:
-    raise RuntimeError("tmux_observation_unknown")
+sessions = observe_tmux_sessions()
 forbidden_sessions = sorted(set(sessions) & set(config["sessions"]))
 
 failure_stage = "verify_no_recovery_processes"

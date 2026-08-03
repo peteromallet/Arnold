@@ -336,6 +336,59 @@ def _remote_fence_function(
 
 
 @pytest.mark.parametrize("remote", [_remote_bootstrap_function, _remote_fence_function])
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (0, "one\ntwo\n", "", ["one", "two"]),
+        (1, "", "no server running on /tmp/tmux-0/default\n", []),
+        (
+            1,
+            "",
+            "error connecting to /tmp/tmux-0/default (No such file or directory)\n",
+            [],
+        ),
+        (1, "", "failed to connect to server: No such file or directory\n", []),
+    ],
+)
+def test_remote_tmux_observation_accepts_sessions_or_absent_server(
+    remote: object,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    expected: list[str],
+) -> None:
+    namespace = remote(
+        "observe_tmux_sessions",
+        {
+            "run": lambda _argv: SimpleNamespace(
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            ),
+            "RuntimeError": RuntimeError,
+        },
+    )
+    assert namespace["observe_tmux_sessions"]() == expected
+
+
+@pytest.mark.parametrize("remote", [_remote_bootstrap_function, _remote_fence_function])
+def test_remote_tmux_observation_rejects_unknown_failure(remote: object) -> None:
+    namespace = remote(
+        "observe_tmux_sessions",
+        {
+            "run": lambda _argv: SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="permission denied\n",
+            ),
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="tmux_observation_unknown"):
+        namespace["observe_tmux_sessions"]()
+
+
+@pytest.mark.parametrize("remote", [_remote_bootstrap_function, _remote_fence_function])
 def test_remote_unit_observation_rejects_non_root_persistent_mask(
     remote: object,
 ) -> None:
