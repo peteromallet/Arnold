@@ -1155,14 +1155,30 @@ def _assert_zero_recovery_source_unchanged(
         head=before["head"],
         tree=before["tree"],
     )
-    if (
-        after["tracked"] != before["tracked"]
-        or after["git_metadata"] != before["git_metadata"]
-        or after["schema_runtime"] != before["schema_runtime"]
-    ):
+    changed: list[str] = []
+    if after["tracked"] != before["tracked"]:
+        changed.append("tracked_source")
+    if after["git_metadata"] != before["git_metadata"]:
+        changed.append("git_control_metadata")
+    if after["schema_runtime"] != before["schema_runtime"]:
+        before_schemas = {
+            item["path"]: (item["mode"], item["sha256"])
+            for item in before["schema_runtime"]
+        }
+        after_schemas = {
+            item["path"]: (item["mode"], item["sha256"])
+            for item in after["schema_runtime"]
+        }
+        schema_changes = sorted(
+            path
+            for path in set(before_schemas) | set(after_schemas)
+            if before_schemas.get(path) != after_schemas.get(path)
+        )
+        changed.append("runtime_schema:" + ",".join(schema_changes[:8]))
+    if changed:
         raise CliError(
             "zero_recovery_worker_mutation_denied",
-            "model changed admitted HEAD or tree identity",
+            "model changed admitted source identity: " + " | ".join(changed),
         )
     _zero_recovery_validate_engine_runtime_transition(
         before["engine_runtime"], after["engine_runtime"]
