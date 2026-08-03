@@ -386,6 +386,119 @@ def test_legacy_migration_survives_clearance_rewrite_and_finalize_validation(
     assert_finalize_custody(plan_dir, graph)
 
 
+def test_legacy_migration_accepts_bound_post_migration_state_history_append(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    source_before = receipt_path.read_bytes()
+    [migration] = migrate_legacy_critique_custody(
+        plan_dir,
+        iteration=2,
+        expected_source_sha256=critique_custody.sha256_file(receipt_path),
+        actor="operator:test",
+        reason="admit legacy custody before later workflow attempts",
+    )
+    stored_state_sha = next(
+        row["sha256"]
+        for row in migration["lineage_evidence"]
+        if row["role"] == "state_history"
+    )
+    state = critique_custody.read_json(plan_dir / "state.json")
+    state["history"].append(
+        {
+            "step": "finalize",
+            "result": "failed",
+            "invocation_id": "finalize-attempt-9",
+            "wbc_attempt_id": "93b18c0b-423b-53e8-b063-523648c5c4aa",
+        }
+    )
+    atomic_write_json(plan_dir / "state.json", state)
+
+    assert critique_custody.sha256_file(plan_dir / "state.json") != stored_state_sha
+    assert receipt_path.read_bytes() == source_before
+    critique_custody._validate_receipt_at_path(
+        plan_dir, receipt_path, critique_custody.read_json(receipt_path)
+    )
+
+
+def test_legacy_migration_rejects_mutated_bound_critique_history_row(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    migrate_legacy_critique_custody(
+        plan_dir,
+        iteration=2,
+        expected_source_sha256=critique_custody.sha256_file(receipt_path),
+        actor="operator:test",
+        reason="admit legacy custody before later workflow attempts",
+    )
+    state = critique_custody.read_json(plan_dir / "state.json")
+    state["history"][0]["artifact_hash"] = "sha256:" + "0" * 64
+    atomic_write_json(plan_dir / "state.json", state)
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="state history lacks exactly one matching successful critique result",
+    ):
+        critique_custody._validate_receipt_at_path(
+            plan_dir, receipt_path, critique_custody.read_json(receipt_path)
+        )
+
+
+def test_legacy_migration_rejects_post_admission_immutable_lineage_mutation(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    migrate_legacy_critique_custody(
+        plan_dir,
+        iteration=2,
+        expected_source_sha256=critique_custody.sha256_file(receipt_path),
+        actor="operator:test",
+        reason="admit immutable legacy lineage",
+    )
+    critique_step_path = plan_dir / "step_receipt_critique_v2.json"
+    critique_step = critique_custody.read_json(critique_step_path)
+    critique_step["untrusted_extra_field"] = "mutation after admission"
+    atomic_write_json(critique_step_path, critique_step)
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="legacy immutable lineage changed for critique_step_receipt",
+    ):
+        critique_custody._validate_receipt_at_path(
+            plan_dir, receipt_path, critique_custody.read_json(receipt_path)
+        )
+
+
+def test_legacy_migration_rejects_post_admission_source_artifact_mutation(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    receipt_path = _legacy_unbound_fixture(plan_dir, _state(tmp_path, iteration=2))
+    receipt = critique_custody.read_json(receipt_path)
+    migrate_legacy_critique_custody(
+        plan_dir,
+        iteration=2,
+        expected_source_sha256=critique_custody.sha256_file(receipt_path),
+        actor="operator:test",
+        reason="admit immutable legacy source artifacts",
+    )
+    raw_source_path = plan_dir / receipt["raw_sources"][0]["artifact"]
+    atomic_write_text(raw_source_path, "mutated after migration\n")
+
+    with pytest.raises(CritiqueCustodyError, match="raw source hash mismatch"):
+        critique_custody._validate_receipt_at_path(
+            plan_dir, receipt_path, critique_custody.read_json(receipt_path)
+        )
+
+
 def test_legacy_migration_is_idempotent_across_publish_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
