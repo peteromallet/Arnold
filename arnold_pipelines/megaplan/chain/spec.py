@@ -3016,6 +3016,9 @@ def _validate_chain_completed_precondition(
 
 _FINITE_CANARY_SCHEMA = "arnold.megaplan.finite_canary_receipt.v1"
 _FINITE_CANARY_PHASES = ["init", "plan", "critique", "gate", "finalize"]
+_FINITE_CANARY_REVISED_PHASES = [
+    "init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize",
+]
 _FINITE_CANARY_ROLES = {
     "canary_spec",
     "proof_map",
@@ -3487,9 +3490,10 @@ def _finite_canary_repository_integrity_is_valid(
     *,
     source_commit: str,
     source_tree: str,
+    phases: list[str] | None = None,
 ) -> bool:
     expected_names = ["baseline"]
-    for phase in _FINITE_CANARY_PHASES:
+    for phase in phases if phases is not None else _FINITE_CANARY_PHASES:
         expected_names.extend([f"pre:{phase}", f"post:{phase}"])
     expected_names.append("final")
     if not isinstance(checkpoints, list) or len(checkpoints) != len(expected_names):
@@ -3663,33 +3667,53 @@ def _finite_canary_privilege_receipt_is_valid(
     payload: Any,
     *,
     phase: str,
-    plan_iteration: int,
-    dispatch_ordinal: int,
+    plan_iteration: int | None = None,
+    dispatch_ordinal: int | None = None,
     plan_dir: Path,
 ) -> bool:
     if not isinstance(payload, dict):
         return False
-    fields = {
+    base_fields = {
         "schema", "status", "phase", "plan_iteration", "dispatch_ordinal",
         "model_uid", "model_gid",
         "uid_processes_before", "uid_processes_after", "privilege_observation",
         "command_prefix", "environment_keys", "writable_roots", "global_scratch",
         "limits", "output", "runtime", "recorded_at", "receipt_digest",
     }
+    schema = payload.get("schema")
+    if schema == "arnold.megaplan.zero_recovery_privilege_receipt.v1":
+        if plan_iteration is not None or dispatch_ordinal is not None:
+            return False
+        fields = base_fields - {"plan_iteration", "dispatch_ordinal"}
+        output_name = f".zero-recovery-{phase}-worker-output.json"
+        runtime_pattern = re.compile(
+            rf"/run/megaplan-zero-recovery/{re.escape(phase)}-[0-9a-f]{{32}}\Z"
+        )
+    elif schema == "arnold.megaplan.zero_recovery_privilege_receipt.v2":
+        if (
+            type(plan_iteration) is not int
+            or plan_iteration < 1
+            or type(dispatch_ordinal) is not int
+            or dispatch_ordinal < 1
+        ):
+            return False
+        fields = base_fields
+        output_name = (
+            f".zero-recovery-{dispatch_ordinal:02d}-{phase}-i{plan_iteration}"
+            "-worker-output.json"
+        )
+        runtime_pattern = re.compile(
+            rf"/run/megaplan-zero-recovery/{dispatch_ordinal:02d}-"
+            rf"{re.escape(phase)}-i{plan_iteration}-[0-9a-f]{{32}}\Z"
+        )
+    else:
+        return False
     unsigned = dict(payload)
     digest = unsigned.pop("receipt_digest", None)
     output = payload.get("output")
     runtime = payload.get("runtime")
     privilege = payload.get("privilege_observation")
-    output_name = (
-        f".zero-recovery-{dispatch_ordinal:02d}-{phase}-i{plan_iteration}"
-        "-worker-output.json"
-    )
     output_path = plan_dir / output_name
-    runtime_pattern = re.compile(
-        rf"/run/megaplan-zero-recovery/{dispatch_ordinal:02d}-"
-        rf"{re.escape(phase)}-i{plan_iteration}-[0-9a-f]{{32}}\Z"
-    )
     expected_command_prefix = [
         "/usr/bin/setpriv", "--reuid=65532", "--regid=65532",
         "--clear-groups", "--no-new-privs", "--bounding-set=-all",
@@ -3713,12 +3737,16 @@ def _finite_canary_privilege_receipt_is_valid(
         return False
     return bool(
         set(payload) == fields
-        and payload.get("schema")
-        == "arnold.megaplan.zero_recovery_privilege_receipt.v2"
+        and payload.get("schema") == schema
         and payload.get("status") == "sealed"
         and payload.get("phase") == phase
-        and payload.get("plan_iteration") == plan_iteration
-        and payload.get("dispatch_ordinal") == dispatch_ordinal
+        and (
+            schema == "arnold.megaplan.zero_recovery_privilege_receipt.v1"
+            or (
+                payload.get("plan_iteration") == plan_iteration
+                and payload.get("dispatch_ordinal") == dispatch_ordinal
+            )
+        )
         and payload.get("model_uid") == 65532
         and payload.get("model_gid") == 65532
         and payload.get("uid_processes_before") == 0
@@ -3798,6 +3826,304 @@ def _finite_canary_privilege_receipt_is_valid(
     )
 
 
+def _finite_canary_success_route(payload: Any) -> dict[str, Any] | None:
+    """Return the one admitted finalized route, or fail closed with ``None``."""
+    if not isinstance(payload, dict):
+        return None
+    schema = payload.get("schema")
+    phases = payload.get("phases")
+    if schema == "arnold.megaplan.finite_canary_run_receipt.v2":
+        if (
+            phases != _FINITE_CANARY_PHASES
+            or payload.get("status") != "passed"
+            or payload.get("terminal_state") != "finalized"
+            or payload.get("failure") is not None
+            or payload.get("phase_results")
+            != [
+                {"phase": phase, "returncode": 0, "state": state}
+                for phase, state in zip(
+                    _FINITE_CANARY_PHASES,
+                    ["initialized", "planned", "critiqued", "gated", "finalized"],
+                    strict=True,
+                )
+            ]
+        ):
+            return None
+        return {
+            "version": 2,
+            "dispatch_version": 1,
+            "phases": list(_FINITE_CANARY_PHASES),
+            "states": ["initialized", "planned", "critiqued", "gated", "finalized"],
+            "iterations": [None] * 5,
+            "ordinals": [None] * 5,
+            "gate_recommendations": [None] * 5,
+        }
+    if schema != "arnold.megaplan.finite_canary_run_receipt.v3":
+        return None
+    if phases == _FINITE_CANARY_PHASES:
+        states = ["initialized", "planned", "critiqued", "gated", "finalized"]
+        iterations = [0, 1, 1, 1, 1]
+        ordinals: list[int | None] = [None, 1, 2, 3, 4]
+        gate_recommendations: list[str | None] = [None, None, None, "PROCEED", None]
+        gate_semantics = [(1, 1, "PROCEED", "gated")]
+    elif phases == _FINITE_CANARY_REVISED_PHASES:
+        states = [
+            "initialized", "planned", "critiqued", "critiqued",
+            "planned", "critiqued", "gated", "finalized",
+        ]
+        iterations = [0, 1, 1, 1, 2, 2, 2, 2]
+        ordinals = [None, 1, 2, 3, 4, 5, 6, 7]
+        gate_recommendations = [
+            None, None, None, "ITERATE", None, None, "PROCEED", None,
+        ]
+        gate_semantics = [
+            (1, 1, "ITERATE", "critiqued"),
+            (2, 2, "PROCEED", "gated"),
+        ]
+    else:
+        return None
+    gate_attempts = payload.get("gate_attempts")
+    if not isinstance(gate_attempts, list) or len(gate_attempts) != len(gate_semantics):
+        return None
+    for attempt, expected in zip(gate_attempts, gate_semantics, strict=True):
+        if (
+            not isinstance(attempt, dict)
+            or set(attempt)
+            != {"attempt", "plan_iteration", "recommendation", "state", "gate_sha256"}
+            or (
+                attempt.get("attempt"),
+                attempt.get("plan_iteration"),
+                attempt.get("recommendation"),
+                attempt.get("state"),
+            )
+            != expected
+            or type(attempt.get("attempt")) is not int
+            or type(attempt.get("plan_iteration")) is not int
+            or not isinstance(attempt.get("gate_sha256"), str)
+            or not _SHA256_RE.fullmatch(attempt["gate_sha256"])
+        ):
+            return None
+    gate_attempt_count = len(gate_semantics)
+    phase_results = payload.get("phase_results")
+    if (
+        payload.get("status") != "passed"
+        or payload.get("terminal_state") != "finalized"
+        or payload.get("failure") is not None
+        or payload.get("product_outcome")
+        != {
+            "kind": "proceed_finalized",
+            "gate_attempt": gate_attempt_count,
+            "recommendation": "PROCEED",
+        }
+        or gate_attempts[-1]["gate_sha256"] != payload.get("gate_sha256")
+        or phase_results
+        != [
+            {
+                "phase": phase,
+                "plan_iteration": iteration,
+                "dispatch_ordinal": ordinal,
+                "returncode": 0,
+                "state": state,
+                "gate_recommendation": recommendation,
+            }
+            for phase, iteration, ordinal, state, recommendation in zip(
+                phases,
+                iterations,
+                ordinals,
+                states,
+                gate_recommendations,
+                strict=True,
+            )
+        ]
+    ):
+        return None
+    for index, result in enumerate(phase_results):
+        if (
+            type(result.get("plan_iteration")) is not int
+            or (
+                index == 0
+                and result.get("dispatch_ordinal") is not None
+            )
+            or (
+                index > 0
+                and type(result.get("dispatch_ordinal")) is not int
+            )
+        ):
+            return None
+    return {
+        "version": 3,
+        "dispatch_version": 2,
+        "phases": phases,
+        "states": states,
+        "iterations": iterations,
+        "ordinals": ordinals,
+        "gate_recommendations": gate_recommendations,
+    }
+
+
+def _finite_canary_dispatches_are_valid(
+    payload: Any, route: dict[str, Any]
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    dispatches = payload.get("dispatches")
+    phases = route["phases"][1:]
+    iterations = route["iterations"][1:]
+    ordinals = route["ordinals"][1:]
+    if not isinstance(dispatches, list) or len(dispatches) != len(phases) * 2:
+        return False
+    start_fields = {
+        "schema", "event", "dispatch_id", "phase", "selected_agent",
+        "selected_model", "selected_effort", "model_cli_argv", "attempt",
+        "plan_iteration", "dispatch_ordinal", "retry", "fallback",
+        "json_repair", "adaptive_routing", "recorded_at",
+    }
+    terminal_fields = {
+        "schema", "event", "dispatch_id", "phase", "actual_agent",
+        "actual_model", "model_evidence", "privilege_receipt_path",
+        "privilege_receipt_sha256", "rollout_path", "rollout_sha256",
+        "actual_effort", "attempt", "plan_iteration", "dispatch_ordinal",
+        "retry", "fallback", "json_repair", "adaptive_routing", "result",
+        "recorded_at",
+    }
+    legacy = route.get("version") == 2
+    if legacy:
+        start_fields -= {"plan_iteration", "dispatch_ordinal"}
+        terminal_fields -= {"plan_iteration", "dispatch_ordinal"}
+    privilege_hashes: list[str] = []
+    dispatch_ids: set[str] = set()
+    previous_terminal = None
+    for pair_index, (phase, iteration, ordinal) in enumerate(
+        zip(phases, iterations, ordinals, strict=True)
+    ):
+        start = dispatches[pair_index * 2]
+        terminal = dispatches[pair_index * 2 + 1]
+        privilege_name = (
+            f".zero-recovery-{phase}-privilege-receipt.json"
+            if legacy
+            else (
+                f".zero-recovery-{ordinal:02d}-{phase}-i{iteration}"
+                "-privilege-receipt.json"
+            )
+        )
+        start_time = _parse_iso_datetime(start.get("recorded_at")) if isinstance(start, dict) else None
+        terminal_time = _parse_iso_datetime(terminal.get("recorded_at")) if isinstance(terminal, dict) else None
+        rollout_path = terminal.get("rollout_path") if isinstance(terminal, dict) else None
+        if (
+            not isinstance(start, dict)
+            or not isinstance(terminal, dict)
+            or set(start) != start_fields
+            or set(terminal) != terminal_fields
+            or start.get("schema")
+            != f"arnold.megaplan.zero_recovery_dispatch.v{route['dispatch_version']}"
+            or terminal.get("schema")
+            != f"arnold.megaplan.zero_recovery_dispatch.v{route['dispatch_version']}"
+            or start.get("event") != "start"
+            or terminal.get("event") != "terminal"
+            or start.get("dispatch_id") != terminal.get("dispatch_id")
+            or not isinstance(start.get("dispatch_id"), str)
+            or re.fullmatch(r"[0-9a-f]{32}", start["dispatch_id"]) is None
+            or start["dispatch_id"] in dispatch_ids
+            or start.get("phase") != phase
+            or terminal.get("phase") != phase
+            or (
+                not legacy
+                and (
+                    type(start.get("plan_iteration")) is not int
+                    or start.get("plan_iteration") != iteration
+                    or type(terminal.get("plan_iteration")) is not int
+                    or terminal.get("plan_iteration") != iteration
+                    or type(start.get("dispatch_ordinal")) is not int
+                    or start.get("dispatch_ordinal") != ordinal
+                    or type(terminal.get("dispatch_ordinal")) is not int
+                    or terminal.get("dispatch_ordinal") != ordinal
+                )
+            )
+            or start.get("selected_agent") != "codex"
+            or start.get("selected_model") != "gpt-5.6-sol"
+            or start.get("selected_effort") != "high"
+            or start.get("model_cli_argv") != ["-c", "model='gpt-5.6-sol'"]
+            or terminal.get("actual_agent") != "codex"
+            or terminal.get("actual_model") != "gpt-5.6-sol"
+            or terminal.get("model_evidence") != "codex_cli_turn_context"
+            or terminal.get("actual_effort") != "high"
+            or terminal.get("privilege_receipt_path") != privilege_name
+            or not isinstance(terminal.get("privilege_receipt_sha256"), str)
+            or not _SHA256_RE.fullmatch(terminal["privilege_receipt_sha256"])
+            or not isinstance(rollout_path, str)
+            or not rollout_path.startswith("sessions/")
+            or PurePosixPath(rollout_path).is_absolute()
+            or rollout_path != PurePosixPath(rollout_path).as_posix()
+            or ".." in PurePosixPath(rollout_path).parts
+            or not isinstance(terminal.get("rollout_sha256"), str)
+            or not _SHA256_RE.fullmatch(terminal["rollout_sha256"])
+            or start.get("attempt") != 1
+            or terminal.get("attempt") != 1
+            or terminal.get("result") != "returned"
+            or any(
+                item.get(key) is not False
+                for item in (start, terminal)
+                for key in ("retry", "fallback", "json_repair", "adaptive_routing")
+            )
+            or start_time is None
+            or terminal_time is None
+            or terminal_time < start_time
+            or (previous_terminal is not None and start_time < previous_terminal)
+        ):
+            return False
+        dispatch_ids.add(start["dispatch_id"])
+        previous_terminal = terminal_time
+        privilege_hashes.append(terminal["privilege_receipt_sha256"])
+    return payload.get("privilege_receipt_sha256") == privilege_hashes
+
+
+def _finite_canary_phase_commands_are_valid(
+    payload: Any,
+    route: dict[str, Any],
+    *,
+    workspace: str,
+    plan_name: str,
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    commands = payload.get("phase_commands")
+    phases = route["phases"]
+    if (
+        not isinstance(commands, list)
+        or len(commands) != len(phases)
+        or not commands
+        or any(not isinstance(command, list) or len(command) < 5 for command in commands)
+    ):
+        return False
+    executable = commands[0][0]
+    if not isinstance(executable, str) or not executable:
+        return False
+    if any(
+        command[:4] != [executable, "-P", "-m", "arnold_pipelines.megaplan"]
+        for command in commands
+    ):
+        return False
+    init_tail = [
+        "init", "--project-dir", workspace,
+        "--name", plan_name, "--auto-approve", "--idea-file",
+        workspace + "/.megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md",
+        "--north-star", workspace + "/.megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md",
+        "--robustness", "full", "--no-adaptive-critique", "--vendor", "codex",
+        "--phase-model", "plan=codex:gpt-5.6-sol:high",
+        "--phase-model", "critique=codex:gpt-5.6-sol:high",
+        "--phase-model", "gate=codex:gpt-5.6-sol:high",
+    ]
+    if route.get("version") == 3:
+        init_tail.extend(["--phase-model", "revise=codex:gpt-5.6-sol:high"])
+    init_tail.extend(["--phase-model", "finalize=codex:gpt-5.6-sol:high"])
+    if commands[0][4:] != init_tail:
+        return False
+    return all(
+        commands[index][4:] == [phase, "--plan", plan_name, "--fresh"]
+        for index, phase in enumerate(phases[1:], start=1)
+    )
+
+
 def _validate_finite_canary_receipt(
     precondition: LaunchPreconditionSpec,
     root: Path,
@@ -3829,7 +4155,8 @@ def _validate_finite_canary_receipt(
     if (
         payload.get("schema") != _FINITE_CANARY_SCHEMA
         or payload.get("status") != "passed"
-        or payload.get("phases") != _FINITE_CANARY_PHASES
+        or payload.get("phases")
+        not in (_FINITE_CANARY_PHASES, _FINITE_CANARY_REVISED_PHASES)
         or payload.get("terminal_state") != "finalized"
     ):
         raise CliError(
@@ -4105,34 +4432,43 @@ def _validate_finite_canary_receipt(
     run_payload = _strict_json_document(run_path, label=label, spec_path=spec_path)
     run_fields = {
         "schema", "status", "canary_id", "plan_name", "phases", "phase_results",
-        "terminal_state", "failure", "started_at", "completed_at", "source_commit",
+        "terminal_state", "product_outcome", "gate_attempts", "failure",
+        "started_at", "completed_at", "source_commit",
         "source_tree", "canary_spec_sha256", "launch_manifest_sha256", "state_sha256", "gate_sha256", "receipt_digest",
         "dispatch_ledger_sha256", "dispatches", "dispatch_integrity", "import_root", "phase_commands",
         "phase_receipt_sha256", "phase_receipts_manifest_sha256",
         "repository_integrity", "privilege_receipt_sha256",
         "privilege_receipts_manifest_sha256",
     }
+    if (
+        isinstance(run_payload, dict)
+        and run_payload.get("schema")
+        == "arnold.megaplan.finite_canary_run_receipt.v2"
+    ):
+        run_fields -= {"product_outcome", "gate_attempts"}
     run_unsigned = dict(run_payload) if isinstance(run_payload, dict) else {}
     run_digest = run_unsigned.pop("receipt_digest", None)
+    route = _finite_canary_success_route(run_payload)
+    run_started = (
+        _parse_iso_datetime(run_payload.get("started_at"))
+        if isinstance(run_payload, dict)
+        else None
+    )
+    run_completed = (
+        _parse_iso_datetime(run_payload.get("completed_at"))
+        if isinstance(run_payload, dict)
+        else None
+    )
     if (
         not isinstance(run_payload, dict)
         or set(run_payload) != run_fields
-        or run_payload.get("schema") != "arnold.megaplan.finite_canary_run_receipt.v2"
-        or run_payload.get("status") != "passed"
+        or route is None
         or run_payload.get("canary_id") != subject.get("canary_id")
         or run_payload.get("plan_name") != subject.get("plan_name")
-        or run_payload.get("phases") != _FINITE_CANARY_PHASES
-        or run_payload.get("terminal_state") != "finalized"
-        or run_payload.get("phase_results")
-        != [
-            {"phase": phase, "returncode": 0, "state": state}
-            for phase, state in zip(
-                _FINITE_CANARY_PHASES,
-                ["initialized", "planned", "critiqued", "gated", "finalized"],
-                strict=True,
-            )
-        ]
-        or run_payload.get("failure") is not None
+        or payload.get("phases") != route["phases"]
+        or run_started is None
+        or run_completed is None
+        or run_completed < run_started
         or run_payload.get("source_commit") != subject.get("source_commit")
         or run_payload.get("source_tree") != subject.get("source_tree")
         or run_payload.get("canary_spec_sha256") != canary_spec_hash
@@ -4148,94 +4484,21 @@ def _validate_finite_canary_receipt(
             run_payload.get("repository_integrity"),
             source_commit=str(subject.get("source_commit")),
             source_tree=str(subject.get("source_tree")),
+            phases=route["phases"] if route is not None else [],
         )
         or not isinstance(run_payload.get("dispatch_ledger_sha256"), str)
         or not _SHA256_RE.fullmatch(run_payload.get("dispatch_ledger_sha256"))
-        or not isinstance(run_payload.get("dispatches"), list)
-        or len(run_payload.get("dispatches")) != 8
-        or run_payload.get("privilege_receipt_sha256")
-        != [
-            run_payload["dispatches"][index].get("privilege_receipt_sha256")
-            for index in range(1, 8, 2)
-            if isinstance(run_payload["dispatches"][index], dict)
-        ]
-        or [item.get("event") for item in run_payload.get("dispatches") if isinstance(item, dict)]
-        != [value for _phase in _FINITE_CANARY_PHASES[1:] for value in ("start", "terminal")]
-        or [item.get("phase") for item in run_payload.get("dispatches") if isinstance(item, dict)]
-        != [phase for phase in _FINITE_CANARY_PHASES[1:] for _event in (0, 1)]
-        or any(
-            not isinstance(item, dict)
-            or item.get("attempt") != 1
-            or any(item.get(key) is not False for key in ("retry", "fallback", "json_repair", "adaptive_routing"))
-            for item in run_payload.get("dispatches")
-        )
-        or any(
-            run_payload["dispatches"][index].get("dispatch_id")
-            != run_payload["dispatches"][index + 1].get("dispatch_id")
-            or run_payload["dispatches"][index].get("selected_agent") != "codex"
-            or run_payload["dispatches"][index].get("selected_model") != "gpt-5.6-sol"
-            or run_payload["dispatches"][index].get("selected_effort") != "high"
-            or run_payload["dispatches"][index].get("model_cli_argv")
-            != ["-c", "model='gpt-5.6-sol'"]
-            or run_payload["dispatches"][index + 1].get("actual_agent") != "codex"
-            or run_payload["dispatches"][index + 1].get("actual_model") != "gpt-5.6-sol"
-            or run_payload["dispatches"][index + 1].get("model_evidence")
-            != "codex_cli_turn_context"
-            or run_payload["dispatches"][index + 1].get("privilege_receipt_path")
-            != f".zero-recovery-{run_payload['dispatches'][index + 1].get('phase')}-privilege-receipt.json"
-            or not isinstance(
-                run_payload["dispatches"][index + 1].get("privilege_receipt_sha256"),
-                str,
-            )
-            or not _SHA256_RE.fullmatch(
-                run_payload["dispatches"][index + 1]["privilege_receipt_sha256"]
-            )
-            or not isinstance(
-                run_payload["dispatches"][index + 1].get("rollout_path"), str
-            )
-            or not run_payload["dispatches"][index + 1]["rollout_path"].startswith("sessions/")
-            or ".." in PurePosixPath(
-                run_payload["dispatches"][index + 1]["rollout_path"]
-            ).parts
-            or not isinstance(
-                run_payload["dispatches"][index + 1].get("rollout_sha256"), str
-            )
-            or not _SHA256_RE.fullmatch(
-                run_payload["dispatches"][index + 1]["rollout_sha256"]
-            )
-            or run_payload["dispatches"][index + 1].get("actual_effort") != "high"
-            or run_payload["dispatches"][index + 1].get("result") != "returned"
-            for index in range(0, 8, 2)
-        )
+        or not _finite_canary_dispatches_are_valid(run_payload, route)
         or run_payload.get("import_root")
         != subject["cloud"].get("workspace") + "/arnold_pipelines/megaplan/__init__.py"
-        or not isinstance(run_payload.get("phase_commands"), list)
-        or len(run_payload.get("phase_commands")) != 5
-        or any(not isinstance(command, list) or len(command) < 5 for command in run_payload.get("phase_commands"))
-        or any(
-            command[:4] != [run_payload["phase_commands"][0][0], "-P", "-m", "arnold_pipelines.megaplan"]
-            for command in run_payload.get("phase_commands")
-            if isinstance(command, list) and command
-        )
-        or run_payload["phase_commands"][0][4:]
-        != [
-            "init", "--project-dir", subject["cloud"].get("workspace"),
-            "--name", subject.get("plan_name"), "--auto-approve", "--idea-file",
-            subject["cloud"].get("workspace") + "/.megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md",
-            "--north-star", subject["cloud"].get("workspace") + "/.megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md",
-            "--robustness", "full", "--no-adaptive-critique", "--vendor", "codex",
-            "--phase-model", "plan=codex:gpt-5.6-sol:high",
-            "--phase-model", "critique=codex:gpt-5.6-sol:high",
-            "--phase-model", "gate=codex:gpt-5.6-sol:high",
-            "--phase-model", "finalize=codex:gpt-5.6-sol:high",
-        ]
-        or any(
-            run_payload["phase_commands"][index][4:]
-            != [phase, "--plan", subject.get("plan_name"), "--fresh"]
-            for index, phase in enumerate(_FINITE_CANARY_PHASES[1:], start=1)
+        or not _finite_canary_phase_commands_are_valid(
+            run_payload,
+            route,
+            workspace=str(subject["cloud"].get("workspace")),
+            plan_name=str(subject.get("plan_name")),
         )
         or not isinstance(run_payload.get("phase_receipt_sha256"), list)
-        or len(run_payload.get("phase_receipt_sha256")) != 5
+        or len(run_payload.get("phase_receipt_sha256")) != len(route["phases"])
         or any(not isinstance(value, str) or not _SHA256_RE.fullmatch(value) for value in run_payload.get("phase_receipt_sha256"))
         or run_payload.get("state_sha256") != artifacts_by_role["plan_state"][1]
         or run_payload.get("gate_sha256") != artifacts_by_role["gate_result"][1]
@@ -4258,19 +4521,25 @@ def _validate_finite_canary_receipt(
         spec_path=spec_path,
     )
     phase_entries = phase_manifest.get("entries") if isinstance(phase_manifest, dict) else None
+    modern = route["version"] == 3
+    expected_phase_manifest_schema = (
+        "arnold.megaplan.finite_canary_phase_receipts_manifest.v2"
+        if modern
+        else "arnold.megaplan.finite_canary_phase_receipts_manifest.v1"
+    )
     expected_phase_paths = [
         f".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts/{index:02d}-{phase}.phase-receipt.json"
-        for index, phase in enumerate(_FINITE_CANARY_PHASES)
+        for index, phase in enumerate(route["phases"])
     ]
     if (
         not isinstance(phase_manifest, dict)
         or set(phase_manifest) != {"schema", "canary_id", "plan_name", "entries"}
         or phase_manifest.get("schema")
-        != "arnold.megaplan.finite_canary_phase_receipts_manifest.v1"
+        != expected_phase_manifest_schema
         or phase_manifest.get("canary_id") != subject.get("canary_id")
         or phase_manifest.get("plan_name") != subject.get("plan_name")
         or not isinstance(phase_entries, list)
-        or len(phase_entries) != 5
+        or len(phase_entries) != len(route["phases"])
         or [entry.get("path") for entry in phase_entries if isinstance(entry, dict)]
         != expected_phase_paths
         or [entry.get("sha256") for entry in phase_entries if isinstance(entry, dict)]
@@ -4280,22 +4549,59 @@ def _validate_finite_canary_receipt(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: phase receipt manifest is invalid",
         )
+    previous_phase_completed = run_started
     for phase_index, (phase, expected_path, entry) in enumerate(
-        zip(_FINITE_CANARY_PHASES, expected_phase_paths, phase_entries, strict=True)
+        zip(route["phases"], expected_phase_paths, phase_entries, strict=True)
     ):
-        if not isinstance(entry, dict) or set(entry) != {"phase", "path", "sha256"} or entry.get("phase") != phase:
+        expected_iteration = route["iterations"][phase_index]
+        expected_ordinal = route["ordinals"][phase_index]
+        expected_entry_fields = (
+            {"phase", "plan_iteration", "dispatch_ordinal", "path", "sha256"}
+            if modern
+            else {"phase", "path", "sha256"}
+        )
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != expected_entry_fields
+            or entry.get("phase") != phase
+            or (
+                modern
+                and (
+                    type(entry.get("plan_iteration")) is not int
+                    or entry.get("plan_iteration") != expected_iteration
+                    or (
+                        expected_ordinal is None
+                        and entry.get("dispatch_ordinal") is not None
+                    )
+                    or (
+                        expected_ordinal is not None
+                        and type(entry.get("dispatch_ordinal")) is not int
+                    )
+                    or entry.get("dispatch_ordinal") != expected_ordinal
+                )
+            )
+        ):
             raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase entry mismatch")
         phase_path = (root / expected_path).resolve()
         _require_inside_root(phase_path, root, label)
         if not phase_path.is_file() or _sha256_file(phase_path) != entry.get("sha256"):
             raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase receipt hash mismatch")
         phase_payload = _strict_json_document(phase_path, label=label, spec_path=spec_path)
+        phase_completed = (
+            _parse_iso_datetime(phase_payload.get("completed_at"))
+            if isinstance(phase_payload, dict)
+            else None
+        )
         expected_phase_fields = {
-            "schema", "phase", "status", "returncode", "state", "reason",
+            "schema", "phase",
+            "status", "returncode", "state", "reason",
             "argv", "state_sha256", "dispatch_ledger_sha256",
             "privilege_receipt_sha256", "integrity_before", "integrity_after",
+            "stdout_sha256", "stderr_sha256", "stdout_tail", "stderr_tail",
             "completed_at",
         }
+        if modern:
+            expected_phase_fields.update({"plan_iteration", "dispatch_ordinal"})
         expected_privilege_hash = (
             None
             if phase == "init"
@@ -4304,21 +4610,75 @@ def _validate_finite_canary_receipt(
         if (
             not isinstance(phase_payload, dict)
             or set(phase_payload) != expected_phase_fields
-            or phase_payload.get("schema") != "arnold.megaplan.finite_canary_phase_receipt.v2"
+            or phase_payload.get("schema")
+            != f"arnold.megaplan.finite_canary_phase_receipt.v{route['version']}"
             or phase_payload.get("phase") != phase
+            or (
+                modern
+                and (
+                    type(phase_payload.get("plan_iteration")) is not int
+                    or phase_payload.get("plan_iteration") != expected_iteration
+                    or (
+                        expected_ordinal is None
+                        and phase_payload.get("dispatch_ordinal") is not None
+                    )
+                    or (
+                        expected_ordinal is not None
+                        and type(phase_payload.get("dispatch_ordinal")) is not int
+                    )
+                    or phase_payload.get("dispatch_ordinal") != expected_ordinal
+                )
+            )
             or phase_payload.get("status") != "passed"
             or phase_payload.get("returncode") != 0
             or phase_payload.get("state")
-            != ["initialized", "planned", "critiqued", "gated", "finalized"][phase_index]
+            != route["states"][phase_index]
+            or phase_payload.get("reason") is not None
+            or phase_payload.get("argv") != run_payload["phase_commands"][phase_index]
             or phase_payload.get("integrity_before")
             != run_payload["repository_integrity"][1 + phase_index * 2]
             or phase_payload.get("integrity_after")
             != run_payload["repository_integrity"][2 + phase_index * 2]
             or phase_payload.get("privilege_receipt_sha256")
             != expected_privilege_hash
-            or _parse_iso_datetime(phase_payload.get("completed_at")) is None
+            or not isinstance(phase_payload.get("state_sha256"), str)
+            or not _SHA256_RE.fullmatch(phase_payload["state_sha256"])
+            or (
+                phase == "init"
+                and phase_payload.get("dispatch_ledger_sha256") is not None
+            )
+            or (
+                phase != "init"
+                and (
+                    not isinstance(phase_payload.get("dispatch_ledger_sha256"), str)
+                    or not _SHA256_RE.fullmatch(phase_payload["dispatch_ledger_sha256"])
+                )
+            )
+            or any(
+                not isinstance(phase_payload.get(field), str)
+                or not _SHA256_RE.fullmatch(phase_payload[field])
+                for field in ("stdout_sha256", "stderr_sha256")
+            )
+            or not isinstance(phase_payload.get("stdout_tail"), str)
+            or not isinstance(phase_payload.get("stderr_tail"), str)
+            or len(phase_payload["stdout_tail"]) > 4096
+            or len(phase_payload["stderr_tail"]) > 4096
+            or phase_completed is None
+            or previous_phase_completed is None
+            or phase_completed < previous_phase_completed
+            or phase_completed > run_completed
+            or (
+                phase_index == len(route["phases"]) - 1
+                and (
+                    phase_payload.get("state_sha256")
+                    != artifacts_by_role["plan_state"][1]
+                    or phase_payload.get("dispatch_ledger_sha256")
+                    != artifacts_by_role["dispatch_ledger"][1]
+                )
+            )
         ):
             raise CliError("launch_precondition_failed", f"{label} failed for {spec_path}: phase receipt semantics invalid")
+        previous_phase_completed = phase_completed
     privilege_manifest = _strict_json_document(
         artifacts_by_role["privilege_receipts_manifest"][0],
         label=label,
@@ -4329,20 +4689,38 @@ def _validate_finite_canary_receipt(
         if isinstance(privilege_manifest, dict)
         else None
     )
+    dispatch_phases = route["phases"][1:]
+    dispatch_iterations = route["iterations"][1:]
+    dispatch_ordinals = route["ordinals"][1:]
     expected_privilege_paths = [
-        f".megaplan/plans/critique-ledger-cl2-planning-canary/"
-        f".zero-recovery-{phase}-privilege-receipt.json"
-        for phase in _FINITE_CANARY_PHASES[1:]
+        (
+            ".megaplan/plans/critique-ledger-cl2-planning-canary/"
+            f".zero-recovery-{ordinal:02d}-{phase}-i{iteration}"
+            "-privilege-receipt.json"
+            if modern
+            else (
+                ".megaplan/plans/critique-ledger-cl2-planning-canary/"
+                f".zero-recovery-{phase}-privilege-receipt.json"
+            )
+        )
+        for phase, iteration, ordinal in zip(
+            dispatch_phases, dispatch_iterations, dispatch_ordinals, strict=True
+        )
     ]
+    expected_privilege_manifest_schema = (
+        "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v2"
+        if modern
+        else "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v1"
+    )
     if (
         not isinstance(privilege_manifest, dict)
         or set(privilege_manifest) != {"schema", "entries"}
         or privilege_manifest.get("schema")
-        != "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v1"
+        != expected_privilege_manifest_schema
         or not isinstance(privilege_entries, list)
-        or len(privilege_entries) != 4
+        or len(privilege_entries) != len(dispatch_phases)
         or [entry.get("phase") for entry in privilege_entries if isinstance(entry, dict)]
-        != _FINITE_CANARY_PHASES[1:]
+        != dispatch_phases
         or [entry.get("path") for entry in privilege_entries if isinstance(entry, dict)]
         != expected_privilege_paths
         or [entry.get("sha256") for entry in privilege_entries if isinstance(entry, dict)]
@@ -4352,13 +4730,33 @@ def _validate_finite_canary_receipt(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: privilege receipt manifest is invalid",
         )
-    for phase, expected_path, entry in zip(
-        _FINITE_CANARY_PHASES[1:],
+    for phase, iteration, ordinal, expected_path, entry in zip(
+        dispatch_phases,
+        dispatch_iterations,
+        dispatch_ordinals,
         expected_privilege_paths,
         privilege_entries,
         strict=True,
     ):
-        if not isinstance(entry, dict) or set(entry) != {"phase", "path", "sha256"}:
+        expected_entry_fields = (
+            {"phase", "plan_iteration", "dispatch_ordinal", "path", "sha256"}
+            if modern
+            else {"phase", "path", "sha256"}
+        )
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != expected_entry_fields
+            or entry.get("phase") != phase
+            or (
+                modern
+                and (
+                    type(entry.get("plan_iteration")) is not int
+                    or entry.get("plan_iteration") != iteration
+                    or type(entry.get("dispatch_ordinal")) is not int
+                    or entry.get("dispatch_ordinal") != ordinal
+                )
+            )
+        ):
             raise CliError(
                 "launch_precondition_failed",
                 f"{label} failed for {spec_path}: privilege receipt entry is ambiguous",
@@ -4379,8 +4777,8 @@ def _validate_finite_canary_receipt(
         if not _finite_canary_privilege_receipt_is_valid(
             privilege_payload,
             phase=phase,
-            plan_iteration=int(entry.get("plan_iteration") or 0),
-            dispatch_ordinal=int(entry.get("dispatch_ordinal") or 0),
+            plan_iteration=iteration if modern else None,
+            dispatch_ordinal=ordinal if modern else None,
             plan_dir=privilege_path.parent,
         ):
             raise CliError(
@@ -4415,12 +4813,50 @@ def _validate_finite_canary_receipt(
             "launch_precondition_failed",
             f"{label} failed for {spec_path}: dispatch ledger is invalid: {exc}",
         ) from exc
+    versioned_gates_valid = True
+    if modern:
+        versioned_gate_hashes: list[str] = []
+        for gate_attempt in run_payload["gate_attempts"]:
+            versioned_gate_path = ledger_path.parent / (
+                f"gate_v{gate_attempt['plan_iteration']}.json"
+            )
+            if (
+                not versioned_gate_path.is_file()
+                or _sha256_file(versioned_gate_path)
+                != gate_attempt["gate_sha256"]
+            ):
+                versioned_gates_valid = False
+                break
+            versioned_gate = _strict_json_document(
+                versioned_gate_path, label=label, spec_path=spec_path
+            )
+            if (
+                not isinstance(versioned_gate, dict)
+                or versioned_gate.get("recommendation")
+                != gate_attempt["recommendation"]
+            ):
+                versioned_gates_valid = False
+                break
+            versioned_gate_hashes.append(gate_attempt["gate_sha256"])
+        if (
+            len(versioned_gate_hashes) == 2
+            and versioned_gate_hashes[0] == versioned_gate_hashes[1]
+        ):
+            versioned_gates_valid = False
     if (
         not isinstance(state_payload, dict)
         or state_payload.get("current_state") != "finalized"
         or state_payload.get("active_step") not in (None, "")
+        or (
+            modern
+            and (
+                type(state_payload.get("iteration")) is not int
+                or state_payload.get("iteration") != route["iterations"][-1]
+            )
+        )
         or not isinstance(gate_payload, dict)
         or gate_payload.get("recommendation") != "PROCEED"
+        or not versioned_gates_valid
         or ledger_payload != run_payload.get("dispatches")
     ):
         raise CliError(

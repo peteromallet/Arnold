@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.chain import run_chain_cli
+from arnold_pipelines.megaplan.chain import spec as chain_spec_module
 from arnold_pipelines.megaplan.chain.spec import (
     ChainSpec,
     ChainState,
@@ -112,6 +113,39 @@ def test_launch_precondition_contains_text_fails_and_passes(tmp_path: Path) -> N
 
     artifact.write_text("# Artifact\n\nright text\n", encoding="utf-8")
     validate_paths(spec, tmp_path, spec_path=spec_path)
+
+
+def test_chain_precondition_dispatches_finite_canary_validator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "finite-canary.json"
+    receipt.write_text("{}\n", encoding="utf-8")
+    spec_path = _write_chain(tmp_path, "milestones: []\n")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "bounded finite canary",
+                    "kind": "finite_canary_receipt",
+                    "path": "finite-canary.json",
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    observed: list[tuple[Path, Path, int]] = []
+
+    def accept(precondition, root: Path, path: Path, *, index: int) -> None:
+        assert precondition.path == "finite-canary.json"
+        observed.append((root, path, index))
+
+    monkeypatch.setattr(
+        chain_spec_module, "_validate_finite_canary_receipt", accept
+    )
+
+    validate_paths(spec, tmp_path, spec_path=spec_path)
+
+    assert observed == [(tmp_path.resolve(), spec_path, 0)]
 
 
 def test_launch_precondition_review_log_clean_fails_on_block_and_unaddressed_edit(tmp_path: Path) -> None:

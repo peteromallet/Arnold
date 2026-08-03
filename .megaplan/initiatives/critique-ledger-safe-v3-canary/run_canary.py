@@ -574,6 +574,8 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             state = strict_object(state_path)
             current_state = state.get("current_state")
             actual_iteration = int(state.get("iteration", 0) or 0)
+            if actual_iteration != phase_plan_iteration:
+                raise RuntimeError("phase_plan_iteration_mismatch")
             if phase in MODEL_PHASES:
                 dispatch_expectations.append((phase, phase_plan_iteration))
                 read_dispatch_ledger(ledger_path, dispatch_expectations)

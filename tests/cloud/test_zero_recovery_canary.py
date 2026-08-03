@@ -73,14 +73,152 @@ from arnold_pipelines.megaplan.cloud.spec import (
 )
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
 from arnold_pipelines.megaplan.chain.spec import (
+    _finite_canary_dispatches_are_valid,
     _finite_canary_global_scratch_is_valid,
+    _finite_canary_phase_commands_are_valid,
+    _finite_canary_privilege_receipt_is_valid,
+    _finite_canary_success_route,
     _finite_canary_completion_contract_is_valid,
     _finite_canary_custody_contract,
     _finite_canary_conformance_has_trust_evidence,
     _finite_canary_fence_is_valid,
     _finite_canary_review_inputs_match,
 )
+
+
+def _bounded_run_contract(*, revised: bool) -> dict[str, object]:
+    phases = (
+        ["init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize"]
+        if revised
+        else ["init", "plan", "critique", "gate", "finalize"]
+    )
+    iterations = [0, 1, 1, 1, 2, 2, 2, 2] if revised else [0, 1, 1, 1, 1]
+    ordinals = [None, *range(1, len(phases))]
+    states = (
+        ["initialized", "planned", "critiqued", "critiqued", "planned", "critiqued", "gated", "finalized"]
+        if revised
+        else ["initialized", "planned", "critiqued", "gated", "finalized"]
+    )
+    gate_recommendations = (
+        [None, None, None, "ITERATE", None, None, "PROCEED", None]
+        if revised
+        else [None, None, None, "PROCEED", None]
+    )
+    gate_attempts = (
+        [
+            {"attempt": 1, "plan_iteration": 1, "recommendation": "ITERATE", "state": "critiqued", "gate_sha256": "a" * 64},
+            {"attempt": 2, "plan_iteration": 2, "recommendation": "PROCEED", "state": "gated", "gate_sha256": "b" * 64},
+        ]
+        if revised
+        else [
+            {"attempt": 1, "plan_iteration": 1, "recommendation": "PROCEED", "state": "gated", "gate_sha256": "b" * 64},
+        ]
+    )
+    dispatches: list[dict[str, object]] = []
+    privilege_hashes: list[str] = []
+    for phase, iteration, ordinal in zip(
+        phases[1:], iterations[1:], ordinals[1:], strict=True
+    ):
+        dispatch_id = f"{ordinal:032x}"
+        privilege_hash = f"{ordinal:064x}"
+        common = {
+            "schema": "arnold.megaplan.zero_recovery_dispatch.v2",
+            "dispatch_id": dispatch_id,
+            "phase": phase,
+            "attempt": 1,
+            "plan_iteration": iteration,
+            "dispatch_ordinal": ordinal,
+            "retry": False,
+            "fallback": False,
+            "json_repair": False,
+            "adaptive_routing": False,
+        }
+        dispatches.extend([
+            {
+                **common,
+                "event": "start",
+                "selected_agent": "codex",
+                "selected_model": "gpt-5.6-sol",
+                "selected_effort": "high",
+                "model_cli_argv": ["-c", "model='gpt-5.6-sol'"],
+                "recorded_at": f"2026-08-03T00:00:{ordinal * 2:02d}Z",
+            },
+            {
+                **common,
+                "event": "terminal",
+                "actual_agent": "codex",
+                "actual_model": "gpt-5.6-sol",
+                "model_evidence": "codex_cli_turn_context",
+                "privilege_receipt_path": (
+                    f".zero-recovery-{ordinal:02d}-{phase}-i{iteration}"
+                    "-privilege-receipt.json"
+                ),
+                "privilege_receipt_sha256": privilege_hash,
+                "rollout_path": f"sessions/{ordinal}.jsonl",
+                "rollout_sha256": "c" * 64,
+                "actual_effort": "high",
+                "result": "returned",
+                "recorded_at": f"2026-08-03T00:00:{ordinal * 2 + 1:02d}Z",
+            },
+        ])
+        privilege_hashes.append(privilege_hash)
+    workspace = "/workspace/Arnold"
+    plan_name = "critique-ledger-cl2-planning-canary"
+    init = [
+        "/usr/bin/python3", "-P", "-m", "arnold_pipelines.megaplan",
+        "init", "--project-dir", workspace, "--name", plan_name,
+        "--auto-approve", "--idea-file",
+        workspace + "/.megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md",
+        "--north-star",
+        workspace + "/.megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md",
+        "--robustness", "full", "--no-adaptive-critique", "--vendor", "codex",
+        "--phase-model", "plan=codex:gpt-5.6-sol:high",
+        "--phase-model", "critique=codex:gpt-5.6-sol:high",
+        "--phase-model", "gate=codex:gpt-5.6-sol:high",
+        "--phase-model", "revise=codex:gpt-5.6-sol:high",
+        "--phase-model", "finalize=codex:gpt-5.6-sol:high",
+    ]
+    return {
+        "schema": "arnold.megaplan.finite_canary_run_receipt.v3",
+        "status": "passed",
+        "phases": phases,
+        "phase_results": [
+            {
+                "phase": phase,
+                "plan_iteration": iteration,
+                "dispatch_ordinal": ordinal,
+                "returncode": 0,
+                "state": state,
+                "gate_recommendation": recommendation,
+            }
+            for phase, iteration, ordinal, state, recommendation in zip(
+                phases, iterations, ordinals, states, gate_recommendations, strict=True
+            )
+        ],
+        "terminal_state": "finalized",
+        "product_outcome": {
+            "kind": "proceed_finalized",
+            "gate_attempt": len(gate_attempts),
+            "recommendation": "PROCEED",
+        },
+        "gate_attempts": gate_attempts,
+        "failure": None,
+        "gate_sha256": "b" * 64,
+        "dispatches": dispatches,
+        "privilege_receipt_sha256": privilege_hashes,
+        "phase_commands": [
+            init,
+            *[
+                [
+                    "/usr/bin/python3", "-P", "-m", "arnold_pipelines.megaplan",
+                    phase, "--plan", plan_name, "--fresh",
+                ]
+                for phase in phases[1:]
+            ],
+        ],
+    }
 
 
 @pytest.mark.parametrize("dev_shm", ["root_nonwritable", "absent_ipc_none"])
@@ -95,6 +233,265 @@ def test_finite_canary_receipt_accepts_only_safe_global_scratch(
     assert _finite_canary_global_scratch_is_valid(value)
     value["/tmp"] = "writable"
     assert not _finite_canary_global_scratch_is_valid(value)
+
+
+@pytest.mark.parametrize("revised", [False, True])
+def test_finite_canary_v3_accepts_only_the_two_bounded_success_routes(
+    revised: bool,
+) -> None:
+    payload = _bounded_run_contract(revised=revised)
+    route = _finite_canary_success_route(payload)
+    assert route is not None
+    assert route["version"] == 3
+    assert _finite_canary_dispatches_are_valid(payload, route)
+    assert _finite_canary_phase_commands_are_valid(
+        payload,
+        route,
+        workspace="/workspace/Arnold",
+        plan_name="critique-ledger-cl2-planning-canary",
+    )
+    assert len(payload["dispatches"]) == (14 if revised else 8)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "phase",
+        "iteration",
+        "ordinal",
+        "first_gate_outcome",
+        "second_gate_outcome",
+        "third_gate",
+        "product_outcome",
+        "schema",
+        "bool_iteration",
+    ],
+)
+def test_finite_canary_v3_route_mutations_fail_closed(mutation: str) -> None:
+    payload = _bounded_run_contract(revised=True)
+    if mutation == "phase":
+        payload["phases"][4] = "plan"
+    elif mutation == "iteration":
+        payload["phase_results"][4]["plan_iteration"] = 1
+    elif mutation == "ordinal":
+        payload["phase_results"][5]["dispatch_ordinal"] = 4
+    elif mutation == "first_gate_outcome":
+        payload["gate_attempts"][0]["recommendation"] = "PROCEED"
+    elif mutation == "second_gate_outcome":
+        payload["gate_attempts"][1]["recommendation"] = "ITERATE"
+    elif mutation == "third_gate":
+        payload["gate_attempts"].append(copy.deepcopy(payload["gate_attempts"][1]))
+    elif mutation == "product_outcome":
+        payload["product_outcome"]["gate_attempt"] = 1
+    elif mutation == "schema":
+        payload["schema"] = "arnold.megaplan.finite_canary_run_receipt.v4"
+    elif mutation == "bool_iteration":
+        payload["phase_results"][1]["plan_iteration"] = True
+    assert _finite_canary_success_route(payload) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["iteration", "ordinal", "bool_ordinal", "path", "schema", "duplicate_id", "retry", "rollout"],
+)
+def test_finite_canary_v3_dispatch_mutations_fail_closed(mutation: str) -> None:
+    payload = _bounded_run_contract(revised=True)
+    route = _finite_canary_success_route(payload)
+    assert route is not None
+    terminal = payload["dispatches"][9]
+    start = payload["dispatches"][8]
+    if mutation == "iteration":
+        terminal["plan_iteration"] = 1
+    elif mutation == "ordinal":
+        terminal["dispatch_ordinal"] = 4
+    elif mutation == "bool_ordinal":
+        terminal["dispatch_ordinal"] = True
+    elif mutation == "path":
+        terminal["privilege_receipt_path"] = ".zero-recovery-critique-privilege-receipt.json"
+    elif mutation == "schema":
+        terminal["schema"] = "arnold.megaplan.zero_recovery_dispatch.v1"
+    elif mutation == "duplicate_id":
+        start["dispatch_id"] = payload["dispatches"][6]["dispatch_id"]
+        terminal["dispatch_id"] = start["dispatch_id"]
+    elif mutation == "retry":
+        start["retry"] = True
+    elif mutation == "rollout":
+        terminal["rollout_path"] = "sessions//5.jsonl"
+    assert not _finite_canary_dispatches_are_valid(payload, route)
+
+
+def test_finite_canary_legacy_v2_run_and_v1_dispatch_remain_admitted() -> None:
+    payload = _bounded_run_contract(revised=False)
+    payload["schema"] = "arnold.megaplan.finite_canary_run_receipt.v2"
+    payload.pop("product_outcome")
+    payload.pop("gate_attempts")
+    payload["phase_results"] = [
+        {"phase": item["phase"], "returncode": 0, "state": item["state"]}
+        for item in payload["phase_results"]
+    ]
+    for record in payload["dispatches"]:
+        record["schema"] = "arnold.megaplan.zero_recovery_dispatch.v1"
+        record.pop("plan_iteration")
+        record.pop("dispatch_ordinal")
+        if record["event"] == "terminal":
+            record["privilege_receipt_path"] = (
+                f".zero-recovery-{record['phase']}-privilege-receipt.json"
+            )
+    init = payload["phase_commands"][0]
+    revise_pin = init.index("revise=codex:gpt-5.6-sol:high")
+    del init[revise_pin - 1 : revise_pin + 1]
+    route = _finite_canary_success_route(payload)
+    assert route is not None and route["version"] == 2
+    assert _finite_canary_dispatches_are_valid(payload, route)
+    assert _finite_canary_phase_commands_are_valid(
+        payload,
+        route,
+        workspace="/workspace/Arnold",
+        plan_name="critique-ledger-cl2-planning-canary",
+    )
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_finite_canary_privilege_validator_schema_dispatches_legacy_and_current(
+    version: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    phase = "plan"
+    iteration = 1 if version == 2 else None
+    ordinal = 1 if version == 2 else None
+    stem = (
+        ".zero-recovery-plan"
+        if version == 1
+        else ".zero-recovery-01-plan-i1"
+    )
+    output_name = stem + "-worker-output.json"
+    output_path = tmp_path / output_name
+    output_path.write_text("{}\n", encoding="utf-8")
+    real = output_path.stat()
+    fake_stat = SimpleNamespace(
+        st_mode=stat.S_IFREG | 0o600,
+        st_nlink=1,
+        st_dev=real.st_dev,
+        st_ino=real.st_ino,
+        st_size=real.st_size,
+        st_uid=0,
+        st_gid=0,
+    )
+    original_lstat = Path.lstat
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda self: fake_stat if self == output_path else original_lstat(self),
+    )
+    runtime_path = (
+        "/run/megaplan-zero-recovery/plan-" + "a" * 32
+        if version == 1
+        else "/run/megaplan-zero-recovery/01-plan-i1-" + "a" * 32
+    )
+    payload = {
+        "schema": f"arnold.megaplan.zero_recovery_privilege_receipt.v{version}",
+        "status": "sealed",
+        "phase": phase,
+        "model_uid": 65532,
+        "model_gid": 65532,
+        "uid_processes_before": 0,
+        "uid_processes_after": 0,
+        "privilege_observation": {
+            "Uid": "65532\t65532\t65532\t65532",
+            "Gid": "65532\t65532\t65532\t65532",
+            "Groups": "",
+            "NoNewPrivs": "1",
+            "CapInh": "0000000000000000",
+            "CapPrm": "0000000000000000",
+            "CapEff": "0000000000000000",
+            "CapBnd": "0000000000000000",
+            "CapAmb": "0000000000000000",
+        },
+        "command_prefix": [
+            "/usr/bin/setpriv", "--reuid=65532", "--regid=65532",
+            "--clear-groups", "--no-new-privs", "--bounding-set=-all",
+            "--inh-caps=-all", "--ambient-caps=-all", "--",
+            "/usr/bin/prlimit", "--nproc=64", "--fsize=67108864",
+            "--core=0", "--",
+        ],
+        "environment_keys": sorted([
+            "LANG", "LC_ALL", "HOME", "CODEX_HOME", "TMPDIR",
+            "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "PATH", "USER", "LOGNAME",
+            "MEGAPLAN_TURN_ID", "PYTHONNOUSERSITE", "PYTHONDONTWRITEBYTECODE",
+            "GIT_CONFIG_NOSYSTEM",
+        ]),
+        "writable_roots": [output_name, runtime_path],
+        "global_scratch": {
+            "/tmp": "root_nonwritable",
+            "/var/tmp": "root_nonwritable",
+            "/dev/shm": "absent_ipc_none",
+        },
+        "limits": {
+            "nproc": 64,
+            "fsize_bytes": 67_108_864,
+            "runtime_max_files": 4096,
+            "runtime_max_bytes": 134_217_728,
+            "output_max_bytes": 16_777_216,
+        },
+        "output": {
+            "path": output_name,
+            "st_dev": real.st_dev,
+            "st_ino": real.st_ino,
+            "size": real.st_size,
+            "sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
+            "sealed_uid": 0,
+            "sealed_gid": 0,
+            "mode": "0600",
+            "nlink": 1,
+        },
+        "runtime": {
+            "path": runtime_path,
+            "st_dev": 1,
+            "st_ino": 2,
+            "files": 1,
+            "bytes": 1,
+            "sealed_uid": 0,
+            "sealed_gid": 0,
+            "mode": "0700",
+        },
+        "recorded_at": "2026-08-03T00:00:00Z",
+    }
+    if version == 2:
+        payload.update(plan_iteration=iteration, dispatch_ordinal=ordinal)
+    payload["receipt_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert _finite_canary_privilege_receipt_is_valid(
+        payload,
+        phase=phase,
+        plan_iteration=iteration,
+        dispatch_ordinal=ordinal,
+        plan_dir=tmp_path,
+    )
+
+
+def test_gate_attempt_bytes_are_immutable_across_bounded_revision(
+    tmp_path: Path,
+) -> None:
+    first = {"recommendation": "ITERATE", "rationale": "revise once"}
+    second = {"recommendation": "PROCEED", "rationale": "final pass"}
+    first_hash = _write_gate_json(tmp_path, first, iteration=1)
+    first_bytes = (tmp_path / "gate_v1.json").read_bytes()
+    second_hash = _write_gate_json(tmp_path, second, iteration=2)
+
+    assert "sha256:" + hashlib.sha256(first_bytes).hexdigest() == first_hash
+    assert (
+        "sha256:" + hashlib.sha256((tmp_path / "gate_v2.json").read_bytes()).hexdigest()
+        == second_hash
+    )
+    assert (tmp_path / "gate_v1.json").read_bytes() == first_bytes
+    assert (tmp_path / "gate_v2.json").read_bytes() == (tmp_path / "gate.json").read_bytes()
+    with pytest.raises(RuntimeError, match="immutable artifact identity"):
+        _write_gate_json(
+            tmp_path,
+            {"recommendation": "PROCEED", "rationale": "tamper"},
+            iteration=1,
+        )
+    assert (tmp_path / "gate_v1.json").read_bytes() == first_bytes
 
 
 def _outer(*, error: str = "historic ENOSPC") -> dict[str, object]:
@@ -1550,6 +1947,8 @@ def test_runner_stops_after_first_failed_phase_and_has_no_forbidden_commands() -
         assert forbidden not in source.lower()
     assert 'REVISE_PHASES = ("revise", "critique", "gate")' in source
     assert 'terminal_state = "product_gate_not_proceed"' in source
+    assert "if actual_iteration != phase_plan_iteration:" in source
+    assert 'raise RuntimeError("phase_plan_iteration_mismatch")' in source
     assert source.index('gate = strict_object(plan_dir / "gate.json")') < source.index(
         'raise RuntimeError("unexpected_or_active_state")'
     )
@@ -1986,6 +2385,18 @@ def _valid_zero_recovery_status_receipt() -> bytes:
     return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
+def _valid_zero_recovery_status_receipt_v2() -> bytes:
+    payload = json.loads(_valid_zero_recovery_status_receipt())
+    payload["schema"] = "arnold.megaplan.finite_canary_run_receipt.v2"
+    payload.pop("product_outcome")
+    payload.pop("gate_attempts")
+    payload.pop("receipt_digest")
+    payload["receipt_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
 def test_running_receipt_is_nonterminal_until_stopped_and_resealed() -> None:
     provider = object.__new__(SshProvider)
     provider._spec = _spec()
@@ -2038,6 +2449,38 @@ def test_running_receipt_is_nonterminal_until_stopped_and_resealed() -> None:
     assert sum(
         shlex.split(command)[:2] == ["docker", "stop"] for command in commands
     ) == 1
+
+
+def test_status_accepts_legacy_attempt13_v2_receipt() -> None:
+    raw = _valid_zero_recovery_status_receipt_v2()
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    envelope = {
+        "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+        "receipt_b64": base64.b64encode(raw).decode("ascii"),
+        "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+        "receipt_count": 1,
+    }
+    provider._remote_run_compatible = lambda *_args, **_kwargs: (
+        subprocess.CompletedProcess([], 0, json.dumps(envelope), "")
+    )
+    provider.observe_container = lambda: {
+        "status": "available",
+        "container": provider._ssh.container,
+        "lifecycle": "stopped",
+    }
+    provider._reconcile_zero_recovery_canary_stop = lambda: (
+        provider.observe_container(), False
+    )
+
+    observed = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert observed["status"] == "available"
+    assert observed["receipt"]["schema"].endswith("run_receipt.v2")
+    assert observed["receipt"]["terminal_state"] == "finalized"
 
 
 def test_status_preserves_terminal_product_nonproceed_as_non_success() -> None:

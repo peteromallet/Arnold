@@ -62,6 +62,20 @@ def main() -> int:
         != ["ITERATE", "PROCEED"]
     ):
         raise SystemExit("offline smoke lifecycle was not an exact pass")
+    gate_attempts = run["gate_attempts"]
+    for attempt in gate_attempts:
+        versioned_gate = PLAN / f"gate_v{attempt['plan_iteration']}.json"
+        gate_payload = _strict(versioned_gate)
+        if (
+            _sha(versioned_gate) != attempt["gate_sha256"]
+            or gate_payload.get("recommendation") != attempt["recommendation"]
+        ):
+            raise SystemExit("offline smoke immutable gate evidence drifted")
+    if (
+        (PLAN / "gate_v1.json").read_bytes() == (PLAN / "gate_v2.json").read_bytes()
+        or (PLAN / "gate_v2.json").read_bytes() != (PLAN / "gate.json").read_bytes()
+    ):
+        raise SystemExit("offline smoke gate versions were not preserved")
     dispatches = run.get("dispatches")
     if not isinstance(dispatches, list) or len(dispatches) != 14:
         raise SystemExit("offline smoke did not produce seven dispatch pairs")

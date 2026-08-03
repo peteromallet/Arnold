@@ -1287,6 +1287,11 @@ class SshProvider(Provider):
                 )
                 unsigned = dict(receipt) if isinstance(receipt, dict) else {}
                 receipt_digest = unsigned.pop("receipt_digest", None)
+                receipt_schema = receipt.get("schema") if isinstance(receipt, dict) else None
+                legacy_v2 = (
+                    receipt_schema
+                    == "arnold.megaplan.finite_canary_run_receipt.v2"
+                )
                 required_receipt_fields = {
                     "schema", "status", "canary_id", "plan_name", "phases",
                     "phase_results", "terminal_state", "product_outcome",
@@ -1300,20 +1305,37 @@ class SshProvider(Provider):
                     "privilege_receipts_manifest_sha256",
                     "receipt_digest",
                 }
+                if legacy_v2:
+                    required_receipt_fields -= {"product_outcome", "gate_attempts"}
+                direct_phases = ["init", "plan", "critique", "gate", "finalize"]
+                v3_allowed_phases = [
+                    ["init", "plan", "critique", "gate"][:length]
+                    for length in range(5)
+                ] + [
+                    direct_phases,
+                    ["init", "plan", "critique", "gate", "revise"],
+                    ["init", "plan", "critique", "gate", "revise", "critique"],
+                    ["init", "plan", "critique", "gate", "revise", "critique", "gate"],
+                    ["init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize"],
+                ]
                 if (
                     not isinstance(receipt, dict)
                     or set(receipt) != required_receipt_fields
-                    or receipt.get("schema")
-                    != "arnold.megaplan.finite_canary_run_receipt.v3"
+                    or receipt_schema not in {
+                        "arnold.megaplan.finite_canary_run_receipt.v2",
+                        "arnold.megaplan.finite_canary_run_receipt.v3",
+                    }
                     or receipt.get("status") not in {"passed", "failed"}
                     or receipt.get("canary_id") != "critique-ledger-safe-v3-canary"
                     or receipt.get("plan_name")
                     != "critique-ledger-cl2-planning-canary"
                     or receipt.get("source_commit") != source_commit
                     or receipt.get("source_tree") != source_tree
-                    or receipt.get("terminal_state") not in {
-                        "finalized", "product_gate_not_proceed", "failed",
-                    }
+                    or receipt.get("terminal_state") not in (
+                        {"finalized", "failed"}
+                        if legacy_v2
+                        else {"finalized", "product_gate_not_proceed", "failed"}
+                    )
                     or (
                         receipt.get("status") == "failed"
                         and receipt.get("terminal_state") != "failed"
@@ -1331,20 +1353,29 @@ class SshProvider(Provider):
                     or not isinstance(receipt.get("phase_results"), list)
                     or len(receipt.get("phase_results")) > 8
                     or [item.get("phase") for item in receipt.get("phase_results") if isinstance(item, dict)]
-                    != receipt.get("phases")
-                    or receipt.get("phases") not in [
-                        ["init", "plan", "critique", "gate"][:length]
-                        for length in range(5)
-                    ] + [
-                        ["init", "plan", "critique", "gate", "finalize"],
-                        ["init", "plan", "critique", "gate", "revise"],
-                        ["init", "plan", "critique", "gate", "revise", "critique"],
-                        ["init", "plan", "critique", "gate", "revise", "critique", "gate"],
-                        ["init", "plan", "critique", "gate", "revise", "critique", "gate", "finalize"],
-                    ]
-                    or not isinstance(receipt.get("gate_attempts"), list)
-                    or len(receipt.get("gate_attempts")) > 2
+                    != (
+                        direct_phases[: len(receipt.get("phase_results"))]
+                        if legacy_v2
+                        else receipt.get("phases")
+                    )
                     or (
+                        legacy_v2
+                        and receipt.get("phases") != direct_phases
+                    )
+                    or (
+                        not legacy_v2
+                        and receipt.get("phases") not in v3_allowed_phases
+                    )
+                    or (
+                        not legacy_v2
+                        and (
+                            not isinstance(receipt.get("gate_attempts"), list)
+                            or len(receipt.get("gate_attempts")) > 2
+                        )
+                    )
+                    or (
+                        not legacy_v2
+                        and
                         receipt.get("terminal_state") == "finalized"
                         and (
                             not isinstance(receipt.get("product_outcome"), dict)
@@ -1358,6 +1389,8 @@ class SshProvider(Provider):
                         )
                     )
                     or (
+                        not legacy_v2
+                        and
                         receipt.get("terminal_state")
                         == "product_gate_not_proceed"
                         and (
