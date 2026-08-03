@@ -79,6 +79,18 @@ surface and a durable supervisor that publishes version-keyed status results
 after interaction acknowledgement without using observation as mutation
 authority.
 
+F1 additionally owns the receipt-aware archival and stale-attempt projection
+cleanup exposed during live r5 recovery. `critique_custody_v1.json` and
+`critique_custody_v2.json` bind exact producer/raw artifact basenames and
+SHA-256 values; a broad move of `critique_check_*` can therefore orphan valid
+custody even when the bytes survive elsewhere. The archive path must derive an
+immutable keep-set from validated active receipts, copy non-destructively,
+verify exact bytes, persist an append-only manifest, and revalidate custody
+before any separately authorized retirement. Independently, current-attention
+views must rebuild from lifecycle/supersession/incarnation authority so retired
+r2-r4 failures remain historical but only exact r5 appears current. The shared
+normative target is `artifact-archival-projection-cleanup-contract.json`.
+
 F1 acceptance is also blocked on dependency-closed revalidation of the
 historical M11 completion claim. Commit
 `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` contained four ownership blockers
@@ -119,6 +131,10 @@ disabled fail closed. Exact audit evidence is
   shared-UID kill is not the generalized concurrency authority.
 - Sealed phase rollouts/runtime receipts have explicit retention and garbage
   collection; cleanup cannot erase incident evidence or leak writable state.
+- Custody-bound artifact retention is receipt-driven, never filename-glob-
+  driven. Archival is a non-destructive copy/readback/manifest transaction;
+  destructive retirement requires separate current-owner authority after all
+  active v1/v2 receipts validate at original or manifest-bound locations.
 - The privilege launcher has installed conformance for supported kernels and
   container runtimes, including capability, setpriv, tmp/proc/signal and
   resource-limit hostile matrices.
@@ -154,6 +170,9 @@ disabled fail closed. Exact audit evidence is
 - Status collection is observe-only. One canonical content-addressed report
   feeds CLI, cloud and Discord views; an interaction timeout cannot cancel the
   durable collector or cause duplicate publication.
+- Current-attention projections contain at most one authority-selected active
+  generation. Superseded attempts remain immutable history; projection cleanup
+  may neither delete them nor allow r2-r4 to masquerade as current beside r5.
 - Historical completion is not grandfathered around unmet dependencies. The
   M11 `d10b0fef...` claim stays invalidated until an append-only superseding Run
   Authority decision consumes the exact ownership/F01-F17 inputs, proves zero
@@ -264,6 +283,13 @@ receipts.
   rejects missing, stale, duplicate, late or cross-invocation children with
   actionable per-child diagnostics. Source, wheel and installed-provider
   matrices prove equivalent behavior.
+- Receipt-aware archival tests cover both `critique_custody_v1.json` and
+  `critique_custody_v2.json`. They prove immutable receipt-derived keep-set
+  construction, exact-target preflight, non-destructive content-addressed
+  copy, source/archive byte and SHA-256 equality, append-only manifest fsync,
+  and post-archive custody validation. Broad `critique_check_*` move/delete,
+  late-writer/TOCTOU, missing source, symlink escape, collision, hash mismatch
+  and absent manifest-row mutations all fail closed with originals preserved.
 - A canonical observe-only full report joins plan/chain/incarnation/worker and
   repair request/decision/attempt/claim/goal/manifest evidence with bounded log
   references, emits a content digest, performs zero mutations, and reports
@@ -310,6 +336,11 @@ receipts.
   within 60 seconds. A broken checkpoint returns typed degraded evidence and
   never infers a product stall. The installed cloud regression proves one
   active runner, one current incarnation and zero repeated cursor warnings.
+- Projection rebuild tests retain r2-r4 as terminal queryable history while
+  excluding them from current attention beside exact r5. Process/resident
+  restart and 200 unchanged polls retain exactly one current row, zero history
+  loss and zero repair, relaunch, deletion or notification effects; conflicting
+  authority produces typed degraded evidence and never guesses “latest.”
 - Work-ledger emitters remove reserved fields from metadata before forwarding;
   each auto phase transition produces exactly one idempotent transition and no
   `multiple values for keyword argument 'transition'` warning.

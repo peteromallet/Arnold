@@ -53,6 +53,21 @@ collection or publish the same report twice. Until that surface exists, treat
 `/whats-cooking` timeout as an availability/observation failure and inspect the
 subject separately—never as automatic evidence of a product stall.
 
+Do not manually move, delete or archive `critique_check_*` files. Active
+`critique_custody_v1.json` and `critique_custody_v2.json` receipts bind exact
+producer/raw bytes at those names. The supported archive path first validates
+all active receipts, freezes their exact path/hash keep-set, copies into a
+content-addressed archive, reads back and verifies every byte, fsyncs an
+append-only manifest, and revalidates custody. Original deletion is a later,
+separately authorized transaction; ambiguity retains originals.
+
+Likewise, remove r2-r4 only from the derived current-attention projection—not
+from run, event, custody or receipt history. Rebuild from authoritative
+lifecycle/supersession/incarnation records and require exact r5 to be the sole
+current subject. If more than one generation is plausibly active, publish
+typed degraded ambiguity and mutate nothing; never pick the newest filename or
+timestamp.
+
 The historical M11 completion claim at
 `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` is invalidated pending
 dependency-closed revalidation. Its committed ownership record had four

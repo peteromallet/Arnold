@@ -30,6 +30,9 @@ R5_REPAIR_CONTROL_EVIDENCE = (
     "evidence/r5-cl2-repair-control-incident-20260803.json"
 )
 PROVIDER_POLICY_BINDING_CONTRACT = "provider-policy-execution-binding-contract.json"
+ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT = (
+    "artifact-archival-projection-cleanup-contract.json"
+)
 M11_ACCEPTANCE_GAP_EVIDENCE = (
     "evidence/m11-acceptance-dependency-gap-20260803.json"
 )
@@ -2082,6 +2085,12 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         not in f1_proofs
     ):
         raise ContractError("M11 acceptance dependency-gap proof map drift")
+    if (
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        + ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT
+        not in f1_proofs
+    ):
+        raise ContractError("artifact archival/projection cleanup proof map drift")
     if proof_map.get("f2a-launch-profile-artifact-drift-containment") != [
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
         "provider-policy-execution-binding-contract.json",
@@ -2153,6 +2162,189 @@ def _validate_r5_repair_control_incident(incident: dict[str, Any]) -> None:
         or follow_up.get("milestone") != "f1-owner-storage-recovery-hardening"
     ):
         raise ContractError("r5 immediate/deferred repair custody drift")
+
+
+def _validate_artifact_archival_projection_cleanup_contract(
+    contract: dict[str, Any],
+) -> None:
+    if (
+        contract.get("schema")
+        != "arnold.cross_pipeline.receipt_aware_artifact_archival_projection_cleanup.v1"
+        or contract.get("status") != "NORMATIVE_DESIGN_TARGET_NOT_RUNTIME_PROOF"
+        or contract.get("owner_milestone")
+        != "f1-owner-storage-recovery-hardening"
+        or contract.get("scope")
+        != "ALL_CUSTODY_BOUND_PRODUCER_ARTIFACTS_AND_ATTEMPT_PROJECTIONS"
+        or contract.get("difficulty") != "5/5 VERY HARD"
+    ):
+        raise ContractError("artifact archival/projection contract identity drift")
+
+    fixture = contract.get("incident_fixture")
+    if (
+        not isinstance(fixture, dict)
+        or fixture.get("session")
+        != "critique-ledger-accountability-v3-r5-20260803"
+        or fixture.get("plan") != "cl2-wbc-backed-ledger-20260803-1357"
+        or fixture.get("hazard")
+        != "BROAD_CRITIQUE_CHECK_GLOB_CAN_RELOCATE_RAW_SOURCES_NAMED_BY_ACTIVE_CUSTODY_RECEIPTS"
+        or fixture.get("receipt_versions")
+        != ["critique_custody_v1.json", "critique_custody_v2.json"]
+        or fixture.get("producer_patterns_are_discovery_only_not_mutation_authority")
+        != [
+            "critique_check_*_producer_vN.json",
+            "critique_check_*_raw_vN.txt",
+        ]
+        or len(fixture.get("code_evidence") or []) != 2
+    ):
+        raise ContractError("artifact archival incident fixture drift")
+
+    archive = contract.get("archive_contract")
+    keep_set = archive.get("immutable_keep_set") if isinstance(archive, dict) else None
+    preflight = archive.get("preflight") if isinstance(archive, dict) else None
+    manifest = archive.get("archive_manifest") if isinstance(archive, dict) else None
+    retirement = (
+        archive.get("destructive_retirement") if isinstance(archive, dict) else None
+    )
+    expected_order = [
+        "READ_AND_VALIDATE_ALL_ACTIVE_RECEIPTS",
+        "FREEZE_IMMUTABLE_EXACT_PATH_AND_SHA256_KEEP_SET",
+        "PREFLIGHT_EXACT_TARGETS_AND_DESTINATION",
+        "COPY_TO_NON_DESTRUCTIVE_CONTENT_ADDRESSED_ARCHIVE",
+        "READ_BACK_AND_VERIFY_EXACT_BYTES_AND_SHA256",
+        "WRITE_AND_FSYNC_APPEND_ONLY_ARCHIVE_MANIFEST",
+        "REVALIDATE_EVERY_ACTIVE_RECEIPT_AGAINST_ORIGINAL_OR_MANIFEST_BOUND_ARCHIVE_PATH",
+        "PUBLISH_ARCHIVE_SUCCESS_RECEIPT",
+        "SEPARATELY_AUTHORIZE_ANY_LATER_DESTRUCTIVE_RETIREMENT",
+    ]
+    if (
+        not isinstance(archive, dict)
+        or archive.get("authority") != "ACTIVE_VALIDATED_CUSTODY_RECEIPTS_ONLY"
+        or archive.get("ordered_steps") != expected_order
+        or not isinstance(keep_set, dict)
+        or keep_set.get("derive_from")
+        != [
+            "validated_receipt_bytes",
+            "receipt.plan_artifact_and_plan_sha256",
+            "receipt.critique_artifact_and_critique_sha256",
+            "receipt.raw_sources_artifact_and_sha256",
+        ]
+        or keep_set.get("freeze_before_preflight") is not True
+        or keep_set.get("glob_results_may_expand_keep_set") is not False
+        or keep_set.get("missing_ambiguous_or_mutating_source")
+        != "FAIL_CLOSED_NO_ARCHIVE_NO_DELETE"
+    ):
+        raise ContractError("receipt-derived immutable archive order/keep-set drift")
+    if (
+        not isinstance(preflight, dict)
+        or set(preflight.values()) != {True}
+        or set(preflight)
+        != {
+            "exact_targets_only",
+            "reject_globs_wildcards_and_unexpanded_patterns",
+            "reject_symlink_path_escape_and_non_regular_files",
+            "reject_source_identity_change_between_read_and_copy",
+            "reject_destination_collision_unless_exact_same_bytes",
+        }
+    ):
+        raise ContractError("exact-target archive preflight drift")
+    required_manifest_fields = [
+        "schema",
+        "operation_id",
+        "subject",
+        "receipt_path",
+        "receipt_sha256",
+        "source_path",
+        "source_sha256",
+        "source_size",
+        "archive_path",
+        "archive_sha256",
+        "archive_size",
+        "copied_at",
+        "verified_at",
+    ]
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("append_only") is not True
+        or manifest.get("content_addressed") is not True
+        or manifest.get("required_fields") != required_manifest_fields
+        or manifest.get("exact_byte_hash_verification")
+        != "SHA256_AND_SIZE_SOURCE_EQUALS_ARCHIVE_READBACK"
+        or not isinstance(retirement, dict)
+        or retirement
+        != {
+            "part_of_archive_transaction": False,
+            "default": "RETAIN_ORIGINALS",
+            "requires_separate_current_owner_grant": True,
+            "requires_post_archive_custody_validation": True,
+            "ambiguous_response": "NO_DELETE",
+        }
+    ):
+        raise ContractError("archive manifest/readback/retirement contract drift")
+    forbidden = set(archive.get("forbidden") or [])
+    if (
+        forbidden
+        != {
+            "MV_OR_DELETE_BY_BROAD_CRITIQUE_CHECK_GLOB",
+            "MOVE_OR_DELETE_BEFORE_ARCHIVE_READBACK_VERIFICATION",
+            "DERIVE_KEEP_SET_FROM_DIRECTORY_LISTING_WITHOUT_RECEIPTS",
+            "REWRITE_RECEIPT_HASHES_TO_MATCH_MOVED_OR_MUTATED_BYTES",
+            "CLAIM_SUCCESS_WHILE_ANY_ACTIVE_V1_OR_V2_RECEIPT_IS_UNREADABLE",
+        }
+        or archive.get("postcondition")
+        != "EVERY_ACTIVE_V1_AND_V2_RECEIPT_VALIDATES_EXACT_BYTES_AT_ORIGINAL_OR_MANIFEST_BOUND_ARCHIVE_LOCATION"
+    ):
+        raise ContractError("broad-glob/v1-v2 custody protection drift")
+
+    projection = contract.get("projection_cleanup_contract")
+    polling = (
+        projection.get("restart_and_poll_semantics")
+        if isinstance(projection, dict)
+        else None
+    )
+    expected_projection_rules = [
+        "REBUILD_CURRENT_ATTENTION_FROM_AUTHORITATIVE_LIFECYCLE_AND_SUPERSESSION_RECORDS",
+        "SHOW_EXACTLY_ONE_ACTIVE_R5_SUBJECT_OR_TYPED_DEGRADED_AMBIGUITY",
+        "RETAIN_R2_R3_R4_AS_TERMINAL_HISTORICAL_EVIDENCE",
+        "EXCLUDE_RETIRED_GENERATIONS_FROM_CURRENT_ATTENTION",
+        "NEVER_DELETE_OR_REWRITE_RUN_RECEIPT_CUSTODY_OR_EVENT_HISTORY",
+        "ATOMICALLY_PUBLISH_CONTENT_ADDRESSED_PROJECTION_WITH_SOURCE_CURSOR",
+    ]
+    if (
+        not isinstance(projection, dict)
+        or projection.get("authority")
+        != "CANONICAL_LIFECYCLE_SUPERSESSION_AND_INCARNATION_RECORDS"
+        or projection.get("active_generation")
+        != "critique-ledger-accountability-v3-r5-20260803"
+        or projection.get("retired_generation_suffixes") != ["r2", "r3", "r4"]
+        or projection.get("rules") != expected_projection_rules
+        or polling
+        != {
+            "idempotent_rebuild": True,
+            "unchanged_poll_count": 200,
+            "duplicate_current_rows": 0,
+            "history_loss": 0,
+            "ambiguous_authority_result": "TYPED_DEGRADED_NO_GUESS_NO_MUTATION",
+        }
+    ):
+        raise ContractError("authoritative failed-attempt projection cleanup drift")
+
+    tests = contract.get("required_negative_and_mutation_tests")
+    if (
+        not isinstance(tests, list)
+        or len(tests) != 10
+        or "BROAD_CRITIQUE_CHECK_STAR_MOVE_CANNOT_ORPHAN_V1_RECEIPT" not in tests
+        or "BROAD_CRITIQUE_CHECK_STAR_MOVE_CANNOT_ORPHAN_V2_RECEIPT" not in tests
+        or "R2_R3_R4_HISTORY_REMAINS_QUERYABLE_AFTER_PROJECTION_CLEANUP"
+        not in tests
+        or contract.get("acceptance")
+        != {
+            "source_wheel_installed_cloud_parity": True,
+            "cross_pipeline_registry_closed": True,
+            "independent_review_required": True,
+            "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
+        }
+    ):
+        raise ContractError("artifact archival/projection mutation-test acceptance drift")
 
 
 def _validate_provider_policy_binding_contract(
@@ -2677,6 +2869,9 @@ def validate(*, require_live: bool = False) -> None:
     )
     _validate_m11_acceptance_dependency_gap(
         _load_json(INITIATIVE / M11_ACCEPTANCE_GAP_EVIDENCE)
+    )
+    _validate_artifact_archival_projection_cleanup_contract(
+        _load_json(INITIATIVE / ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT)
     )
     chain_path = INITIATIVE / "chain.yaml"
     chain = yaml.safe_load(chain_path.read_text(encoding="utf-8"))

@@ -116,6 +116,99 @@ def test_legacy_automatic_repair_stays_disabled_until_m11_green() -> None:
         contract._validate_m11_acceptance_dependency_gap(evidence)
 
 
+def _artifact_archival_projection_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name("artifact-archival-projection-cleanup-contract.json")
+    )
+
+
+@pytest.mark.parametrize(
+    "receipt_name",
+    ["critique_custody_v1.json", "critique_custody_v2.json"],
+)
+def test_broad_critique_cleanup_cannot_drop_either_receipt_version(
+    receipt_name: str,
+) -> None:
+    artifact_contract = _artifact_archival_projection_fixture()
+    artifact_contract["incident_fixture"]["receipt_versions"].remove(receipt_name)
+    with pytest.raises(
+        contract.ContractError,
+        match="artifact archival incident fixture drift",
+    ):
+        contract._validate_artifact_archival_projection_cleanup_contract(
+            artifact_contract
+        )
+
+
+def test_broad_glob_can_never_be_archive_mutation_authority() -> None:
+    artifact_contract = _artifact_archival_projection_fixture()
+    artifact_contract["archive_contract"]["forbidden"].remove(
+        "MV_OR_DELETE_BY_BROAD_CRITIQUE_CHECK_GLOB"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="broad-glob/v1-v2 custody protection drift",
+    ):
+        contract._validate_artifact_archival_projection_cleanup_contract(
+            artifact_contract
+        )
+
+
+def test_archive_readback_and_manifest_must_precede_custody_revalidation() -> None:
+    artifact_contract = _artifact_archival_projection_fixture()
+    order = artifact_contract["archive_contract"]["ordered_steps"]
+    order[4], order[6] = order[6], order[4]
+    with pytest.raises(
+        contract.ContractError,
+        match="receipt-derived immutable archive order/keep-set drift",
+    ):
+        contract._validate_artifact_archival_projection_cleanup_contract(
+            artifact_contract
+        )
+
+
+def test_archive_never_deletes_originals_as_part_of_copy_transaction() -> None:
+    artifact_contract = _artifact_archival_projection_fixture()
+    artifact_contract["archive_contract"]["destructive_retirement"][
+        "part_of_archive_transaction"
+    ] = True
+    with pytest.raises(
+        contract.ContractError,
+        match="archive manifest/readback/retirement contract drift",
+    ):
+        contract._validate_artifact_archival_projection_cleanup_contract(
+            artifact_contract
+        )
+
+
+def test_retired_r2_r4_attempts_cannot_remain_in_current_attention() -> None:
+    artifact_contract = _artifact_archival_projection_fixture()
+    artifact_contract["projection_cleanup_contract"][
+        "retired_generation_suffixes"
+    ].remove("r3")
+    with pytest.raises(
+        contract.ContractError,
+        match="authoritative failed-attempt projection cleanup drift",
+    ):
+        contract._validate_artifact_archival_projection_cleanup_contract(
+            artifact_contract
+        )
+
+
+def test_projection_cleanup_cannot_discard_historical_attempt_evidence() -> None:
+    artifact_contract = _artifact_archival_projection_fixture()
+    artifact_contract["projection_cleanup_contract"]["rules"].remove(
+        "RETAIN_R2_R3_R4_AS_TERMINAL_HISTORICAL_EVIDENCE"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="authoritative failed-attempt projection cleanup drift",
+    ):
+        contract._validate_artifact_archival_projection_cleanup_contract(
+            artifact_contract
+        )
+
+
 def _provider_policy_fixture() -> tuple[dict, dict]:
     root = Path(__file__).parent
     policy = contract._load_json(

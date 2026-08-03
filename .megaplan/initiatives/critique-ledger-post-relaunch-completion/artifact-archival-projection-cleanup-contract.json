@@ -1,0 +1,133 @@
+{
+  "schema": "arnold.cross_pipeline.receipt_aware_artifact_archival_projection_cleanup.v1",
+  "status": "NORMATIVE_DESIGN_TARGET_NOT_RUNTIME_PROOF",
+  "owner_milestone": "f1-owner-storage-recovery-hardening",
+  "scope": "ALL_CUSTODY_BOUND_PRODUCER_ARTIFACTS_AND_ATTEMPT_PROJECTIONS",
+  "difficulty": "5/5 VERY HARD",
+  "incident_fixture": {
+    "session": "critique-ledger-accountability-v3-r5-20260803",
+    "plan": "cl2-wbc-backed-ledger-20260803-1357",
+    "hazard": "BROAD_CRITIQUE_CHECK_GLOB_CAN_RELOCATE_RAW_SOURCES_NAMED_BY_ACTIVE_CUSTODY_RECEIPTS",
+    "receipt_versions": [
+      "critique_custody_v1.json",
+      "critique_custody_v2.json"
+    ],
+    "producer_patterns_are_discovery_only_not_mutation_authority": [
+      "critique_check_*_producer_vN.json",
+      "critique_check_*_raw_vN.txt"
+    ],
+    "code_evidence": [
+      "arnold_pipelines/megaplan/orchestration/critique_custody.py:write_critique_production_receipt",
+      "arnold_pipelines/megaplan/orchestration/critique_custody.py:_validate_production_receipt"
+    ]
+  },
+  "archive_contract": {
+    "authority": "ACTIVE_VALIDATED_CUSTODY_RECEIPTS_ONLY",
+    "immutable_keep_set": {
+      "derive_from": [
+        "validated_receipt_bytes",
+        "receipt.plan_artifact_and_plan_sha256",
+        "receipt.critique_artifact_and_critique_sha256",
+        "receipt.raw_sources_artifact_and_sha256"
+      ],
+      "freeze_before_preflight": true,
+      "glob_results_may_expand_keep_set": false,
+      "missing_ambiguous_or_mutating_source": "FAIL_CLOSED_NO_ARCHIVE_NO_DELETE"
+    },
+    "ordered_steps": [
+      "READ_AND_VALIDATE_ALL_ACTIVE_RECEIPTS",
+      "FREEZE_IMMUTABLE_EXACT_PATH_AND_SHA256_KEEP_SET",
+      "PREFLIGHT_EXACT_TARGETS_AND_DESTINATION",
+      "COPY_TO_NON_DESTRUCTIVE_CONTENT_ADDRESSED_ARCHIVE",
+      "READ_BACK_AND_VERIFY_EXACT_BYTES_AND_SHA256",
+      "WRITE_AND_FSYNC_APPEND_ONLY_ARCHIVE_MANIFEST",
+      "REVALIDATE_EVERY_ACTIVE_RECEIPT_AGAINST_ORIGINAL_OR_MANIFEST_BOUND_ARCHIVE_PATH",
+      "PUBLISH_ARCHIVE_SUCCESS_RECEIPT",
+      "SEPARATELY_AUTHORIZE_ANY_LATER_DESTRUCTIVE_RETIREMENT"
+    ],
+    "preflight": {
+      "exact_targets_only": true,
+      "reject_globs_wildcards_and_unexpanded_patterns": true,
+      "reject_symlink_path_escape_and_non_regular_files": true,
+      "reject_source_identity_change_between_read_and_copy": true,
+      "reject_destination_collision_unless_exact_same_bytes": true
+    },
+    "archive_manifest": {
+      "append_only": true,
+      "content_addressed": true,
+      "required_fields": [
+        "schema",
+        "operation_id",
+        "subject",
+        "receipt_path",
+        "receipt_sha256",
+        "source_path",
+        "source_sha256",
+        "source_size",
+        "archive_path",
+        "archive_sha256",
+        "archive_size",
+        "copied_at",
+        "verified_at"
+      ],
+      "exact_byte_hash_verification": "SHA256_AND_SIZE_SOURCE_EQUALS_ARCHIVE_READBACK"
+    },
+    "destructive_retirement": {
+      "part_of_archive_transaction": false,
+      "default": "RETAIN_ORIGINALS",
+      "requires_separate_current_owner_grant": true,
+      "requires_post_archive_custody_validation": true,
+      "ambiguous_response": "NO_DELETE"
+    },
+    "forbidden": [
+      "MV_OR_DELETE_BY_BROAD_CRITIQUE_CHECK_GLOB",
+      "MOVE_OR_DELETE_BEFORE_ARCHIVE_READBACK_VERIFICATION",
+      "DERIVE_KEEP_SET_FROM_DIRECTORY_LISTING_WITHOUT_RECEIPTS",
+      "REWRITE_RECEIPT_HASHES_TO_MATCH_MOVED_OR_MUTATED_BYTES",
+      "CLAIM_SUCCESS_WHILE_ANY_ACTIVE_V1_OR_V2_RECEIPT_IS_UNREADABLE"
+    ],
+    "postcondition": "EVERY_ACTIVE_V1_AND_V2_RECEIPT_VALIDATES_EXACT_BYTES_AT_ORIGINAL_OR_MANIFEST_BOUND_ARCHIVE_LOCATION"
+  },
+  "projection_cleanup_contract": {
+    "authority": "CANONICAL_LIFECYCLE_SUPERSESSION_AND_INCARNATION_RECORDS",
+    "active_generation": "critique-ledger-accountability-v3-r5-20260803",
+    "retired_generation_suffixes": [
+      "r2",
+      "r3",
+      "r4"
+    ],
+    "rules": [
+      "REBUILD_CURRENT_ATTENTION_FROM_AUTHORITATIVE_LIFECYCLE_AND_SUPERSESSION_RECORDS",
+      "SHOW_EXACTLY_ONE_ACTIVE_R5_SUBJECT_OR_TYPED_DEGRADED_AMBIGUITY",
+      "RETAIN_R2_R3_R4_AS_TERMINAL_HISTORICAL_EVIDENCE",
+      "EXCLUDE_RETIRED_GENERATIONS_FROM_CURRENT_ATTENTION",
+      "NEVER_DELETE_OR_REWRITE_RUN_RECEIPT_CUSTODY_OR_EVENT_HISTORY",
+      "ATOMICALLY_PUBLISH_CONTENT_ADDRESSED_PROJECTION_WITH_SOURCE_CURSOR"
+    ],
+    "restart_and_poll_semantics": {
+      "idempotent_rebuild": true,
+      "unchanged_poll_count": 200,
+      "duplicate_current_rows": 0,
+      "history_loss": 0,
+      "ambiguous_authority_result": "TYPED_DEGRADED_NO_GUESS_NO_MUTATION"
+    }
+  },
+  "required_negative_and_mutation_tests": [
+    "BROAD_CRITIQUE_CHECK_STAR_MOVE_CANNOT_ORPHAN_V1_RECEIPT",
+    "BROAD_CRITIQUE_CHECK_STAR_MOVE_CANNOT_ORPHAN_V2_RECEIPT",
+    "MISSING_OR_HASH_CHANGED_KEEP_SET_MEMBER_FAILS_BEFORE_ARCHIVE_MUTATION",
+    "LATE_WRITER_OR_SOURCE_CHANGE_FAILS_CLOSED_WITH_ORIGINALS_PRESERVED",
+    "ARCHIVE_READBACK_HASH_MISMATCH_NEVER_AUTHORIZES_RETIREMENT",
+    "MISSING_ARCHIVE_MANIFEST_ROW_MAKES_POST_ARCHIVE_CUSTODY_FAIL",
+    "R2_R3_R4_CANNOT_REENTER_CURRENT_ATTENTION_AFTER_RESTART_OR_200_POLLS",
+    "R2_R3_R4_HISTORY_REMAINS_QUERYABLE_AFTER_PROJECTION_CLEANUP",
+    "MULTIPLE_PLAUSIBLE_ACTIVE_GENERATIONS_RETURN_TYPED_DEGRADED_INSTEAD_OF_PICKING_LATEST",
+    "PROJECTION_CLEANUP_HAS_ZERO_REPAIR_RELAUNCH_DELETE_OR_NOTIFICATION_EFFECTS"
+  ],
+  "acceptance": {
+    "source_wheel_installed_cloud_parity": true,
+    "cross_pipeline_registry_closed": true,
+    "independent_review_required": true,
+    "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json"
+  }
+}

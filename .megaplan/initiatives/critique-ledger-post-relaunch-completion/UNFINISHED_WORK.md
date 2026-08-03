@@ -173,6 +173,28 @@ deferred obligations.
   Immediate branch: reducer/promotion regression work exists, pending accepted
   integration. F1 remainder: provider matrix, crash/late-writer isolation,
   installed parity and bounded artifact retention.
+- [ ] **VERY HARD — F1 receipt-aware artifact archival and cleanup.** Never
+  broad-glob, move or delete `critique_check_*` producer/raw artifacts: active
+  `critique_custody_v1.json` and `critique_custody_v2.json` receipts name and
+  hash those exact bytes. Derive and freeze an immutable exact-path/SHA-256
+  keep-set only from validated active receipts; preflight every source and
+  destination; copy into a content-addressed non-destructive
+  archive; read back exact bytes; fsync an append-only archive manifest; then
+  revalidate every active receipt against its original or manifest-bound
+  archive path. Originals remain by default. Any later deletion is a separate
+  owner-authorized transaction and ambiguity means no delete. Negative and
+  mutation tests must prove a broad `critique_check_*` cleanup cannot orphan
+  either receipt version, including late writers, path escape, collisions,
+  missing manifest rows and hash changes. Contract:
+  `artifact-archival-projection-cleanup-contract.json`.
+- [ ] **F1 authoritative failed-attempt projection cleanup.** Rebuild current
+  attention only from canonical lifecycle, supersession and incarnation
+  records. Exact r5 may be the one current subject; retired r2-r4 attempts stay
+  queryable as immutable terminal history but never appear beside r5 as
+  current attention. Missing or conflicting authority returns typed degraded
+  ambiguity rather than choosing “latest.” Prove idempotence across restart and
+  200 unchanged polls, zero duplicate-current rows, zero history loss, and zero
+  repair/relaunch/delete/notification effects.
 - [ ] **F1 — canonical observe-only full report and durable publication.** One
   read-only command must join plan/chain state, incarnation, live worker,
   repair request/decision/attempt, claim owner, goal, managed manifest and

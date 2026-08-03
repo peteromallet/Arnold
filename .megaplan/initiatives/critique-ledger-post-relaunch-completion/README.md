@@ -86,6 +86,16 @@ supported stale-claim/goal settlement, phase-bound repair authority,
 current-error signature discipline, per-check reconstruction, canonical
 observe-only full report and durable version-keyed status publication.
 
+F1 also owns a receipt-aware archival boundary and authoritative failed-attempt
+projection cleanup. Active critique custody receipts—not broad
+`critique_check_*` directory matches—define the immutable bytes that must stay
+readable. Archival copies and verifies those bytes under an append-only
+manifest before any separately authorized retirement. The current-attention
+view is rebuilt from canonical lifecycle/supersession/incarnation records: r2,
+r3 and r4 remain historical evidence, while exact r5 is the sole current
+subject or the view reports typed ambiguity. See
+[`artifact-archival-projection-cleanup-contract.json`](artifact-archival-projection-cleanup-contract.json).
+
 Today's relaunch also proved a separate cross-pipeline launch invariant was
 missing: declared profile/vendor intent, fully resolved phase routing, uploaded
 bytes and the process that actually ran were not one sealed object. The new
