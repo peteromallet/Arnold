@@ -122,10 +122,20 @@ def validated_deterministic_phase_repair(
             "missing_phase_repair_commit",
             "deterministic phase recovery requires --repair-commit with the validated target HEAD",
         )
+    repair_scope = "target_workspace"
+    repair_root = project_dir
+    if failure_kind == "provider_contract_failure":
+        # Provider response compilation is engine-owned.  Binding this repair
+        # to the target product HEAD would create a receipt for the wrong code
+        # surface (and made an engine-only deployment impossible to attest).
+        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
+        repair_scope = "engine_runtime"
+        repair_root = megaplan_engine_root()
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=project_dir,
+            cwd=repair_root,
             capture_output=True,
             text=True,
             timeout=10,
@@ -134,28 +144,35 @@ def validated_deterministic_phase_repair(
     except (OSError, subprocess.TimeoutExpired) as error:
         raise CliError(
             "phase_repair_head_unavailable",
-            "deterministic phase recovery could not verify the target workspace HEAD",
-            extra={"project_dir": str(project_dir), "error": str(error)},
+            "deterministic phase recovery could not verify the repaired source HEAD",
+            extra={"repair_root": str(repair_root), "error": str(error)},
         ) from error
     current_head = result.stdout.strip().lower() if result.returncode == 0 else ""
     if current_head != commit:
         raise CliError(
             "phase_repair_commit_mismatch",
-            "deterministic phase recovery repair commit does not match the target workspace HEAD",
+            "deterministic phase recovery repair commit does not match the repaired source HEAD",
             extra={
-                "project_dir": str(project_dir),
+                "repair_root": str(repair_root),
+                "repair_scope": repair_scope,
                 "repair_commit": commit,
-                "workspace_head": current_head,
+                "current_head": current_head,
             },
         )
-    return {
+    evidence = {
         "failure_kind": failure_kind,
         "phase": cursor_phase,
         "repair_commit": commit,
-        "workspace_head": current_head,
         "failure_fingerprint": current_fingerprint,
-        "authority": "explicit_repair_commit_bound_to_target_head",
+        "repair_scope": repair_scope,
+        "repair_root": str(repair_root),
+        "authority": f"explicit_repair_commit_bound_to_{repair_scope}",
     }
+    if repair_scope == "engine_runtime":
+        evidence["engine_head"] = current_head
+    else:
+        evidence["workspace_head"] = current_head
+    return evidence
 
 
 @dataclass(frozen=True)

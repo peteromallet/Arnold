@@ -4851,6 +4851,65 @@ def _codex_response_schema_args(transport_schema_file: Path | None) -> list[str]
     return ["--output-schema", str(transport_schema_file), "-"]
 
 
+def _is_codex_provider_schema_rejection(raw: str) -> bool:
+    """Recognize a backend rejection of the submitted response schema."""
+
+    lowered = raw.lower()
+    return bool(
+        "invalid_json_schema" in lowered
+        or (
+            ("output schema" in lowered or "response_format" in lowered)
+            and (
+                "invalid schema" in lowered
+                or "http 400" in lowered
+                or "invalid_request_error" in lowered
+            )
+        )
+    )
+
+
+def _codex_provider_contract_error(
+    contract: CompiledResponseContract,
+    raw: str,
+) -> CliError:
+    """Return the typed, stable failure for a rejected compiled schema."""
+
+    attestation = contract.attestation
+    material = {
+        "compiler_version": attestation.compiler_version,
+        "provider": attestation.provider,
+        "model": attestation.model,
+        "phase": attestation.phase,
+        "canonical_schema_hash": attestation.canonical_schema_hash,
+        "transport_schema_hash": attestation.transport_schema_hash,
+        "failure_class": "provider_schema_rejected",
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    message = (
+        "Codex rejected the compiled response schema before model execution; "
+        "an identical request is non-retryable"
+    )
+    return CliError(
+        "provider_contract",
+        message,
+        extra={
+            "raw_output": raw,
+            "_external_error": {
+                "provider": "codex",
+                "error_kind": "provider_contract",
+                "message": message,
+                "error_layer": "schema_error",
+                "deterministic": True,
+                "nonretryable": True,
+                "failure_fingerprint": fingerprint,
+            },
+            "response_enforcement_attestation": attestation.to_json(),
+        },
+    )
+
+
 def _run_codex_step_uncapped(
     step: str,
     state: PlanState,
@@ -4969,9 +5028,16 @@ def _run_codex_step_uncapped(
     )
     persisted_schema = read_json(schema_file)
     capture_schema = SCHEMAS.get(codex_schema_name, persisted_schema)
-    # The generic strict schema is the canonical prompt/transport candidate.
-    # Provider-specific compatibility is decided separately below.
-    schema = strict_schema(deepcopy(capture_schema))
+    # Preserve the consumer's semantic required/optional contract.  Gate is
+    # the one established exception: every gate reader already treats its
+    # OpenAI-strict projection as canonical (see model_seam audit handling).
+    # Provider compatibility must never be obtained by silently promoting
+    # optional fields before this compiler sees them.
+    schema = (
+        strict_schema(deepcopy(capture_schema))
+        if step == "gate"
+        else deepcopy(capture_schema)
+    )
     response_contract: CompiledResponseContract | None = None
     transport_schema_file: Path | None = None
     if not free_text:
@@ -5495,6 +5561,13 @@ def _run_codex_step_uncapped(
             model=model,
             read_only=read_only,
         )
+    if (
+        result.returncode != 0
+        and response_contract is not None
+        and response_contract.transport_schema is not None
+        and _is_codex_provider_schema_rejection(raw)
+    ):
+        raise _codex_provider_contract_error(response_contract, raw)
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         raise CliError(error_code, error_message, extra={"raw_output": raw})
@@ -5841,7 +5914,11 @@ def run_codex_prep_step(
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
     persisted_schema = read_json(schema_file)
     capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], persisted_schema)
-    schema = strict_schema(deepcopy(capture_schema))
+    schema = (
+        strict_schema(deepcopy(capture_schema))
+        if step == "gate"
+        else deepcopy(capture_schema)
+    )
     response_contract, transport_schema_file = _prepare_codex_response_contract(
         schema=schema,
         plan_dir=plan_dir,
@@ -5900,6 +5977,12 @@ def run_codex_prep_step(
         activity_callback=_activity_callback_for_state(state, plan_dir),
     )
     raw = result.stdout + result.stderr
+    if (
+        result.returncode != 0
+        and response_contract.transport_schema is not None
+        and _is_codex_provider_schema_rejection(raw)
+    ):
+        raise _codex_provider_contract_error(response_contract, raw)
     if result.returncode != 0 and (
         not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()
     ):

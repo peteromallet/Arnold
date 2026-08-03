@@ -1505,10 +1505,11 @@ def ensure_runtime_layout(root: Path) -> None:
     schemas_dir = megaplan_rt / "schemas"
     schemas_dir.mkdir(parents=True, exist_ok=True)
     for filename, schema in SCHEMAS.items():
-        # This directory is the provider-neutral semantic contract.  Provider
-        # dialect compilation belongs at dispatch time; writing an OpenAI-
-        # mutated schema here made every worker inherit transport-specific
-        # semantics and let unsupported dynamic maps reach Codex unchecked.
+        # This shared directory retains the legacy recursively-closed runtime
+        # schemas consumed by non-Codex workers.  Codex no longer treats these
+        # files as provider-ready: it compiles from the in-memory capture
+        # contract at dispatch time, so OpenAI-specific rewrites and dynamic
+        # map compatibility cannot leak through this shared materialization.
         atomic_write_json(schemas_dir / filename, strict_schema(schema))
 
 

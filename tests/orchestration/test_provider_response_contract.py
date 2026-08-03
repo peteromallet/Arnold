@@ -7,6 +7,7 @@ import pytest
 
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import capture_step_output
+from arnold.pipeline.model_seam import ModelStructuralAuditError
 from arnold_pipelines.megaplan.provider_response import (
     ProviderResponseContractError,
     ResponseEnforcement,
@@ -15,7 +16,11 @@ from arnold_pipelines.megaplan.provider_response import (
     schema_sha256,
 )
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
-from arnold_pipelines.megaplan.workers._impl import _codex_response_schema_args
+from arnold_pipelines.megaplan.workers._impl import (
+    _codex_provider_contract_error,
+    _codex_response_schema_args,
+    _is_codex_provider_schema_rejection,
+)
 
 
 @pytest.mark.parametrize(
@@ -79,6 +84,72 @@ def test_closed_schema_uses_provider_strict_and_output_schema_argument(tmp_path)
 
 def test_local_strict_command_omits_output_schema() -> None:
     assert _codex_response_schema_args(None) == ["-"]
+
+
+def test_optional_semantic_fields_are_not_promoted_for_provider_acceptance() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "required_value": {"type": "string"},
+            "optional_value": {"type": "string"},
+        },
+        "required": ["required_value"],
+        "additionalProperties": False,
+    }
+
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="semantic"
+    )
+
+    assert compiled.transport_schema is None
+    assert compiled.attestation.response_enforcement == "local_strict_json"
+    assert "optional_object_properties" in compiled.attestation.enforcement_reason
+    assert compiled.attestation.canonical_schema_hash == schema_sha256(schema)
+
+
+@pytest.mark.parametrize(
+    ("schema", "reason"),
+    [
+        ({"type": "string"}, "root_schema_must_be_object"),
+        (
+            {
+                "type": ["object", "null"],
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            "unsupported_type_union",
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"answers": {"type": "array"}},
+                "required": ["answers"],
+                "additionalProperties": False,
+            },
+            "array_without_item_schema",
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer", "answer"],
+                "additionalProperties": False,
+            },
+            "optional_object_properties",
+        ),
+    ],
+)
+def test_ambiguous_provider_dialect_contracts_fail_closed_to_local_validation(
+    schema, reason: str
+) -> None:
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="conservative"
+    )
+
+    assert compiled.transport_schema is None
+    assert compiled.attestation.response_enforcement == "local_strict_json"
+    assert reason in compiled.attestation.enforcement_reason
 
 
 def test_resume_transport_forces_local_strict_even_for_closed_schema() -> None:
@@ -227,3 +298,147 @@ def test_invalid_compiler_input_has_typed_stable_external_error() -> None:
         "nonretryable": True,
         "failure_fingerprint": second.value.failure_fingerprint,
     }
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        'prefix {"spec_updates": {}, "next_action": "continue", "reasoning": "ok"}',
+        '```json\n{"spec_updates": {}, "next_action": "continue", "reasoning": "ok"}\n```',
+    ],
+)
+def test_local_strict_capture_rejects_candidate_recovery(
+    tmp_path, rendered: str
+) -> None:
+    schema = strict_schema(deepcopy(SCHEMAS["loop_plan.json"]))
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="loop_plan"
+    )
+    output = tmp_path / "response.txt"
+    output.write_text(rendered, encoding="utf-8")
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "model": "gpt-5.6-sol",
+            "validation_step": "loop_plan",
+            "compatibility_validation_step": "loop_plan",
+            "schema": schema,
+            "capture_schema": SCHEMAS["loop_plan.json"],
+            "response_enforcement_attestation": compiled.attestation.to_json(),
+            "capture_recovery": {
+                "step": "loop_plan",
+                "plan_dir": str(tmp_path),
+                "output_path": str(output),
+                "prefer_output_file": True,
+            },
+        },
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        capture_step_output(invocation, rendered)
+
+
+@pytest.mark.parametrize(
+    "rendered, match",
+    [
+        (
+            '{"spec_updates":{"x":1,"x":2},"next_action":"continue","reasoning":"ok"}',
+            "duplicate JSON object key",
+        ),
+        (
+            '{"spec_updates":{"x":NaN},"next_action":"continue","reasoning":"ok"}',
+            "non-finite JSON number",
+        ),
+    ],
+)
+def test_local_strict_capture_rejects_ambiguous_json(
+    tmp_path, rendered: str, match: str
+) -> None:
+    schema = strict_schema(deepcopy(SCHEMAS["loop_plan.json"]))
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="loop_plan"
+    )
+    output = tmp_path / "response.txt"
+    output.write_text(rendered, encoding="utf-8")
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "validation_step": "loop_plan",
+            "compatibility_validation_step": "loop_plan",
+            "schema": schema,
+            "capture_schema": SCHEMAS["loop_plan.json"],
+            "response_enforcement_attestation": compiled.attestation.to_json(),
+            "capture_recovery": {
+                "step": "loop_plan",
+                "plan_dir": str(tmp_path),
+                "output_path": str(output),
+            },
+        },
+    )
+
+    with pytest.raises(ModelStructuralAuditError, match=match):
+        capture_step_output(invocation, rendered)
+
+
+def test_local_strict_capture_rejects_schema_attestation_substitution(tmp_path) -> None:
+    schema = strict_schema(deepcopy(SCHEMAS["loop_plan.json"]))
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="loop_plan"
+    )
+    attestation = compiled.attestation.to_json()
+    attestation["canonical_schema_hash"] = "0" * 64
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "validation_step": "loop_plan",
+            "compatibility_validation_step": "loop_plan",
+            "schema": schema,
+            "capture_schema": SCHEMAS["loop_plan.json"],
+            "response_enforcement_attestation": attestation,
+        },
+    )
+
+    with pytest.raises(ModelStructuralAuditError, match="does not bind"):
+        capture_step_output(
+            invocation,
+            '{"spec_updates":{},"next_action":"continue","reasoning":"ok"}',
+        )
+
+
+def test_unexpected_backend_schema_rejection_is_typed_and_stable() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    compiled = compile_response_contract(
+        schema, provider="codex", model="gpt-5.6-sol", phase="finalize"
+    )
+    raw_a = "HTTP 400 invalid_json_schema request_id=req-a"
+    raw_b = "HTTP 400 invalid_json_schema request_id=req-b"
+
+    assert _is_codex_provider_schema_rejection(raw_a)
+    first = _codex_provider_contract_error(compiled, raw_a)
+    second = _codex_provider_contract_error(compiled, raw_b)
+    first_external = first.extra["_external_error"]
+    second_external = second.extra["_external_error"]
+
+    assert first.code == "provider_contract"
+    assert first_external["error_kind"] == "provider_contract"
+    assert first_external["deterministic"] is True
+    assert first_external["nonretryable"] is True
+    assert (
+        first_external["failure_fingerprint"]
+        == second_external["failure_fingerprint"]
+    )
+
+
+def test_generic_http_400_is_not_forged_into_schema_rejection() -> None:
+    assert not _is_codex_provider_schema_rejection(
+        "HTTP 400 invalid_request_error: malformed command argument"
+    )
