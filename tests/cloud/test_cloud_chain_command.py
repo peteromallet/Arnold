@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import subprocess
 import tarfile
@@ -189,10 +190,19 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
         engine_dir="/workspace/arnold",
     )
 
-    assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
-    assert 'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
+    pin_at = command.index(
+        'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"'
+    )
+    hot_env_at = command.index(
+        "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;"
+    )
+    assert pin_at < hot_env_at
+    assert 'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
-    assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
+    assert (
+        'cd /workspace/project && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'PYTHONPATH="$ENGINE_DIR"' in command
+    )
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 
@@ -276,6 +286,7 @@ def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
     assert '[ -e "$SRC/.git" ]' in command
     assert '[ -d "$SRC/.git" ]' not in command
     assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"' in command
 
 
 def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() -> None:
@@ -300,6 +311,168 @@ def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() ->
     assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' in command
     assert "runtime_provenance --expected-root" in command
     assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"' in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"' in command
+
+
+def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
+    shim = tmp_path / "bin" / "python"
+    shim.parent.mkdir(parents=True)
+    shim.write_text(
+        "#!/bin/sh\n"
+        "printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$MEGAPLAN_RUNTIME_SRC\" "
+        "\"$MEGAPLAN_LAUNCH_RUNTIME_SRC\" \"$MEGAPLAN_LAUNCH_RUNTIME_REVISION\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "case \"$*\" in\n"
+        "  *arnold_pipelines.megaplan.cloud.runtime_provenance*) "
+        f"exit {provenance_exit} ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return shim
+
+
+def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    accepted = tmp_path / "accepted-runtime"
+    stale = tmp_path / "stale-runtime"
+    accepted.mkdir()
+    stale.mkdir()
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text(
+        "\n".join(
+            [
+                f"export MEGAPLAN_RUNTIME_SRC={stale}",
+                f"export MEGAPLAN_LAUNCH_RUNTIME_SRC={stale}",
+                "export MEGAPLAN_LAUNCH_RUNTIME_REVISION=stale-revision",
+                f"PINNED_LAUNCH_RUNTIME_SRC={stale}",
+                "PINNED_LAUNCH_RUNTIME_REVISION=stale-revision",
+                f"export PYTHONPATH={stale}",
+                f"export PYTHONHOME={stale}",
+                "export HOT_ENV_SOURCED=1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+    revision = "a" * 40
+    command = cloud_cli._chain_start_command(
+        str(tmp_path / "chain.yaml"),
+        project_dir=str(tmp_path),
+        engine_dir="/fallback/runtime",
+        log_relative="chain.log",
+        require_pinned_runtime_binding=True,
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "MEGAPLAN_LAUNCH_RUNTIME_SRC": str(accepted),
+            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": revision,
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    assert len(observations) == 2
+    for observation in observations:
+        (
+            pythonpath,
+            runtime_src,
+            launch_src,
+            launch_revision,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 6)
+        assert pythonpath == str(accepted)
+        assert runtime_src == str(accepted)
+        assert launch_src == str(accepted)
+        assert launch_revision == revision
+        assert hot_env_sourced == "unset"
+        assert pythonhome == "unset"
+    assert "runtime_provenance" in observations[0]
+    assert f"--expected-revision {revision}" in observations[0]
+    assert "chain start" in observations[1]
+
+
+def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text("export MEGAPLAN_RUNTIME_SRC=/stale/runtime\n", encoding="utf-8")
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path, provenance_exit=2)
+    capture = tmp_path / "capture.txt"
+    accepted = tmp_path / "accepted-runtime"
+    accepted.mkdir()
+    command = cloud_cli._chain_start_command(
+        str(tmp_path / "chain.yaml"),
+        project_dir=str(tmp_path),
+        engine_dir="/fallback/runtime",
+        log_relative="chain.log",
+        require_pinned_runtime_binding=True,
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "MEGAPLAN_LAUNCH_RUNTIME_SRC": str(accepted),
+            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": "a" * 40,
+        },
+    )
+
+    assert result.returncode == 24
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    assert len(observations) == 1
+    assert "runtime_provenance" in observations[0]
+    assert "chain start" not in observations[0]
+    assert "isolated_chain_runtime_binding_drift" in (
+        tmp_path / "chain.log"
+    ).read_text(encoding="utf-8")
+
+
+def test_isolated_chain_spec_enables_post_hot_env_runtime_gate() -> None:
+    spec = replace(
+        _cloud_spec(),
+        isolated_chain_runner=True,
+        isolated_chain_runner_image_id="sha256:" + "a" * 64,
+    )
+
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        spec=spec,
+        refresh_editable_install=False,
+    )
+
+    assert "isolated_chain_runtime_binding_drift" in command
+    assert "--expected-root" in command
+    assert "--expected-revision" in command
+    assert ". /workspace/.cloud-hot-env" not in command
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
