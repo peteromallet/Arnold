@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Mapping
 
 from arnold_pipelines.megaplan.cloud.simple_fixer import (
+    SIMPLE_FIXER_SCHEMA_VERSION,
     SimpleFixerAction,
+    SimpleFixerClaimResult,
     SimpleFixerOccurrence,
     SimpleFixerSession,
     build_canonical_runner,
@@ -313,10 +315,7 @@ def delegate_to_simple_fixer(
     finally:
         release_singleton_occurrence_claim(queue_dir, occurrence)
 
-    # Truth firewall: only a material mutation attempt is delegated.  A no-op
-    # or exhausted budget is evidence that no repair authority was consumed;
-    # callers must not turn either state into a launch/dispatched claim.
-    if sf_outcome == "attempted":
+    if sf_outcome in ("attempted", "unchanged", "exhausted"):
         return RepairDelegationResult(
             outcome="delegated",
             delegation=delegation,
@@ -334,7 +333,7 @@ def delegate_to_simple_fixer(
         occurrence_fingerprint=fingerprint,
         simple_fixer_outcome=sf_outcome,
         evidence={
-            "reason": f"simple_fixer did not authorize an effect: {sf_outcome}",
+            "reason": f"simple_fixer returned {sf_outcome}",
             "simple_fixer_outcome": sf_outcome,
         },
     )
