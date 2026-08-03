@@ -9,9 +9,11 @@ import json
 import os
 import runpy
 import shlex
+import socket
 import stat
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,9 +49,11 @@ from arnold_pipelines.megaplan.workers._impl import (
     _codex_step_cost,
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
+    _reclaim_zero_recovery_tree,
     run_command,
     _zero_recovery_global_scratch_observation,
     _zero_recovery_plan_snapshot,
+    _zero_recovery_runtime_usage,
     _zero_recovery_source_identity,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -2024,6 +2028,47 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     )
     assert '".megaplan/worker_tmp"' in source
     assert "any surviving" in source
+
+
+def test_zero_recovery_runtime_accounts_for_and_seals_inert_unix_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ownership: list[tuple[Path, int, int, bool]] = []
+    monkeypatch.setattr(
+        os,
+        "chown",
+        lambda path, uid, gid, *, follow_symlinks: ownership.append(
+            (Path(path), uid, gid, follow_symlinks)
+        ),
+    )
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="zr-") as temporary:
+        runtime = Path(temporary) / "runtime"
+        runtime.mkdir()
+        ipc = runtime / "ipc.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            listener.bind(str(ipc))
+        finally:
+            listener.close()
+
+        assert _zero_recovery_runtime_usage(runtime) == (1, 0)
+        _reclaim_zero_recovery_tree(runtime)
+        socket_stat = os.lstat(ipc)
+        assert stat.S_ISSOCK(socket_stat.st_mode)
+        assert stat.S_IMODE(socket_stat.st_mode) == 0o600
+        assert (ipc, 0, 0, False) in ownership
+
+
+def test_zero_recovery_runtime_still_rejects_symlink(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "target").write_text("trusted", encoding="utf-8")
+    (runtime / "alias").symlink_to("target")
+
+    with pytest.raises(CliError, match="forbidden or linked object"):
+        _zero_recovery_runtime_usage(runtime)
+    with pytest.raises(CliError, match="forbidden filesystem object"):
+        _reclaim_zero_recovery_tree(runtime)
 
 
 def test_streaming_run_command_reuses_and_removes_its_single_stdin_file(

@@ -358,11 +358,14 @@ def _prepare_zero_recovery_model_runtime(
 def _reclaim_zero_recovery_tree(path: Path) -> None:
     current = os.lstat(path)
     if stat.S_ISLNK(current.st_mode) or (
-        not stat.S_ISDIR(current.st_mode) and not stat.S_ISREG(current.st_mode)
+        not stat.S_ISDIR(current.st_mode)
+        and not stat.S_ISREG(current.st_mode)
+        and not stat.S_ISSOCK(current.st_mode)
     ):
         raise CliError(
             "zero_recovery_privilege_boundary_invalid",
-            f"model runtime contains a forbidden filesystem object: {path}",
+            "model runtime contains a forbidden filesystem object: "
+            f"{path} mode={stat.S_IFMT(current.st_mode):#o}",
         )
     if stat.S_ISREG(current.st_mode) and current.st_nlink != 1:
         raise CliError(
@@ -394,10 +397,20 @@ def _zero_recovery_runtime_usage(path: Path) -> tuple[int, int]:
             for child in children:
                 visit(child)
             return
+        if stat.S_ISSOCK(item_stat.st_mode):
+            # Codex creates an AF_UNIX IPC endpoint under its isolated
+            # CODEX_HOME.  Once every finite-model UID process is dead, the
+            # filesystem socket has no listener and is an inert, bounded
+            # runtime object.  Count it without opening or following it; the
+            # subsequent reclaim seals its ownership and mode.
+            files += 1
+            return
         if not stat.S_ISREG(item_stat.st_mode) or item_stat.st_nlink != 1:
             raise CliError(
                 "zero_recovery_privilege_boundary_invalid",
-                "finite-model runtime contains a special or linked object",
+                "finite-model runtime contains a forbidden or linked object: "
+                f"{candidate} mode={stat.S_IFMT(item_stat.st_mode):#o} "
+                f"nlink={item_stat.st_nlink}",
             )
         files += 1
         total_bytes += item_stat.st_size
