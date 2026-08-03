@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
+
+import pytest
 
 from arnold_pipelines.megaplan.control_interface import (
     DECLARED_OVERRIDE_POLICY_TARGETS,
     apply_transition,
 )
+from arnold_pipelines.megaplan.handlers import override as override_handler
+from arnold_pipelines.megaplan.handlers.override import handle_override
 from arnold_pipelines.megaplan.planning.control_binding import (
     planning_control_binding,
     planning_run_state_view,
@@ -324,6 +329,61 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
     assert stale.artifacts["conflict"]["key"] == "config"
     assert chain_path.read_bytes() == chain_before
     assert phase_wbc_path.read_bytes() == phase_wbc_before
+
+
+def test_default_cli_same_profile_refresh_always_uses_cas_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "name": "demo",
+        "current_state": "gated",
+        "iteration": 2,
+        "config": {
+            "project_dir": str(tmp_path),
+            "profile": "partnered-5-glm",
+            "depth": "high",
+            "phase_model": [
+                "finalize=codex:gpt-5.6-sol:high",
+                "execute=hermes:zhipu:glm-5.2",
+            ],
+            "tier_models": {
+                "execute": {
+                    str(tier): "hermes:deepseek:deepseek-v4-pro"
+                    for tier in range(1, 11)
+                }
+            },
+        },
+        "history": [],
+        "meta": {"overrides": []},
+        "_state_meta": {"versions": {"config": 0, "meta": 0}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.delenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", raising=False)
+    monkeypatch.setattr(override_handler, "preflight_phase", lambda **_kwargs: None)
+
+    response = handle_override(
+        tmp_path,
+        argparse.Namespace(
+            plan="demo",
+            override_action="set-profile",
+            profile="partnered-5-glm",
+            reason="refresh persisted GLM-only Execute routing",
+        ),
+    )
+
+    receipt = response["profile_refresh_receipt"]
+    assert receipt["same_profile_refresh"] is True
+    assert receipt["from_routing_sha256"] != receipt["to_routing_sha256"]
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert all(
+        "glm" in json.dumps(spec).lower()
+        and "deepseek" not in json.dumps(spec).lower()
+        and "codex" not in json.dumps(spec).lower()
+        for spec in persisted["config"]["tier_models"]["execute"].values()
+    )
 
 
 def test_set_model_replaces_encoded_chain_with_scalar_spec() -> None:
