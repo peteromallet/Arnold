@@ -40,6 +40,14 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     discord_parser = sub.add_parser("discord", parents=[shared], help="Start the resident Discord service")
     discord_parser.add_argument("--dry-run", action="store_true", help="Validate configuration without connecting to Discord")
     discord_parser.add_argument(
+        "--listener-only",
+        action="store_true",
+        help=(
+            "Serve inbound Discord interactions without startup reconciliation, "
+            "scheduled jobs, or background delivery sweeps"
+        ),
+    )
+    discord_parser.add_argument(
         "--profile",
         choices=["megaplan", "agentbox_operator"],
         help="Resident profile to run for Discord.",
@@ -265,7 +273,13 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
                 limit=args.limit,
             )
         if action == "discord":
-            return _resident_discord(root, store, config, dry_run=args.dry_run)
+            return _resident_discord(
+                root,
+                store,
+                config,
+                dry_run=args.dry_run,
+                listener_only=args.listener_only,
+            )
     finally:
         close = getattr(store, "close", None)
         if callable(close):
@@ -965,7 +979,14 @@ async def _resident_scheduler_once(store: Store, config: ResidentConfig, *, work
     }
 
 
-def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_run: bool) -> dict[str, Any]:
+def _resident_discord(
+    root: Path,
+    store: Store,
+    config: ResidentConfig,
+    *,
+    dry_run: bool,
+    listener_only: bool = False,
+) -> dict[str, Any]:
     token = discord_token_from_env(config.discord_bot_token_env)
     if dry_run:
         return {
@@ -973,6 +994,7 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
             "step": "resident",
             "action": "discord",
             "dry_run": True,
+            "listener_only": listener_only,
             "token_configured": bool(token),
             "profile": config.profile,
             "model_provider": config.model_provider,
@@ -1024,20 +1046,23 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
         runner=_resident_runner(config, root, store=store),
         outbound=outbound,
     )
-    scheduler = make_store_scheduler(
-        store=store,
-        config=config,
-        cloud_backend=CloudCliBackend(),
-        outbound=outbound,
-        confirmation_manager=confirmation_manager,
-        runtime=runtime,
-        worker_id="resident-discord-scheduler",
-    )
+    scheduler = None
+    if not listener_only:
+        scheduler = make_store_scheduler(
+            store=store,
+            config=config,
+            cloud_backend=CloudCliBackend(),
+            outbound=outbound,
+            confirmation_manager=confirmation_manager,
+            runtime=runtime,
+            worker_id="resident-discord-scheduler",
+        )
     service = ResidentDiscordService(
         runtime=runtime,
         token=token,
         scheduler=scheduler,
         scheduler_interval_s=config.scheduler_poll_interval_s,
+        listener_only=listener_only,
     )
     service.run()
     return {"success": True, "step": "resident", "action": "discord", "stopped": True, "project_root": str(root)}
