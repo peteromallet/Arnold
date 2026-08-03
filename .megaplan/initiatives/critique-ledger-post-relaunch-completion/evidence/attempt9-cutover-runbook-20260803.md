@@ -181,6 +181,30 @@ From the attested new-candidate control environment, first call
 - resident container
   `a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`.
 
+Use the exact final source checkout as the local control plane and prove its
+import before either command:
+
+```bash
+CUTOVER_CONTROL_SRC=/absolute/path/to/exact-final-Arnold-checkout
+CUTOVER_CONTROL_PYTHON=python3
+CUTOVER_CLOUD_YAML=$CUTOVER_CONTROL_SRC/.megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml
+NEW_RUNTIME=/workspace/runtime-candidates/arnold-$NEW_COMMIT
+test "$(git -C "$CUTOVER_CONTROL_SRC" rev-parse HEAD)" = "$NEW_COMMIT"
+test -z "$(git -C "$CUTOVER_CONTROL_SRC" status --porcelain)"
+CUTOVER_CONTROL_SRC="$CUTOVER_CONTROL_SRC" PYTHONPATH="$CUTOVER_CONTROL_SRC" \
+  "$CUTOVER_CONTROL_PYTHON" -P -c \
+  'import os,pathlib,arnold_pipelines; assert pathlib.Path(arnold_pipelines.__file__).resolve().is_relative_to(pathlib.Path(os.environ["CUTOVER_CONTROL_SRC"]).resolve())'
+
+PYTHONPATH="$CUTOVER_CONTROL_SRC" "$CUTOVER_CONTROL_PYTHON" -P -m \
+  arnold_pipelines.megaplan cloud resident-down \
+  --cloud-yaml "$CUTOVER_CLOUD_YAML" \
+  --outage-epoch discord-enospc-20260803-r7 \
+  --expected-source-container-id 277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab \
+  --expected-source-image-id sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94 \
+  --expected-resident-image-id sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20 \
+  --expected-resident-container-id a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a
+```
+
 Then call `cloud resident-recover` under a fresh, never-reused outage epoch with
 the same source identities, the independently admitted compatible resident
 image, and exact new runtime path/commit/tree. Guard the interpreter as
@@ -190,14 +214,37 @@ Use
 `.megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml` for both
 commands. Never print or copy the resident secret environment.
 
+```bash
+test -n "$NEW_COMMIT"
+test -n "$NEW_TREE"
+test -n "$NEW_EPOCH"
+PYTHONPATH="$CUTOVER_CONTROL_SRC" "$CUTOVER_CONTROL_PYTHON" -P -m \
+  arnold_pipelines.megaplan cloud resident-recover \
+  --cloud-yaml "$CUTOVER_CLOUD_YAML" \
+  --outage-epoch "$NEW_EPOCH" \
+  --expected-source-container-id 277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab \
+  --expected-source-image-id sha256:de249469ec93ae57eec650b743a08e5a9790dd9612755f2118b6a3ac7149db94 \
+  --expected-resident-image-id sha256:78474208a513bfa03c51d6e04f3d31381ae07305b1c291db112098c05ba82c20 \
+  --expected-runtime-path "$NEW_RUNTIME" \
+  --expected-runtime-commit "$NEW_COMMIT" \
+  --expected-runtime-tree "$NEW_TREE" \
+  --expected-runtime-python-path /root/.pyenv/versions/3.11.11/bin/python3.11 \
+  --expected-runtime-python-sha256 2575448bc13e2a87f48b65eeaa6d72de75e250616340b377a8989a80317a0ec5 \
+  --health-timeout-seconds 45
+```
+
 Required postconditions are: top status `healthy`, reason `discord_ready`,
 `listener_only=true`, `resident_running=true`; singleton container name
 `megaplan-cloud-agent-resident-only`; restart policy `no`; start receipt bound
 to the exact candidate path/commit/tree/interpreter; custody runtime and seed
 mounted read-only; workspace mounted read-write; and logs after `started_at`
 contain the readiness line with `listener_only=True`. Run unchanged completion
-and subagent sweeps across a resident restart and require one provider attempt
-per durable effect identity.
+and subagent notification tests before deployment; do not synthesize an
+outbound event against the production Discord resident. Live validation is
+read-only: require the durable delivery-effect store to initialize, compare
+its rows and provider-attempt count across two ordinary unchanged resident
+polls, and require no duplicate attempt for any effect identity. Confirm
+`/whats-cooking` through the ordinary command only after readiness.
 
 If new health fails, call `resident-down` with the new epoch and exact new
 resident ID, then recover under another fresh rollback epoch using old runtime
