@@ -36,6 +36,16 @@ CALLER_KINDS = frozenset(
     }
 )
 
+ACCEPTANCE_GATE_SCHEMA = "arnold.megaplan.cloud.wrapper_acceptance_gate.v1"
+ACCEPTANCE_GATE_SCHEMA_VERSION = 1
+_ACCEPTANCE_GATE_REQUIRED_FIELDS = frozenset(
+    {"schema", "schema_version", "decision", "gate_open", "reason", "identity"}
+)
+_ACCEPTANCE_GATE_OPTIONAL_FIELDS = frozenset({"blocker_event"})
+_ACCEPTANCE_IDENTITY_FIELDS = frozenset(
+    {"spec_path", "workspace", "session", "plan_name"}
+)
+
 BLOCKER_KIND_BY_CALLER: dict[str, str] = {
     "chain_wrapper": "cloud_chain_wrapper_restart_acceptance_gate_closed",
     "repair_loop": "cloud_repair_loop_relaunch_acceptance_gate_closed",
@@ -43,6 +53,14 @@ BLOCKER_KIND_BY_CALLER: dict[str, str] = {
     "watchdog": "cloud_watchdog_dispatch_acceptance_gate_closed",
     "cloud_wrapper": "cloud_wrapper_acceptance_gate_closed",
 }
+
+
+class AcceptanceGateDecisionError(ValueError):
+    """A wrapper acceptance decision was not safe to consume."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
 
 
 def _load_spec(spec_path: Path) -> ChainSpec | None:
@@ -94,12 +112,184 @@ def _load_resolved_chain_state(state_path: Path) -> ChainState:
     return ChainState.from_dict(raw)
 
 
+def _resolved_path(path: Path) -> str:
+    """Resolve a path for identity comparison without requiring it to exist."""
+    try:
+        return str(path.expanduser().resolve(strict=False))
+    except OSError:
+        return str(path.expanduser())
+
+
+def _decision_identity(
+    spec: Path,
+    *,
+    workspace: Path | None,
+    state: ChainState | None = None,
+    expected_session: str | None = None,
+    expected_plan_name: str | None = None,
+) -> dict[str, Any]:
+    """Build the identity attached to every canonical gate decision."""
+    resolved_workspace = workspace or spec.parent
+    state_session = getattr(state, "chain_session", None) if state else None
+    state_plan = getattr(state, "current_plan_name", None) if state else None
+    session = expected_session or state_session or "chain"
+    plan_name = expected_plan_name if expected_plan_name is not None else state_plan
+    return {
+        "spec_path": _resolved_path(spec),
+        "workspace": _resolved_path(resolved_workspace),
+        "session": str(session),
+        "plan_name": str(plan_name) if plan_name is not None else None,
+    }
+
+
+def validate_wrapper_acceptance_decision(
+    value: str | bytes | dict[str, Any],
+    *,
+    spec_path: str,
+    workspace: str | None = None,
+    chain_state_path: str | None = None,
+    expected_session: str | None = None,
+    expected_plan_name: str | None = None,
+    require_open: bool = True,
+) -> dict[str, Any]:
+    """Validate one serialized canonical decision at a process boundary.
+
+    This is deliberately the only JSON decision parser used by production
+    launch wrappers.  A decision is consumable only when its schema, required
+    fields, open/closed vocabulary, and spec/workspace/session/plan identity
+    all match the intended launch.
+    """
+    if isinstance(value, (str, bytes)):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise AcceptanceGateDecisionError(
+                "acceptance_gate_malformed_json",
+                "acceptance helper returned malformed JSON; rerun the helper and inspect its stderr",
+            ) from exc
+    else:
+        decoded = value
+    if not isinstance(decoded, dict):
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_invalid",
+            "acceptance helper decision must be a JSON object",
+        )
+
+    unknown_fields = sorted(
+        set(decoded) - _ACCEPTANCE_GATE_REQUIRED_FIELDS - _ACCEPTANCE_GATE_OPTIONAL_FIELDS
+    )
+    if unknown_fields:
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_invalid",
+            f"acceptance helper decision has unknown field {unknown_fields[0]!r}",
+        )
+    missing_fields = sorted(_ACCEPTANCE_GATE_REQUIRED_FIELDS - set(decoded))
+    if missing_fields:
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_invalid",
+            f"acceptance helper decision is missing required field {missing_fields[0]!r}",
+        )
+    if decoded.get("schema") != ACCEPTANCE_GATE_SCHEMA:
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_unknown",
+            f"acceptance helper returned unknown schema {decoded.get('schema')!r}",
+        )
+    if decoded.get("schema_version") != ACCEPTANCE_GATE_SCHEMA_VERSION:
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_unknown",
+            f"acceptance helper returned unsupported schema version {decoded.get('schema_version')!r}",
+        )
+    decision = decoded.get("decision")
+    gate_open = decoded.get("gate_open")
+    if decision not in {"open", "closed"} or not isinstance(gate_open, bool):
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_invalid",
+            "acceptance helper decision must contain decision=open|closed and boolean gate_open",
+        )
+    if gate_open != (decision == "open"):
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_invalid",
+            "acceptance helper decision and gate_open disagree",
+        )
+    reason = decoded.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_schema_invalid",
+            "acceptance helper decision requires a non-empty actionable reason",
+        )
+
+    identity = decoded.get("identity")
+    if not isinstance(identity, dict):
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_identity_mismatch",
+            "acceptance helper decision requires an identity object",
+        )
+    if set(identity) != _ACCEPTANCE_IDENTITY_FIELDS:
+        missing_identity = sorted(_ACCEPTANCE_IDENTITY_FIELDS - set(identity))
+        if missing_identity:
+            detail = f"missing identity field {missing_identity[0]!r}"
+        else:
+            detail = f"unknown identity field {sorted(set(identity) - _ACCEPTANCE_IDENTITY_FIELDS)[0]!r}"
+        raise AcceptanceGateDecisionError("acceptance_gate_identity_mismatch", detail)
+    for field_name in ("spec_path", "workspace", "session"):
+        if not isinstance(identity.get(field_name), str) or not identity[field_name].strip():
+            raise AcceptanceGateDecisionError(
+                "acceptance_gate_identity_mismatch",
+                f"identity.{field_name} must be a non-empty string",
+            )
+    if identity.get("plan_name") is not None and (
+        not isinstance(identity.get("plan_name"), str) or not identity["plan_name"].strip()
+    ):
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_identity_mismatch",
+            "identity.plan_name must be a non-empty string or null",
+        )
+
+    expected_spec = Path(spec_path)
+    expected_workspace = Path(workspace) if workspace else None
+    expected_state: ChainState | None = None
+    expected_state_path = _resolve_state_path(
+        expected_spec,
+        workspace=expected_workspace,
+        explicit_state_path=Path(chain_state_path) if chain_state_path else None,
+    )
+    if expected_state_path is not None:
+        try:
+            expected_state = _load_resolved_chain_state(expected_state_path)
+        except Exception:
+            # A closed decision may correctly describe an unreadable state;
+            # the helper's own identity remains the authoritative evidence.
+            expected_state = None
+    expected_identity = _decision_identity(
+        expected_spec,
+        workspace=expected_workspace,
+        state=expected_state,
+        expected_session=expected_session,
+        expected_plan_name=expected_plan_name,
+    )
+    for field_name, expected in expected_identity.items():
+        if identity.get(field_name) != expected:
+            raise AcceptanceGateDecisionError(
+                "acceptance_gate_identity_mismatch",
+                f"identity.{field_name} does not match the intended launch "
+                f"(expected {expected!r}, got {identity.get(field_name)!r})",
+            )
+    if require_open and not gate_open:
+        raise AcceptanceGateDecisionError(
+            "acceptance_gate_closed",
+            f"acceptance gate is explicitly closed: {reason.strip()}",
+        )
+    return decoded
+
+
 def check_wrapper_acceptance_gate(
     spec_path: str,
     *,
     workspace: str | None = None,
     chain_state_path: str | None = None,
     caller_kind: str = "cloud_wrapper",
+    expected_session: str | None = None,
+    expected_plan_name: str | None = None,
 ) -> dict[str, Any]:
     """Check the acceptance gate before a cloud wrapper restarts / relaunches.
 
@@ -115,12 +305,16 @@ def check_wrapper_acceptance_gate(
     caller_kind:
         One of ``chain_wrapper``, ``repair_loop``, ``meta_repair``,
         ``watchdog``, or ``cloud_wrapper`` (generic fallback).
+    expected_session / expected_plan_name:
+        Optional launch identity supplied by the caller.  When omitted, the
+        canonical helper binds the decision to the persisted chain state (or
+        the initial ``chain`` session and no active plan).
 
     Returns
     -------
     dict
-        ``{"gate_open": true, "reason": "..."}`` when the wrapper may proceed,
-        or ``{"gate_open": false, "reason": "...", "blocker_event": {...}}``
+        A schema-versioned decision with ``decision`` and ``identity`` fields.
+        An explicit ``decision=open`` is required before a wrapper may proceed.
         when the gate is closed and the wrapper must NOT restart / relaunch.
     """
     spec = Path(spec_path)
@@ -139,6 +333,7 @@ def check_wrapper_acceptance_gate(
             "caller_kind": caller_kind,
         },
     )
+    gate_state: ChainState | None = None
 
     def _finish(
         gate_open: bool,
@@ -154,7 +349,20 @@ def check_wrapper_acceptance_gate(
                 **extra,
             },
         )
-        result: dict[str, Any] = {"gate_open": gate_open, "reason": reason}
+        result: dict[str, Any] = {
+            "schema": ACCEPTANCE_GATE_SCHEMA,
+            "schema_version": ACCEPTANCE_GATE_SCHEMA_VERSION,
+            "decision": "open" if gate_open else "closed",
+            "gate_open": gate_open,
+            "reason": reason,
+            "identity": _decision_identity(
+                spec,
+                workspace=ws,
+                state=gate_state,
+                expected_session=expected_session,
+                expected_plan_name=expected_plan_name,
+            ),
+        }
         result.update(extra)
         return result
 
@@ -163,9 +371,7 @@ def check_wrapper_acceptance_gate(
 
     spec_obj = _load_spec(spec)
     if spec_obj is None:
-        # If we can't read the spec, we can't determine whether successors
-        # require acceptance — err on the side of allowing the restart.
-        return _finish(True, f"spec unreadable: {spec_path}; gate open by default")
+        return _finish(False, f"spec unreadable: {spec_path}; acceptance gate closed")
 
     # ── resolve chain state ───────────────────────────────────────────
     state_path = _resolve_state_path(
@@ -200,6 +406,46 @@ def check_wrapper_acceptance_gate(
             False,
             "chain state unreadable; gate closed",
             blocker_event=blocker_event,
+        )
+
+    gate_state = state
+
+    identity = _decision_identity(
+        spec,
+        workspace=ws,
+        state=state,
+        expected_session=expected_session,
+        expected_plan_name=expected_plan_name,
+    )
+    identity_failures: list[str] = []
+    state_session = state.chain_session
+    if expected_session and state_session and expected_session != state_session:
+        identity_failures.append(
+            f"session mismatch: expected {expected_session!r}, state has {state_session!r}"
+        )
+    if expected_plan_name is not None and state.current_plan_name != expected_plan_name:
+        identity_failures.append(
+            f"plan mismatch: expected {expected_plan_name!r}, state has {state.current_plan_name!r}"
+        )
+    if state.resolved_workspace:
+        intended_workspace = _resolved_path(ws or spec.parent)
+        if _resolved_path(Path(state.resolved_workspace)) != intended_workspace:
+            identity_failures.append(
+                "workspace mismatch: persisted chain workspace does not match the intended launch"
+            )
+    if identity_failures:
+        return _finish(
+            False,
+            "acceptance gate identity mismatch; verify the intended spec, session, and plan before relaunch",
+            blocker_event={
+                "kind": BLOCKER_KIND_BY_CALLER.get(
+                    caller_kind, BLOCKER_KIND_BY_CALLER["cloud_wrapper"]
+                ),
+                "predicate_kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+                "evidence_kind": f"cloud_wrapper_{caller_kind}",
+                "summary": "acceptance gate identity mismatch",
+                "details": {"identity": identity, "failures": identity_failures},
+            },
         )
 
     # ── check mode ─────────────────────────────────────────────────────
@@ -307,13 +553,52 @@ def _main() -> None:
     except json.JSONDecodeError:
         print(json.dumps({"gate_open": False, "reason": "invalid JSON input"}))
         sys.exit(2)
+    if not isinstance(args, dict):
+        print(json.dumps({"gate_open": False, "reason": "input must be a JSON object"}))
+        sys.exit(2)
 
     result = check_wrapper_acceptance_gate(
         spec_path=args.get("spec_path", ""),
         workspace=args.get("workspace"),
         chain_state_path=args.get("chain_state_path"),
         caller_kind=args.get("caller_kind", "cloud_wrapper"),
+        expected_session=args.get("expected_session"),
+        expected_plan_name=args.get("expected_plan_name"),
     )
+    try:
+        validate_wrapper_acceptance_decision(
+            result,
+            spec_path=str(args.get("spec_path", "")),
+            workspace=args.get("workspace"),
+            chain_state_path=args.get("chain_state_path"),
+            expected_session=args.get("expected_session"),
+            expected_plan_name=args.get("expected_plan_name"),
+            require_open=False,
+        )
+    except AcceptanceGateDecisionError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema": ACCEPTANCE_GATE_SCHEMA,
+                    "schema_version": ACCEPTANCE_GATE_SCHEMA_VERSION,
+                    "decision": "closed",
+                    "gate_open": False,
+                    "reason": f"{exc.code}: {exc}",
+                    "identity": _decision_identity(
+                        Path(str(args.get("spec_path", ""))),
+                        workspace=(
+                            Path(args["workspace"])
+                            if isinstance(args.get("workspace"), str)
+                            else None
+                        ),
+                        expected_session=args.get("expected_session"),
+                        expected_plan_name=args.get("expected_plan_name"),
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        sys.exit(2)
     print(json.dumps(result, sort_keys=True))
     sys.exit(0 if result.get("gate_open") else 1)
 
