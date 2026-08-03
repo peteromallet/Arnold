@@ -80,6 +80,7 @@ def validated_summary(
         "image id": item.get("Image") == image_id,
         "network none": host.get("NetworkMode") == "none",
         "restart no": restart == {"Name": "no", "MaximumRetryCount": 0},
+        "init reaper": host.get("Init") is True,
         "cap drop": host.get("CapDrop") == ["ALL"],
         "cap add": _normalized_cap_add(host.get("CapAdd")) == EXPECTED_CAP_ADD,
         "no new privileges": host.get("SecurityOpt") == ["no-new-privileges:true"],
@@ -117,13 +118,14 @@ def validated_summary(
     if mount != expected_mount:
         raise ValueError("container runtime drift: sole rprivate workspace bind")
     summary: dict[str, Any] = {
-        "schema": "arnold.megaplan.zero_recovery_offline_smoke_runtime.v1",
+        "schema": "arnold.megaplan.zero_recovery_offline_smoke_runtime.v2",
         "validated": True,
         "container_id": container_id,
         "container_name": container_name,
         "image_id": image_id,
         "network_mode": "none",
         "restart_policy": "no",
+        "init": True,
         "cap_drop": ["ALL"],
         "cap_add": EXPECTED_CAP_ADD,
         "security_opt": ["no-new-privileges:true"],

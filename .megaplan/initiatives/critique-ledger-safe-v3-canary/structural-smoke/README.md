@@ -28,7 +28,7 @@ The harness:
 5. Requires a passing run receipt, exactly four terminal dispatch records labelled
    `codex_cli_turn_context`, four privilege receipts, no surviving UID 65532
    process, and exact host-inspected runtime confinement (no network, restart,
-   ports, volumes, or extra mounts; only the admitted rprivate bind and tmpfs;
+   ports, volumes, or extra mounts; an explicit init reaper; only the admitted rprivate bind and tmpfs;
    exact capabilities, NNP, IPC, PID and memory limits). It emits a typed attempt
    receipt binding both image IDs, the exact container and source identities,
    the normalized runtime summary, and the verifier result.

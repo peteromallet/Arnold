@@ -638,29 +638,76 @@ def _write_zero_recovery_privilege_receipt(
 
 
 def _quiesce_zero_recovery_model_uid() -> None:
-    killed = subprocess.run(
-        ["/usr/bin/pkill", "-KILL", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
-        env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
-    )
-    if killed.returncode not in {0, 1}:
-        raise CliError(
-            "zero_recovery_privilege_boundary_invalid",
-            "could not terminate finite-model UID processes",
+    process_env = {"PATH": "/usr/bin:/bin"}
+    deadline = time.monotonic() + 5.0
+    consecutive_empty = 0
+    last_processes: list[dict[str, str]] = []
+    # Real Codex may terminate a process tree in waves. Re-issue KILL while the
+    # container's init reaps exited descendants; a one-shot kill plus 200 ms
+    # can mistake a transient orphan/zombie for a live mutation-capable owner.
+    while True:
+        observed = subprocess.run(
+            [
+                "/usr/bin/ps", "--no-headers", "-o", "pid=,ppid=,stat=,lstart=",
+                "-u", str(_ZERO_RECOVERY_MODEL_UID),
+            ],
+            env=process_env, capture_output=True, check=False, text=True,
         )
-    remaining: subprocess.CompletedProcess[bytes] | None = None
-    for _attempt in range(20):
-        remaining = subprocess.run(
-            ["/usr/bin/pgrep", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
-            env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
-        )
-        if remaining.returncode == 1:
-            break
-        time.sleep(0.01)
-    if remaining is None or remaining.returncode != 1:
-        raise CliError(
-            "zero_recovery_privilege_boundary_invalid",
-            "finite-model UID retained a process after provider return",
-        )
+        if observed.returncode not in {0, 1}:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "could not observe finite-model UID process states",
+            )
+        last_processes = []
+        for line in (observed.stdout or "").splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) != 4 or not fields[0].isdigit() or not fields[1].isdigit():
+                raise CliError(
+                    "zero_recovery_privilege_boundary_invalid",
+                    "finite-model UID process census was malformed",
+                )
+            last_processes.append(
+                {
+                    "pid": fields[0],
+                    "ppid": fields[1],
+                    "stat": fields[2],
+                    "started": fields[3],
+                }
+            )
+        if not last_processes:
+            consecutive_empty += 1
+            if consecutive_empty == 2:
+                return
+        else:
+            consecutive_empty = 0
+            live_pids = [
+                item["pid"]
+                for item in last_processes
+                if not item["stat"].startswith("Z")
+            ]
+            if live_pids:
+                # Races with a process exiting are harmless: the following
+                # census, not kill(2)'s return code, is authoritative.
+                subprocess.run(
+                    ["/bin/kill", "-KILL", *live_pids],
+                    env=process_env, capture_output=True, check=False,
+                )
+        if time.monotonic() >= deadline:
+            kind = (
+                "unreaped zombies"
+                if last_processes
+                and all(item["stat"].startswith("Z") for item in last_processes)
+                else "surviving processes"
+            )
+            detail = ", ".join(
+                "pid={pid} ppid={ppid} stat={stat} started={started}".format(**item)
+                for item in last_processes[:8]
+            )
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"finite-model UID retained {kind} after bounded kill/reap: {detail}",
+            )
+        time.sleep(0.05)
 
 
 def _finish_zero_recovery_model_runtime(

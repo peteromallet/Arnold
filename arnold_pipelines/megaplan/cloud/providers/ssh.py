@@ -53,7 +53,7 @@ INSTALL_LINK = "Install: https://www.openssh.com/"
 
 _ZERO_RECOVERY_CANARY_RUNTIME_FORMAT = (
     "{{json .State}}\n{{json .Config.Env}}\n{{json .Config.Cmd}}\n"
-    "{{json .HostConfig.RestartPolicy}}\n{{json .Mounts}}\n"
+    "{{json .HostConfig.RestartPolicy}}\n{{json .HostConfig.Init}}\n{{json .Mounts}}\n"
     "{{json .HostConfig.CapDrop}}\n{{json .HostConfig.CapAdd}}\n"
     "{{json .HostConfig.SecurityOpt}}\n{{json .HostConfig.IpcMode}}\n"
     "{{json .HostConfig.Tmpfs}}\n{{json .HostConfig.PidsLimit}}\n"
@@ -792,7 +792,7 @@ class SshProvider(Provider):
         lines = (result.stdout or "").splitlines()
         try:
             (
-                state, env, cmd, restart, mounts, cap_drop, cap_add,
+                state, env, cmd, restart, init, mounts, cap_drop, cap_add,
                 security_opt, ipc_mode, tmpfs, pids_limit, memory_limit,
                 memory_swap, port_bindings,
             ) = [json.loads(line) for line in lines]
@@ -801,13 +801,14 @@ class SshProvider(Provider):
                 "zero_recovery_canary_unknown", "canary runtime evidence malformed"
             ) from exc
         if (
-            len(lines) != 14
+            len(lines) != 15
             or not isinstance(state, dict)
             or state.get("Running") is not expected_running
             or not isinstance(env, list)
             or "MEGAPLAN_ZERO_RECOVERY_CANARY=1" not in env
             or cmd != ["/usr/local/bin/entrypoint.sh"]
             or restart != {"Name": "no", "MaximumRetryCount": 0}
+            or init is not True
             or not isinstance(mounts, list)
             or any(not isinstance(item, dict) for item in mounts)
             or len([item for item in mounts if item.get("Type") == "bind"]) != 1
@@ -872,6 +873,7 @@ class SshProvider(Provider):
             "env": env,
             "cmd": cmd,
             "restart_policy": restart,
+            "init": True,
             "workspace_bind": {
                 "type": "bind",
                 "source": bind_mount["Source"],
@@ -1645,6 +1647,7 @@ class SshProvider(Provider):
                     "--restart no"
                     if self._spec.zero_recovery_canary
                     else "--restart unless-stopped",
+                    *(["--init"] if self._spec.zero_recovery_canary else []),
                     *(
                         ["-e MEGAPLAN_ZERO_RECOVERY_CANARY=1"]
                         if self._spec.zero_recovery_canary

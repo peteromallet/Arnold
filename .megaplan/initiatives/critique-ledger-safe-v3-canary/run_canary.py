@@ -29,6 +29,34 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def trusted_phase_failure_artifact(plan_dir: Path, phase: str) -> str:
+    """Bind the primary child failure artifact without copying its contents."""
+    candidates = sorted(plan_dir.glob(f"{phase}_v*_raw.txt"))
+    if len(candidates) != 1:
+        return "unavailable"
+    path = candidates[0]
+    observed = os.lstat(path)
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or observed.st_nlink != 1
+        or observed.st_uid != os.geteuid()
+        or observed.st_mode & 0o022
+        or observed.st_size > 1_048_576
+    ):
+        return "untrusted"
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino):
+            return "raced"
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+    finally:
+        os.close(fd)
+    return f"{path.name}:sha256={digest.hexdigest()}"
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -423,20 +451,42 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         integrity_after: dict[str, Any] | None = None
         phase_stdout = ""
         phase_stderr = ""
+        phase_execution_error: BaseException | None = None
+        completed: subprocess.CompletedProcess[str] | None = None
         try:
             try:
-                completed = subprocess.run(
-                    argv, cwd=root, env=child_env, text=True, capture_output=True,
-                    check=False, timeout=3600,
-                )
+                try:
+                    completed = subprocess.run(
+                        argv, cwd=root, env=child_env, text=True, capture_output=True,
+                        check=False, timeout=3600,
+                    )
+                except BaseException as exc:
+                    phase_execution_error = exc
+                    raise
                 phase_stdout = completed.stdout or ""
                 phase_stderr = completed.stderr or ""
             finally:
                 # This executes on success, nonzero exit, timeout, and signal.
                 # Do not parse child output before checkout identity and the
                 # complete runtime delta have been re-established.
-                integrity_after = direct_integrity(f"post:{phase}")
-                integrity_checkpoints.append(integrity_after)
+                try:
+                    integrity_after = direct_integrity(f"post:{phase}")
+                    integrity_checkpoints.append(integrity_after)
+                except BaseException as integrity_exc:
+                    if phase_execution_error is not None:
+                        primary = type(phase_execution_error).__name__
+                    elif completed is not None and completed.returncode != 0:
+                        primary = (
+                            f"child_nonzero:{completed.returncode};"
+                            "primary_artifact="
+                            f"{trusted_phase_failure_artifact(plan_dir, phase)}"
+                        )
+                    else:
+                        raise
+                    raise RuntimeError(
+                        f"{primary};secondary_integrity="
+                        f"{type(integrity_exc).__name__}:{integrity_exc}"
+                    ) from integrity_exc
             returncode = completed.returncode
             if completed.returncode != 0:
                 raise RuntimeError(f"nonzero_returncode:{returncode}")

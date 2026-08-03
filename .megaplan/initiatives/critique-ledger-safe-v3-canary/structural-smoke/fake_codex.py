@@ -10,6 +10,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -156,6 +157,17 @@ function payload(schemaName) {
   throw new Error(`unsupported structural-smoke schema: ${schemaName}`);
 }
 
+function shouldLeaveReapingProbe() {
+  try {
+    const auth = JSON.parse(
+      fs.readFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "utf8"),
+    );
+    return auth.auth_mode === "offline_structural_smoke";
+  } catch (_error) {
+    return false;
+  }
+}
+
 function main() {
   const output = argumentValue("-o");
   const schema = argumentValue("--output-schema");
@@ -166,6 +178,16 @@ function main() {
     .update(`${phase}-offline-smoke`)
     .digest("hex")
     .slice(0, 32);
+  // Deliberately leave one finite-model child behind. The production boundary
+  // must kill it and Docker's admitted init process must reap it before seal.
+  if (shouldLeaveReapingProbe()) {
+    const orphan = childProcess.spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {detached: true, stdio: "ignore"},
+    );
+    orphan.unref();
+  }
   fs.writeFileSync(output, JSON.stringify(payload(schemaName)), "utf8");
   const rolloutDir = path.join(
     process.env.CODEX_HOME,
