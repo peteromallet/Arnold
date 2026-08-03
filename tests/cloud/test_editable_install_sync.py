@@ -95,6 +95,11 @@ def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
     assert "arnold_pipelines.megaplan.cloud.runtime_provenance" in command
     assert '--expected-root "$MEGAPLAN_RUNTIME_SRC"' in command
     assert '--expected-revision "$RUNTIME_REVISION"' in command
+    assert (
+        'env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC"'
+        in command
+    )
+    assert 'PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}"' not in command
 
 
 def test_dirty_source_runtime_mirror_executes_configured_upstream_ref(
@@ -165,6 +170,45 @@ def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
     assert 'git -C "$SRC" clean -fd' in command
 
 
+def test_cloud_refresh_missing_source_cannot_reuse_inherited_runtime_pin(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-runtime"
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="main", repo="", src_path=str(missing)),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    command = _megaplan_refresh_command(spec)
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "MEGAPLAN_RUNTIME_SRC": "/stale/runtime",
+            "MEGAPLAN_LAUNCH_RUNTIME_SRC": "/stale/runtime",
+            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": "a" * 40,
+            "RUNTIME_REVISION": "a" * 40,
+        },
+    )
+
+    assert result.returncode == 21
+    assert f"source clone missing at {missing}" in result.stdout
+    assert "[megaplan-refresh] done" not in result.stdout
+    assert (
+        "unset MEGAPLAN_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_SRC "
+        "MEGAPLAN_LAUNCH_RUNTIME_REVISION RUNTIME_REVISION" in command
+    )
+
+
 def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
     command = _refresh_then_chain_start_command(
         "/workspace/project/.megaplan/initiatives/example/chain.yaml",
@@ -175,8 +219,11 @@ def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
     assert "} >> .megaplan/cloud-chain.log 2>&1 && " in command
     assert "} >> .megaplan/cloud-chain.log 2>&1 || true" not in command
     assert 'RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine' in command
-    assert 'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
-    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
+    assert 'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"' in command
+    assert 'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
+    assert 'PYTHONPATH="$ENGINE_DIR"' in command
+    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' not in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"' in command
 
 
 def test_cloud_chain_start_can_force_clean_editable_refresh() -> None:

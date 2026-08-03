@@ -3550,6 +3550,7 @@ def _chain_start_command(
     repair_session: str | None = None,
     repair_run_kind: str = "chain",
     repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
+    require_pinned_runtime_binding: bool = False,
 ) -> str:
     """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
 
@@ -3569,10 +3570,24 @@ def _chain_start_command(
         if project_dir
         else shlex.quote(log_relative)
     )
+    # The editable refresh runs immediately before this command and exports a
+    # private launch pin.  Capture it as readonly *before* an ordinary launch
+    # loads the mutable box-wide hot env: that file legitimately changes
+    # resident/watchdog selectors and may still advertise an older runtime.
+    # Isolated launches do not need those box-wide controls and therefore never
+    # source the file.  Letting it replace the accepted launch pin can produce
+    # the particularly dangerous split identity where editable metadata names
+    # the new checkout while Python imports the old checkout.
     prefix = (
-        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
-        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"; '
+        'PINNED_LAUNCH_RUNTIME_REVISION="${MEGAPLAN_LAUNCH_RUNTIME_REVISION:-}"; '
+        'readonly PINNED_LAUNCH_RUNTIME_SRC PINNED_LAUNCH_RUNTIME_REVISION; '
     )
+    if not require_pinned_runtime_binding:
+        prefix += (
+            f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+            f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        )
     if repair_session:
         prefix += (
             "export ARNOLD_REPAIR_QUEUE_ROOT="
@@ -3586,9 +3601,34 @@ def _chain_start_command(
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
+            'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
-            f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+            'if [ -n "$PINNED_LAUNCH_RUNTIME_SRC" ]; then '
+            'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$PINNED_LAUNCH_RUNTIME_SRC"; '
+            'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$PINNED_LAUNCH_RUNTIME_REVISION"; '
+            'export MEGAPLAN_RUNTIME_SRC="$PINNED_LAUNCH_RUNTIME_SRC"; '
+            'fi; '
+        )
+        if require_pinned_runtime_binding:
+            prefix += (
+                'if [ -z "$PINNED_LAUNCH_RUNTIME_SRC" ] || '
+                '[ -z "$PINNED_LAUNCH_RUNTIME_REVISION" ]; then '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing refresh-verified runtime pin" >> {log_target}; '
+                'exit 24; '
+                'fi; '
+                'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+                'PYTHONPATH="$PINNED_LAUNCH_RUNTIME_SRC" '
+                'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+                '--expected-root "$PINNED_LAUNCH_RUNTIME_SRC" '
+                '--expected-revision "$PINNED_LAUNCH_RUNTIME_REVISION" '
+                f'>> {log_target} 2>&1; then '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with refresh-verified runtime" >> {log_target}; '
+                'exit 24; '
+                'fi; '
+            )
+        prefix += (
+            f'cd {cwd} && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+            'PYTHONPATH="$ENGINE_DIR" '
         )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
@@ -3639,6 +3679,9 @@ def _megaplan_refresh_command(
     lines = [
         "set -e",
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
+        # Never inherit a previously selected runtime when the configured
+        # checkout is absent or refresh fails before producing a new receipt.
+        "unset MEGAPLAN_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_REVISION RUNTIME_REVISION",
         f"SRC={shlex.quote(src)}",
         f"REPO={shlex.quote(repo)}",
         f"REF={shlex.quote(ref)}",
@@ -3705,13 +3748,15 @@ def _megaplan_refresh_command(
         "  fi",
         '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
         '  RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
-        '  PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
+        '  env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         "else",
-        '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
+        '  echo "[megaplan-refresh] source clone missing at $SRC"',
+        "  exit 21",
         "fi",
         # Preserve the refresh-verified source across the later cloud hot-env
         # load, which may still advertise an older resident runtime.
         'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"',
+        'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"',
         'echo "[megaplan-refresh] done"',
         "true",
     ]
@@ -3743,8 +3788,9 @@ def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
         'export MEGAPLAN_RUNTIME_SRC="$SRC"',
         'pip install -e "$MEGAPLAN_RUNTIME_SRC"',
         'RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
-        'PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
+        'env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"',
+        'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"',
         'echo "[megaplan-runtime] current source accepted at $RUNTIME_REVISION"',
         "true",
     ]
@@ -3782,7 +3828,7 @@ def _refresh_then_chain_start_command(
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
-        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir)}"
+        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir, require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner))}"
     )
 
 
