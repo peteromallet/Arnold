@@ -28,6 +28,7 @@ from .scheduler import make_store_scheduler
 from . import vp_todo
 from .status_tree import DEFAULT_NODE_LIMIT, MAX_NODE_LIMIT, read_cloud_status_node
 from .context_tree import read_context_node, search_context
+from .listener_recovery import require_listener_recovery_seed
 from arnold_pipelines.megaplan.cloud import status_snapshot
 
 
@@ -46,6 +47,10 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
             "Serve inbound Discord interactions without startup reconciliation, "
             "scheduled jobs, or background delivery sweeps"
         ),
+    )
+    discord_parser.add_argument(
+        "--recovery-seed",
+        help="Root-custodied launch seed required by listener-only recovery",
     )
     discord_parser.add_argument(
         "--profile",
@@ -279,6 +284,7 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
                 config,
                 dry_run=args.dry_run,
                 listener_only=args.listener_only,
+                recovery_seed=args.recovery_seed,
             )
     finally:
         close = getattr(store, "close", None)
@@ -986,6 +992,7 @@ def _resident_discord(
     *,
     dry_run: bool,
     listener_only: bool = False,
+    recovery_seed: str | None = None,
 ) -> dict[str, Any]:
     token = discord_token_from_env(config.discord_bot_token_env)
     if dry_run:
@@ -1005,11 +1012,10 @@ def _resident_discord(
         }
     if token is None:
         raise CliError("missing_discord_token", f"{config.discord_bot_token_env} is required")
-    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
-        require_configured_runtime_launch,
+    _require_discord_runtime_launch(
+        listener_only=listener_only,
+        recovery_seed=recovery_seed,
     )
-
-    require_configured_runtime_launch("resident", create=True)
     authorizer = ResidentAuthorizer(config)
     resident_state_root = Path(
         getattr(store, "root", None) or root / ".megaplan/resident"
@@ -1066,6 +1072,22 @@ def _resident_discord(
     )
     service.run()
     return {"success": True, "step": "resident", "action": "discord", "stopped": True, "project_root": str(root)}
+
+
+def _require_discord_runtime_launch(
+    *,
+    listener_only: bool,
+    recovery_seed: str | None = None,
+) -> None:
+    """Select recovery-specific or ordinary resident launch attestation."""
+    if listener_only:
+        require_listener_recovery_seed(recovery_seed)
+        return
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        require_configured_runtime_launch,
+    )
+
+    require_configured_runtime_launch("resident", create=True)
 
 
 def _resident_runner(config: ResidentConfig, root: Path, *, store: Store | None = None):

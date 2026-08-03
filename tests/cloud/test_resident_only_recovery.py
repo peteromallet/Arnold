@@ -26,6 +26,7 @@ from arnold_pipelines.megaplan.cloud.providers.resident_recovery import (
     parse_resident_down_receipt,
     parse_resident_recovery_receipt,
     resident_down_command,
+    resident_custody_host_root,
     resident_only_container_name,
     resident_recover_command,
 )
@@ -43,6 +44,11 @@ from arnold_pipelines.megaplan.resident.discord import (
     ResidentDiscordService,
     register_discord_application_commands,
 )
+from arnold_pipelines.megaplan.resident.cli import _require_discord_runtime_launch
+from arnold_pipelines.megaplan.resident.listener_recovery import (
+    LISTENER_RECOVERY_SEED_SCHEMA,
+    _consume_recovery_seed_once,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -51,6 +57,40 @@ IMAGE_ID = "sha256:" + "b" * 64
 RESIDENT_ID = "c" * 64
 WORKSPACE = "/opt/megaplan-cloud/workspace"
 SOURCE = "megaplan-cloud-agent"
+RUNTIME_PATH = "/workspace/.cloud-watchdog/runtime/arnold-current"
+RUNTIME_COMMIT = "1" * 40
+RUNTIME_TREE = "2" * 40
+RUNTIME_PYTHON = "/usr/local/bin/python3.13"
+RUNTIME_PYTHON_SHA256 = "3" * 64
+RUNTIME_ARGS = {
+    "expected_runtime_path": RUNTIME_PATH,
+    "expected_runtime_commit": RUNTIME_COMMIT,
+    "expected_runtime_tree": RUNTIME_TREE,
+    "expected_runtime_python_path": RUNTIME_PYTHON,
+    "expected_runtime_python_sha256": RUNTIME_PYTHON_SHA256,
+}
+
+
+def _emulate_root_custody_for_local_transaction(script: str) -> str:
+    """Keep the integration deterministic on a non-root developer machine."""
+    return script.replace(
+        'if os.geteuid() != 0:\n    raise RuntimeError("resident_recovery_requires_root_custody")',
+        "if False:\n    raise RuntimeError(\"resident_recovery_requires_root_custody\")",
+    ).replace(
+        'if os.geteuid() != 0:\n    raise RuntimeError("resident_down_requires_root_custody")',
+        "if False:\n    raise RuntimeError(\"resident_down_requires_root_custody\")",
+    ).replace(".st_uid != 0", ".st_uid != os.geteuid()")
+
+
+def _relocate_custody_for_local_transaction(command: str, root: Path) -> str:
+    argv = shlex.split(command)
+    config = json.loads(base64.b64decode(argv[2], validate=True))
+    config["custody_host_parent"] = str(root.parent)
+    config["custody_host_root"] = str(root)
+    argv[2] = base64.b64encode(
+        json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+    ).decode()
+    return shlex.join(argv)
 
 
 def _spec() -> CloudSpec:
@@ -99,6 +139,7 @@ def _recover_receipt(*, status: str = "healthy") -> dict[str, object]:
         "source_image_id": IMAGE_ID,
         "workspace": WORKSPACE,
         "prior_restart_policy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+        "fence_intent_sha256": "a" * 64,
         "applied_restart_policy": {"Name": "no", "MaximumRetryCount": 0},
         "rollback_required": True,
     }
@@ -113,6 +154,14 @@ def _recover_receipt(*, status: str = "healthy") -> dict[str, object]:
         "resident_container": resident,
         "resident_container_id": RESIDENT_ID,
         "resident_command_sha256": "d" * 64,
+        "resident_env_sha256": "f" * 64,
+        "intent_sha256": "9" * 64,
+        "recovery_seed_sha256": "e" * 64,
+        "runtime_path": RUNTIME_PATH,
+        "runtime_commit": RUNTIME_COMMIT,
+        "runtime_tree": RUNTIME_TREE,
+        "runtime_python_path": RUNTIME_PYTHON,
+        "runtime_python_sha256": RUNTIME_PYTHON_SHA256,
         "restart_policy": "no",
         "listener_only": True,
         "started_at": "2026-08-03T10:00:00.000000000Z",
@@ -137,11 +186,12 @@ def _recover_receipt(*, status: str = "healthy") -> dict[str, object]:
         "start_receipt": start,
         "health_receipt": health,
         "receipt_paths": {
-            "fence_intent": WORKSPACE + "/.megaplan/resident-only-recovery/discord-enospc-20260803.fence.intent.json",
-            "fence": WORKSPACE + "/.megaplan/resident-only-recovery/discord-enospc-20260803.fence.json",
-            "intent": WORKSPACE + "/.megaplan/resident-only-recovery/discord-enospc-20260803.intent.json",
-            "start": WORKSPACE + "/.megaplan/resident-only-recovery/discord-enospc-20260803.start.json",
-            "health": WORKSPACE + "/.megaplan/resident-only-recovery/discord-enospc-20260803.health.json",
+            "fence_intent": resident_custody_host_root(SOURCE_ID) + "/discord-enospc-20260803/transaction.fence.intent.json",
+            "fence": resident_custody_host_root(SOURCE_ID) + "/discord-enospc-20260803/transaction.fence.json",
+            "intent": resident_custody_host_root(SOURCE_ID) + "/discord-enospc-20260803/transaction.intent.json",
+            "seed": resident_custody_host_root(SOURCE_ID) + "/discord-enospc-20260803/seed/launch-seed.json",
+            "start": resident_custody_host_root(SOURCE_ID) + "/discord-enospc-20260803/transaction.start.json",
+            "health": resident_custody_host_root(SOURCE_ID) + "/discord-enospc-20260803/transaction.health.json",
         },
     }
 
@@ -170,6 +220,7 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
         source_container=SOURCE,
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        **RUNTIME_ARGS,
         workspace=WORKSPACE,
         outage_epoch="discord-enospc-20260803",
         min_free_bytes=123,
@@ -181,16 +232,54 @@ def test_recover_builder_contains_only_fixed_listener_process_and_no_secret_valu
     config = json.loads(base64.b64decode(argv[2], validate=True))
 
     assert argv[:2] == ["python3", "-"]
-    assert config["resident_command"] == RESIDENT_ONLY_COMMAND
-    assert "resident discord --listener-only" in RESIDENT_ONLY_COMMAND
-    assert "arnold-watchdog" not in RESIDENT_ONLY_COMMAND
-    assert "tmux" not in RESIDENT_ONLY_COMMAND
-    assert "DISCORD_BOT_TOKEN" not in command
-    assert "DISCORD_BOT_TOKEN" not in script
-    assert "docker\", \"run" in script
+    assert config["resident_argv_template"] == list(RESIDENT_ONLY_COMMAND)
+    assert config["listener_recovery_seed_schema"] == LISTENER_RECOVERY_SEED_SCHEMA
+    assert config["expected_runtime_python_path"] == RUNTIME_PYTHON
+    assert config["expected_runtime_python_sha256"] == RUNTIME_PYTHON_SHA256
+    assert config["custody_host_root"].startswith(
+        "/var/lib/arnold/megaplan-resident-recovery/"
+    )
+    assert "--listener-only" in RESIDENT_ONLY_COMMAND
+    assert "__RECOVERY_SEED_PATH__" in RESIDENT_ONLY_COMMAND
+    assert "resident-runtime.env" not in config["listener_capture_command"]
+    assert ".cloud-hot-env" not in config["listener_capture_command"]
+    assert "--ignored=matching" in config["listener_capture_command"]
+    assert config["listener_capture_command"].index("--ignored=matching") < config[
+        "listener_capture_command"
+    ].index("resident discord --help")
+    assert "arnold-watchdog" not in " ".join(RESIDENT_ONLY_COMMAND)
+    assert "tmux" not in " ".join(RESIDENT_ONLY_COMMAND)
+    assert "fake-never-printed" not in command + script
+    assert ". /workspace/.secrets" not in script
+    assert "--env-file" in script
+    assert '"--entrypoint", capture["runtime_python_path"]' in script
+    assert 'cfg["expected_source_image_id"], "-lc", command' not in script
+    assert "dst=/workspace/.megaplan/resident-only-custody" not in script
+    assert "dst=/run/megaplan-resident-recovery,readonly" in script
+    assert "docker\", \"create" in script
+    assert "docker\", \"start" in script
+    assert "resident_recovery_requires_root_custody" in script
+    assert "info.st_uid != 0" in script
     assert "--restart\", \"no" in script
     assert "one-secret-value" not in command + script
     compile(script, "<resident-recover>", "exec")
+
+
+def test_recovery_seed_is_single_use_within_the_exact_container(tmp_path: Path) -> None:
+    consumption_root = tmp_path / "consumed"
+    seed = {"schema": LISTENER_RECOVERY_SEED_SCHEMA, "nonce": "a" * 64}
+
+    _consume_recovery_seed_once(
+        seed,
+        consumption_root,
+        required_uid=os.getuid(),
+    )
+    with pytest.raises(CliError, match="already consumed"):
+        _consume_recovery_seed_once(
+            seed,
+            consumption_root,
+            required_uid=os.getuid(),
+        )
 
 
 def test_down_builder_is_exact_stop_remove_not_generic_shell() -> None:
@@ -210,6 +299,26 @@ def test_down_builder_is_exact_stop_remove_not_generic_shell() -> None:
     compile(script, "<resident-down>", "exec")
 
 
+def test_recover_rejects_mutable_workspace_interpreter() -> None:
+    with pytest.raises(CliError, match="immutable accepted image"):
+        resident_recover_command(
+            source_container=SOURCE,
+            expected_source_container_id=SOURCE_ID,
+            expected_source_image_id=IMAGE_ID,
+            expected_runtime_path=RUNTIME_PATH,
+            expected_runtime_commit=RUNTIME_COMMIT,
+            expected_runtime_tree=RUNTIME_TREE,
+            expected_runtime_python_path=RUNTIME_PATH + "/.venv/bin/python",
+            expected_runtime_python_sha256=RUNTIME_PYTHON_SHA256,
+            workspace=WORKSPACE,
+            outage_epoch="discord-enospc-20260803",
+            min_free_bytes=0,
+            min_free_inodes=0,
+            receipt_reserve_bytes=0,
+            health_timeout_seconds=5,
+        )
+
+
 def test_provider_recover_cas_capacity_and_receipt_binding() -> None:
     provider = _ResidentProvider()
 
@@ -217,6 +326,7 @@ def test_provider_recover_cas_capacity_and_receipt_binding() -> None:
         outage_epoch="discord-enospc-20260803",
         expected_source_container_id=SOURCE_ID,
         expected_source_image_id=IMAGE_ID,
+        **RUNTIME_ARGS,
         health_timeout_seconds=45,
     )
 
@@ -234,6 +344,7 @@ def test_provider_recover_fails_closed_before_effect_on_source_mismatch() -> Non
             outage_epoch="discord-enospc-20260803",
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            **RUNTIME_ARGS,
         )
 
     assert provider.effects == []
@@ -247,6 +358,7 @@ def test_provider_recover_fails_closed_before_effect_below_capacity_floor() -> N
             outage_epoch="discord-enospc-20260803",
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            **RUNTIME_ARGS,
         )
 
     assert provider.effects == []
@@ -262,6 +374,7 @@ def test_provider_recover_rejects_health_for_a_different_container() -> None:
             outage_epoch="discord-enospc-20260803",
             expected_source_container_id=SOURCE_ID,
             expected_source_image_id=IMAGE_ID,
+            **RUNTIME_ARGS,
         )
 
 
@@ -309,6 +422,16 @@ def test_cli_registers_complete_recover_and_down_contract() -> None:
             SOURCE_ID,
             "--expected-source-image-id",
             IMAGE_ID,
+            "--expected-runtime-path",
+            RUNTIME_PATH,
+            "--expected-runtime-commit",
+            RUNTIME_COMMIT,
+            "--expected-runtime-tree",
+            RUNTIME_TREE,
+            "--expected-runtime-python-path",
+            RUNTIME_PYTHON,
+            "--expected-runtime-python-sha256",
+            RUNTIME_PYTHON_SHA256,
         ]
     )
     down = parser.parse_args(
@@ -344,6 +467,16 @@ def test_cli_dispatches_recover_and_preserves_failed_health_exit(
             SOURCE_ID,
             "--expected-source-image-id",
             IMAGE_ID,
+            "--expected-runtime-path",
+            RUNTIME_PATH,
+            "--expected-runtime-commit",
+            RUNTIME_COMMIT,
+            "--expected-runtime-tree",
+            RUNTIME_TREE,
+            "--expected-runtime-python-path",
+            RUNTIME_PYTHON,
+            "--expected-runtime-python-sha256",
+            RUNTIME_PYTHON_SHA256,
         ]
     )
 
@@ -353,6 +486,11 @@ def test_cli_dispatches_recover_and_preserves_failed_health_exit(
                 "outage_epoch": "discord-enospc-20260803",
                 "expected_source_container_id": SOURCE_ID,
                 "expected_source_image_id": IMAGE_ID,
+                "expected_runtime_path": RUNTIME_PATH,
+                "expected_runtime_commit": RUNTIME_COMMIT,
+                "expected_runtime_tree": RUNTIME_TREE,
+                "expected_runtime_python_path": RUNTIME_PYTHON,
+                "expected_runtime_python_sha256": RUNTIME_PYTHON_SHA256,
                 "health_timeout_seconds": 45,
             }
             return {"schema": RECOVER_SCHEMA, "status": "failed"}
@@ -512,6 +650,53 @@ def test_listener_only_omits_restart_command_and_handler_refuses_direct_call() -
     ]
 
 
+def test_listener_recovery_requires_custody_seed_and_public_env_cannot_spoof(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_RESIDENT_LISTENER_RECOVERY", "1")
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED", "0")
+    with pytest.raises(CliError, match="requires a recovery launch seed"):
+        _require_discord_runtime_launch(listener_only=True)
+
+    from arnold_pipelines.megaplan.resident import cli as resident_cli
+
+    recovery_calls = []
+    monkeypatch.setattr(
+        resident_cli,
+        "require_listener_recovery_seed",
+        lambda path: recovery_calls.append(path),
+    )
+    _require_discord_runtime_launch(
+        listener_only=True,
+        recovery_seed="/run/megaplan-resident-recovery/launch-seed.json",
+    )
+    assert recovery_calls == [
+        "/run/megaplan-resident-recovery/launch-seed.json"
+    ]
+
+    from arnold_pipelines.megaplan.cloud import runtime_attestation
+
+    ordinary_calls = []
+
+    def reject_stale_ordinary(component, *, create):
+        ordinary_calls.append((component, create))
+        raise CliError(
+            "runtime_launch_attestation_mismatch",
+            "source_revision_mismatch",
+        )
+
+    monkeypatch.setattr(
+        runtime_attestation,
+        "require_configured_runtime_launch",
+        reject_stale_ordinary,
+    )
+    with pytest.raises(CliError, match="source_revision_mismatch"):
+        _require_discord_runtime_launch(
+            listener_only=False,
+        )
+    assert ordinary_calls == [("resident", True)]
+
+
 def test_host_transactions_fence_recheck_health_freshly_and_target_ids(
     tmp_path: Path,
 ) -> None:
@@ -519,6 +704,11 @@ def test_host_transactions_fence_recheck_health_freshly_and_target_ids(
     (workspace / ".secrets").mkdir(parents=True)
     (workspace / ".secrets" / "megaplan-resident-discord.env").write_text(
         "DISCORD_BOT_TOKEN=fake-never-printed\n", encoding="utf-8"
+    )
+    runtime_workspace = workspace / RUNTIME_PATH.removeprefix("/workspace/")
+    runtime_workspace.mkdir(parents=True)
+    (runtime_workspace / "accepted-runtime.txt").write_text(
+        "accepted\n", encoding="utf-8"
     )
     state_path = tmp_path / "docker-state.json"
     state_path.write_text(
@@ -530,6 +720,10 @@ def test_host_transactions_fence_recheck_health_freshly_and_target_ids(
                 "resident": None,
                 "ready": True,
                 "listener_supported": True,
+                "selector_race": False,
+                "post_create_swap": False,
+                "rewrite_seed_on_final": False,
+                "capture_count": 0,
                 "ops": [],
             }
         ),
@@ -540,9 +734,10 @@ def test_host_transactions_fence_recheck_health_freshly_and_target_ids(
     docker = fake_bin / "docker"
     docker.write_text(
         f"""#!{sys.executable}
-import json, os, sys
+import glob, json, os, sys
 state_path = os.environ["FAKE_DOCKER_STATE"]
 workspace = os.environ["FAKE_DOCKER_WORKSPACE"]
+custody_root = os.environ["FAKE_CUSTODY_ROOT"]
 source_id = os.environ["FAKE_SOURCE_ID"]
 image_id = os.environ["FAKE_IMAGE_ID"]
 resident_id = os.environ["FAKE_RESIDENT_ID"]
@@ -579,16 +774,53 @@ if args[0] == "update":
         state["revive_on_fence"] = False
     save(); print(source_id); raise SystemExit(0)
 if args[0] == "run" and "--rm" in args:
-    save()
-    if state["listener_supported"]: print("--listener-only")
-    raise SystemExit(0)
-if args[0] == "run":
-    assert "--detach" in args
+    state["capture_count"] += 1
+    if not state["listener_supported"]:
+        save(); print("listener unavailable", file=sys.stderr); raise SystemExit(1)
+    commit = "{RUNTIME_COMMIT}"
+    if state.get("selector_race") and state["capture_count"] % 2 == 0:
+        commit = "9" * 40
+    print(json.dumps({{
+      "schema": "arnold.cloud.resident_only_runtime_capture.v1",
+      "runtime_path": "{RUNTIME_PATH}", "runtime_commit": commit,
+      "runtime_tree": "{RUNTIME_TREE}", "runtime_python_path": "{RUNTIME_PYTHON}",
+      "runtime_python_sha256": "{RUNTIME_PYTHON_SHA256}",
+      "workspace_identity": {{"st_dev": 10, "st_ino": 20}},
+    }}))
+    if state.get("rewrite_seed_on_final") and state["capture_count"] >= 4:
+        for seed_path in glob.glob(custody_root + "/*/seed/launch-seed.json"):
+            with open(seed_path, "w", encoding="utf-8") as handle:
+                handle.write("{{}}\\n")
+    save(); raise SystemExit(0)
+if args[0] == "create":
+    mounts = []
+    for index, value in enumerate(args):
+        if value != "--mount": continue
+        spec = args[index + 1]
+        fields = {{part.split("=", 1)[0]: part.split("=", 1)[1] for part in spec.split(",") if "=" in part}}
+        mounts.append({{"Type": fields.get("type"), "Source": fields.get("src"), "Destination": fields.get("dst"), "RW": "readonly" not in spec.split(",")}})
+    env_rows = []
+    if "--env-file" in args:
+        with open(args[args.index("--env-file") + 1], "r", encoding="utf-8") as handle:
+            env_rows.extend(line.rstrip("\\n") for line in handle)
+    env_rows.extend(args[index + 1] for index, value in enumerate(args) if value == "--env")
+    env_map = {{row.split("=", 1)[0]: row.split("=", 1)[1] for row in env_rows}}
+    entrypoint_index = args.index("--entrypoint")
+    image_index = entrypoint_index + 2
     state["resident"] = {{"Id": resident_id, "Image": image_id, "Name": "/" + resident_name,
-      "State": {{"Running": True, "Paused": False, "Restarting": False, "ExitCode": 0, "StartedAt": "2026-08-03T10:00:00.000000000Z"}},
+      "State": {{"Running": False, "Paused": False, "Restarting": False, "ExitCode": 0, "StartedAt": ""}},
       "HostConfig": {{"RestartPolicy": {{"Name": "no", "MaximumRetryCount": 0}}, "CapDrop": ["ALL"], "CapAdd": None, "SecurityOpt": ["no-new-privileges:true"], "PidsLimit": 256, "Memory": 2147483648, "MemorySwap": 2147483648}},
-      "Config": {{"Entrypoint": ["/bin/bash"], "Cmd": ["-lc", args[-1]]}},
-      "Mounts": [{{"Type": "bind", "Source": workspace, "Destination": "/workspace", "RW": True}}]}}
+      "Config": {{"Entrypoint": [args[entrypoint_index + 1]], "User": "0:0", "WorkingDir": args[args.index("--workdir") + 1], "Cmd": args[image_index + 1:], "Env": [key + "=" + value for key, value in env_map.items()]}},
+      "Mounts": mounts}}
+    if state.get("post_create_swap"):
+        runtime_file = os.path.join(workspace, "{RUNTIME_PATH.removeprefix('/workspace/')}", "accepted-runtime.txt")
+        with open(runtime_file, "w", encoding="utf-8") as handle:
+            handle.write("mutated-after-create\\n")
+    save(); print(resident_id); raise SystemExit(0)
+if args[0] == "start":
+    assert args[-1] == resident_id
+    state["resident"]["State"]["Running"] = True
+    state["resident"]["State"]["StartedAt"] = "2026-08-03T10:00:00.000000000Z"
     save(); print(resident_id); raise SystemExit(0)
 if args[0] == "logs":
     assert args[-1] == resident_id
@@ -616,6 +848,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
         "FAKE_DOCKER_STATE": str(state_path),
         "FAKE_DOCKER_WORKSPACE": str(workspace),
+        "FAKE_CUSTODY_ROOT": str(tmp_path / "custody" / SOURCE_ID),
         "FAKE_SOURCE_ID": SOURCE_ID,
         "FAKE_IMAGE_ID": IMAGE_ID,
         "FAKE_RESIDENT_ID": RESIDENT_ID,
@@ -627,7 +860,9 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         "expected_source_image_id": IMAGE_ID,
         "workspace": str(workspace),
         "outage_epoch": "discord-enospc-20260803",
+        **RUNTIME_ARGS,
     }
+    local_custody_root = tmp_path / "custody" / SOURCE_ID
 
     command, script = resident_recover_command(
         **common,
@@ -636,6 +871,8 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         receipt_reserve_bytes=0,
         health_timeout_seconds=5,
     )
+    script = _emulate_root_custody_for_local_transaction(script)
+    command = _relocate_custody_for_local_transaction(command, local_custody_root)
     encoded = shlex.split(command)[2]
     first = subprocess.run(
         [sys.executable, "-", encoded],
@@ -650,10 +887,7 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["source_policy"] == {"Name": "no", "MaximumRetryCount": 0}
     assert state["source_running"] is False
-    resident_runs = sum(
-        op[0] == "run" and "--detach" in op for op in state["ops"]
-    )
-    assert resident_runs == 1
+    assert sum(op[0] == "create" for op in state["ops"]) == 1
 
     state["resident"]["State"]["Running"] = False
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -670,16 +904,24 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
     assert second_payload["status"] == "failed"
     assert second_payload["new_attempt"] is False
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert sum(op[0] == "run" and "--detach" in op for op in state["ops"]) == 1
+    assert sum(op[0] == "create" for op in state["ops"]) == 1
 
     # Simulate a manual restart after the failed observation; exact down must
     # still target the immutable ID and restore the predecessor fence.
     state["resident"]["State"]["Running"] = True
     state_path.write_text(json.dumps(state), encoding="utf-8")
     down_command, down_script = resident_down_command(
-        **common,
+        source_container=SOURCE,
+        expected_source_container_id=SOURCE_ID,
+        expected_source_image_id=IMAGE_ID,
+        workspace=str(workspace),
+        outage_epoch="discord-enospc-20260803",
         expected_resident_container_id=RESIDENT_ID,
     )
+    down_command = _relocate_custody_for_local_transaction(
+        down_command, local_custody_root
+    )
+    down_script = _emulate_root_custody_for_local_transaction(down_script)
     down = subprocess.run(
         [sys.executable, "-", shlex.split(down_command)[2]],
         input=down_script,
@@ -729,6 +971,10 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         receipt_reserve_bytes=0,
         health_timeout_seconds=5,
     )
+    blocked_script = _emulate_root_custody_for_local_transaction(blocked_script)
+    blocked_command = _relocate_custody_for_local_transaction(
+        blocked_command, local_custody_root
+    )
     blocked = subprocess.run(
         [sys.executable, "-", shlex.split(blocked_command)[2]],
         input=blocked_script,
@@ -744,10 +990,9 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         "MaximumRetryCount": 0,
     }
     blocked_prefix = (
-        workspace
-        / ".megaplan"
-        / "resident-only-recovery"
+        local_custody_root
         / "discord-enospc-unsupported"
+        / "transaction"
     )
     assert not Path(str(blocked_prefix) + ".intent.json").exists()
     rollback = json.loads(
@@ -756,3 +1001,256 @@ save(); print("unsupported", args, file=sys.stderr); raise SystemExit(2)
         )
     )
     assert rollback["status"] == "restored"
+
+    state["listener_supported"] = True
+    state["selector_race"] = True
+    state["capture_count"] = 0
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    raced_common = {**common, "outage_epoch": "discord-enospc-selector-race"}
+    raced_command, raced_script = resident_recover_command(
+        **raced_common,
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+        health_timeout_seconds=5,
+    )
+    raced_script = _emulate_root_custody_for_local_transaction(raced_script)
+    raced_command = _relocate_custody_for_local_transaction(
+        raced_command, local_custody_root
+    )
+    creates_before_race = sum(op[0] == "create" for op in state["ops"])
+    raced = subprocess.run(
+        [sys.executable, "-", shlex.split(raced_command)[2]],
+        input=raced_script,
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert raced.returncode != 0
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert sum(op[0] == "create" for op in state["ops"]) == creates_before_race
+    race_prefix = (
+        local_custody_root
+        / "discord-enospc-selector-race"
+        / "transaction"
+    )
+    assert not Path(str(race_prefix) + ".intent.json").exists()
+    race_rollback = json.loads(
+        Path(str(race_prefix) + ".fence.rollback.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert race_rollback["reason"] == "listener_runtime_selector_race"
+
+    state["selector_race"] = False
+    state["post_create_swap"] = True
+    state["capture_count"] = 0
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    swap_common = {**common, "outage_epoch": "discord-enospc-post-create-swap"}
+    swap_command, swap_script = resident_recover_command(
+        **swap_common,
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+        health_timeout_seconds=5,
+    )
+    swap_script = _emulate_root_custody_for_local_transaction(swap_script)
+    swap_command = _relocate_custody_for_local_transaction(
+        swap_command, local_custody_root
+    )
+    swap = subprocess.run(
+        [sys.executable, "-", shlex.split(swap_command)[2]],
+        input=swap_script,
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert swap.returncode == 0, swap.stderr
+    assert parse_resident_recovery_receipt(swap.stdout)["status"] == "healthy"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["resident"] is not None
+    assert state["resident"]["State"]["Running"] is True
+    runtime_mount = next(
+        mount
+        for mount in state["resident"]["Mounts"]
+        if mount["Destination"] == RUNTIME_PATH
+    )
+    expected_snapshot = (
+        local_custody_root
+        / "discord-enospc-post-create-swap"
+        / "runtime"
+    )
+    assert runtime_mount == {
+        "Type": "bind",
+        "Source": str(expected_snapshot),
+        "Destination": RUNTIME_PATH,
+        "RW": False,
+    }
+    assert (runtime_workspace / "accepted-runtime.txt").read_text(
+        encoding="utf-8"
+    ) == "mutated-after-create\n"
+    assert (expected_snapshot / "accepted-runtime.txt").read_text(
+        encoding="utf-8"
+    ) == "accepted\n"
+
+    prestart_down_command, prestart_down_script = resident_down_command(
+        source_container=SOURCE,
+        expected_source_container_id=SOURCE_ID,
+        expected_source_image_id=IMAGE_ID,
+        expected_resident_container_id=RESIDENT_ID,
+        workspace=str(workspace),
+        outage_epoch="discord-enospc-post-create-swap",
+    )
+    prestart_down_command = _relocate_custody_for_local_transaction(
+        prestart_down_command, local_custody_root
+    )
+    prestart_down_script = _emulate_root_custody_for_local_transaction(
+        prestart_down_script
+    )
+    prestart_down = subprocess.run(
+        [sys.executable, "-", shlex.split(prestart_down_command)[2]],
+        input=prestart_down_script,
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert prestart_down.returncode == 0, prestart_down.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["resident"] is None
+    assert state["source_policy"] == {
+        "Name": "unless-stopped",
+        "MaximumRetryCount": 0,
+    }
+
+    state["post_create_swap"] = False
+    state["rewrite_seed_on_final"] = True
+    state["capture_count"] = 0
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    rewrite_common = {**common, "outage_epoch": "discord-enospc-seed-rewrite"}
+    rewrite_command, rewrite_script = resident_recover_command(
+        **rewrite_common,
+        min_free_bytes=0,
+        min_free_inodes=0,
+        receipt_reserve_bytes=0,
+        health_timeout_seconds=5,
+    )
+    rewrite_script = _emulate_root_custody_for_local_transaction(rewrite_script)
+    rewrite_command = _relocate_custody_for_local_transaction(
+        rewrite_command, local_custody_root
+    )
+    rewrite = subprocess.run(
+        [sys.executable, "-", shlex.split(rewrite_command)[2]],
+        input=rewrite_script,
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert rewrite.returncode != 0
+    assert "recovery_seed_changed_before_start" in rewrite.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["resident"] is not None
+    assert state["resident"]["State"]["Running"] is False
+
+    rewrite_down_command, rewrite_down_script = resident_down_command(
+        source_container=SOURCE,
+        expected_source_container_id=SOURCE_ID,
+        expected_source_image_id=IMAGE_ID,
+        expected_resident_container_id=RESIDENT_ID,
+        workspace=str(workspace),
+        outage_epoch="discord-enospc-seed-rewrite",
+    )
+    rewrite_down_command = _relocate_custody_for_local_transaction(
+        rewrite_down_command, local_custody_root
+    )
+    rewrite_down_script = _emulate_root_custody_for_local_transaction(
+        rewrite_down_script
+    )
+    custody_fence_path = (
+        local_custody_root
+        / "discord-enospc-seed-rewrite"
+        / "transaction.fence.json"
+    )
+    original_fence_bytes = custody_fence_path.read_bytes()
+    forged_fence = json.loads(original_fence_bytes)
+    forged_fence["prior_restart_policy"] = {
+        "Name": "always",
+        "MaximumRetryCount": 0,
+    }
+    custody_fence_path.write_text(
+        json.dumps(forged_fence, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    forged_down = subprocess.run(
+        [sys.executable, "-", shlex.split(rewrite_down_command)[2]],
+        input=rewrite_down_script,
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert forged_down.returncode != 0
+    assert "source_fence_receipt_invalid" in forged_down.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["resident"] is not None
+    assert state["source_policy"] == {"Name": "no", "MaximumRetryCount": 0}
+    custody_fence_path.write_bytes(original_fence_bytes)
+    rewrite_down = subprocess.run(
+        [sys.executable, "-", shlex.split(rewrite_down_command)[2]],
+        input=rewrite_down_script,
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert rewrite_down.returncode == 0, rewrite_down.stderr
+
+    secret_file = workspace / ".secrets" / "megaplan-resident-discord.env"
+    for suffix, malicious_secret, expected_error in (
+        (
+            "shell-expansion",
+            "DISCORD_BOT_TOKEN=$(touch-/workspace/pwn)\n",
+            "resident_secret_grammar_invalid",
+        ),
+        (
+            "startup-env",
+            "DISCORD_BOT_TOKEN=safe-token\nBASH_ENV=/workspace/pwn\n",
+            "resident_secret_name_invalid",
+        ),
+    ):
+        secret_file.write_text(malicious_secret, encoding="utf-8")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        mutating_before = sum(
+            op[0] in {"update", "create", "start"} for op in state["ops"]
+        )
+        malicious_command, malicious_script = resident_recover_command(
+            **{**common, "outage_epoch": "discord-secret-" + suffix},
+            min_free_bytes=0,
+            min_free_inodes=0,
+            receipt_reserve_bytes=0,
+            health_timeout_seconds=5,
+        )
+        malicious_command = _relocate_custody_for_local_transaction(
+            malicious_command, local_custody_root
+        )
+        malicious_script = _emulate_root_custody_for_local_transaction(
+            malicious_script
+        )
+        malicious = subprocess.run(
+            [sys.executable, "-", shlex.split(malicious_command)[2]],
+            input=malicious_script,
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+        assert malicious.returncode != 0
+        assert expected_error in malicious.stderr
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert (
+            sum(op[0] in {"update", "create", "start"} for op in state["ops"])
+            == mutating_before
+        )

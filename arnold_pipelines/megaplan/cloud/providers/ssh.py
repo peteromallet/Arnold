@@ -39,6 +39,7 @@ from .ssh_preflight import (
 from .resident_recovery import (
     parse_resident_down_receipt,
     parse_resident_recovery_receipt,
+    resident_custody_host_root,
     resident_down_command,
     resident_only_container_name,
     resident_recover_command,
@@ -1475,6 +1476,11 @@ class SshProvider(Provider):
         outage_epoch: str,
         expected_source_container_id: str,
         expected_source_image_id: str,
+        expected_runtime_path: str,
+        expected_runtime_commit: str,
+        expected_runtime_tree: str,
+        expected_runtime_python_path: str,
+        expected_runtime_python_sha256: str,
         health_timeout_seconds: int = 45,
     ) -> dict[str, Any]:
         """Start one finite, listener-only Discord resident transaction."""
@@ -1492,6 +1498,11 @@ class SshProvider(Provider):
             source_container=self._resident_recovery_source_container(),
             expected_source_container_id=expected_source_container_id,
             expected_source_image_id=expected_source_image_id,
+            expected_runtime_path=expected_runtime_path,
+            expected_runtime_commit=expected_runtime_commit,
+            expected_runtime_tree=expected_runtime_tree,
+            expected_runtime_python_path=expected_runtime_python_path,
+            expected_runtime_python_sha256=expected_runtime_python_sha256,
             workspace=self._ssh.workspace_dir,
             outage_epoch=outage_epoch,
             min_free_bytes=self._spec.resources.prelaunch_min_free_bytes,
@@ -1512,8 +1523,8 @@ class SshProvider(Provider):
             self._resident_recovery_source_container()
         )
         receipt_prefix = (
-            f"{self._ssh.workspace_dir}/.megaplan/resident-only-recovery/"
-            f"{outage_epoch}"
+            f"{resident_custody_host_root(expected_source_container_id)}/"
+            f"{outage_epoch}/transaction"
         )
         if (
             payload.get("outage_epoch") != outage_epoch
@@ -1534,6 +1545,10 @@ class SshProvider(Provider):
                 "fence_intent": receipt_prefix + ".fence.intent.json",
                 "fence": receipt_prefix + ".fence.json",
                 "intent": receipt_prefix + ".intent.json",
+                "seed": (
+                    f"{resident_custody_host_root(expected_source_container_id)}/"
+                    f"{outage_epoch}/seed/launch-seed.json"
+                ),
                 "start": receipt_prefix + ".start.json",
                 "health": receipt_prefix + ".health.json",
             }
