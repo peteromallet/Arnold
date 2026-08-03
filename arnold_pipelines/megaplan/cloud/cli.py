@@ -381,6 +381,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     resident_recover_parser.add_argument("--outage-epoch", required=True)
     resident_recover_parser.add_argument("--expected-source-container-id", required=True)
     resident_recover_parser.add_argument("--expected-source-image-id", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-path", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-commit", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-tree", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-python-path", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-python-sha256", required=True)
     resident_recover_parser.add_argument(
         "--health-timeout-seconds", type=int, default=45
     )
@@ -1158,6 +1163,11 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 outage_epoch=args.outage_epoch,
                 expected_source_container_id=args.expected_source_container_id,
                 expected_source_image_id=args.expected_source_image_id,
+                expected_runtime_path=args.expected_runtime_path,
+                expected_runtime_commit=args.expected_runtime_commit,
+                expected_runtime_tree=args.expected_runtime_tree,
+                expected_runtime_python_path=args.expected_runtime_python_path,
+                expected_runtime_python_sha256=args.expected_runtime_python_sha256,
                 health_timeout_seconds=args.health_timeout_seconds,
             )
             sys.stdout.write(json.dumps(payload, indent=2) + "\n")
