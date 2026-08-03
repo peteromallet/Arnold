@@ -123,7 +123,6 @@ from arnold_pipelines.megaplan.model_seam import (
     render_step_message,
 )
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
-    apply_authoritative_execute_overrides,
     validate_execution_evidence,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
@@ -2568,30 +2567,6 @@ def _count_execute_tracking(
     )
 
 
-def _durably_evidenced_finalized_task_ids(
-    tasks: Iterable[dict[str, Any]],
-) -> set[str]:
-    """Return terminal task IDs with output evidence for quality coverage.
-
-    This deliberately does not relax scheduler authority: it only keeps a
-    replayed or partial retry from erasing finalized task coverage.
-    """
-    completed: set[str] = set()
-    for task in tasks:
-        task_id = task.get("id")
-        if not isinstance(task_id, str) or not task_id:
-            continue
-        status = task.get("status")
-        if status == "done" and (task.get("files_changed") or task.get("commands_run")):
-            completed.add(task_id)
-            continue
-        if status == "skipped":
-            notes = task.get("executor_notes")
-            if isinstance(notes, str) and notes.strip():
-                completed.add(task_id)
-    return completed
-
-
 def build_blocking_reasons(
     *,
     tracked_tasks: int,
@@ -3577,48 +3552,13 @@ def handle_execute_one_batch(
     )
     if resolved_prereq_reset_ids:
         tasks = finalize_data.get("tasks", [])
-    # In per-batch execute mode, finalize.json is only rewritten after the
-    # final batch — between batches the per-task status overlay lives in
-    # the S4 batch artifacts (execute_batches/batch_<n>/tasks_*.json; legacy
-    # execution_batch_<n>.json still readable for migration). Apply that
-    # overlay so prerequisite checks see the most recent on-disk truth.
-    batch_status_overlay: dict[str, str] = {}
-    for batch_path in list_batch_artifacts(plan_dir):
-        prior_index = batch_artifact_index(batch_path)
-        if prior_index is None:
-            continue
-        if prior_index >= batch_number:
-            continue
-        try:
-            batch_data = read_json(batch_path)
-        except (OSError, UnicodeDecodeError, ValueError) as exc:
-            raise CliError(
-                "corrupt_execution_batch",
-                "M3B_HALT_CORRUPT_EXECUTION_BATCH: "
-                f"failed to read prior execution batch artifact {batch_path}: {exc}",
-                extra={"artifact_path": str(batch_path), "batch_number": batch_number},
-            ) from exc
-        for update in batch_data.get("task_updates", []) or []:
-            if not isinstance(update, dict):
-                continue
-            tid = update.get("task_id")
-            status = update.get("status")
-            if isinstance(tid, str) and isinstance(status, str) and status:
-                batch_status_overlay[tid] = status
-    overlaid_tasks = []
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        task_id = task.get("id")
-        if not isinstance(task_id, str):
-            continue
-        overlaid_task = dict(task)
-        if task_id in batch_status_overlay:
-            overlaid_task["status"] = batch_status_overlay[task_id]
-        overlaid_tasks.append(overlaid_task)
+    # Prior batch artifacts are observations until their result envelopes have
+    # passed the accepted-attempt projection. Never copy their raw status into
+    # scheduling inputs.
+    schedulable_tasks = [task for task in tasks if isinstance(task, dict)]
     authority_decisions: dict[str, Any] = {}
     completed_ids = _scheduler_completed_ids_for_tasks(
-        overlaid_tasks,
+        schedulable_tasks,
         plan_dir=plan_dir,
         root=root,
         state=state,
@@ -3725,7 +3665,12 @@ def handle_execute_one_batch(
             # diverge from the on-disk state and the liveness heartbeat would
             # silently no-op for every batch after the first.
             set_active_step(
-                state, step="execute", agent=agent, mode=mode, model=model
+                state,
+                step="execute",
+                agent=agent,
+                mode=mode,
+                model=model,
+                run_id=(state.get("active_step") or {}).get("run_id"),
             )
             save_state_merge_meta(plan_dir, state)
     selected_resolved_model = model if model is not None else resolved_model
@@ -5743,6 +5688,7 @@ def handle_execute_auto_loop(
                     agent=batch_agent,
                     mode=batch_mode,
                     model=batch_model,
+                    run_id=(state.get("active_step") or {}).get("run_id"),
                 )
                 save_state_merge_meta(plan_dir, state)
 
@@ -5946,10 +5892,6 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
-    finalize_data = apply_authoritative_execute_overrides(
-        finalize_data,
-        plan_dir=plan_dir,
-    )
     reconcile_finalized_review_scope_claims(
         finalize_data,
         plan_dir=plan_dir,
@@ -6020,9 +5962,6 @@ def handle_execute_auto_loop(
         plan_dir=plan_dir,
         root=root,
         state=state,
-    )
-    completed_task_ids |= _durably_evidenced_finalized_task_ids(
-        finalize_data.get("tasks", [])
     )
     tracked_tasks, total_tasks, acknowledged_checks, total_checks = (
         _count_execute_tracking(

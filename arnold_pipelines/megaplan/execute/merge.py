@@ -624,45 +624,6 @@ def _grant_aware_validate_entries(
     if not isinstance(entries, list):
         return _GrantAwareValidationResult([], ())
     source = str(source_path)
-    if not _payload_has_authority_metadata(payload):
-        accepted_entries: list[dict[str, Any]] = []
-        decisions: list[GrantAwareValidationDecision] = []
-        for index, entry in enumerate(entries):
-            if not isinstance(entry, dict):
-                continue
-            subject_id = _entry_subject_id(entry, id_field)
-            if (
-                off_scope_outcome == "quarantined"
-                and subject_id is not None
-                and subject_id not in target_subject_ids
-            ):
-                decision = GrantAwareValidationDecision(
-                    outcome="quarantined",
-                    entry_kind=entry_kind,
-                    entry_index=index,
-                    subject_id=subject_id,
-                    reason="subject_outside_dispatched_batch",
-                    source_path=source,
-                )
-                entry["authority_validation"] = decision.to_dict()
-                issues.append(
-                    f"Grant-aware validation quarantined {entry_kind}[{decision.entry_index}]"
-                    f" for {decision.subject_id}: {decision.reason}"
-                    f" (source: {decision.source_path})."
-                )
-            else:
-                decision = GrantAwareValidationDecision(
-                    outcome="accepted",
-                    entry_kind=entry_kind,
-                    entry_index=index,
-                    subject_id=subject_id,
-                    reason="legacy_no_authority_metadata",
-                    source_path=source,
-                )
-                accepted_entries.append(entry)
-            decisions.append(decision)
-        return _GrantAwareValidationResult(accepted_entries, tuple(decisions))
-
     authority_resolution = resolve_batch_authority_metadata(payload, source)
     if authority_resolution.quarantine is not None:
         decisions = tuple(
@@ -1364,6 +1325,32 @@ def _merge_scoped_batch_artifact_through_validator(
         return _ScopedBatchArtifactMergeResult(quarantine=resolution.quarantine)
     scope = resolution.scope
     assert scope is not None
+
+    # A compatibility batch scope is useful for locating an artifact, but it
+    # is not an execution grant.  Refuse the artifact before the merge helper
+    # sees any rows when the durable dispatch/result authority is missing.
+    authority_resolution = resolve_batch_authority_metadata(payload, artifact_path)
+    if authority_resolution.quarantine is not None:
+        return _ScopedBatchArtifactMergeResult(
+            quarantine=authority_resolution.quarantine
+        )
+    if (
+        authority_resolution.metadata is not None
+        and not authority_resolution.metadata.result_envelopes
+        and (
+            payload.get("task_updates")
+            or payload.get("sense_check_acknowledgments")
+        )
+    ):
+        return _ScopedBatchArtifactMergeResult(
+            quarantine=BatchScopeQuarantine(
+                reason="missing_result_envelopes",
+                message="artifact has scoped rows but no persisted result envelopes",
+                source_path=str(artifact_path),
+                task_ids=scope.task_ids,
+                sense_check_ids=scope.sense_check_ids,
+            )
+        )
 
     issues: list[str] = []
     merged_count, total_task_count, acknowledged_count, total_check_count = _merge_batch_results(

@@ -272,6 +272,26 @@ def test_validator_accepts_current_enveloped_task_update() -> None:
     assert not issues
 
 
+def test_validator_quarantines_scoped_legacy_task_without_dispatch_authority() -> None:
+    entry = _task_entry()
+    issues, outcomes = _validate([entry], payload={})
+
+    assert outcomes == ("quarantined",)
+    assert entry["authority_validation"]["reason"] == "missing_dispatch_identity"
+    assert any("missing_dispatch_identity" in issue for issue in issues)
+
+
+def test_validator_quarantines_sense_check_without_result_envelopes() -> None:
+    entry = _sense_check_entry()
+    issues, outcomes = _validate_sense_checks(
+        [entry], payload={"dispatch_identity": _task_envelope(_task_entry()).dispatch.to_dict()}
+    )
+
+    assert outcomes == ("quarantined",)
+    assert entry["authority_validation"]["reason"] == "missing_result_envelope"
+    assert any("missing_result_envelope" in issue for issue in issues)
+
+
 def test_validator_rejects_worker_identity_mismatch_without_accepting_entry() -> None:
     entry = _task_entry()
     envelope = _task_envelope(entry, worker_id="worker-1")
@@ -520,3 +540,15 @@ def test_megaplan_policy_stays_outside_generic_reducer() -> None:
     assert not any(term in reducer_source for term in forbidden_generic_terms)
     assert "TASK_RESULT_CAPABILITY" in merge_source
     assert "prerequisite_digest" in merge_source
+
+
+def test_retired_execute_authority_paths_are_not_executable() -> None:
+    from arnold_pipelines.megaplan.orchestration import execution_evidence
+    from arnold_pipelines.megaplan.workers import hermes
+
+    merge_source = inspect.getsource(merge_module)
+    hermes_source = inspect.getsource(hermes)
+    evidence_source = inspect.getsource(execution_evidence)
+    assert "legacy_no_authority_metadata" not in merge_source
+    assert "execute_batch_*_output.json" not in hermes_source
+    assert "apply_authoritative_execute_overrides" not in evidence_source
