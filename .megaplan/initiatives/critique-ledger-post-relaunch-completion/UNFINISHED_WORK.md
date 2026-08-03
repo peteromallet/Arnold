@@ -50,6 +50,11 @@ single `STARTED` event and no terminal event. The abort must append the matching
 `CANCELLED` terminal event, reread it as durable, and clear active custody only
 with the matching run ID/version. Killing the processes alone is not an abort.
 
+The evidence-backed operator sequence, exact guards, fail-closed points, and
+attempt-9 canaries are in
+`evidence/attempt9-cutover-runbook-20260803.md`; execute that runbook without
+substituting a fresh launch or direct candidate copy.
+
 ### Relaunch gate task board
 
 Tasks marked `[parallel]` may be implemented and tested concurrently. Deployment
