@@ -3,12 +3,12 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: megaplan/critique-ledger-accountability-v3-20260803
-  workspace: /workspace/critique-ledger-accountability-v3-r2-20260803/Arnold
+  workspace: /workspace/critique-ledger-accountability-v3-r3-20260803/Arnold
 
 extra_repos:
   - url: https://github.com/peteromallet/Arnold.git
     branch: fix/isolated-chain-runner-20260803
-    workspace: /workspace/runtime-candidates/arnold-d9dfab4c80835829ec1e1218f0e1f9c84071482e
+    workspace: /workspace/runtime-candidates/arnold-82a5a012fa58f44cdc5e9e895f454d86d95b446d
 
 agents:
   default: codex
@@ -17,7 +17,7 @@ codex:
   model: gpt-5.6-sol
   reasoning: high
 
-chain_session: critique-ledger-accountability-v3-r2-20260803
+chain_session: critique-ledger-accountability-v3-r3-20260803
 mode: idle
 isolated_chain_runner: true
 isolated_chain_runner_image_id: sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d
@@ -26,7 +26,7 @@ megaplan:
   ref: fix/isolated-chain-runner-20260803
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/runtime-candidates/arnold-d9dfab4c80835829ec1e1218f0e1f9c84071482e
+  src_path: /workspace/runtime-candidates/arnold-82a5a012fa58f44cdc5e9e895f454d86d95b446d
 
 resources:
   volume: agent-volume
