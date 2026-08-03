@@ -33,7 +33,11 @@ from arnold_pipelines.megaplan.fallback_chains import (
     provider_family,
 )
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
-from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
+from arnold_pipelines.megaplan.schemas import (
+    SCHEMAS,
+    EpicEvent,
+    get_execution_schema_key,
+)
 from arnold_pipelines.megaplan.orchestration.progress import strip_progress_env
 from arnold_pipelines.megaplan.observability.routing_ledger import (
     format_selected_spec,
@@ -68,6 +72,7 @@ from arnold_pipelines.megaplan._core import (
     touch_active_step,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
+from arnold_pipelines.megaplan._core.io import framed_json_record_bytes
 from arnold_pipelines.megaplan.prompts import (
     _resolve_prompt_root,
     create_codex_prompt,
@@ -105,6 +110,20 @@ _ZERO_RECOVERY_MODEL_UID = 65532
 _ZERO_RECOVERY_MODEL_GID = 65532
 _ZERO_RECOVERY_RUNTIME_ROOT = Path("/run/megaplan-zero-recovery")
 _ZERO_RECOVERY_MODEL_PATH = "/opt/zero-recovery-node/bin:/usr/local/bin:/usr/bin:/bin"
+_ZERO_RECOVERY_SCHEMA_PATHS = tuple(
+    f".megaplan/schemas/{filename}" for filename in sorted(SCHEMAS)
+)
+_ZERO_RECOVERY_ENGINE_RUNTIME_PATHS = (
+    ".megaplan/.state-locks/critique-ledger-cl2-planning-canary.lock",
+    ".megaplan/epics/critique-ledger-cl2-planning-canary/events.jsonl",
+)
+_ZERO_RECOVERY_EPIC_JOURNAL_DIR = (
+    ".megaplan/epics/critique-ledger-cl2-planning-canary/_journal"
+)
+_ZERO_RECOVERY_EMPTY_RUNTIME_DIRS = {
+    _ZERO_RECOVERY_EPIC_JOURNAL_DIR,
+    ".megaplan/blobs",
+}
 
 
 def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
@@ -574,6 +593,220 @@ def _zero_recovery_file_record(path: Path, *, trusted_uid: int) -> dict[str, Any
     }
 
 
+def _zero_recovery_runtime_file_identity(
+    path: Path, *, trusted_uid: int
+) -> tuple[dict[str, Any], bytes]:
+    try:
+        observed = os.lstat(path)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary engine runtime file identity is invalid",
+        ) from exc
+    try:
+        identity = os.fstat(fd)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or not stat.S_ISREG(identity.st_mode)
+            or (identity.st_dev, identity.st_ino)
+            != (observed.st_dev, observed.st_ino)
+            or identity.st_nlink != 1
+            or identity.st_uid != trusted_uid
+            or identity.st_mode & 0o022
+            or stat.S_IMODE(identity.st_mode) != 0o644
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary engine runtime file identity is invalid",
+            )
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            raw = handle.read()
+        after_read = os.fstat(fd)
+        if (
+            (after_read.st_dev, after_read.st_ino, after_read.st_size)
+            != (identity.st_dev, identity.st_ino, identity.st_size)
+            or len(raw) != identity.st_size
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary engine runtime file raced",
+            )
+    finally:
+        os.close(fd)
+    return {
+        "path": path.as_posix(),
+        "st_dev": identity.st_dev,
+        "st_ino": identity.st_ino,
+        "size": identity.st_size,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }, raw
+
+
+def _zero_recovery_observe_engine_runtime(
+    root: Path, *, trusted_uid: int
+) -> dict[str, Any]:
+    lock_path = root / _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[0]
+    event_path = root / _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[1]
+    lock = None
+    try:
+        os.lstat(lock_path)
+        lock_present = True
+    except FileNotFoundError:
+        lock_present = False
+    if lock_present:
+        lock, lock_raw = _zero_recovery_runtime_file_identity(
+            lock_path, trusted_uid=trusted_uid
+        )
+        lock["path"] = _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[0]
+        if lock_raw != b"":
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary state lock is not empty",
+            )
+    events = None
+    try:
+        os.lstat(event_path)
+        events_present = True
+    except FileNotFoundError:
+        events_present = False
+    if not events_present:
+        return {"lock": lock, "events": events}
+    journal_dir = root / _ZERO_RECOVERY_EPIC_JOURNAL_DIR
+    if not journal_dir.is_dir() or any(journal_dir.iterdir()):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic transaction journal is not empty at checkpoint",
+        )
+    events, raw = _zero_recovery_runtime_file_identity(
+        event_path, trusted_uid=trusted_uid
+    )
+    events["path"] = _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[1]
+    flattened: list[dict[str, Any]] = []
+    offset = 0
+    while offset < len(raw):
+        frame_start = offset
+        if len(raw) - offset < 5:
+            break
+        payload_size = int.from_bytes(raw[offset : offset + 4], "big")
+        offset += 4
+        if payload_size > 1024 * 1024 or len(raw) - offset < payload_size + 1:
+            break
+        payload = raw[offset : offset + payload_size]
+        offset += payload_size
+        if raw[offset : offset + 1] != b"\n":
+            break
+        offset += 1
+        try:
+            record = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            break
+        if (
+            not isinstance(record, dict)
+            or framed_json_record_bytes(record) != raw[frame_start:offset]
+        ):
+            break
+        flattened.append(record)
+    if not flattened or offset != len(raw) or len(flattened) % 3:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic event journal is noncanonical",
+        )
+    sequences: list[int] = []
+    transaction_ids: set[str] = set()
+    for record_index in range(0, len(flattened), 3):
+        records = flattened[record_index : record_index + 3]
+        transaction_id = records[0].get("tx_id")
+        if (
+            not isinstance(transaction_id, str)
+            or re.fullmatch(r"tx_[0-9a-f]{12}", transaction_id) is None
+            or transaction_id in transaction_ids
+            or records[0]
+            != {"event_type": "_tx_begin", "tx_id": transaction_id}
+            or records[-1]
+            != {"event_type": "_tx_commit", "tx_id": transaction_id}
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary epic event transaction markers are invalid",
+            )
+        transaction_ids.add(transaction_id)
+        for raw_event in records[1:-1]:
+            event = dict(raw_event)
+            if event.pop("tx_id", None) != transaction_id:
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    "canary epic event transaction binding is invalid",
+                )
+            try:
+                parsed = EpicEvent.model_validate(event)
+            except Exception as exc:
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    "canary epic event record is invalid",
+                ) from exc
+            if (
+                set(event) != set(EpicEvent.model_fields)
+                or parsed.epic_id != "critique-ledger-cl2-planning-canary"
+                or parsed.event_type != "state_change"
+                or re.fullmatch(r"evt_[0-9a-f]{12}", parsed.id) is None
+                or re.fullmatch(r"[0-9a-f]{16}", parsed.transaction_id) is None
+                or not isinstance(parsed.post_state, dict)
+                or set(parsed.post_state) != {"event"}
+                or not isinstance(parsed.post_state.get("event"), dict)
+                or type(parsed.post_state["event"].get("seq")) is not int
+            ):
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    "canary epic event record escaped the admitted plan",
+                )
+            sequences.append(parsed.post_state["event"]["seq"])
+    if sequences != list(range(len(sequences))):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic event sequence is not contiguous",
+        )
+    events.update({
+        "transaction_count": len(transaction_ids),
+        "last_seq": sequences[-1],
+        "_raw": raw,
+    })
+    return {"lock": lock, "events": events}
+
+
+def _zero_recovery_validate_engine_runtime_transition(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    before_lock = before.get("lock")
+    after_lock = after.get("lock")
+    before_events = before.get("events")
+    after_events = after.get("events")
+    if before_lock is not None and (
+        after_lock is None
+        or (after_lock["st_dev"], after_lock["st_ino"])
+        != (before_lock["st_dev"], before_lock["st_ino"])
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary state lock identity changed",
+        )
+    if before_events is None:
+        return
+    if (
+        after_events is None
+        or (after_events["st_dev"], after_events["st_ino"])
+        != (before_events["st_dev"], before_events["st_ino"])
+        or after_events["size"] < before_events["size"]
+        or after_events["transaction_count"] < before_events["transaction_count"]
+        or after_events["last_seq"] < before_events["last_seq"]
+        or not after_events["_raw"].startswith(before_events["_raw"])
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic event journal is not append-only",
+        )
+
+
 def _zero_recovery_git_metadata(root: Path, *, trusted_uid: int) -> dict[str, Any]:
     git_dir = root / ".git"
     git_stat = os.lstat(git_dir)
@@ -649,13 +882,20 @@ def _zero_recovery_direct_source_manifest(
         if parent.as_posix() != "."
     }
     plan_relative = plan_dir.absolute().relative_to(root.absolute()).as_posix()
-    allowed = (
+    mutable_allowed = (
         plan_relative,
         ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
     )
+    schema_paths = set(_ZERO_RECOVERY_SCHEMA_PATHS)
+    engine_runtime_paths = set(_ZERO_RECOVERY_ENGINE_RUNTIME_PATHS)
     allowed_ancestors = {
         parent.as_posix()
-        for value in allowed
+        for value in (
+            *mutable_allowed,
+            *_ZERO_RECOVERY_SCHEMA_PATHS,
+            *_ZERO_RECOVERY_ENGINE_RUNTIME_PATHS,
+            _ZERO_RECOVERY_EPIC_JOURNAL_DIR,
+        )
         for parent in Path(value).parents
         if parent.as_posix() != "."
     }
@@ -692,9 +932,10 @@ def _zero_recovery_direct_source_manifest(
                 if (
                     relative not in tracked_parents
                     and relative not in allowed_ancestors
+                    and relative not in _ZERO_RECOVERY_EMPTY_RUNTIME_DIRS
                     and not any(
                         relative == root_value or relative.startswith(root_value + "/")
-                        for root_value in allowed
+                        for root_value in mutable_allowed
                     )
                 ):
                     raise CliError(
@@ -705,9 +946,13 @@ def _zero_recovery_direct_source_manifest(
                 continue
             if relative in tracked_paths:
                 continue
-            if not any(
+            if (
+                relative not in schema_paths
+                and relative not in engine_runtime_paths
+                and not any(
                 relative == root_value or relative.startswith(root_value + "/")
-                for root_value in allowed
+                for root_value in mutable_allowed
+                )
             ):
                 raise CliError(
                     "zero_recovery_worker_mutation_denied",
@@ -719,6 +964,21 @@ def _zero_recovery_direct_source_manifest(
             runtime_delta.append({"path": relative, **record})
 
     visit(root)
+    schema_runtime = [
+        item for item in runtime_delta if item["path"] in schema_paths
+    ]
+    if (
+        [item["path"] for item in schema_runtime]
+        != list(_ZERO_RECOVERY_SCHEMA_PATHS)
+        or any(item["kind"] != "file" for item in schema_runtime)
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canonical runtime schema set is incomplete",
+        )
+    engine_runtime = _zero_recovery_observe_engine_runtime(
+        root, trusted_uid=trusted_uid
+    )
     git_metadata = _zero_recovery_git_metadata(root, trusted_uid=trusted_uid)
     return {
         "head": head,
@@ -727,6 +987,8 @@ def _zero_recovery_direct_source_manifest(
         "tracked": tracked,
         "git_metadata": git_metadata,
         "runtime_delta": runtime_delta,
+        "schema_runtime": schema_runtime,
+        "engine_runtime": engine_runtime,
     }
 
 
@@ -801,11 +1063,15 @@ def _assert_zero_recovery_source_unchanged(
     if (
         after["tracked"] != before["tracked"]
         or after["git_metadata"] != before["git_metadata"]
+        or after["schema_runtime"] != before["schema_runtime"]
     ):
         raise CliError(
             "zero_recovery_worker_mutation_denied",
             "model changed admitted HEAD or tree identity",
         )
+    _zero_recovery_validate_engine_runtime_transition(
+        before["engine_runtime"], after["engine_runtime"]
+    )
     return after
 
 

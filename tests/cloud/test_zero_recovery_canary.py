@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from jsonschema import validate
 
+from arnold_pipelines.megaplan._core.io import ensure_runtime_layout
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 from arnold_pipelines.megaplan.cloud.providers import ssh as ssh_provider_module
 from arnold_pipelines.megaplan.cloud.providers import zero_recovery
@@ -395,6 +396,13 @@ def _assignment_target(node: ast.stmt) -> str | None:
 
 def test_bootstrap_top_level_intent_to_unit_observation_executes() -> None:
     tree = ast.parse(zero_recovery._BOOTSTRAP_RECLAIM_SCRIPT)
+    hook_index = next(
+        index
+        for index, node in enumerate(tree.body)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Attribute)
+        and node.targets[0].attr == "excepthook"
+    )
     start = next(
         index
         for index, node in enumerate(tree.body)
@@ -402,6 +410,7 @@ def test_bootstrap_top_level_intent_to_unit_observation_executes() -> None:
         and isinstance(node, ast.Assign)
         and isinstance(node.value, ast.Call)
     )
+    assert hook_index < start
     end = next(
         index
         for index in range(start + 1, len(tree.body))
@@ -437,6 +446,13 @@ def test_bootstrap_top_level_intent_to_unit_observation_executes() -> None:
 
 def test_fence_top_level_authority_to_unit_observation_executes() -> None:
     tree = ast.parse(zero_recovery._FENCE_SCRIPT)
+    hook_index = next(
+        index
+        for index, node in enumerate(tree.body)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Attribute)
+        and node.targets[0].attr == "excepthook"
+    )
     authority_index = next(
         index
         for index, node in enumerate(tree.body)
@@ -444,6 +460,7 @@ def test_fence_top_level_authority_to_unit_observation_executes() -> None:
         and isinstance(node, ast.Assign)
         and isinstance(node.value, ast.Call)
     )
+    assert hook_index < authority_index
     start = authority_index - 1
     assert isinstance(tree.body[start], ast.If)
     end = next(
@@ -484,6 +501,86 @@ def test_fence_top_level_authority_to_unit_observation_executes() -> None:
     assert calls[1][0] == "persist"
     assert namespace["authority_dir_fd"] == 9
     assert namespace["before"] == [{"unit": "one"}, {"unit": "two"}]
+
+
+@pytest.mark.parametrize(
+    ("remote", "writer_name", "hook_name", "error", "schema"),
+    [
+        (
+            _remote_bootstrap_function,
+            "write_failure_receipt",
+            "failure_excepthook",
+            "authority_directory_identity_invalid",
+            "arnold.cloud.zero_recovery_bootstrap_failure_envelope.v1",
+        ),
+        (
+            _remote_fence_function,
+            "write_fence_failure_receipt",
+            "fence_failure_excepthook",
+            "authority_directory_identity_invalid",
+            "arnold.cloud.zero_recovery_host_fence_failure_envelope.v1",
+        ),
+        (
+            _remote_fence_function,
+            "write_fence_failure_receipt",
+            "fence_failure_excepthook",
+            "existing_fence_intent_subject_mismatch",
+            "arnold.cloud.zero_recovery_host_fence_failure_envelope.v1",
+        ),
+    ],
+)
+def test_pre_intent_authority_and_conflicting_intent_failures_emit_typed_envelope(
+    remote: object,
+    writer_name: str,
+    hook_name: str,
+    error: str,
+    schema: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    namespace: dict[str, object] = {
+        "config": {
+            "transaction_id": "tx-pre-intent",
+            "transaction_digest": "d" * 64,
+        },
+        "authority_root": Path("/unavailable-authority"),
+        "authority_dir_fd": None,
+        "failure_stage": "before_intent",
+        "prune_started": False,
+        "marker_published": False,
+        "settle_observations": [],
+        "last_systemd_jobs": [],
+        "last_fence_jobs": [],
+        "units": [],
+        "action": "apply",
+        "safe_unit_observations": lambda: [],
+        "safe_fence_unit_observations": lambda: [],
+        "authority_filename": lambda suffix: "tx-pre-intent" + suffix,
+        "datetime": datetime,
+        "timezone": timezone,
+        "hashlib": hashlib,
+        "json": json,
+        "os": os,
+        "sys": sys,
+    }
+    remote(writer_name, namespace)
+    remote(hook_name, namespace)
+    namespace[hook_name](RuntimeError, RuntimeError(error), None)
+    emitted = json.loads(capsys.readouterr().err.strip())
+    assert emitted == {
+        "schema": schema,
+        "status": "failed",
+        "stage": "before_intent",
+        **({"action": "apply"} if "host_fence" in schema else {}),
+        "transaction_id": "tx-pre-intent",
+        "transaction_digest": "d" * 64,
+        "error_type": "RuntimeError",
+        "error": error,
+        "durable_receipt_written": False,
+        "durable_receipt_error": "authority_directory_unavailable",
+        "failure_receipt": emitted["failure_receipt"],
+    }
+    assert emitted["failure_receipt"]["status"] == "failed"
+    assert emitted["failure_receipt"]["stage"] == "before_intent"
 
 
 class _FakeSettleTime:
@@ -711,6 +808,9 @@ def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
     ]
     authority_root = tmp_path / "authority"
     authority_root.mkdir()
+    authority_dir_fd = os.open(
+        authority_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    )
 
     def write_authority_file(name: str, raw: bytes) -> None:
         fd = os.open(
@@ -729,6 +829,7 @@ def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
                 "transaction_digest": "d" * 64,
             },
             "authority_root": authority_root,
+            "authority_dir_fd": authority_dir_fd,
             "authority_filename": lambda suffix: "tx-1" + suffix,
             "write_authority_file": write_authority_file,
             "failure_stage": "settle_units_before_prune",
@@ -768,8 +869,13 @@ def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
     assert path.read_bytes() == before
     emitted = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert emitted[0]["durable_receipt_written"] is True
+    assert emitted[0]["schema"] == (
+        "arnold.cloud.zero_recovery_bootstrap_failure_envelope.v1"
+    )
+    assert emitted[0]["failure_receipt"] == payload
     assert emitted[1]["durable_receipt_written"] is False
     assert emitted[1]["durable_receipt_error"].startswith("FileExistsError:")
+    os.close(authority_dir_fd)
 
 
 def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
@@ -1120,6 +1226,17 @@ def test_fence_authority_directory_rejects_symlink_and_wrong_owner(
     target.mkdir(mode=0o700)
     symlink = tmp_path / "authority-link"
     symlink.symlink_to(target, target_is_directory=True)
+    bootstrap_symlink_namespace = _remote_bootstrap_function(
+        "open_authority_directory",
+        {
+            "authority_root": symlink,
+            "os": os,
+            "stat": stat_module,
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="authority_directory_identity_invalid"):
+        bootstrap_symlink_namespace["open_authority_directory"]()
     symlink_namespace = _remote_fence_function(
         "open_authority_directory",
         {
@@ -1776,9 +1893,30 @@ def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "canary@example.test"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Canary"], cwd=root, check=True)
-    (root / ".gitignore").write_text("ignored-shadow.py\n", encoding="utf-8")
+    (root / ".gitignore").write_text(
+        "ignored-shadow.py\n.megaplan/schemas/\n", encoding="utf-8"
+    )
+    (root / ".gitattributes").write_text(
+        "*.pypeline linguist-language=Python\n", encoding="utf-8"
+    )
     (root / "engine.py").write_text("ADMITTED = True\n", encoding="utf-8")
-    subprocess.run(["git", "add", ".gitignore", "engine.py"], cwd=root, check=True)
+    (root / "idea.md").write_text("# Canary idea\n", encoding="utf-8")
+    (root / "NORTHSTAR.md").write_text(
+        "# North Star\n\nFinite canary.\n", encoding="utf-8"
+    )
+    (root / ".vscode").mkdir()
+    (root / ".vscode/settings.json").write_text(
+        '{\n  "files.associations": {\n    "*.pypeline": "python"\n  }\n}\n',
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            "git", "add", ".gitattributes", ".gitignore", "engine.py",
+            "idea.md", "NORTHSTAR.md", ".vscode/settings.json",
+        ],
+        cwd=root,
+        check=True,
+    )
     subprocess.run(["git", "commit", "-qm", "admitted"], cwd=root, check=True)
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True,
@@ -1799,6 +1937,102 @@ def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
 @pytest.mark.parametrize(
     "mutation",
     [
+        "schema_tampered",
+        "schema_missing",
+        "schema_extra",
+        "lock_tampered",
+        "lock_extra",
+        "epic_tampered",
+        "epic_extra",
+    ],
+)
+def test_runner_post_init_binds_canonical_schema_runtime_and_rejects_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    _, _, plan_dir = _git_canary_fixture(tmp_path)
+    plan_dir.rmdir()
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    ensure_runtime_layout(tmp_path)
+    before = _zero_recovery_source_identity(tmp_path, plan_dir)
+    assert before is not None
+    assert [item["path"] for item in before["schema_runtime"]] == [
+        f".megaplan/schemas/{filename}"
+        for filename in sorted(
+            path.name for path in (tmp_path / ".megaplan/schemas").iterdir()
+        )
+    ]
+
+    command = [
+        sys.executable,
+        "-P",
+        "-m",
+        "arnold_pipelines.megaplan",
+        "init",
+        "--project-dir",
+        str(tmp_path),
+        "--name",
+        "critique-ledger-cl2-planning-canary",
+        "--auto-approve",
+        "--idea-file",
+        str(tmp_path / "idea.md"),
+        "--north-star",
+        str(tmp_path / "NORTHSTAR.md"),
+        "--robustness",
+        "full",
+        "--no-adaptive-critique",
+        "--vendor",
+        "codex",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "MEGAPLAN_ZERO_RECOVERY_CANARY": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(Path.cwd()),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    post_init = _assert_zero_recovery_source_unchanged(
+        tmp_path, plan_dir, before
+    )
+    assert post_init is not None
+
+    schema_root = tmp_path / ".megaplan/schemas"
+    lock_root = tmp_path / ".megaplan/.state-locks"
+    epic_root = (
+        tmp_path
+        / ".megaplan/epics/critique-ledger-cl2-planning-canary"
+    )
+    if mutation == "schema_tampered":
+        (schema_root / "plan.json").write_text("{}\n", encoding="utf-8")
+    elif mutation == "schema_missing":
+        (schema_root / "plan.json").unlink()
+    elif mutation == "schema_extra":
+        (schema_root / "hostile.json").write_text("{}\n", encoding="utf-8")
+    elif mutation == "lock_tampered":
+        (lock_root / "critique-ledger-cl2-planning-canary.lock").write_text(
+            "hostile\n", encoding="utf-8"
+        )
+    elif mutation == "lock_extra":
+        (lock_root / "hostile.lock").write_text("1\n", encoding="utf-8")
+    elif mutation == "epic_tampered":
+        with (epic_root / "events.jsonl").open("ab") as handle:
+            handle.write(b"hostile\n")
+    else:
+        (epic_root / "hostile.json").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(CliError) as exc:
+        _assert_zero_recovery_source_unchanged(tmp_path, plan_dir, post_init)
+    assert exc.value.code == "zero_recovery_worker_mutation_denied"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
         "tracked_source", "head_ref", "untracked_shadow", "ignored_shadow",
         "assume_unchanged_source", "index_flag", "config_fsmonitor", "hook",
     ],
@@ -1814,6 +2048,7 @@ def test_runner_and_worker_reject_repository_identity_or_import_shadow_mutation(
     integrity(
         tmp_path, source_commit=head, source_tree=tree, checkpoint="baseline"
     )
+    ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
     worker_before = _zero_recovery_source_identity(tmp_path, plan_dir)
     if mutation == "tracked_source":
@@ -1912,7 +2147,8 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     assert "requests" not in source
     output = tmp_path / f"{phase}.json"
     codex_home = tmp_path / "codex-home"
-    schema = Path(f".megaplan/schemas/{phase}.json")
+    ensure_runtime_layout(tmp_path)
+    schema = tmp_path / ".megaplan" / "schemas" / f"{phase}.json"
     completed = subprocess.run(
         [
             sys.executable,
@@ -2019,6 +2255,72 @@ def test_custody_contract_rejects_omission_extra_duplicate_or_status_drift(
         )
     else:
         hostile["items"][0]["status"] = "COMPLETED"
+    assert _finite_canary_custody_contract(hostile) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "top_level_extra",
+        "contract_timestamp_invalid",
+        "gate_omitted",
+        "gate_extra",
+        "gate_duplicate",
+        "gate_reordered",
+        "gate_status_drift",
+        "gate_owner_drift",
+        "gate_evidence_drift",
+        "host_control_state_drift",
+        "obligation_owner_drift",
+        "obligation_acceptance_drift",
+        "obligation_evidence_drift",
+        "obligation_claim_drift",
+    ],
+)
+def test_custody_v3_rejects_noncanonical_gate_host_and_obligation_fields(
+    mutation: str,
+) -> None:
+    custody = json.loads(
+        Path(
+            ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+            "custody-manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    hostile = copy.deepcopy(custody)
+    gates = hostile["prelaunch_release_gates"]
+    obligation = hostile["deferred_obligations"][0]
+    if mutation == "top_level_extra":
+        hostile["hostile"] = True
+    elif mutation == "contract_timestamp_invalid":
+        hostile["contract_updated_at"] = "2026-08-03T02:40:21+00:00"
+    elif mutation == "gate_omitted":
+        gates.pop()
+    elif mutation == "gate_extra":
+        extra = copy.deepcopy(gates[-1])
+        extra["id"] = "hostile_extra_gate"
+        gates.append(extra)
+    elif mutation == "gate_duplicate":
+        gates.append(copy.deepcopy(gates[0]))
+    elif mutation == "gate_reordered":
+        gates[0], gates[1] = gates[1], gates[0]
+    elif mutation == "gate_status_drift":
+        gates[0]["status"] = "ACCEPTED"
+    elif mutation == "gate_owner_drift":
+        gates[0]["owner"] = "untrusted operator"
+    elif mutation == "gate_evidence_drift":
+        gates[0]["evidence"]["path"] = "forged.json"
+    elif mutation == "host_control_state_drift":
+        hostile["trusted_host_control_state_contract"][
+            "global_containment_marker"
+        ]["schema"] = "arnold.cloud.zero_recovery_marker.v1"
+    elif mutation == "obligation_owner_drift":
+        obligation["owner_milestone"] = "wrong-owner"
+    elif mutation == "obligation_acceptance_drift":
+        obligation["acceptance_gate"] = "SELF_ASSERTION_ALLOWED"
+    elif mutation == "obligation_evidence_drift":
+        obligation["evidence_ref"] = "forged.json#/claim"
+    else:
+        obligation["required_claim_id"] = "F1.forged"
     assert _finite_canary_custody_contract(hostile) is None
 
 
