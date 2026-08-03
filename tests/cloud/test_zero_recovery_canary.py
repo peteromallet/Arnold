@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan.orchestration.task_feasibility import (
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     validate_finalize_resolution_coverage,
 )
+from arnold_pipelines.megaplan.prompts.finalize import _finalize_prompt
 from arnold_pipelines.megaplan.cloud import cli as cloud_cli
 from arnold_pipelines.megaplan.cloud.providers import ssh as ssh_provider_module
 from arnold_pipelines.megaplan.cloud.providers import zero_recovery
@@ -3629,10 +3630,12 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     output = tmp_path / f"{phase}.json"
     codex_home = tmp_path / "codex-home"
     ensure_runtime_layout(tmp_path)
+    prompt = None
     if phase == "finalize":
-        (tmp_path / "critique_clearance.json").write_text(
-            json.dumps({"admitted": True, "finding_count": 0, "finding_ids": []}),
-            encoding="utf-8",
+        prompt = _offline_structural_smoke_finalize_prompt(
+            tmp_path,
+            tmp_path,
+            {"admitted": True, "finding_count": 0, "finding_ids": []},
         )
     schema = tmp_path / ".megaplan" / "schemas" / f"{schema_name}.json"
     completed = subprocess.run(
@@ -3647,6 +3650,7 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
             "-",
         ],
         env={"CODEX_HOME": str(codex_home), "PATH": os.environ["PATH"]},
+        input=prompt,
         text=True,
         capture_output=True,
         check=True,
@@ -3814,7 +3818,53 @@ def test_offline_structural_smoke_revise_survives_real_capture_and_structure_aud
         assert addressed["plan_refs"] == [heading]
 
 
-def test_offline_structural_smoke_finalize_binds_plan_local_clearance_through_capture(
+def _offline_structural_smoke_finalize_prompt(
+    plan_dir: Path, tmp_path: Path, clearance: dict[str, object]
+) -> str:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir(exist_ok=True)
+    (plan_dir / "plan_v1.md").write_text(
+        "# Plan\n\n## Step 1: Verify receipts\n", encoding="utf-8"
+    )
+    (plan_dir / "plan_v1.meta.json").write_text(
+        json.dumps({"success_criteria": []}), encoding="utf-8"
+    )
+    (plan_dir / "gate.json").write_text(
+        json.dumps(
+            {
+                "recommendation": "PROCEED",
+                "rationale": "Ready.",
+                "signals_assessment": "Clear.",
+                "warnings": [],
+                "settled_decisions": [],
+                "flag_resolutions": [],
+                "accepted_tradeoffs": [],
+                "north_star_actions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "critique_clearance.json").write_text(
+        json.dumps(clearance), encoding="utf-8"
+    )
+    state = {
+        "name": "offline-structural-smoke",
+        "idea": "Verify receipts.",
+        "iteration": 1,
+        "config": {
+            "project_dir": str(project_dir),
+            "mode": "code",
+            "robustness": "full",
+        },
+        "meta": {},
+        "sessions": {},
+        "plan_versions": [{"version": 1, "file": "plan_v1.md"}],
+        "history": [],
+    }
+    return _finalize_prompt(state, plan_dir, root=tmp_path)
+
+
+def test_offline_structural_smoke_finalize_binds_prompt_clearance_through_capture(
     tmp_path: Path,
 ) -> None:
     fake = Path(
@@ -3830,9 +3880,10 @@ def test_offline_structural_smoke_finalize_binds_plan_local_clearance_through_ca
         "finding_count": 2,
         "finding_ids": ["CF-REPRESENTATIVE-1", "CF-REPRESENTATIVE-2"],
     }
-    (plan_dir / "critique_clearance.json").write_text(
-        json.dumps(clearance), encoding="utf-8"
-    )
+    prompt = _offline_structural_smoke_finalize_prompt(plan_dir, tmp_path, clearance)
+    clearance_path = plan_dir / "critique_clearance.json"
+    clearance_path.write_text("this file must not be read", encoding="utf-8")
+    clearance_path.chmod(0)
     output = plan_dir / ".zero-recovery-07-finalize-i2-worker-output.json"
     codex_home = tmp_path / "codex-home"
     completed = subprocess.run(
@@ -3847,6 +3898,7 @@ def test_offline_structural_smoke_finalize_binds_plan_local_clearance_through_ca
             "-",
         ],
         env={"CODEX_HOME": str(codex_home), "PATH": os.environ["PATH"]},
+        input=prompt,
         text=True,
         capture_output=True,
         check=True,
@@ -3885,7 +3937,7 @@ def test_offline_structural_smoke_finalize_binds_plan_local_clearance_through_ca
 
 
 @pytest.mark.parametrize("clearance", [None, {"finding_ids": "malformed"}])
-def test_offline_structural_smoke_finalize_rejects_missing_or_malformed_clearance(
+def test_offline_structural_smoke_finalize_rejects_missing_or_malformed_prompt_clearance(
     tmp_path: Path, clearance: dict[str, object] | None
 ) -> None:
     fake = Path(
@@ -3895,9 +3947,11 @@ def test_offline_structural_smoke_finalize_rejects_missing_or_malformed_clearanc
     schema_path = Path(".megaplan/schemas/finalize_capture.json").resolve()
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
-    if clearance is not None:
-        (plan_dir / "critique_clearance.json").write_text(
-            json.dumps(clearance), encoding="utf-8"
+    if clearance is None:
+        prompt = "Finalize the approved plan without a custody section."
+    else:
+        prompt = _offline_structural_smoke_finalize_prompt(
+            plan_dir, tmp_path, clearance
         )
     output = plan_dir / ".zero-recovery-07-finalize-i2-worker-output.json"
 
@@ -3913,13 +3967,14 @@ def test_offline_structural_smoke_finalize_rejects_missing_or_malformed_clearanc
             "-",
         ],
         env={"CODEX_HOME": str(tmp_path / "codex-home"), "PATH": os.environ["PATH"]},
+        input=prompt,
         text=True,
         capture_output=True,
         check=False,
     )
 
     assert completed.returncode != 0
-    assert "fake codex finalize requires valid" in completed.stderr
+    assert "fake codex finalize requires valid prompt critique clearance" in completed.stderr
     assert not output.exists()
 
 
