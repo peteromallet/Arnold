@@ -2010,8 +2010,12 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
         preflight_mutating_phase(root=root, state=state, phase=f"override:{action}")
     else:
         preflight_phase(root=root, state=state, phase=f"override:{action}")
-    if action == "force-proceed":
-        # Force-proceed has one mutation owner: the CAS-backed control binding.
+    if action in {"force-proceed", "set-profile"}:
+        # These controls have one mutation owner: the CAS-backed control
+        # binding.  In particular, set-profile is also the recovery operation
+        # that refreshes persisted tier routing when the selected profile name
+        # is unchanged.  Letting it fall back to the legacy writer would omit
+        # the routing receipt and could race the paused cutover state.
         # Preflight isolation metadata is carried in ``state`` and committed by
         # that same CAS; do not persist an out-of-band pre-transition write.
         return _handle_routed_override(root, plan_dir, state, args)
