@@ -102,6 +102,7 @@ rejected, or deferred after parent review.
 | MP-080 | P0 | Notification adapter failure or ambiguous provider outcome can fall through to a direct Discord send, bypassing durable effect identity and recreating duplicate messages | notification delivery | accepted | raw audit `a03-s09`; current-head reachability rechecked in `discord_dm.py` and resident delivery paths | fail closed/INDETERMINATE, one real provider callback, delete direct-send fallback; relaunch gate |
 | MP-081 | P0 | Simple-fixer mutation budgets reset after process/session/claim release and mutation effects lack a durable occurrence-wide idempotency record | repair/fixer | accepted | raw audits `a03-s06`, `a03-s08`; distinct from active MP-074/075 identity work | durable reservation/counters/effect outcomes keyed by canonical repair occurrence; relaunch gate |
 | MP-082 | P1 | Launch, resident, repair, scheduler, and reset paths keep independent retry budgets instead of one occurrence policy | launch/runtime/effects | follow-up | raw audits `a03-s06`, `a03-s09` | shared budget service after MP-081 proves canonical repair implementation |
+| MP-083 | P0 | SSH provider status invokes `arnold status --plan`, but that executable is the native Arnold CLI rather than Megaplan; live status fails before canonical liveness can be read | cloud status/supervisor | accepted | installed-cloud probe on 2026-08-03: native CLI rejected missing `--artifact-root`; merges with MP-073 | attested `python -P -m arnold_pipelines.megaplan status` route plus canonical current-target runner field; relaunch gate |
 
 ## Rolling disposition log
 
@@ -130,6 +131,7 @@ rejected, or deferred after parent review.
 | 2026-08-03 21:58 | Owner-lease publisher parity | Integrated `9a3a7aa6e7`; conflict resolution preserves schema-v2 managed identity, single publisher flock, monotonic active-step fence, and diagnostic-only markerless tmux discovery. |
 | 2026-08-03 22:10 | Bounded Luna audit completion | All 25 judgment-selected authority, identity, and highest-risk retry/effect cells completed with zero launcher failures. The matrix is closed; further exploration now requires a concrete uncovered path. |
 | 2026-08-03 22:14 | Retry/effect audit triage | Accepted MP-080/MP-081 as relaunch gates because they can repeat user-visible effects or fixer mutations after ambiguous/restarted attempts. Deferred generalized Finalize/Execute/launch budget unification as MP-078/MP-079/MP-082; those do not block clean candidate adoption and initial GLM Execute progress. |
+| 2026-08-03 22:33 | Installed SSH status probe | Accepted MP-083 and merged it with MP-073 implementation scope. `SshProvider.status_payload()` invokes the wrong CLI family on the live runner; the replacement must be runtime-attested and must not restore raw tmux/process authority. |
 | 2026-08-03 20:49 | 50-cell Luna audit matrix | Started with five concurrent read-only agents; every completed report will be triaged here before fixer dispatch. |
 
 ## Admission and completion rule

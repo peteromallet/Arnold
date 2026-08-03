@@ -66,7 +66,9 @@ waits for all checked items and one exact integration commit.
 - [ ] After repair identity lands, persist the simple-fixer mutation budget and
   effect outcomes by canonical repair occurrence across restart/claim release.
 - [ ] Route cloud status/supervisor actions through canonical current-target
-  liveness; tmux/`ps` evidence is diagnostic only.
+  liveness; tmux/`ps` evidence is diagnostic only. Replace the collided SSH
+  `arnold status --plan` invocation with the exact runtime-attested Megaplan
+  module entrypoint; prove the native Arnold CLI is never selected.
 - [ ] Run combined regression, adversarial stale-writer/replay tests, and real
   sibling-container/provider canaries against one candidate commit.
 - [ ] Deploy that exact commit to the cloud runtime candidate; verify remote
