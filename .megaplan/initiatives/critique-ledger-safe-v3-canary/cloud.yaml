@@ -13,7 +13,7 @@ codex:
   reasoning: high
 mode: idle
 megaplan:
-  ref: 8e07ab367f043504ca5def8090d75fff7823751f
+  ref: fd1ecec2bc41b07708a71842c76a4d5937785938
   codex_auth: chatgpt
 resources:
   port: 8080
