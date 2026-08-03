@@ -1382,8 +1382,14 @@ def _apply_file_fallback(
     }
     if step not in file_fallback:
         return payload
-    fallback_name, sentinel_key = file_fallback[step]
-    fallback_path = Path(output_path) if output_path is not None else plan_dir / fallback_name
+    _, sentinel_key = file_fallback[step]
+    # Shannon is an inline structured-output worker.  Only an exact path
+    # explicitly supplied by its caller may participate in capture; discovering
+    # a conventional scratch filename would silently adopt stale or unrelated
+    # state outside the response contract.
+    if output_path is None:
+        return payload
+    fallback_path = Path(output_path)
     if not fallback_path.exists():
         return payload
     try:
