@@ -17,11 +17,13 @@ import tempfile
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 import pytest
 from jsonschema import validate
 
 from arnold_pipelines.megaplan._core.io import ensure_runtime_layout
+from arnold_pipelines.megaplan.workers import _impl as worker_impl
 from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
@@ -2042,8 +2044,16 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     finish = verify.index("_finish_zero_recovery_model_runtime(")
     source_check = verify.index("_assert_zero_recovery_source_unchanged(")
     revoke = verify.index("_restore_zero_recovery_schema_input(")
-    assert finish < source_check < revoke
-    assert verify.index("if runtime_finished:") < revoke
+    assert finish < revoke < source_check
+
+    run_start = source.index("def _run_codex_step_uncapped(")
+    run_end = source.index("\ndef run_codex_step(", run_start)
+    run = source[run_start:run_end]
+    baseline = run.index("worker_source_before = _zero_recovery_source_identity(")
+    grant = run.index("schema_grant = _prepare_zero_recovery_schema_input(")
+    outer_quiesce = run.rindex("_quiesce_zero_recovery_model_uid()")
+    outer_revoke = run.rindex("_restore_zero_recovery_schema_input(schema_grant)")
+    assert baseline < grant < outer_quiesce < outer_revoke
 
 
 def test_zero_recovery_schema_grant_is_exact_root_owned_read_only(
@@ -2122,6 +2132,104 @@ def test_zero_recovery_schema_grant_rejects_writable_input(
     )
     with pytest.raises(CliError, match="root-owned immutable"):
         _prepare_zero_recovery_schema_input(schema)
+
+
+def test_zero_recovery_schema_grant_reseals_when_post_grant_check_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    schema = tmp_path / "plan.json"
+    schema.write_text("{}\n", encoding="utf-8")
+    identity = os.lstat(schema)
+    real_fstat = os.fstat
+    real_fchmod = os.fchmod
+    mode = 0o600
+    chmod_calls: list[int] = []
+
+    def root_stat(*, nlink: int = 1) -> SimpleNamespace:
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | mode,
+            st_nlink=nlink,
+            st_uid=0,
+            st_gid=0,
+            st_dev=identity.st_dev,
+            st_ino=identity.st_ino,
+        )
+
+    def fake_fstat(fd: int) -> SimpleNamespace:
+        observed = real_fstat(fd)
+        assert (observed.st_dev, observed.st_ino) == (
+            identity.st_dev,
+            identity.st_ino,
+        )
+        return root_stat(nlink=2 if mode == 0o644 else 1)
+
+    def fake_fchmod(fd: int, granted_mode: int) -> None:
+        nonlocal mode
+        real_fchmod(fd, granted_mode)
+        mode = granted_mode
+        chmod_calls.append(granted_mode)
+
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "lstat", lambda _path: root_stat())
+    monkeypatch.setattr(os, "fstat", fake_fstat)
+    monkeypatch.setattr(os, "fchmod", fake_fchmod)
+
+    with pytest.raises(CliError, match="did not seal exact identity"):
+        _prepare_zero_recovery_schema_input(schema)
+
+    assert chmod_calls == [0o644, 0o600]
+    assert mode == 0o600
+
+
+def test_zero_recovery_boundary_revokes_at_empty_milestone_before_late_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+
+    def late_failure(
+        _runtime: dict[str, object] | None,
+        *,
+        output_path: Path,
+        on_process_empty: Callable[[], None] | None,
+    ) -> None:
+        assert output_path == tmp_path / "output.json"
+        assert on_process_empty is not None
+        events.append("empty")
+        on_process_empty()
+        raise CliError("seeded_late_failure", "after process emptiness")
+
+    monkeypatch.setattr(
+        worker_impl, "_finish_zero_recovery_model_runtime", late_failure
+    )
+    monkeypatch.setattr(
+        worker_impl,
+        "_restore_zero_recovery_schema_input",
+        lambda _grant: events.append("revoke"),
+    )
+    monkeypatch.setattr(
+        worker_impl,
+        "_assert_zero_recovery_source_unchanged",
+        lambda _root, _plan_dir, _before: events.append("source"),
+    )
+    monkeypatch.setattr(
+        worker_impl,
+        "_assert_zero_recovery_plan_unchanged",
+        lambda _root, _plan_dir, *, output_path, before: events.append("plan"),
+    )
+
+    with pytest.raises(CliError, match="after process emptiness"):
+        worker_impl._verify_zero_recovery_worker_boundaries(
+            root=tmp_path,
+            plan_dir=tmp_path / "plan",
+            output_path=tmp_path / "output.json",
+            runtime={"step": "plan"},
+            schema_grant={"path": tmp_path / "schema.json"},
+            source_before={},
+            plan_before={},
+        )
+
+    assert events == ["empty", "revoke", "source", "plan"]
 
 
 def test_zero_recovery_runtime_accounts_for_and_seals_inert_unix_socket(
