@@ -35,6 +35,9 @@ from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud import status_format, status_snapshot
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
+from arnold_pipelines.megaplan.finite_canary_policy import (
+    finite_canary_policy_is_exact,
+)
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
@@ -116,7 +119,7 @@ def _validate_zero_recovery_canary_spec(
     required = {
         "schema", "canary_id", "engine_commit", "engine_tree", "brief",
         "north_star", "plan_name", "phases", "terminal_state", "model_spec",
-        "robustness", "adaptive_critique", "receipts",
+        "robustness", "adaptive_critique", "receipts", "policy",
     }
     receipts = payload.get("receipts") if isinstance(payload, dict) else None
     if (
@@ -137,6 +140,7 @@ def _validate_zero_recovery_canary_spec(
         or payload.get("model_spec") != "codex:gpt-5.6-sol:high"
         or payload.get("robustness") != "full"
         or payload.get("adaptive_critique") is not False
+        or not finite_canary_policy_is_exact(payload.get("policy"))
         or receipts
         != {
             "directory": ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
