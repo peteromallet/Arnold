@@ -1642,13 +1642,17 @@ def expected_worker_launch_values(
     spec_path: Path | None = None,
     *,
     root: Path | None = None,
+    runtime_vector_available: bool = False,
 ) -> dict[str, Any]:
     """Extract expected worker launch parameters from the persisted binding.
 
     Returns expected runtime fields plus the canonical *require_full_vector*
-    enforcement decision when a bound chain execution identity exists.  Returns
-    empty strings and ``False`` when no binding is available (e.g. plan-level
-    dispatch without a chain spec).
+    enforcement decision when a bound chain execution identity and a verified
+    launch-seed vector are both available.  The editable-runtime identity is
+    still checked when a launch seed is not configured; only the seed-derived
+    module/interpreter/path vector is omitted.  Returns empty strings and
+    ``False`` when no binding is available (e.g. plan-level dispatch without a
+    chain spec).
 
     Model and configured-spec are runtime dispatch choices not stored in the
     binding, so their expected values are always returned empty.
@@ -1696,7 +1700,13 @@ def expected_worker_launch_values(
         "expected_model": None,
         "expected_spec": "",
         "expected_chain_spec": str(spec_path.resolve(strict=False)),
-        "require_full_vector": True,
+        # A content-addressed runtime vector exists only in a verified launch
+        # seed.  Isolated cloud chains intentionally do not use the resident
+        # supervisor seed, but their persisted root/revision/spec identity is
+        # still strict.  Requiring a seed-only value here made every such chain
+        # fail with expected=<required>, actual=<missing> before its first
+        # worker dispatch.
+        "require_full_vector": bool(runtime_vector_available),
     }
     missing = [
         field

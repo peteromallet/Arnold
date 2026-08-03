@@ -689,7 +689,25 @@ class SshProvider(Provider):
         # Provider failures and their WBC evidence must never become a secret
         # exfiltration surface, even when ordinary output redaction is disabled.
         failure_env["ARNOLD_REDACTION_ENABLED"] = "1"
-        return redact(value, self._spec.secrets, env=failure_env)
+        redacted = redact(value, self._spec.secrets, env=failure_env)
+        for secret in getattr(self, "_ephemeral_redaction_values", ()):
+            if secret:
+                redacted = redacted.replace(secret, "[REDACTED]")
+        return redacted
+
+    def _remote_run_secret_input(
+        self, command: str, *, secret: str, surface: str
+    ) -> subprocess.CompletedProcess[str]:
+        previous = getattr(self, "_ephemeral_redaction_values", ())
+        self._ephemeral_redaction_values = (*previous, secret)
+        try:
+            return self._remote_run_compatible(
+                command,
+                input=secret,
+                surface=surface,
+            )
+        finally:
+            self._ephemeral_redaction_values = previous
 
     def _remote_run(
         self,
@@ -1091,9 +1109,9 @@ class SshProvider(Provider):
                 "/root",
             ]
         )
-        install = self._remote_run_compatible(
+        install = self._remote_run_secret_input(
             command,
-            input=token,
+            secret=token,
             surface="isolated_chain_runner_git_auth_seed",
         )
         expected_receipt = {
@@ -1118,7 +1136,7 @@ class SshProvider(Provider):
                 "isolated_chain_runner_git_auth_failed",
                 "isolated Git credential modes, helper, or identity were not attested",
             )
-        self._remote_run_compatible(
+        self._remote_run_secret_input(
             shlex.join(
                 [
                     "docker",
@@ -1136,7 +1154,7 @@ class SshProvider(Provider):
                     "--insecure-storage",
                 ]
             ),
-            input=token,
+            secret=token,
             surface="isolated_chain_runner_gh_auth_seed",
         )
         self._remote_run_compatible(

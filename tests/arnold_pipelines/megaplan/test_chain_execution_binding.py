@@ -1172,11 +1172,53 @@ def test_worker_expectations_propagate_strict_runtime_policy(
         lambda _path, verify_execution_binding=False: state,
     )
 
-    values = expected_worker_launch_values(spec_path, root=tmp_path)
+    values = expected_worker_launch_values(
+        spec_path,
+        root=tmp_path,
+        runtime_vector_available=True,
+    )
 
     assert values["expected_source_ref"] == "a" * 40
     assert values["expected_root"] == "/runtime"
     assert values["require_full_vector"] is True
+
+
+def test_worker_expectations_do_not_require_seed_vector_when_unconfigured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    runtime = {
+        "source_revision": "a" * 40,
+        "import_root": "/runtime",
+    }
+    state = SimpleNamespace(
+        metadata={
+            "execution_binding": {
+                "launched_identity": {},
+                "runtime_binding": {"current_identity": runtime},
+            }
+        }
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.binding_policy",
+        lambda _path: {"required": True, "require_editable_runtime_match": True},
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.spec.load_chain_state",
+        lambda _path, verify_execution_binding=False: state,
+    )
+
+    values = expected_worker_launch_values(spec_path, root=tmp_path)
+
+    # Root/revision/spec expectations remain populated and therefore strict.
+    assert values["expected_source_ref"] == "a" * 40
+    assert values["expected_installed_package_path"] == "/runtime"
+    assert values["expected_runtime_revision"] == "a" * 40
+    assert values["expected_root"] == "/runtime"
+    # The module/interpreter/path vector can only come from a verified seed.
+    assert values["expected_runtime_vector_sha256"] == ""
+    assert values["require_full_vector"] is False
 
 
 def test_worker_expectations_reject_malformed_binding_policy(tmp_path: Path) -> None:

@@ -1007,6 +1007,15 @@ def test_isolated_git_seed_discovers_gh_without_token_in_argv_or_messages() -> N
     assert token not in "".join(messages)
 
 
+def test_isolated_git_seed_failure_redaction_covers_stdin_only_token() -> None:
+    provider = SshProvider(_spec())
+    token = "ghp_failure_echo_secret"
+    provider._ephemeral_redaction_values = (token,)
+    redacted = provider._redact_failure_text(f"remote unexpectedly echoed {token}")
+    assert token not in redacted
+    assert "[REDACTED]" in redacted
+
+
 @pytest.mark.parametrize(
     "action",
     ["chain", "preflight", "sync-megaplan", "status", "logs", "chains"],
