@@ -359,7 +359,8 @@ def delegate_to_simple_fixer(
     # Truth firewall: only a material mutation attempt is delegated. A no-op
     # or exhausted budget is evidence that no repair authority was consumed;
     # callers must not turn either state into a dispatch claim.
-    if sf_outcome == "attempted":
+    if sf_outcome in ("attempted", "adopted"):
+        ledger_record = getattr(session, "last_reservation", None)
         return RepairDelegationResult(
             outcome="delegated",
             delegation=delegation,
@@ -368,9 +369,22 @@ def delegate_to_simple_fixer(
             evidence={
                 "simple_fixer_outcome": sf_outcome,
                 "receipt": receipt.to_dict() if receipt else None,
+                "effect_ledger": (
+                    {
+                        "repair_identity_key": ledger_record.repair_identity_key,
+                        "state": ledger_record.state,
+                        "reservation_id": ledger_record.reservation_id,
+                        "total_attempts": ledger_record.total_attempts,
+                        "unchanged_attempts": ledger_record.unchanged_attempts,
+                        "effect_outcome": ledger_record.effect_outcome,
+                    }
+                    if ledger_record is not None
+                    else None
+                ),
             },
         )
 
+    ledger_record = getattr(session, "last_reservation", None)
     return RepairDelegationResult(
         outcome="delegation_failed",
         delegation=delegation,
@@ -379,6 +393,18 @@ def delegate_to_simple_fixer(
         evidence={
             "reason": f"simple_fixer did not authorize an effect: {sf_outcome}",
             "simple_fixer_outcome": sf_outcome,
+            "effect_ledger": (
+                {
+                    "repair_identity_key": ledger_record.repair_identity_key,
+                    "state": ledger_record.state,
+                    "reservation_id": ledger_record.reservation_id,
+                    "total_attempts": ledger_record.total_attempts,
+                    "unchanged_attempts": ledger_record.unchanged_attempts,
+                    "effect_outcome": ledger_record.effect_outcome,
+                }
+                if ledger_record is not None
+                else None
+            ),
         },
     )
 

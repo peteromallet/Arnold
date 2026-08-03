@@ -157,8 +157,10 @@ def test_typed_outcomes_form_a_closed_vocabulary():
         "already_claimed",
         "busy",
         "attempted",
+        "adopted",
         "unchanged",
         "exhausted",
+        "indeterminate",
         "rejected_identity",
         "rejected_no_claim",
         "rejected_child_agent",
@@ -294,26 +296,6 @@ def test_singleton_claim_and_mutation_budget(tmp_path):
     )
     assert claim_reclaimed.outcome == "claimed"
 
-    # ── Mutation budget: two unchanged attempts exhaust ─────────────────
-    budget = sf.MutationBudget(occ.occurrence_fingerprint)
-    fp = occ.occurrence_fingerprint
-
-    # A productive mutation (fingerprint changed) → attempted, resets streak.
-    assert budget.record_mutation(fp, "sha256:after-first") == "attempted"
-    assert budget.unchanged_attempts == 0
-    assert budget.exhausted is False
-
-    # First unchanged attempt → unchanged (1 < 2).
-    assert budget.record_mutation(fp, fp) == "unchanged"
-    assert budget.unchanged_attempts == 1
-    assert budget.exhausted is False
-
-    # Second unchanged attempt → exhausted (2 >= 2).
-    assert budget.record_mutation(fp, fp) == "exhausted"
-    assert budget.unchanged_attempts == 2
-    assert budget.exhausted is True
-    assert budget.remaining == 0
-
     # ── Session action gates fire at every boundary ────────────────────
     # Release so the session can acquire a fresh claim.
     assert sf.release_singleton_occurrence_claim(queue_dir, occ) is True
@@ -343,20 +325,12 @@ def test_singleton_claim_and_mutation_budget(tmp_path):
     )
     assert result == "rejected_child_agent"
 
-    # A fresh budget: two unchanged then a third is rejected (gate 4).
-    session.budget = sf.MutationBudget(occ.occurrence_fingerprint)
+    # The durable occurrence budget: two unchanged then a third is rejected.
     no_op = sf.SimpleFixerAction(mutate=lambda o: o.occurrence_fingerprint)
     assert session.attempt_mutation(no_op) == "unchanged"
     assert session.attempt_mutation(no_op) == "exhausted"
     # Once exhausted, even an otherwise-valid mutation is rejected.
     assert session.attempt_mutation(no_op) == "exhausted"
-
-    # A productive mutation on a fresh budget resets the streak.
-    session.budget = sf.MutationBudget(occ.occurrence_fingerprint)
-    productive = sf.SimpleFixerAction(mutate=lambda o: "sha256:fixed")
-    assert session.attempt_mutation(no_op) == "unchanged"
-    assert session.attempt_mutation(productive) == "attempted"
-    assert session.budget.unchanged_attempts == 0
 
 
 def test_claim_rejects_non_occurrence_identity(tmp_path):
@@ -372,17 +346,6 @@ def test_claim_rejects_non_occurrence_identity(tmp_path):
     )
     assert result.outcome == "rejected_identity"
     assert "current normalized repair identity" in result.evidence["reason"]
-
-
-def test_mutation_budget_is_occurrence_scoped(tmp_path):
-    """The budget is bound to one occurrence fingerprint."""
-
-    occ = _occurrence()
-    budget = sf.MutationBudget(occ.occurrence_fingerprint)
-    snapshot = budget.to_dict()
-    assert snapshot["occurrence_fingerprint"] == occ.occurrence_fingerprint
-    assert snapshot["max_unchanged_fingerprint_attempts"] == sf.MAX_UNCHANGED_FINGERPRINT_ATTEMPTS
-    assert snapshot["exhausted"] is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -464,7 +427,7 @@ def test_canonical_runner_emits_verifier_receipts(tmp_path):
         session=session2,
         verifier_slot="next_three_hour",
     )
-    assert outcome2 == "attempted"
+    assert outcome2 == "adopted"
     assert receipt2 is not None
     assert receipt2.kind == "reconciliation"
     assert receipt2.verifier_slot == "next_three_hour"
