@@ -22,7 +22,32 @@ function argumentValue(name) {
   return process.argv[index + 1];
 }
 
-function payload(schemaName) {
+const FIRST_GATE_REQUIRED_CHANGES = [
+  "Insert a Phase 0 checkpoint forbidding database creation and publication until the accepted CL1 artifact is present, blocker-free, version-supported, and hash-valid; defer contract-dependent steps until its decisions replace every provisional assumption.",
+  "Define CL1 admission using baseline ancestry and schema hashes, then record a separate content-addressed CL2 runtime commit/tree in the CL2 handoff. Add unrelated-ancestry and stale-schema tests.",
+  "Add a mandatory payload-policy/access context derived from CL1, reject absent or mismatched scope before preparing bytes, and test protected/private, cross-tenant, cross-workflow, encryption-unavailable, retention, and tombstone cases.",
+  "Persist or reference a content-addressed selection roster before dispatch; bind starts and occurrences to it; include its hash in the manifest; and test selected-but-never-started, missing-outcome, and unrostered-producer cases.",
+  "Add _core/worker_fanout.py and the common dispatch failure contract to scope; define a public success/failure carrier for WBC start and terminal references; preserve it through callbacks and reducers; and test both paths end to end.",
+  "Thread an explicit per-dispatch retry ordinal through WorkerUnit, fan-out serialization, repair construction, and dispatch identity derivation. Test initial, fallback, and repair attempts for distinct starts, terminals, and occurrences.",
+  "Split importer inventory from publication; sequential custody construction from state-ordering integration; parallel carrier/identity work from reducer persistence; and fixture construction from crash, concurrency, privacy, negative-authority, and regression gates.",
+  "Add a post-gate, pre-execution requirement for the ordinary finalizer to regenerate deterministic source-bound feasibility artifacts. Finalize and execute must fail closed on missing, stale, mismatched, or negative admission.",
+];
+
+function firstGateActions() {
+  return FIRST_GATE_REQUIRED_CHANGES.map((requiredChange, index) => ({
+    id: `A40-${index + 1}`,
+    concern: `Locked attempt-13 gate action ${index + 1}`,
+    category: "correctness",
+    action_type: index === 0 || index === 7 ? "add_gate" : "change_plan",
+    severity: "blocking",
+    severity_source: "worker",
+    evidence: "Hash-verified attempt-13 gate.json required_change.",
+    plan_refs: [`Locked first-pass requirement ${index + 1}`],
+    required_change: requiredChange,
+  }));
+}
+
+function payload(schemaName, output) {
   if (schemaName === "plan.json") {
     return {
       plan: "# Offline Structural Smoke\n\n## Overview\nExercise the finite canary boundary without provider contact.\n\n## Step 1: Verify receipts\nRun the exact bounded receipt path.\n\n## Execution Order\n1. Step 1.",
@@ -66,16 +91,57 @@ function payload(schemaName) {
     }));
     return {checks, flags: [], verified_flag_ids: [], disputed_flag_ids: []};
   }
-  if (schemaName === "gate.json") {
+  if (schemaName === "revise.json") {
     return {
-      recommendation: "PROCEED",
-      rationale: "The deterministic structural payload is internally consistent.",
+      plan: [
+        "# Offline Structural Smoke Revision",
+        "",
+        ...FIRST_GATE_REQUIRED_CHANGES.map(
+          (change, index) => `## Locked first-pass requirement ${index + 1}\n${change}`,
+        ),
+      ].join("\n\n"),
+      changes_summary: "Applied all eight locked first-pass attempt-13 gate requirements.",
+      flags_addressed: [],
+      north_star_actions_addressed: FIRST_GATE_REQUIRED_CHANGES.map(
+        (_change, index) => ({
+          action_id: `A40-${index + 1}`,
+          resolution: "addressed",
+          reason: "The revised plan includes the exact locked requirement.",
+          where: `Locked first-pass requirement ${index + 1}`,
+          plan_refs: [`Locked first-pass requirement ${index + 1}`],
+          action_type: index === 0 || index === 7 ? "add_gate" : "change_plan",
+        }),
+      ),
+      assumptions: ["This is offline structural evidence only."],
+      success_criteria: [{
+        criterion: "All eight locked first-pass requirements remain explicit.",
+        priority: "must",
+        requires: [],
+      }],
+      questions: [],
+      changed_surfaces: ["finite-canary bounded revise path"],
+      test_blast_radius: {
+        strategy: "scoped",
+        selectors: [],
+        changed_surfaces: ["finite-canary bounded revise path"],
+        full_suite_fallback: false,
+        rationale: "The smoke exercises exactly one bounded revise cycle.",
+      },
+    };
+  }
+  if (schemaName === "gate.json") {
+    const firstGate = path.basename(output).includes("-03-gate-i1-");
+    return {
+      recommendation: firstGate ? "ITERATE" : "PROCEED",
+      rationale: firstGate
+        ? "The first bounded gate requires exactly one revise cycle."
+        : "The bounded revision addressed the structural requirements.",
       signals_assessment: "Offline structural smoke only; no provider claim.",
       warnings: [],
       settled_decisions: [],
       flag_resolutions: [],
       accepted_tradeoffs: [],
-      north_star_actions: [],
+      north_star_actions: firstGate ? firstGateActions() : [],
       tiebreaker_question: "",
       tiebreaker_flag_ids: [],
       tiebreaker_fuzzy_group_id: "",
@@ -188,7 +254,7 @@ function main() {
     );
     orphan.unref();
   }
-  fs.writeFileSync(output, JSON.stringify(payload(schemaName)), "utf8");
+  fs.writeFileSync(output, JSON.stringify(payload(schemaName, output)), "utf8");
   const rolloutDir = path.join(
     process.env.CODEX_HOME,
     "sessions",

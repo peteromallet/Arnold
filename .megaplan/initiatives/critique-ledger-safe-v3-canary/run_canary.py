@@ -14,9 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PHASES = ("init", "plan", "critique", "gate", "finalize")
-MODEL_PHASES = PHASES[1:]
-STATES = ("initialized", "planned", "critiqued", "gated", "finalized")
+INITIAL_PHASES = ("init", "plan", "critique", "gate")
+REVISE_PHASES = ("revise", "critique", "gate")
+MAX_PHASES = (*INITIAL_PHASES, *REVISE_PHASES, "finalize")
+MODEL_PHASES = frozenset(MAX_PHASES) - {"init"}
 CANARY_ID = "critique-ledger-safe-v3-canary"
 PLAN_NAME = "critique-ledger-cl2-planning-canary"
 
@@ -29,9 +30,11 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def trusted_phase_failure_artifact(plan_dir: Path, phase: str) -> str:
+def trusted_phase_failure_artifact(
+    plan_dir: Path, phase: str, plan_iteration: int
+) -> str:
     """Bind the primary child failure artifact without copying its contents."""
-    candidates = sorted(plan_dir.glob(f"{phase}_v*_raw.txt"))
+    candidates = sorted(plan_dir.glob(f"{phase}_v{plan_iteration}_raw.txt"))
     if len(candidates) != 1:
         return "unavailable"
     path = candidates[0]
@@ -74,6 +77,31 @@ def strict_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} is not an object")
     return value
+
+
+def classify_gate(
+    recommendation: object,
+    *,
+    current_state: object,
+    active_step: object,
+    gate_attempt: int,
+) -> str:
+    """Classify product gate authority before applying generic state checks."""
+    if gate_attempt not in {1, 2}:
+        raise RuntimeError("gate_attempt_out_of_bounds")
+    if recommendation not in {"PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER"}:
+        raise RuntimeError("invalid_gate_recommendation")
+    if active_step not in (None, ""):
+        raise RuntimeError("gate_returned_with_active_state")
+    if recommendation == "PROCEED":
+        if current_state != "gated":
+            raise RuntimeError("proceed_without_gated_state")
+        return "finalize"
+    if current_state != "critiqued":
+        raise RuntimeError("nonproceed_without_critiqued_state")
+    if recommendation == "ITERATE" and gate_attempt == 1:
+        return "revise_once"
+    return "product_gate_not_proceed"
 
 
 def write_once(path: Path, payload: dict[str, object]) -> None:
@@ -202,7 +230,9 @@ def read_dispatch_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def read_dispatch_ledger(path: Path, expected: tuple[str, ...]) -> list[dict[str, Any]]:
+def read_dispatch_ledger(
+    path: Path, expected: list[tuple[str, int]]
+) -> list[dict[str, Any]]:
     records = read_dispatch_records(path)
     if not expected:
         if records:
@@ -210,11 +240,11 @@ def read_dispatch_ledger(path: Path, expected: tuple[str, ...]) -> list[dict[str
         return []
     if len(records) != 2 * len(expected):
         raise ValueError("dispatch ledger does not contain one start/terminal pair per phase")
-    for index, phase in enumerate(expected):
-        start, terminal = records[index * 2 : index * 2 + 2]
+    for index, (phase, plan_iteration) in enumerate(expected, start=1):
+        start, terminal = records[(index - 1) * 2 : (index - 1) * 2 + 2]
         if (
-            start.get("schema") != "arnold.megaplan.zero_recovery_dispatch.v1"
-            or terminal.get("schema") != "arnold.megaplan.zero_recovery_dispatch.v1"
+            start.get("schema") != "arnold.megaplan.zero_recovery_dispatch.v2"
+            or terminal.get("schema") != "arnold.megaplan.zero_recovery_dispatch.v2"
             or start.get("event") != "start"
             or terminal.get("event") != "terminal"
             or start.get("phase") != phase
@@ -227,7 +257,10 @@ def read_dispatch_ledger(path: Path, expected: tuple[str, ...]) -> list[dict[str
             or terminal.get("actual_model") != "gpt-5.6-sol"
             or terminal.get("model_evidence") != "codex_cli_turn_context"
             or terminal.get("privilege_receipt_path")
-            != f".zero-recovery-{phase}-privilege-receipt.json"
+            != (
+                f".zero-recovery-{index:02d}-{phase}-i{plan_iteration}"
+                "-privilege-receipt.json"
+            )
             or not isinstance(terminal.get("privilege_receipt_sha256"), str)
             or len(terminal["privilege_receipt_sha256"]) != 64
             or sha(path.parent / terminal["privilege_receipt_path"])
@@ -242,6 +275,10 @@ def read_dispatch_ledger(path: Path, expected: tuple[str, ...]) -> list[dict[str
             or terminal.get("actual_effort") != "high"
             or start.get("attempt") != 1
             or terminal.get("attempt") != 1
+            or start.get("plan_iteration") != plan_iteration
+            or terminal.get("plan_iteration") != plan_iteration
+            or start.get("dispatch_ordinal") != index
+            or terminal.get("dispatch_ordinal") != index
             or terminal.get("result") != "returned"
             or any(item.get(key) is not False for item in (start, terminal) for key in ("retry", "fallback", "json_repair", "adaptive_routing"))
         ):
@@ -253,6 +290,8 @@ def phase_receipt(
     receipt_dir: Path,
     index: int,
     phase: str,
+    plan_iteration: int,
+    dispatch_ordinal: int | None,
     *,
     status: str,
     returncode: int,
@@ -269,7 +308,8 @@ def phase_receipt(
     phase_terminals = [
         record
         for record in read_dispatch_records(ledger_path)
-        if record.get("event") == "terminal" and record.get("phase") == phase
+        if record.get("event") == "terminal"
+        and record.get("dispatch_ordinal") == dispatch_ordinal
     ]
     privilege_receipt_sha256 = (
         phase_terminals[0].get("privilege_receipt_sha256")
@@ -277,8 +317,10 @@ def phase_receipt(
         else None
     )
     payload: dict[str, object] = {
-        "schema": "arnold.megaplan.finite_canary_phase_receipt.v2",
+        "schema": "arnold.megaplan.finite_canary_phase_receipt.v3",
         "phase": phase,
+        "plan_iteration": plan_iteration,
+        "dispatch_ordinal": dispatch_ordinal,
         "status": status,
         "returncode": returncode,
         "state": state,
@@ -304,10 +346,27 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         raise RuntimeError("finite canary plan identity already exists")
     idea = initiative / "briefs/cl2-ledger-persistence-and-replay.md"
     north_star = initiative / "NORTHSTAR.md"
-    commands = [
-        [sys.executable, "-P", "-m", "arnold_pipelines.megaplan", "init", "--project-dir", str(root), "--name", PLAN_NAME, "--auto-approve", "--idea-file", str(idea), "--north-star", str(north_star), "--robustness", "full", "--no-adaptive-critique", "--vendor", "codex", "--phase-model", "plan=codex:gpt-5.6-sol:high", "--phase-model", "critique=codex:gpt-5.6-sol:high", "--phase-model", "gate=codex:gpt-5.6-sol:high", "--phase-model", "finalize=codex:gpt-5.6-sol:high"],
-        *[[sys.executable, "-P", "-m", "arnold_pipelines.megaplan", phase, "--plan", PLAN_NAME, "--fresh"] for phase in MODEL_PHASES],
+    init_command = [
+        sys.executable, "-P", "-m", "arnold_pipelines.megaplan", "init",
+        "--project-dir", str(root), "--name", PLAN_NAME, "--auto-approve",
+        "--idea-file", str(idea), "--north-star", str(north_star),
+        "--robustness", "full", "--no-adaptive-critique", "--vendor", "codex",
+        "--phase-model", "plan=codex:gpt-5.6-sol:high",
+        "--phase-model", "critique=codex:gpt-5.6-sol:high",
+        "--phase-model", "gate=codex:gpt-5.6-sol:high",
+        "--phase-model", "revise=codex:gpt-5.6-sol:high",
+        "--phase-model", "finalize=codex:gpt-5.6-sol:high",
     ]
+
+    def command_for(phase: str) -> list[str]:
+        if phase == "init":
+            return list(init_command)
+        return [
+            sys.executable, "-P", "-m", "arnold_pipelines.megaplan", phase,
+            "--plan", PLAN_NAME, "--fresh",
+        ]
+
+    maximum_commands = [command_for(phase) for phase in MAX_PHASES]
     allowed_environment = (
         "PATH", "LANG", "LC_ALL", "LC_CTYPE", "SSL_CERT_FILE", "SSL_CERT_DIR",
         "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
@@ -425,11 +484,11 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
     if admitted_manifest_hashes != actual_manifest_hashes:
         raise RuntimeError("runner manifest hashes differ from host admission")
     write_once(receipt_dir / "run-context.json", {
-        "schema": "arnold.megaplan.finite_canary_run_context.v1",
+        "schema": "arnold.megaplan.finite_canary_run_context.v2",
         "source_commit": source_commit,
         "source_tree": source_tree,
         "import_root": str(import_root),
-        "phase_commands": commands,
+        "maximum_phase_commands": maximum_commands,
         "launch_manifest_sha256": actual_manifest_hashes,
         "recorded_at": now(),
     })
@@ -437,14 +496,35 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
     started_at = now()
     results: list[dict[str, object]] = []
     failure: dict[str, object] | None = None
-    status = "passed"
+    infrastructure_status = "passed"
+    terminal_state = "failed"
+    product_outcome: dict[str, object] | None = None
+    gate_attempts: list[dict[str, object]] = []
     ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
-    for index, (phase, expected_state, argv) in enumerate(zip(PHASES, STATES, commands, strict=True)):
+    scheduled = list(INITIAL_PHASES)
+    dispatch_expectations: list[tuple[str, int]] = []
+    index = 0
+    while index < len(scheduled):
+        phase = scheduled[index]
+        argv = command_for(phase)
+        pre_iteration = 0
+        pre_state_path = plan_dir / "state.json"
+        if pre_state_path.is_file():
+            pre_state = strict_object(pre_state_path)
+            pre_iteration = int(pre_state.get("iteration", 0) or 0)
+        phase_plan_iteration = (
+            pre_iteration + 1 if phase in {"plan", "revise"} else pre_iteration
+        )
+        dispatch_ordinal = (
+            len(dispatch_expectations) + 1 if phase in MODEL_PHASES else None
+        )
         integrity_before = direct_integrity(f"pre:{phase}")
         integrity_checkpoints.append(integrity_before)
         write_once(receipt_dir / f"{index:02d}-{phase}.started.json", {
-            "schema": "arnold.megaplan.finite_canary_phase_checkpoint.v1",
-            "phase": phase, "argv": argv, "started_at": now(),
+            "schema": "arnold.megaplan.finite_canary_phase_checkpoint.v2",
+            "phase": phase, "plan_iteration": phase_plan_iteration,
+            "dispatch_ordinal": dispatch_ordinal,
+            "argv": argv, "started_at": now(),
             "import_root": str(import_root),
             "repository_integrity": integrity_before,
         })
@@ -479,7 +559,7 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
                         primary = (
                             f"child_nonzero:{completed.returncode};"
                             "primary_artifact="
-                            f"{trusted_phase_failure_artifact(plan_dir, phase)}"
+                            f"{trusted_phase_failure_artifact(plan_dir, phase, phase_plan_iteration)}"
                         )
                     else:
                         raise
@@ -493,13 +573,67 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             state_path = plan_dir / "state.json"
             state = strict_object(state_path)
             current_state = state.get("current_state")
-            if current_state != expected_state or state.get("active_step") not in (None, ""):
-                raise RuntimeError("unexpected_or_active_state")
-            if phase == "gate" and strict_object(plan_dir / "gate.json").get("recommendation") != "PROCEED":
-                raise RuntimeError("gate_not_proceed")
-            read_dispatch_ledger(ledger_path, MODEL_PHASES[:index])
-            results.append({"phase": phase, "returncode": 0, "state": current_state})
-            phase_receipt(receipt_dir, index, phase, status="passed", returncode=0,
+            actual_iteration = int(state.get("iteration", 0) or 0)
+            if phase in MODEL_PHASES:
+                dispatch_expectations.append((phase, phase_plan_iteration))
+                read_dispatch_ledger(ledger_path, dispatch_expectations)
+            gate_recommendation: str | None = None
+            if phase == "gate":
+                gate = strict_object(plan_dir / "gate.json")
+                gate_recommendation = gate.get("recommendation")
+                gate_route = classify_gate(
+                    gate_recommendation,
+                    current_state=current_state,
+                    active_step=state.get("active_step"),
+                    gate_attempt=len(gate_attempts) + 1,
+                )
+                gate_attempts.append({
+                    "attempt": len(gate_attempts) + 1,
+                    "plan_iteration": actual_iteration,
+                    "recommendation": gate_recommendation,
+                    "state": current_state,
+                    "gate_sha256": sha(plan_dir / "gate.json"),
+                })
+                if gate_route == "finalize":
+                    product_outcome = {
+                        "kind": "proceed", "gate_attempt": len(gate_attempts),
+                        "recommendation": gate_recommendation,
+                    }
+                    scheduled.append("finalize")
+                elif gate_route == "revise_once":
+                    scheduled.extend(REVISE_PHASES)
+                else:
+                    terminal_state = "product_gate_not_proceed"
+                    product_outcome = {
+                        "kind": "product_gate_not_proceed",
+                        "gate_attempt": len(gate_attempts),
+                        "recommendation": gate_recommendation,
+                    }
+            else:
+                expected_state = {
+                    "init": "initialized", "plan": "planned",
+                    "critique": "critiqued", "revise": "planned",
+                    "finalize": "finalized",
+                }[phase]
+                if current_state != expected_state or state.get("active_step") not in (None, ""):
+                    raise RuntimeError("unexpected_or_active_state")
+                if phase == "finalize":
+                    terminal_state = "finalized"
+                    product_outcome = {
+                        "kind": "proceed_finalized",
+                        "gate_attempt": len(gate_attempts),
+                        "recommendation": "PROCEED",
+                    }
+            results.append({
+                "phase": phase, "plan_iteration": actual_iteration,
+                "dispatch_ordinal": dispatch_ordinal,
+                "returncode": 0, "state": current_state,
+                "gate_recommendation": gate_recommendation,
+            })
+            phase_receipt(receipt_dir, index, phase,
+                          plan_iteration=actual_iteration,
+                          dispatch_ordinal=dispatch_ordinal,
+                          status="passed", returncode=0,
                           state=str(current_state), reason=None, argv=argv,
                           state_path=state_path, ledger_path=ledger_path,
                           integrity_before=integrity_before,
@@ -522,8 +656,12 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
             returncode = locals().get("returncode", 1)
             reason = f"{type(exc).__name__}:{str(exc)[:160]}"
         else:
+            index += 1
+            if terminal_state == "product_gate_not_proceed":
+                break
             continue
-        status = "failed"
+        infrastructure_status = "failed"
+        terminal_state = "failed"
         failure = {"phase": phase, "reason": reason, "returncode": returncode}
         state_path = plan_dir / "state.json"
         current_state = None
@@ -532,8 +670,16 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
                 current_state = strict_object(state_path).get("current_state")
             except BaseException:
                 pass
-        results.append({"phase": phase, "returncode": returncode, "state": current_state})
-        phase_receipt(receipt_dir, index, phase, status="failed", returncode=returncode,
+        results.append({
+            "phase": phase, "plan_iteration": phase_plan_iteration,
+            "dispatch_ordinal": dispatch_ordinal,
+            "returncode": returncode, "state": current_state,
+            "gate_recommendation": None,
+        })
+        phase_receipt(receipt_dir, index, phase,
+                      plan_iteration=phase_plan_iteration,
+                      dispatch_ordinal=dispatch_ordinal,
+                      status="failed", returncode=returncode,
                       state=str(current_state) if current_state is not None else None,
                       reason=reason, argv=argv, state_path=state_path,
                       ledger_path=ledger_path,
@@ -544,29 +690,36 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
 
     state_path = plan_dir / "state.json"
     ledger_records = (
-        read_dispatch_ledger(ledger_path, MODEL_PHASES)
-        if status == "passed"
+        read_dispatch_ledger(ledger_path, dispatch_expectations)
+        if infrastructure_status == "passed"
         else read_dispatch_records(ledger_path)
     )
     dispatch_integrity = (
         "complete"
-        if status == "passed"
+        if infrastructure_status == "passed"
         else "partial"
         if ledger_records
         else "not_started"
     )
     phase_receipt_entries = [
         {
-            "phase": phase,
+            "phase": result["phase"],
+            "plan_iteration": result["plan_iteration"],
+            "dispatch_ordinal": result["dispatch_ordinal"],
             "path": str(
-                (receipt_dir / f"{index:02d}-{phase}.phase-receipt.json").relative_to(root)
+                (
+                    receipt_dir
+                    / f"{index:02d}-{result['phase']}.phase-receipt.json"
+                ).relative_to(root)
             ),
-            "sha256": sha(receipt_dir / f"{index:02d}-{phase}.phase-receipt.json"),
+            "sha256": sha(
+                receipt_dir / f"{index:02d}-{result['phase']}.phase-receipt.json"
+            ),
         }
-        for index, phase in enumerate(PHASES[:len(results)])
+        for index, result in enumerate(results)
     ]
     phase_manifest = {
-        "schema": "arnold.megaplan.finite_canary_phase_receipts_manifest.v1",
+        "schema": "arnold.megaplan.finite_canary_phase_receipts_manifest.v2",
         "canary_id": CANARY_ID,
         "plan_name": PLAN_NAME,
         "entries": phase_receipt_entries,
@@ -576,6 +729,8 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
     privilege_entries = [
         {
             "phase": record["phase"],
+            "plan_iteration": record["plan_iteration"],
+            "dispatch_ordinal": record["dispatch_ordinal"],
             "path": str(
                 (plan_dir / record["privilege_receipt_path"]).relative_to(root)
             ),
@@ -586,19 +741,21 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
     ]
     privilege_manifest_path = receipt_dir / "privilege-receipts-manifest.json"
     write_once(privilege_manifest_path, {
-        "schema": "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v1",
+        "schema": "arnold.megaplan.zero_recovery_privilege_receipts_manifest.v2",
         "entries": privilege_entries,
     })
     final_integrity = direct_integrity("final")
     integrity_checkpoints.append(final_integrity)
     unsigned: dict[str, object] = {
-        "schema": "arnold.megaplan.finite_canary_run_receipt.v2",
-        "status": status,
+        "schema": "arnold.megaplan.finite_canary_run_receipt.v3",
+        "status": infrastructure_status,
         "canary_id": CANARY_ID,
         "plan_name": PLAN_NAME,
-        "phases": list(PHASES),
+        "phases": [result["phase"] for result in results],
         "phase_results": results,
-        "terminal_state": "finalized" if status == "passed" else "failed",
+        "terminal_state": terminal_state,
+        "product_outcome": product_outcome,
+        "gate_attempts": gate_attempts,
         "failure": failure,
         "started_at": started_at,
         "completed_at": now(),
@@ -612,7 +769,7 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         "dispatches": ledger_records,
         "dispatch_integrity": dispatch_integrity,
         "import_root": str(import_root),
-        "phase_commands": commands,
+        "phase_commands": [command_for(str(result["phase"])) for result in results],
         "phase_receipts_manifest_sha256": sha(phase_manifest_path),
         "phase_receipt_sha256": [entry["sha256"] for entry in phase_receipt_entries],
         "privilege_receipt_sha256": [
@@ -623,7 +780,9 @@ def run_locked(root: Path, initiative: Path, receipt_dir: Path) -> tuple[int, di
         "privilege_receipts_manifest_sha256": sha(privilege_manifest_path),
         "repository_integrity": integrity_checkpoints,
     }
-    return (0 if status == "passed" else 1), unsigned
+    if infrastructure_status != "passed":
+        return 1, unsigned
+    return (0 if terminal_state == "finalized" else 2), unsigned
 
 
 def main() -> int:
@@ -662,9 +821,10 @@ def main() -> int:
             }]
             dispatch_integrity = "unreadable"
         unsigned = {
-            "schema": "arnold.megaplan.finite_canary_run_receipt.v2",
+            "schema": "arnold.megaplan.finite_canary_run_receipt.v3",
             "status": "failed", "canary_id": CANARY_ID, "plan_name": PLAN_NAME,
-            "phases": list(PHASES), "phase_results": [], "terminal_state": "failed",
+            "phases": [], "phase_results": [], "terminal_state": "failed",
+            "product_outcome": None, "gate_attempts": [],
             "failure": {"phase": "runner", "reason": f"{type(exc).__name__}:{str(exc)[:160]}", "returncode": 1},
             "started_at": now(), "completed_at": now(),
             "source_commit": source_commit, "source_tree": source_tree,
@@ -676,7 +836,7 @@ def main() -> int:
             "dispatches": emergency_dispatches,
             "dispatch_integrity": dispatch_integrity,
             "import_root": context.get("import_root"),
-            "phase_commands": context.get("phase_commands", []),
+            "phase_commands": [],
             "phase_receipts_manifest_sha256": None,
             "phase_receipt_sha256": [],
             "privilege_receipt_sha256": [],

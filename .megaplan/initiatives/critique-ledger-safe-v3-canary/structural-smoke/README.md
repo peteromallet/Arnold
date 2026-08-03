@@ -2,8 +2,9 @@
 
 This fixture replaces the Codex executable only in a derived, test-only image.
 It makes no network or provider call and proves no model/backend identity. Its
-sole purpose is to drive the real `init -> plan -> critique -> gate -> finalize`
-pipeline, with all four model phases crossing the production UID/GID 65532,
+sole purpose is to drive the real bounded
+`init -> plan -> critique -> gate(ITERATE) -> revise -> critique -> gate(PROCEED) -> finalize`
+pipeline, with all seven model dispatches crossing the production UID/GID 65532,
 no-new-privileges, zero-capability, resource-limit, rollout-capture, and receipt
 sealing paths.
 
@@ -25,8 +26,9 @@ The harness:
    tmpfs, no-port, and single-bind arguments, plus `--network none`.
 4. Pre-seeds a clean accepted A/B checkout into the fresh host bind, then runs
    `run_canary.py` with its exact Git and four-manifest admission identities.
-5. Requires a passing run receipt, exactly four terminal dispatch records labelled
-   `codex_cli_turn_context`, four privilege receipts, no surviving UID 65532
+5. Requires a passing run receipt, exactly seven terminal dispatch records labelled
+   `codex_cli_turn_context`, seven ordinal/iteration-bound privilege receipts,
+   exactly two gate attempts and one revise, no surviving UID 65532
    process, and exact host-inspected runtime confinement (no network, restart,
    ports, volumes, or extra mounts; an explicit init reaper; only the admitted rprivate bind and tmpfs;
    exact capabilities, NNP, IPC, PID and memory limits). It emits a typed attempt

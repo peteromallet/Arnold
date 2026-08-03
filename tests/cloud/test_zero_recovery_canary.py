@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import runpy
 import shlex
 import socket
@@ -1545,14 +1546,97 @@ def test_zero_deploy_source_has_no_reachable_container_removal() -> None:
 def test_runner_stops_after_first_failed_phase_and_has_no_forbidden_commands() -> None:
     source = Path(".megaplan/initiatives/critique-ledger-safe-v3-canary/run_canary.py").read_text(encoding="utf-8")
     assert "break" in source and "if completed.returncode != 0" in source
-    for forbidden in ('"auto"', '"chain"', '"resume"', '"revise"', '"execute"', '"review"', '"override"', "tmux"):
+    for forbidden in ('"auto"', '"chain"', '"resume"', '"execute"', '"review"', '"override"', "tmux"):
         assert forbidden not in source.lower()
+    assert 'REVISE_PHASES = ("revise", "critique", "gate")' in source
+    assert 'terminal_state = "product_gate_not_proceed"' in source
+    assert source.index('gate = strict_object(plan_dir / "gate.json")') < source.index(
+        'raise RuntimeError("unexpected_or_active_state")'
+    )
     assert "for key, value in os.environ.items()" not in source
     for forbidden_env in ("OPENAI_API_KEY", "DISCORD_TOKEN", "ARNOLD_", "MEGAPLAN_USE_AGENT_DISPATCHER"):
         assert forbidden_env not in source
     assert "except BaseException as exc" in source
-    assert "finite_canary_phase_checkpoint.v1" in source
-    assert source.count('"--phase-model"') == 4
+    assert "finite_canary_phase_checkpoint.v2" in source
+    assert source.count('"--phase-model"') == 5
+
+
+@pytest.mark.parametrize(
+    ("recommendation", "state", "attempt", "route"),
+    [
+        ("PROCEED", "gated", 1, "finalize"),
+        ("PROCEED", "gated", 2, "finalize"),
+        ("ITERATE", "critiqued", 1, "revise_once"),
+        ("ITERATE", "critiqued", 2, "product_gate_not_proceed"),
+        ("ESCALATE", "critiqued", 1, "product_gate_not_proceed"),
+        ("TIEBREAKER", "critiqued", 1, "product_gate_not_proceed"),
+    ],
+)
+def test_runner_gate_classification_is_finite_and_product_typed(
+    recommendation: str, state: str, attempt: int, route: str
+) -> None:
+    runner = runpy.run_path(
+        str(
+            Path(
+                ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+                "run_canary.py"
+            )
+        )
+    )
+    assert runner["classify_gate"](
+        recommendation,
+        current_state=state,
+        active_step=None,
+        gate_attempt=attempt,
+    ) == route
+
+
+def test_runner_gate_classification_rejects_state_promotion_and_third_gate() -> None:
+    runner = runpy.run_path(
+        str(
+            Path(
+                ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+                "run_canary.py"
+            )
+        )
+    )
+    classify = runner["classify_gate"]
+    with pytest.raises(RuntimeError, match="proceed_without_gated_state"):
+        classify("PROCEED", current_state="critiqued", active_step=None, gate_attempt=1)
+    with pytest.raises(RuntimeError, match="nonproceed_without_critiqued_state"):
+        classify("ITERATE", current_state="gated", active_step=None, gate_attempt=1)
+    with pytest.raises(RuntimeError, match="gate_attempt_out_of_bounds"):
+        classify("ITERATE", current_state="critiqued", active_step=None, gate_attempt=3)
+
+
+def test_attempt_13_gate_actions_are_hash_locked_in_brief_and_offline_fake() -> None:
+    brief = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/"
+        "cl2-ledger-persistence-and-replay.md"
+    ).read_text(encoding="utf-8")
+    brief_actions = [
+        match.group(1)
+        for match in re.finditer(r"^[1-8]\. (.+)$", brief, re.MULTILINE)
+    ]
+    assert len(brief_actions) == 8
+    assert hashlib.sha256(
+        json.dumps(
+            brief_actions, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+    ).hexdigest() == "8e1d94013a0db2dabfd7b6de52d4925f45ebeb0d0476e55c5a6475a474fd47c8"
+    assert "81156da5f1fcce5d7eb5df970de3d97f18f59e7ac1668b633f0bd84c116c2bd3" in brief
+
+    fake = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+        "structural-smoke/fake_codex.py"
+    ).read_text(encoding="utf-8")
+    start = fake.index("const FIRST_GATE_REQUIRED_CHANGES = [")
+    end = fake.index("\n];", start)
+    fake_actions = [
+        json.loads(f'"{match.group(1)}"')
+        for match in re.finditer(r'^  "((?:[^"\\]|\\.)*)",$', fake[start:end], re.MULTILINE)
+    ]
+    assert fake_actions == brief_actions
 
 
 def test_oauth_installer_is_strict_atomic_no_follow_and_stdin_only() -> None:
@@ -1588,14 +1672,17 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
 ) -> None:
     monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
     start = _record_zero_recovery_dispatch(
-        tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high"
+        tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high",
+        plan_iteration=1,
     )
     _record_zero_recovery_dispatch_terminal(
         tmp_path,
         start=start,
         worker=SimpleNamespace(
             model_actual="gpt-5.6-sol", model_evidence="codex_cli_turn_context",
-            privilege_receipt_path=".zero-recovery-plan-privilege-receipt.json",
+            privilege_receipt_path=(
+                ".zero-recovery-01-plan-i1-privilege-receipt.json"
+            ),
             privilege_receipt_sha256="a" * 64,
             rollout_path="sessions/2026/08/03/rollout-session.jsonl",
             rollout_sha256="b" * 64,
@@ -1604,9 +1691,12 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
     rows = [json.loads(line) for line in (tmp_path / "zero_recovery_dispatch_ledger.ndjson").read_text().splitlines()]
     assert [row["event"] for row in rows] == ["start", "terminal"]
     assert rows[0]["dispatch_id"] == rows[1]["dispatch_id"]
+    assert [row["dispatch_ordinal"] for row in rows] == [1, 1]
+    assert [row["plan_iteration"] for row in rows] == [1, 1]
     with pytest.raises(CliError, match="second plan dispatch"):
         _record_zero_recovery_dispatch(
-            tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high"
+            tmp_path, step="plan", agent="codex", model="gpt-5.6-sol", effort="high",
+            plan_iteration=1,
         )
     with pytest.raises(CliError, match="admitted model boundary"):
         _record_zero_recovery_dispatch_terminal(
@@ -1623,6 +1713,67 @@ def test_dispatch_ledger_has_one_matching_start_terminal_pair(
             tmp_path,
             start=start,
             worker=SimpleNamespace(model_actual="gpt-5.6-sol", model_evidence=None),
+        )
+
+
+def test_dispatch_ledger_keys_repeated_phases_by_iteration_and_ordinal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_ZERO_RECOVERY_CANARY", "1")
+
+    def complete(phase: str, iteration: int) -> None:
+        start = _record_zero_recovery_dispatch(
+            tmp_path,
+            step=phase,
+            agent="codex",
+            model="gpt-5.6-sol",
+            effort="high",
+            plan_iteration=iteration,
+        )
+        assert start is not None
+        ordinal = start["dispatch_ordinal"]
+        _record_zero_recovery_dispatch_terminal(
+            tmp_path,
+            start=start,
+            worker=SimpleNamespace(
+                model_actual="gpt-5.6-sol",
+                model_evidence="codex_cli_turn_context",
+                privilege_receipt_path=(
+                    f".zero-recovery-{ordinal:02d}-{phase}-i{iteration}"
+                    "-privilege-receipt.json"
+                ),
+                privilege_receipt_sha256="a" * 64,
+                rollout_path=f"sessions/{ordinal}.jsonl",
+                rollout_sha256="b" * 64,
+            ),
+        )
+
+    for phase, iteration in (
+        ("plan", 1), ("critique", 1), ("gate", 1), ("revise", 2),
+        ("critique", 2), ("gate", 2), ("finalize", 2),
+    ):
+        complete(phase, iteration)
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "zero_recovery_dispatch_ledger.ndjson")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert len(rows) == 14
+    assert [row["dispatch_ordinal"] for row in rows[::2]] == list(range(1, 8))
+    assert [(row["phase"], row["plan_iteration"]) for row in rows[::2]] == [
+        ("plan", 1), ("critique", 1), ("gate", 1), ("revise", 2),
+        ("critique", 2), ("gate", 2), ("finalize", 2),
+    ]
+    with pytest.raises(CliError, match="second gate dispatch for plan iteration 2"):
+        _record_zero_recovery_dispatch(
+            tmp_path,
+            step="gate",
+            agent="codex",
+            model="gpt-5.6-sol",
+            effort="high",
+            plan_iteration=2,
         )
 
 
@@ -1788,7 +1939,7 @@ def test_status_poll_never_stops_running_canary_without_receipt() -> None:
 
 def _valid_zero_recovery_status_receipt() -> bytes:
     payload = {
-        "schema": "arnold.megaplan.finite_canary_run_receipt.v2",
+        "schema": "arnold.megaplan.finite_canary_run_receipt.v3",
         "status": "passed",
         "canary_id": "critique-ledger-safe-v3-canary",
         "plan_name": "critique-ledger-cl2-planning-canary",
@@ -1797,6 +1948,18 @@ def _valid_zero_recovery_status_receipt() -> bytes:
             {"phase": phase} for phase in ("init", "plan", "critique", "gate", "finalize")
         ],
         "terminal_state": "finalized",
+        "product_outcome": {
+            "kind": "proceed_finalized",
+            "gate_attempt": 1,
+            "recommendation": "PROCEED",
+        },
+        "gate_attempts": [{
+            "attempt": 1,
+            "plan_iteration": 1,
+            "recommendation": "PROCEED",
+            "state": "gated",
+            "gate_sha256": "e" * 64,
+        }],
         "failure": None,
         "started_at": "2026-08-03T00:00:00Z",
         "completed_at": "2026-08-03T00:01:00Z",
@@ -1875,6 +2038,60 @@ def test_running_receipt_is_nonterminal_until_stopped_and_resealed() -> None:
     assert sum(
         shlex.split(command)[:2] == ["docker", "stop"] for command in commands
     ) == 1
+
+
+def test_status_preserves_terminal_product_nonproceed_as_non_success() -> None:
+    receipt = json.loads(_valid_zero_recovery_status_receipt())
+    receipt["phases"] = ["init", "plan", "critique", "gate"]
+    receipt["phase_results"] = receipt["phase_results"][:4]
+    receipt["terminal_state"] = "product_gate_not_proceed"
+    receipt["product_outcome"] = {
+        "kind": "product_gate_not_proceed",
+        "gate_attempt": 1,
+        "recommendation": "ESCALATE",
+    }
+    receipt["gate_attempts"] = [{
+        "attempt": 1,
+        "plan_iteration": 1,
+        "recommendation": "ESCALATE",
+        "state": "critiqued",
+        "gate_sha256": "e" * 64,
+    }]
+    receipt.pop("receipt_digest")
+    receipt["receipt_digest"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+    provider = object.__new__(SshProvider)
+    provider._spec = _spec()
+    provider._ssh = provider._spec.ssh
+    envelope = {
+        "schema": "arnold.cloud.zero_recovery_canary_status.v1",
+        "receipt_b64": base64.b64encode(raw).decode("ascii"),
+        "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+        "receipt_count": 1,
+    }
+    provider._remote_run_compatible = lambda *_args, **_kwargs: (
+        subprocess.CompletedProcess([], 0, json.dumps(envelope), "")
+    )
+    provider.observe_container = lambda: {
+        "status": "available",
+        "container": provider._ssh.container,
+        "lifecycle": "stopped",
+    }
+    provider._reconcile_zero_recovery_canary_stop = lambda: (
+        provider.observe_container(), False
+    )
+
+    observed = provider.zero_recovery_canary_status(
+        source_commit="a" * 40, source_tree="b" * 40
+    )
+
+    assert observed["status"] == "available"
+    assert observed["receipt"]["status"] == "passed"
+    assert observed["receipt"]["terminal_state"] == "product_gate_not_proceed"
+    assert observed["receipt"]["product_outcome"]["recommendation"] == "ESCALATE"
 
 
 @pytest.mark.parametrize(
@@ -2749,12 +2966,12 @@ def test_runner_binds_primary_phase_failure_artifact_without_copying_content(
     raw.write_text("finite-model UID retained an unreaped child\n", encoding="utf-8")
     raw.chmod(0o600)
 
-    evidence = runner["trusted_phase_failure_artifact"](plan_dir, "plan")
+    evidence = runner["trusted_phase_failure_artifact"](plan_dir, "plan", 1)
 
     assert evidence == f"plan_v1_raw.txt:sha256={hashlib.sha256(raw.read_bytes()).hexdigest()}"
     assert "retained" not in evidence
     raw.chmod(0o666)
-    assert runner["trusted_phase_failure_artifact"](plan_dir, "plan") == "untrusted"
+    assert runner["trusted_phase_failure_artifact"](plan_dir, "plan", 1) == "untrusted"
 
 
 def test_zero_recovery_schema_mode_drift_reports_exact_transition(
@@ -2879,7 +3096,9 @@ def test_worker_boundary_rejects_model_mutation_and_output_aliases(
         )
 
 
-@pytest.mark.parametrize("phase", ["plan", "critique", "gate", "finalize"])
+@pytest.mark.parametrize(
+    "phase", ["plan", "critique", "gate", "revise", "finalize"]
+)
 def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     tmp_path: Path, phase: str
 ) -> None:

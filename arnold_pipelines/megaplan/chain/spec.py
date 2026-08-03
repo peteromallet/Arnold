@@ -3663,12 +3663,15 @@ def _finite_canary_privilege_receipt_is_valid(
     payload: Any,
     *,
     phase: str,
+    plan_iteration: int,
+    dispatch_ordinal: int,
     plan_dir: Path,
 ) -> bool:
     if not isinstance(payload, dict):
         return False
     fields = {
-        "schema", "status", "phase", "model_uid", "model_gid",
+        "schema", "status", "phase", "plan_iteration", "dispatch_ordinal",
+        "model_uid", "model_gid",
         "uid_processes_before", "uid_processes_after", "privilege_observation",
         "command_prefix", "environment_keys", "writable_roots", "global_scratch",
         "limits", "output", "runtime", "recorded_at", "receipt_digest",
@@ -3678,10 +3681,14 @@ def _finite_canary_privilege_receipt_is_valid(
     output = payload.get("output")
     runtime = payload.get("runtime")
     privilege = payload.get("privilege_observation")
-    output_name = f".zero-recovery-{phase}-worker-output.json"
+    output_name = (
+        f".zero-recovery-{dispatch_ordinal:02d}-{phase}-i{plan_iteration}"
+        "-worker-output.json"
+    )
     output_path = plan_dir / output_name
     runtime_pattern = re.compile(
-        rf"/run/megaplan-zero-recovery/{re.escape(phase)}-[0-9a-f]{{32}}\Z"
+        rf"/run/megaplan-zero-recovery/{dispatch_ordinal:02d}-"
+        rf"{re.escape(phase)}-i{plan_iteration}-[0-9a-f]{{32}}\Z"
     )
     expected_command_prefix = [
         "/usr/bin/setpriv", "--reuid=65532", "--regid=65532",
@@ -3707,9 +3714,11 @@ def _finite_canary_privilege_receipt_is_valid(
     return bool(
         set(payload) == fields
         and payload.get("schema")
-        == "arnold.megaplan.zero_recovery_privilege_receipt.v1"
+        == "arnold.megaplan.zero_recovery_privilege_receipt.v2"
         and payload.get("status") == "sealed"
         and payload.get("phase") == phase
+        and payload.get("plan_iteration") == plan_iteration
+        and payload.get("dispatch_ordinal") == dispatch_ordinal
         and payload.get("model_uid") == 65532
         and payload.get("model_gid") == 65532
         and payload.get("uid_processes_before") == 0
@@ -4368,7 +4377,11 @@ def _validate_finite_canary_receipt(
             privilege_path, label=label, spec_path=spec_path
         )
         if not _finite_canary_privilege_receipt_is_valid(
-            privilege_payload, phase=phase, plan_dir=privilege_path.parent
+            privilege_payload,
+            phase=phase,
+            plan_iteration=int(entry.get("plan_iteration") or 0),
+            dispatch_ordinal=int(entry.get("dispatch_ordinal") or 0),
+            plan_dir=privilege_path.parent,
         ):
             raise CliError(
                 "launch_precondition_failed",

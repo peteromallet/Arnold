@@ -105,7 +105,9 @@ from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _bu
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_WORKER_CHANNEL = "codex_cli"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
-_ZERO_RECOVERY_MODEL_PHASES = frozenset({"plan", "critique", "gate", "finalize"})
+_ZERO_RECOVERY_MODEL_PHASES = frozenset(
+    {"plan", "critique", "gate", "revise", "finalize"}
+)
 _ZERO_RECOVERY_MODEL_UID = 65532
 _ZERO_RECOVERY_MODEL_GID = 65532
 _ZERO_RECOVERY_RUNTIME_ROOT = Path("/run/megaplan-zero-recovery")
@@ -314,7 +316,12 @@ def _restore_zero_recovery_schema_input(
 
 
 def _prepare_zero_recovery_model_runtime(
-    *, step: str, plan_dir: Path, output_path: Path
+    *,
+    step: str,
+    plan_dir: Path,
+    output_path: Path,
+    plan_iteration: int,
+    dispatch_ordinal: int,
 ) -> dict[str, Any] | None:
     if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
         return None
@@ -355,7 +362,9 @@ def _prepare_zero_recovery_model_runtime(
             "zero_recovery_privilege_boundary_invalid",
             "finite model runtime root is not the admitted root-owned 0711 directory",
         )
-    runtime = _ZERO_RECOVERY_RUNTIME_ROOT / f"{step}-{uuid.uuid4().hex}"
+    runtime = _ZERO_RECOVERY_RUNTIME_ROOT / (
+        f"{dispatch_ordinal:02d}-{step}-i{plan_iteration}-{uuid.uuid4().hex}"
+    )
     output_created = False
     try:
         os.mkdir(runtime, 0o700)
@@ -460,6 +469,8 @@ def _prepare_zero_recovery_model_runtime(
             )
         return {
             "step": step,
+            "plan_iteration": plan_iteration,
+            "dispatch_ordinal": dispatch_ordinal,
             "runtime": runtime,
             "home": home,
             "codex_home": codex_home,
@@ -572,9 +583,11 @@ def _write_zero_recovery_privilege_receipt(
     output_digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
     runtime_stat = os.lstat(runtime["runtime"])
     payload: dict[str, Any] = {
-        "schema": "arnold.megaplan.zero_recovery_privilege_receipt.v1",
+        "schema": "arnold.megaplan.zero_recovery_privilege_receipt.v2",
         "status": "sealed",
         "phase": runtime["step"],
+        "plan_iteration": runtime["plan_iteration"],
+        "dispatch_ordinal": runtime["dispatch_ordinal"],
         "model_uid": _ZERO_RECOVERY_MODEL_UID,
         "model_gid": _ZERO_RECOVERY_MODEL_GID,
         "uid_processes_before": 0,
@@ -619,8 +632,8 @@ def _write_zero_recovery_privilege_receipt(
     payload["receipt_digest"] = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    receipt_path = output_path.parent / (
-        f".zero-recovery-{runtime['step']}-privilege-receipt.json"
+    receipt_path = output_path.parent / output_path.name.replace(
+        "-worker-output.json", "-privilege-receipt.json"
     )
     fd = os.open(
         receipt_path,
@@ -1498,6 +1511,7 @@ def _record_zero_recovery_dispatch(
     agent: str,
     model: str | None,
     effort: str | None,
+    plan_iteration: int,
 ) -> dict[str, Any] | None:
     """Append the sole permitted model dispatch before crossing its boundary."""
     if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
@@ -1517,7 +1531,52 @@ def _record_zero_recovery_dispatch(
             "zero_recovery_dispatch_denied",
             "finite canary dispatch did not match the admitted Codex model pin",
         )
-    lock_path = plan_dir / f".zero-recovery-{step}-dispatch.lock"
+    if plan_iteration < 1:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary dispatch requires a positive trusted plan iteration",
+        )
+    ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
+    prior_records: list[dict[str, Any]] = []
+    if ledger_path.is_file():
+        try:
+            prior_records = [
+                json.loads(line)
+                for line in ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CliError(
+                "zero_recovery_dispatch_denied",
+                "finite canary dispatch ledger is unreadable",
+            ) from exc
+    if len(prior_records) % 2 != 0 or any(
+        prior_records[index].get("event") != "start"
+        or prior_records[index + 1].get("event") != "terminal"
+        or prior_records[index].get("dispatch_id")
+        != prior_records[index + 1].get("dispatch_id")
+        for index in range(0, len(prior_records), 2)
+    ):
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary dispatch ledger has an unterminated or unordered pair",
+        )
+    if any(
+        record.get("event") == "start"
+        and record.get("phase") == step
+        and record.get("plan_iteration") == plan_iteration
+        for record in prior_records
+    ):
+        raise CliError(
+            "zero_recovery_redispatch_denied",
+            f"a second {step} dispatch for plan iteration {plan_iteration} "
+            "was rejected before provider invocation",
+        )
+    dispatch_ordinal = len(prior_records) // 2 + 1
+    artifact_stem = (
+        f".zero-recovery-{dispatch_ordinal:02d}-{step}-i{plan_iteration}"
+    )
+    lock_path = plan_dir / f"{artifact_stem}-dispatch.lock"
     try:
         lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError as exc:
@@ -1530,7 +1589,7 @@ def _record_zero_recovery_dispatch(
         lock.flush()
         os.fsync(lock.fileno())
     record: dict[str, Any] = {
-        "schema": "arnold.megaplan.zero_recovery_dispatch.v1",
+        "schema": "arnold.megaplan.zero_recovery_dispatch.v2",
         "event": "start",
         "dispatch_id": uuid.uuid4().hex,
         "phase": step,
@@ -1539,13 +1598,14 @@ def _record_zero_recovery_dispatch(
         "selected_effort": effort,
         "model_cli_argv": ["-c", "model='gpt-5.6-sol'"],
         "attempt": 1,
+        "plan_iteration": plan_iteration,
+        "dispatch_ordinal": dispatch_ordinal,
         "retry": False,
         "fallback": False,
         "json_repair": False,
         "adaptive_routing": False,
         "recorded_at": now_utc(),
     }
-    ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
     ledger_fd = os.open(ledger_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(ledger_fd, "a", encoding="utf-8") as ledger:
         ledger.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
@@ -1581,7 +1641,7 @@ def _record_zero_recovery_dispatch_terminal(
             "sealed Codex CLI evidence did not match the admitted model boundary",
         )
     record = {
-        "schema": "arnold.megaplan.zero_recovery_dispatch.v1",
+        "schema": "arnold.megaplan.zero_recovery_dispatch.v2",
         "event": "terminal",
         "dispatch_id": start["dispatch_id"],
         "phase": start["phase"],
@@ -1593,7 +1653,9 @@ def _record_zero_recovery_dispatch_terminal(
         "rollout_path": rollout_path,
         "rollout_sha256": rollout_sha256,
         "actual_effort": start["selected_effort"],
-        "attempt": 1,
+        "attempt": start["attempt"],
+        "plan_iteration": start["plan_iteration"],
+        "dispatch_ordinal": start["dispatch_ordinal"],
         "retry": False,
         "fallback": False,
         "json_repair": False,
@@ -1610,6 +1672,42 @@ def _record_zero_recovery_dispatch_terminal(
         ledger.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
         ledger.flush()
         os.fsync(ledger.fileno())
+
+
+def _active_zero_recovery_dispatch(
+    plan_dir: Path, *, step: str
+) -> dict[str, Any] | None:
+    """Return the trusted unpaired start that owns this worker artifact set."""
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
+    try:
+        records = [
+            json.loads(line)
+            for line in ledger_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary active dispatch ledger is unreadable",
+        ) from exc
+    active = records[-1] if records else None
+    expected_ordinal = (len(records) + 1) // 2
+    if (
+        len(records) % 2 != 1
+        or not isinstance(active, dict)
+        or active.get("event") != "start"
+        or active.get("phase") != step
+        or active.get("dispatch_ordinal") != expected_ordinal
+        or not isinstance(active.get("plan_iteration"), int)
+        or active["plan_iteration"] < 1
+    ):
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary worker has no matching trusted active dispatch",
+        )
+    return active
 
 # Shared mapping from step name to schema filename, used by both
 # run_claude_step and run_codex_step.
@@ -4780,8 +4878,15 @@ def _run_codex_step_uncapped(
             state["sessions"].pop(session_key, None)
             session = {}
             fresh = True
+    active_dispatch: dict[str, Any] | None = None
     if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
-        fixed_output = plan_dir / f".zero-recovery-{step}-worker-output.json"
+        active_dispatch = _active_zero_recovery_dispatch(plan_dir, step=step)
+        assert active_dispatch is not None
+        artifact_stem = (
+            f".zero-recovery-{active_dispatch['dispatch_ordinal']:02d}-{step}"
+            f"-i{active_dispatch['plan_iteration']}"
+        )
+        fixed_output = plan_dir / f"{artifact_stem}-worker-output.json"
         if output_path is not None and Path(output_path).absolute() != fixed_output.absolute():
             raise CliError(
                 "zero_recovery_worker_output_invalid",
@@ -4968,7 +5073,19 @@ def _run_codex_step_uncapped(
         try:
             schema_grant = _prepare_zero_recovery_schema_input(schema_file)
             model_runtime = _prepare_zero_recovery_model_runtime(
-                step=step, plan_dir=plan_dir, output_path=output_path
+                step=step,
+                plan_dir=plan_dir,
+                output_path=output_path,
+                plan_iteration=(
+                    active_dispatch["plan_iteration"]
+                    if active_dispatch is not None
+                    else 0
+                ),
+                dispatch_ordinal=(
+                    active_dispatch["dispatch_ordinal"]
+                    if active_dispatch is not None
+                    else 0
+                ),
             )
             try:
                 child_env = _codex_child_env(turn_id=f'plan_worker_{state["name"]}')
@@ -6621,12 +6738,16 @@ def _run_step_with_worker_legacy(
         require_full_vector=_strict_runtime_binding,
         **_expected,
     )
+    _zero_recovery_plan_iteration = int(state.get("iteration", 0) or 0)
+    if step in {"plan", "revise"}:
+        _zero_recovery_plan_iteration += 1
     _zero_recovery_dispatch_start = _record_zero_recovery_dispatch(
         plan_dir,
         step=step,
         agent=agent,
         model=resolved_model,
         effort=effort,
+        plan_iteration=_zero_recovery_plan_iteration,
     )
     while True:
         attempted_agents.add(agent)

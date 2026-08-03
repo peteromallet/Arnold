@@ -7,6 +7,23 @@ seams, with atomic append, idempotent retry, rebuildable projections, read-only
 replay, and one-time import from retained legacy artifacts. Leave CL3 one stable
 target API and fixtures.
 
+## Locked first-pass plan requirements
+
+The first plan must include all eight requirements below unchanged. They are
+copied from attempt 13's root-sealed `gate.json` (SHA-256
+`81156da5f1fcce5d7eb5df970de3d97f18f59e7ac1668b633f0bd84c116c2bd3`,
+`north_star_actions[*].required_change`). They are input constraints, not proof
+that the product work is complete.
+
+1. Insert a Phase 0 checkpoint forbidding database creation and publication until the accepted CL1 artifact is present, blocker-free, version-supported, and hash-valid; defer contract-dependent steps until its decisions replace every provisional assumption.
+2. Define CL1 admission using baseline ancestry and schema hashes, then record a separate content-addressed CL2 runtime commit/tree in the CL2 handoff. Add unrelated-ancestry and stale-schema tests.
+3. Add a mandatory payload-policy/access context derived from CL1, reject absent or mismatched scope before preparing bytes, and test protected/private, cross-tenant, cross-workflow, encryption-unavailable, retention, and tombstone cases.
+4. Persist or reference a content-addressed selection roster before dispatch; bind starts and occurrences to it; include its hash in the manifest; and test selected-but-never-started, missing-outcome, and unrostered-producer cases.
+5. Add _core/worker_fanout.py and the common dispatch failure contract to scope; define a public success/failure carrier for WBC start and terminal references; preserve it through callbacks and reducers; and test both paths end to end.
+6. Thread an explicit per-dispatch retry ordinal through WorkerUnit, fan-out serialization, repair construction, and dispatch identity derivation. Test initial, fallback, and repair attempts for distinct starts, terminals, and occurrences.
+7. Split importer inventory from publication; sequential custody construction from state-ordering integration; parallel carrier/identity work from reducer persistence; and fixture construction from crash, concurrency, privacy, negative-authority, and regression gates.
+8. Add a post-gate, pre-execution requirement for the ordinary finalizer to regenerate deterministic source-bound feasibility artifacts. Finalize and execute must fail closed on missing, stale, mismatched, or negative admission.
+
 ## In scope
 
 - Persist critic start/result and immutable occurrence envelopes with WBC

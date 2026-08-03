@@ -1,9 +1,14 @@
 # North Star: Finite CL2 critique-ledger canary
 
-This canary proves exactly one fresh CL2 planning lifecycle—init, plan,
-critique, gate, finalize—while every resident, watchdog, repair, notification,
-and relaunch authority remains absent. It does not execute implementation work,
-declare CL2 complete, or establish durability beyond the finite receipt.
+This canary proves one fresh, finitely bounded CL2 planning lifecycle. It runs
+init, plan, critique, and a first gate. `PROCEED` requires `gated` state and may
+run finalize. One first-gate `ITERATE` requires `critiqued` state and admits
+exactly one revise, one fresh critique, and one final gate; there is no second
+revise. A second non-PROCEED, or any `ESCALATE`/`TIEBREAKER`, is a terminal
+product block with infrastructure status preserved and no finalize. Every
+resident, watchdog, repair, notification, execution, and relaunch authority
+remains absent. The canary does not execute implementation work, declare CL2
+complete, or establish durability beyond the finite receipt.
 
 The canonical product North Star remains
 `.megaplan/initiatives/critique-ledger/NORTHSTAR.md`. This canary is successful
