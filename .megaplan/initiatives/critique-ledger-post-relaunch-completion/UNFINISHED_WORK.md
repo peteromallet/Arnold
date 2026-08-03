@@ -301,6 +301,23 @@ deferred obligations.
   bounded action budget. Missing provenance emits zero fixer and one terminal
   diagnostic—not a phantom agent or repeated escalation. Dependency: consumed
   grant/idempotency owner; may be built in parallel with notification dedupe.
+- [ ] **VERY HARD — F1 container-neutral liveness lease and observer
+  convergence.** The live r5 runner in container `782c6da...` remained live,
+  while resident `a2c9a0d...` used local tmux/ps/`os.kill` against a foreign PID
+  namespace, falsely called the process dead, mishandled a fresh heartbeat,
+  excluded the active attention row and left the watchdog stale/masked. Publish
+  one owner-authenticated shared CAS liveness lease binding session, runner
+  container/generation, PID/time namespaces, host boot, run/incarnation,
+  process-start identity, lease/fence and monotonic authority freshness. A
+  foreign process probe is unknown, never negative authority. Fresh-heartbeat/
+  matched-process contradictions are typed degraded and cannot independently
+  trigger recovery. Resident/runner restart, container replacement, stale/
+  spoofed heartbeat, concurrent observers and 200-poll tests prove exactly one
+  active projection and one recovery occurrence maximum. Keep the scoped old-
+  wrapper missing `repair_delegation` module and preexisting checkpoint `0 <= 9`
+  as separate input evidence; neither may mask the run nor serve as runner-death
+  proof. Evidence:
+  `evidence/r5-cross-container-liveness-observer-defect-20260803.json`.
 - [ ] **HARD — reconcile M7 projection cursors.** Make fresh-generation resets
   either advance or explicitly fork projection history. A cursor mismatch must
   be repaired from canonical state or become one actionable incident; it must

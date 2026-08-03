@@ -98,6 +98,16 @@ this as a non-blocking projection epoch/incarnation reconciliation defect, not
 canonical loss or product failure. Exact read-only input evidence is
 `evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json`.
 
+The same live generation exposed a separate container-namespace liveness
+defect. Runner container `782c6da...` was live and emitting a fresh heartbeat,
+but resident container `a2c9a0d...` probed its own tmux/process/PID namespace,
+treated the foreign PID as dead, lost the active attention row and left the
+watchdog report stale or masked. F1 must replace local-process assumptions with
+one container-neutral owner-authenticated lease/view. The scoped old-wrapper
+missing `repair_delegation` module and preexisting event-checkpoint `0 <= 9`
+remain separate historical inputs. Exact evidence is
+`evidence/r5-cross-container-liveness-observer-defect-20260803.json`.
+
 F1 acceptance is also blocked on dependency-closed revalidation of the
 historical M11 completion claim. Commit
 `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` contained four ownership blockers
@@ -184,6 +194,15 @@ disabled fail closed. Exact audit evidence is
   epoch, incarnation and runtime identity. A runtime rebind may atomically
   supersede and rebuild a derived cursor; it may not hand-edit, truncate or bump
   a counter, and no projection can authorize control-plane or publication work.
+- Process probes are namespace-scoped facts. `ps`, tmux or `os.kill` from a
+  foreign container returns unknown, never proof of death. Cross-container
+  liveness comes from the canonical lease's session/container generation/PID
+  namespace/run/incarnation/process-start/fence binding and authority-computed
+  monotonic freshness.
+- A fresh heartbeat that contradicts an authoritative matched-namespace process
+  observation is typed degraded. Observation alone cannot launch recovery; all
+  residents, watchdogs and views consume one occurrence/version-deduped liveness
+  result and publish exactly one active row.
 - Historical completion is not grandfathered around unmet dependencies. The
   M11 `d10b0fef...` claim stays invalidated until an append-only superseding Run
   Authority decision consumes the exact ownership/F01-F17 inputs, proves zero
@@ -359,6 +378,21 @@ receipts.
   restart and 200 unchanged polls retain exactly one current row, zero history
   loss and zero repair, relaunch, deletion or notification effects; conflicting
   authority produces typed degraded evidence and never guesses “latest.”
+- Real resident/isolated-container tests replay runner `782c6da...` observed by
+  resident `a2c9a0d...`. Foreign `os.kill` ESRCH is unknown; a matching fresh
+  lease yields exactly one remote-live attention row. Same-namespace process/
+  heartbeat contradictions degrade explicitly and produce zero autonomous
+  duplicate recoveries.
+- Restart/container-replacement tests bind host boot, time/PID namespace,
+  container generation, run/incarnation, process start, lease/fence and
+  monotonic heartbeat/progress sequences. Stale, spoofed, replayed and cross-
+  invocation heartbeats fail closed; the old container is fenced before the new
+  one becomes active. Resident/runner/watchdog restart and 200 polls retain one
+  active projection, one incident/recovery maximum and identical presentation/
+  watchdog views.
+- The scoped old-wrapper missing-module failure and preexisting checkpoint
+  `0 <= 9` remain separately typed input evidence and can neither mask the live
+  runner nor authorize liveness recovery.
 - Work-ledger emitters remove reserved fields from metadata before forwarding;
   each auto phase transition produces exactly one idempotent transition and no
   `multiple values for keyword argument 'transition'` warning.

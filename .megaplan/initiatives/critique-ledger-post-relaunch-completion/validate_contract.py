@@ -40,6 +40,9 @@ M11_ACCEPTANCE_GAP_EVIDENCE = (
 M7_RUNTIME_REBIND_PROJECTION_EVIDENCE = (
     "evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json"
 )
+CROSS_CONTAINER_LIVENESS_EVIDENCE = (
+    "evidence/r5-cross-container-liveness-observer-defect-20260803.json"
+)
 
 OBLIGATIONS = {
     "F1.platform_capacity_storage_hardening": "f1-owner-storage-recovery-hardening",
@@ -2101,6 +2104,12 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         not in f1_proofs
     ):
         raise ContractError("M7 runtime-rebind projection evidence proof map drift")
+    if (
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        + CROSS_CONTAINER_LIVENESS_EVIDENCE
+        not in f1_proofs
+    ):
+        raise ContractError("cross-container liveness evidence proof map drift")
     if proof_map.get("f2a-launch-profile-artifact-drift-containment") != [
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
         "provider-policy-execution-binding-contract.json",
@@ -2176,6 +2185,173 @@ def _validate_r5_repair_control_incident(incident: dict[str, Any]) -> None:
         or follow_up.get("milestone") != "f1-owner-storage-recovery-hardening"
     ):
         raise ContractError("r5 immediate/deferred repair custody drift")
+
+
+def _validate_r5_cross_container_liveness_observer_defect(
+    evidence: dict[str, Any],
+) -> None:
+    if (
+        evidence.get("schema")
+        != "arnold.critique_ledger.r5_cross_container_liveness_observer_defect.v1"
+        or evidence.get("status")
+        != "NON_BLOCKING_FOLLOW_UP_INPUT_NOT_RUNTIME_ACCEPTANCE"
+        or evidence.get("authority") != "READ_ONLY_LIVE_OBSERVATION"
+        or evidence.get("owner_milestone")
+        != "f1-owner-storage-recovery-hardening"
+        or evidence.get("session")
+        != "critique-ledger-accountability-v3-r5-20260803"
+        or evidence.get("plan") != "cl2-wbc-backed-ledger-20260803-1357"
+    ):
+        raise ContractError("cross-container liveness evidence identity drift")
+    containers = evidence.get("containers")
+    if (
+        not isinstance(containers, dict)
+        or containers.get("runner")
+        != {
+            "container_id": "782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117",
+            "observed_state": "LIVE",
+            "role": "ISOLATED_R5_CHAIN_RUNNER",
+        }
+        or containers.get("resident")
+        != {
+            "container_id": "a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a",
+            "observed_state": "LIVE",
+            "role": "DISCORD_RESIDENT_OBSERVER",
+        }
+        or containers.get("pid_namespaces") != "DISTINCT_FOREIGN_TO_EACH_OTHER"
+        or evidence.get("defect_chain")
+        != [
+            "RESIDENT_OBSERVER_USED_LOCAL_TMUX_PS_AND_OS_KILL_FOR_FOREIGN_RUNNER_PID",
+            "FOREIGN_PID_WAS_FALSELY_CLASSIFIED_DEAD_INSTEAD_OF_NOT_OBSERVABLE",
+            "REDUCER_MISHANDLED_FRESH_HEARTBEAT_PLUS_FOREIGN_PROCESS_OBSERVATION",
+            "PRESENTATION_EXCLUDED_THE_ACTIVE_ATTENTION_ROW",
+            "WATCHDOG_REPORT_REMAINED_STALE_OR_MASKED_THE_LIVE_RUNNER",
+        ]
+    ):
+        raise ContractError("exact runner/resident liveness defect observation drift")
+    if evidence.get("canonical_observations") != {
+        "runner_heartbeat": "FRESH",
+        "resident_local_process_probe": "FOREIGN_PID_NAMESPACE_NOT_OBSERVABLE",
+        "required_combined_classification": "REMOTE_LIVENESS_CONFIRMED_BY_BOUND_FRESH_LEASE_LOCAL_PROCESS_UNKNOWN",
+        "canonical_run_state": "INTACT",
+        "live_mutation_authority_from_this_record": False,
+    }:
+        raise ContractError("fresh-heartbeat/foreign-process classification drift")
+
+    lease = evidence.get("shared_liveness_contract")
+    if (
+        not isinstance(lease, dict)
+        or lease.get("owner")
+        != "CANONICAL_CONTAINER_NEUTRAL_RUN_LIVENESS_LEASE_SERVICE"
+        or lease.get("transport")
+        != "SHARED_DURABLE_OWNER_AUTHENTICATED_COMPARE_AND_SWAP_RECORD"
+        or lease.get("required_identity_fields")
+        != [
+            "session_id",
+            "runner_container_id",
+            "container_generation",
+            "pid_namespace_id",
+            "host_boot_id",
+            "time_namespace_id",
+            "run_id",
+            "incarnation_id",
+            "worker_pid",
+            "process_start_identity",
+            "lease_id",
+            "fencing_token",
+        ]
+        or lease.get("required_freshness_fields")
+        != [
+            "heartbeat_sequence",
+            "authority_accepted_monotonic_ns",
+            "authority_expires_monotonic_ns",
+            "last_progress_sequence",
+            "last_progress_digest",
+            "record_digest",
+        ]
+        or lease.get("freshness_rule")
+        != "AUTHORITY_COMPUTES_MONOTONIC_FRESHNESS_IN_BOUND_BOOT_AND_TIME_NAMESPACE_OBSERVERS_DO_NOT_COMPARE_AMBIENT_LOCAL_CLOCKS"
+        or lease.get("renewal_rule")
+        != "MATCHING_RUN_CONTAINER_GENERATION_LEASE_AND_FENCE_COMPARE_AND_SWAP_ONLY"
+        or lease.get("replacement_rule")
+        != "NEW_CONTAINER_GENERATION_FENCES_PRIOR_LEASE_BEFORE_NEW_ACTIVE_PROJECTION"
+        or lease.get("spoof_rule")
+        != "UNAUTHENTICATED_MISMATCHED_REPLAYED_OR_NONMONOTONIC_HEARTBEAT_IS_REJECTED"
+    ):
+        raise ContractError("container-bound shared liveness lease drift")
+
+    reducer = evidence.get("observer_reducer_contract")
+    if reducer != {
+        "local_process_probe_authority": "ONLY_FOR_MATCHING_CONTAINER_AND_PID_NAMESPACE_WITH_PROCESS_START_IDENTITY",
+        "foreign_os_kill_result": "UNKNOWN_NOT_NEGATIVE_LIVENESS_AUTHORITY",
+        "fresh_bound_heartbeat_plus_foreign_process": "REMOTE_LIVE_PROCESS_NOT_LOCALLY_OBSERVABLE",
+        "fresh_heartbeat_plus_matched_dead_process": "TYPED_DEGRADED_LIVENESS_CONTRADICTION",
+        "stale_heartbeat_plus_matched_live_process": "TYPED_DEGRADED_LIVENESS_CONTRADICTION",
+        "contradiction_effect": "ZERO_AUTOMATIC_RECOVERY_UNTIL_CANONICAL_LEASE_RECONCILIATION",
+        "presentation": "EXACTLY_ONE_ACTIVE_ATTENTION_ROW_WITH_CONTAINER_AND_EVIDENCE_STATUS",
+        "watchdog": "CONSUME_SAME_CANONICAL_LIVENESS_VIEW_AND_REPORT_STALE_OR_DEGRADED_SOURCES_EXPLICITLY",
+    }:
+        raise ContractError("foreign-process liveness reducer/presentation drift")
+    dedupe = evidence.get("recovery_dedupe_contract")
+    if dedupe != {
+        "key_fields": [
+            "session_id",
+            "run_id",
+            "incarnation_id",
+            "container_generation",
+            "accepted_state_version",
+            "liveness_failure_class",
+        ],
+        "maximum_recovery_occurrences_per_state_version": 1,
+        "observer_count_does_not_multiply_recovery": True,
+        "restart_or_response_loss_does_not_replenish_budget": True,
+        "ambiguous_container_replacement": "FENCE_AND_RECONCILE_NO_SECOND_RECOVERY",
+    }:
+        raise ContractError("cross-container liveness recovery dedupe drift")
+
+    adjacent = evidence.get("scoped_adjacent_input_evidence")
+    if adjacent != {
+        "old_wrapper": {
+            "scope": "SCOPED_OLD_WRAPPER_RUNTIME_ONLY",
+            "failure": "MISSING_ARNOLD_PIPELINES_MEGAPLAN_CLOUD_WRAPPERS_REPAIR_DELEGATION_MODULE",
+            "classification": "HISTORICAL_WRAPPER_RUNTIME_DRIFT_NOT_CURRENT_CANONICAL_RUNNER_STATE",
+        },
+        "event_checkpoint": {
+            "failure": "EventCheckpointError: non-monotonic event seq beyond checkpoint: 0 <= 9",
+            "classification": "PREEXISTING_EVENT_CHECKPOINT_INCARNATION_DEFECT_INPUT_ONLY",
+        },
+        "rule": "DO_NOT_MASK_CROSS_CONTAINER_LIVENESS_WITH_EITHER_ADJACENT_FAILURE_AND_DO_NOT_RECLASSIFY_THEM_AS_CURRENT_RUNNER_DEATH",
+    }:
+        raise ContractError("scoped old-wrapper/checkpoint input evidence drift")
+    if (
+        evidence.get("required_mutation_tests")
+        != [
+            "RESIDENT_NAMESPACE_CANNOT_MARK_ISOLATED_RUNNER_PID_DEAD",
+            "FOREIGN_OS_KILL_ESRCH_MAPS_TO_UNKNOWN_NOT_DEAD",
+            "FRESH_BOUND_HEARTBEAT_PLUS_FOREIGN_PROCESS_PRODUCES_ONE_ACTIVE_ROW",
+            "MATCHED_NAMESPACE_DEAD_PROCESS_PLUS_FRESH_HEARTBEAT_IS_TYPED_DEGRADED",
+            "MATCHED_NAMESPACE_LIVE_PROCESS_PLUS_STALE_HEARTBEAT_IS_TYPED_DEGRADED",
+            "RESIDENT_RESTART_PRESERVES_REMOTE_LIVENESS_VIEW",
+            "RUNNER_RESTART_REQUIRES_NEW_INCARNATION_OR_VALID_LEASE_RENEWAL",
+            "CONTAINER_REPLACEMENT_FENCES_OLD_GENERATION_BEFORE_NEW_ACTIVE_ROW",
+            "STALE_HEARTBEAT_CANNOT_KEEP_REPLACED_CONTAINER_ACTIVE",
+            "SPOOFED_OR_REPLAYED_HEARTBEAT_IS_REJECTED",
+            "CONCURRENT_OBSERVERS_CREATE_ZERO_DUPLICATE_RECOVERY",
+            "WATCHDOG_AND_PRESENTATION_CONSUME_IDENTICAL_CANONICAL_VIEW",
+            "OLD_WRAPPER_MODULE_FAILURE_REMAINS_SCOPED_INPUT_EVIDENCE",
+            "EVENT_CHECKPOINT_0_LE_9_REMAINS_SEPARATE_PREEXISTING_INPUT",
+            "TWO_HUNDRED_POLLS_RETAIN_EXACTLY_ONE_ACTIVE_PROJECTION_AND_ONE_INCIDENT_MAXIMUM",
+        ]
+        or evidence.get("acceptance")
+        != {
+            "source_wheel_installed_cloud_parity": True,
+            "resident_and_isolated_namespace_fixture_required": True,
+            "real_container_replacement_fixture_required": True,
+            "independent_review_required": True,
+            "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
+        }
+    ):
+        raise ContractError("cross-container liveness mutation-test acceptance drift")
 
 
 def _validate_r5_m7_runtime_rebind_projection_cursor_mismatch(
@@ -3378,6 +3554,9 @@ def validate(*, require_live: bool = False) -> None:
     )
     _validate_m11_acceptance_dependency_gap(
         _load_json(INITIATIVE / M11_ACCEPTANCE_GAP_EVIDENCE)
+    )
+    _validate_r5_cross_container_liveness_observer_defect(
+        _load_json(INITIATIVE / CROSS_CONTAINER_LIVENESS_EVIDENCE)
     )
     _validate_r5_m7_runtime_rebind_projection_cursor_mismatch(
         _load_json(INITIATIVE / M7_RUNTIME_REBIND_PROJECTION_EVIDENCE)

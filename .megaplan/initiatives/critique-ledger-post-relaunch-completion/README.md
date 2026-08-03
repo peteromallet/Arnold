@@ -134,6 +134,16 @@ aware atomic rebuild, crash/restart idempotence and projection non-authority;
 operators must not hand-edit counters. See
 [`evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json`](evidence/r5-m7-runtime-rebind-projection-cursor-mismatch-20260803.json).
 
+A second non-blocking observer defect crossed container namespaces: live runner
+`782c6da...` was invisible to resident `a2c9a0d...`'s local tmux/ps/`os.kill`
+probe despite a fresh heartbeat, so the reducer dropped the active attention
+row and the watchdog remained stale/masked. F1 now requires a shared container-
+bound liveness lease, foreign-PID unknown semantics, typed contradiction handling
+and exactly-one projection/recovery behavior. The old wrapper's missing
+`repair_delegation` module and checkpoint `0 <= 9` remain separate input facts.
+See
+[`evidence/r5-cross-container-liveness-observer-defect-20260803.json`](evidence/r5-cross-container-liveness-observer-defect-20260803.json).
+
 A separate historical audit invalidates the old M11 completion/promotion claim
 at commit `d10b0fef2b6dbc283639ca14adf6790153ebd2a6`. That commit contained
 `evidence/ownership-decision-record.json` with four blockers and

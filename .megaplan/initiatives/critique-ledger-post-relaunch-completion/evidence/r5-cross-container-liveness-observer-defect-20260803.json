@@ -1,0 +1,125 @@
+{
+  "schema": "arnold.critique_ledger.r5_cross_container_liveness_observer_defect.v1",
+  "status": "NON_BLOCKING_FOLLOW_UP_INPUT_NOT_RUNTIME_ACCEPTANCE",
+  "authority": "READ_ONLY_LIVE_OBSERVATION",
+  "owner_milestone": "f1-owner-storage-recovery-hardening",
+  "session": "critique-ledger-accountability-v3-r5-20260803",
+  "plan": "cl2-wbc-backed-ledger-20260803-1357",
+  "containers": {
+    "runner": {
+      "container_id": "782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117",
+      "observed_state": "LIVE",
+      "role": "ISOLATED_R5_CHAIN_RUNNER"
+    },
+    "resident": {
+      "container_id": "a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a",
+      "observed_state": "LIVE",
+      "role": "DISCORD_RESIDENT_OBSERVER"
+    },
+    "pid_namespaces": "DISTINCT_FOREIGN_TO_EACH_OTHER"
+  },
+  "defect_chain": [
+    "RESIDENT_OBSERVER_USED_LOCAL_TMUX_PS_AND_OS_KILL_FOR_FOREIGN_RUNNER_PID",
+    "FOREIGN_PID_WAS_FALSELY_CLASSIFIED_DEAD_INSTEAD_OF_NOT_OBSERVABLE",
+    "REDUCER_MISHANDLED_FRESH_HEARTBEAT_PLUS_FOREIGN_PROCESS_OBSERVATION",
+    "PRESENTATION_EXCLUDED_THE_ACTIVE_ATTENTION_ROW",
+    "WATCHDOG_REPORT_REMAINED_STALE_OR_MASKED_THE_LIVE_RUNNER"
+  ],
+  "canonical_observations": {
+    "runner_heartbeat": "FRESH",
+    "resident_local_process_probe": "FOREIGN_PID_NAMESPACE_NOT_OBSERVABLE",
+    "required_combined_classification": "REMOTE_LIVENESS_CONFIRMED_BY_BOUND_FRESH_LEASE_LOCAL_PROCESS_UNKNOWN",
+    "canonical_run_state": "INTACT",
+    "live_mutation_authority_from_this_record": false
+  },
+  "shared_liveness_contract": {
+    "owner": "CANONICAL_CONTAINER_NEUTRAL_RUN_LIVENESS_LEASE_SERVICE",
+    "transport": "SHARED_DURABLE_OWNER_AUTHENTICATED_COMPARE_AND_SWAP_RECORD",
+    "required_identity_fields": [
+      "session_id",
+      "runner_container_id",
+      "container_generation",
+      "pid_namespace_id",
+      "host_boot_id",
+      "time_namespace_id",
+      "run_id",
+      "incarnation_id",
+      "worker_pid",
+      "process_start_identity",
+      "lease_id",
+      "fencing_token"
+    ],
+    "required_freshness_fields": [
+      "heartbeat_sequence",
+      "authority_accepted_monotonic_ns",
+      "authority_expires_monotonic_ns",
+      "last_progress_sequence",
+      "last_progress_digest",
+      "record_digest"
+    ],
+    "freshness_rule": "AUTHORITY_COMPUTES_MONOTONIC_FRESHNESS_IN_BOUND_BOOT_AND_TIME_NAMESPACE_OBSERVERS_DO_NOT_COMPARE_AMBIENT_LOCAL_CLOCKS",
+    "renewal_rule": "MATCHING_RUN_CONTAINER_GENERATION_LEASE_AND_FENCE_COMPARE_AND_SWAP_ONLY",
+    "replacement_rule": "NEW_CONTAINER_GENERATION_FENCES_PRIOR_LEASE_BEFORE_NEW_ACTIVE_PROJECTION",
+    "spoof_rule": "UNAUTHENTICATED_MISMATCHED_REPLAYED_OR_NONMONOTONIC_HEARTBEAT_IS_REJECTED"
+  },
+  "observer_reducer_contract": {
+    "local_process_probe_authority": "ONLY_FOR_MATCHING_CONTAINER_AND_PID_NAMESPACE_WITH_PROCESS_START_IDENTITY",
+    "foreign_os_kill_result": "UNKNOWN_NOT_NEGATIVE_LIVENESS_AUTHORITY",
+    "fresh_bound_heartbeat_plus_foreign_process": "REMOTE_LIVE_PROCESS_NOT_LOCALLY_OBSERVABLE",
+    "fresh_heartbeat_plus_matched_dead_process": "TYPED_DEGRADED_LIVENESS_CONTRADICTION",
+    "stale_heartbeat_plus_matched_live_process": "TYPED_DEGRADED_LIVENESS_CONTRADICTION",
+    "contradiction_effect": "ZERO_AUTOMATIC_RECOVERY_UNTIL_CANONICAL_LEASE_RECONCILIATION",
+    "presentation": "EXACTLY_ONE_ACTIVE_ATTENTION_ROW_WITH_CONTAINER_AND_EVIDENCE_STATUS",
+    "watchdog": "CONSUME_SAME_CANONICAL_LIVENESS_VIEW_AND_REPORT_STALE_OR_DEGRADED_SOURCES_EXPLICITLY"
+  },
+  "recovery_dedupe_contract": {
+    "key_fields": [
+      "session_id",
+      "run_id",
+      "incarnation_id",
+      "container_generation",
+      "accepted_state_version",
+      "liveness_failure_class"
+    ],
+    "maximum_recovery_occurrences_per_state_version": 1,
+    "observer_count_does_not_multiply_recovery": true,
+    "restart_or_response_loss_does_not_replenish_budget": true,
+    "ambiguous_container_replacement": "FENCE_AND_RECONCILE_NO_SECOND_RECOVERY"
+  },
+  "scoped_adjacent_input_evidence": {
+    "old_wrapper": {
+      "scope": "SCOPED_OLD_WRAPPER_RUNTIME_ONLY",
+      "failure": "MISSING_ARNOLD_PIPELINES_MEGAPLAN_CLOUD_WRAPPERS_REPAIR_DELEGATION_MODULE",
+      "classification": "HISTORICAL_WRAPPER_RUNTIME_DRIFT_NOT_CURRENT_CANONICAL_RUNNER_STATE"
+    },
+    "event_checkpoint": {
+      "failure": "EventCheckpointError: non-monotonic event seq beyond checkpoint: 0 <= 9",
+      "classification": "PREEXISTING_EVENT_CHECKPOINT_INCARNATION_DEFECT_INPUT_ONLY"
+    },
+    "rule": "DO_NOT_MASK_CROSS_CONTAINER_LIVENESS_WITH_EITHER_ADJACENT_FAILURE_AND_DO_NOT_RECLASSIFY_THEM_AS_CURRENT_RUNNER_DEATH"
+  },
+  "required_mutation_tests": [
+    "RESIDENT_NAMESPACE_CANNOT_MARK_ISOLATED_RUNNER_PID_DEAD",
+    "FOREIGN_OS_KILL_ESRCH_MAPS_TO_UNKNOWN_NOT_DEAD",
+    "FRESH_BOUND_HEARTBEAT_PLUS_FOREIGN_PROCESS_PRODUCES_ONE_ACTIVE_ROW",
+    "MATCHED_NAMESPACE_DEAD_PROCESS_PLUS_FRESH_HEARTBEAT_IS_TYPED_DEGRADED",
+    "MATCHED_NAMESPACE_LIVE_PROCESS_PLUS_STALE_HEARTBEAT_IS_TYPED_DEGRADED",
+    "RESIDENT_RESTART_PRESERVES_REMOTE_LIVENESS_VIEW",
+    "RUNNER_RESTART_REQUIRES_NEW_INCARNATION_OR_VALID_LEASE_RENEWAL",
+    "CONTAINER_REPLACEMENT_FENCES_OLD_GENERATION_BEFORE_NEW_ACTIVE_ROW",
+    "STALE_HEARTBEAT_CANNOT_KEEP_REPLACED_CONTAINER_ACTIVE",
+    "SPOOFED_OR_REPLAYED_HEARTBEAT_IS_REJECTED",
+    "CONCURRENT_OBSERVERS_CREATE_ZERO_DUPLICATE_RECOVERY",
+    "WATCHDOG_AND_PRESENTATION_CONSUME_IDENTICAL_CANONICAL_VIEW",
+    "OLD_WRAPPER_MODULE_FAILURE_REMAINS_SCOPED_INPUT_EVIDENCE",
+    "EVENT_CHECKPOINT_0_LE_9_REMAINS_SEPARATE_PREEXISTING_INPUT",
+    "TWO_HUNDRED_POLLS_RETAIN_EXACTLY_ONE_ACTIVE_PROJECTION_AND_ONE_INCIDENT_MAXIMUM"
+  ],
+  "acceptance": {
+    "source_wheel_installed_cloud_parity": true,
+    "resident_and_isolated_namespace_fixture_required": true,
+    "real_container_replacement_fixture_required": true,
+    "independent_review_required": true,
+    "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json"
+  }
+}

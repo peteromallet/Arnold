@@ -129,6 +129,111 @@ def _m7_runtime_rebind_projection_fixture() -> dict:
     )
 
 
+def _cross_container_liveness_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name("evidence")
+        / "r5-cross-container-liveness-observer-defect-20260803.json"
+    )
+
+
+def test_foreign_pid_namespace_cannot_be_negative_liveness_authority() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["canonical_observations"]["resident_local_process_probe"] = "DEAD"
+    with pytest.raises(
+        contract.ContractError,
+        match="fresh-heartbeat/foreign-process classification drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_foreign_os_kill_esrch_must_remain_unknown_not_dead() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["observer_reducer_contract"]["foreign_os_kill_result"] = "DEAD"
+    with pytest.raises(
+        contract.ContractError,
+        match="foreign-process liveness reducer/presentation drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_liveness_contradiction_cannot_trigger_automatic_recovery() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["observer_reducer_contract"]["contradiction_effect"] = (
+        "AUTOMATIC_RECOVERY"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="foreign-process liveness reducer/presentation drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_cross_container_recovery_budget_is_exactly_once_per_state() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["recovery_dedupe_contract"][
+        "maximum_recovery_occurrences_per_state_version"
+    ] = 2
+    with pytest.raises(
+        contract.ContractError,
+        match="cross-container liveness recovery dedupe drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+@pytest.mark.parametrize(
+    ("field_group", "required_field"),
+    [
+        ("required_identity_fields", "pid_namespace_id"),
+        ("required_freshness_fields", "authority_expires_monotonic_ns"),
+    ],
+)
+def test_shared_liveness_lease_must_bind_pid_namespace_and_monotonic_freshness(
+    field_group: str,
+    required_field: str,
+) -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["shared_liveness_contract"][field_group].remove(required_field)
+    with pytest.raises(
+        contract.ContractError,
+        match="container-bound shared liveness lease drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_remote_live_runner_must_project_exactly_one_active_attention_row() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["observer_reducer_contract"]["presentation"] = "ZERO_ACTIVE_ROWS"
+    with pytest.raises(
+        contract.ContractError,
+        match="foreign-process liveness reducer/presentation drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_old_wrapper_and_checkpoint_failures_remain_separate_scoped_inputs() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["scoped_adjacent_input_evidence"]["event_checkpoint"]["failure"] = (
+        "EventCheckpointError: hidden"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="scoped old-wrapper/checkpoint input evidence drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_container_replacement_and_spoof_mutations_remain_required() -> None:
+    evidence = _cross_container_liveness_fixture()
+    evidence["required_mutation_tests"].remove(
+        "SPOOFED_OR_REPLAYED_HEARTBEAT_IS_REJECTED"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="cross-container liveness mutation-test acceptance drift",
+    ):
+        contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
 def test_m7_exact_runtime_rebind_record_counts_cannot_be_rewritten() -> None:
     evidence = _m7_runtime_rebind_projection_fixture()
     evidence["observation"]["persisted_projection_cursor_record_count"] = 630

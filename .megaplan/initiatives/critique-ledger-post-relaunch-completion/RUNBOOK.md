@@ -76,6 +76,17 @@ the cursor. If the regression is within one epoch, report typed degraded and
 mutate nothing. Never edit/delete/truncate/bump a cursor by hand, and never use
 a projection to authorize repair, relaunch, completion or publication.
 
+Never treat a resident's local tmux/ps/`os.kill` miss as proof that a runner in
+another container is dead. First compare the observer and runner container/PID
+namespace identities. A foreign probe is `unknown`; use the shared owner-
+authenticated lease bound to session, container generation, host boot/time/PID
+namespace, run/incarnation, process-start identity and fence. A matching fresh
+lease can prove remote liveness. A true matched-process/heartbeat contradiction
+is typed degraded and must be reconciled through the canonical lease before any
+recovery. All observers must show one active row and share one deduped recovery
+occurrence. Keep old-wrapper missing-module and checkpoint errors separately
+visible; neither may mask or reclassify the runner.
+
 The historical M11 completion claim at
 `d10b0fef2b6dbc283639ca14adf6790153ebd2a6` is invalidated pending
 dependency-closed revalidation. Its committed ownership record had four
