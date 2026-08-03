@@ -74,7 +74,10 @@ from arnold_pipelines.megaplan.cloud.spec import (
 )
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.types import CliError
-from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
+from arnold_pipelines.megaplan.handlers.shared import (
+    _validate_generated_plan_or_raise,
+    _write_gate_json,
+)
 from arnold_pipelines.megaplan.model_seam import capture_step_output
 from arnold_pipelines.megaplan.finite_canary_policy import (
     ALLOWED_SUCCESS_ROUTES,
@@ -3734,6 +3737,73 @@ def test_offline_structural_smoke_gate_routes_survive_real_codex_capture(
         "model_step_output",
         "codex_recovery:output_file",
     )
+
+
+def test_offline_structural_smoke_revise_survives_real_capture_and_structure_audit(
+    tmp_path: Path,
+) -> None:
+    fake = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+        "structural-smoke/fake_codex.py"
+    )
+    schema_path = Path(".megaplan/schemas/revise.json").resolve()
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output = plan_dir / ".zero-recovery-04-revise-i2-worker-output.json"
+    codex_home = tmp_path / "codex-home"
+    completed = subprocess.run(
+        [
+            "node",
+            str(fake),
+            "exec",
+            "-o",
+            str(output),
+            "--output-schema",
+            str(schema_path),
+            "-",
+        ],
+        env={"CODEX_HOME": str(codex_home), "PATH": os.environ["PATH"]},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    outcome = capture_step_output(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "validation_step": "revise",
+                "compatibility_validation_step": "revise",
+                "schema": schema,
+                "capture_schema": schema,
+                "capture_recovery": {
+                    "step": "revise",
+                    "plan_dir": str(plan_dir),
+                    "output_path": str(output),
+                    "prefer_output_file": True,
+                },
+            },
+        ),
+        completed.stdout + completed.stderr,
+    )
+    revised_plan = outcome.legacy_payload["plan"]
+
+    warnings = _validate_generated_plan_or_raise(
+        plan_dir=plan_dir,
+        state={},
+        step="revise",
+        iteration=2,
+        worker=SimpleNamespace(raw_output=completed.stdout, duration_ms=0),
+        plan_text=revised_plan,
+    )
+
+    assert not warnings
+    for index, addressed in enumerate(
+        outcome.legacy_payload["north_star_actions_addressed"], start=1
+    ):
+        heading = f"Locked first-pass requirement {index}"
+        assert f"### {heading}" in revised_plan
+        assert addressed["plan_refs"] == [heading]
 
 
 def test_custody_contract_separates_two_consumed_substrates_and_15_deferred() -> None:
