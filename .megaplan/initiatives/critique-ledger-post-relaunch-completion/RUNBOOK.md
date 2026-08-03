@@ -61,6 +61,16 @@ content-addressed archive, reads back and verifies every byte, fsyncs an
 append-only manifest, and revalidates custody. Original deletion is a later,
 separately authorized transaction; ambiguity retains originals.
 
+Treat `repair-data/escalations/escalations.jsonl` as the only canonical
+escalation ledger target. A caller must pass the typed `repair-data` root; if it
+passes an already-specialized `.../escalations` directory, reject before open
+instead of appending another path segment. Do not hand-delete or move the known
+nested `repair-data/escalations/escalations/escalations.jsonl`. Copy its exact
+bytes into content-addressed quarantine, verify readback size/SHA-256, fsync an
+append-only migration manifest and retain the original until a separate owner
+grant. Consumers continue ignoring nested paths; canonical `SUPERSEDED` seq 635
+must not be re-appended, renumbered or rewritten.
+
 Likewise, remove r2-r4 only from the derived current-attention projection—not
 from run, event, custody or receipt history. Rebuild from authoritative
 lifecycle/supersession/incarnation records and require exact r5 to be the sole

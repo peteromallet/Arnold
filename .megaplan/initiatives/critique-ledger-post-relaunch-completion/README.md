@@ -96,6 +96,16 @@ r3 and r4 remain historical evidence, while exact r5 is the sole current
 subject or the view reports typed ambiguity. See
 [`artifact-archival-projection-cleanup-contract.json`](artifact-archival-projection-cleanup-contract.json).
 
+That boundary also owns an exact v2 terminalization path defect. A disabled
+feature-gated no-op was followed by one write to noncanonical
+`repair-data/escalations/escalations/escalations.jsonl`; canonical consumers
+correctly ignored it, and `SUPERSEDED` was appended authoritatively as seq 635
+at `repair-data/escalations/escalations.jsonl`. F1 must reject over-specific
+writer roots before open, attest the canonical target, and preserve the nested
+record byte-for-byte in a manifest-bound quarantine without hand deletion or a
+second canonical event. See
+[`escalation-sidecar-path-normalization-migration-contract.json`](escalation-sidecar-path-normalization-migration-contract.json).
+
 Today's relaunch also proved a separate cross-pipeline launch invariant was
 missing: declared profile/vendor intent, fully resolved phase routing, uploaded
 bytes and the process that actually ran were not one sealed object. The new

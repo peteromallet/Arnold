@@ -187,6 +187,20 @@ deferred obligations.
   either receipt version, including late writers, path escape, collisions,
   missing manifest rows and hash changes. Contract:
   `artifact-archival-projection-cleanup-contract.json`.
+- [ ] **HARD — F1 escalation sidecar root normalization and evidence
+  migration.** During v2 escalation terminalization, a feature-gated disabled
+  no-op was followed by one noncanonical nested write at
+  `repair-data/escalations/escalations/escalations.jsonl`. The canonical
+  `SUPERSEDED` event was then correctly appended as seq 635 at
+  `repair-data/escalations/escalations.jsonl`, and consumers ignore the nested
+  file. Replace raw/path-specialized roots with a typed `repair-data` root and
+  one canonical builder; reject doubled segments before open and attest the
+  resolved target. Quarantine/migrate the noncanonical record with exact byte,
+  size and SHA-256 readback plus an append-only manifest. No hand deletion,
+  consumer auto-discovery, canonical rewrite/renumber or duplicate terminal
+  event. Test over-specific roots, doubled segments, traversal/symlink escape,
+  restart and 200 polls. Contract:
+  `escalation-sidecar-path-normalization-migration-contract.json`.
 - [ ] **F1 authoritative failed-attempt projection cleanup.** Rebuild current
   attention only from canonical lifecycle, supersession and incarnation
   records. Exact r5 may be the one current subject; retired r2-r4 attempts stay

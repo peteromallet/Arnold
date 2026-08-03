@@ -1,0 +1,111 @@
+{
+  "schema": "arnold.cross_pipeline.escalation_sidecar_path_normalization_migration.v1",
+  "status": "NORMATIVE_DESIGN_TARGET_WITH_READ_ONLY_INCIDENT_EVIDENCE",
+  "owner_milestone": "f1-owner-storage-recovery-hardening",
+  "scope": "ALL_ESCALATION_EVENT_AND_SIDECAR_WRITERS_AND_CONSUMERS",
+  "difficulty": "4/5 HARD",
+  "incident_fixture": {
+    "transition": "V2_ESCALATION_TERMINALIZATION",
+    "feature_gate_outcome": "DISABLED_NO_OP",
+    "writer_root_fault": "OVER_SPECIFIC_ESCALATIONS_DIRECTORY_REUSED_AS_REPAIR_DATA_ROOT",
+    "causal_order": [
+      "FEATURE_GATED_ESCALATION_ACTION_RETURNED_DISABLED_NO_OP",
+      "TERMINALIZATION_SIDECAR_WRITER_APPENDED_ONE_RECORD_UNDER_DOUBLED_ESCALATIONS_SEGMENT",
+      "CANONICAL_SUPERSEDED_EVENT_WAS_APPENDED_AT_SEQUENCE_635",
+      "CANONICAL_CONSUMERS_IGNORED_THE_NONCANONICAL_NESTED_FILE"
+    ],
+    "noncanonical_record": {
+      "path": "repair-data/escalations/escalations/escalations.jsonl",
+      "record_count": 1,
+      "canonical_consumer_visible": false,
+      "classification": "IMMUTABLE_NONCANONICAL_AUDIT_EVIDENCE_NOT_LEDGER_AUTHORITY"
+    },
+    "canonical_superseding_event": {
+      "path": "repair-data/escalations/escalations.jsonl",
+      "event_sequence": 635,
+      "event": "SUPERSEDED",
+      "classification": "CANONICAL_TERMINALIZATION_AUTHORITY"
+    },
+    "live_mutation_authority": false
+  },
+  "writer_contract": {
+    "typed_root": "REPAIR_DATA_ROOT",
+    "accepted_root_relative_path": "repair-data",
+    "canonical_ledger_relative_path": "escalations/escalations.jsonl",
+    "canonical_target": "repair-data/escalations/escalations.jsonl",
+    "root_normalization_rule": "CALLER_MUST_SUPPLY_TYPED_REPAIR_DATA_ROOT_OVER_SPECIFIC_LEDGER_DIRECTORY_IS_REJECTED_BEFORE_OPEN",
+    "path_construction_rule": "ONE_CANONICAL_BUILDER_JOINS_TYPED_ROOT_AND_CANONICAL_LEDGER_RELATIVE_PATH_EXACTLY_ONCE",
+    "preflight_before_open": [
+      "RESOLVE_TYPED_ROOT_WITHOUT_FOLLOWING_UNTRUSTED_SYMLINKS",
+      "REJECT_ROOT_ALREADY_ENDING_IN_ESCALATIONS_OR_ESCALATIONS_JSONL",
+      "REJECT_ABSOLUTE_TRAVERSAL_SYMLINK_ESCAPE_AND_NON_REGULAR_TARGET",
+      "ATTEST_EXACT_CANONICAL_RELATIVE_AND_RESOLVED_TARGET_PATHS",
+      "ATTEST_EXPECTED_ESCALATIONS_SEGMENT_COUNT_AND_FILENAME",
+      "FAIL_CLOSED_WITH_ZERO_WRITES_ON_ANY_MISMATCH"
+    ],
+    "canonical_path_attestation_fields": [
+      "operation_id",
+      "typed_root",
+      "typed_root_identity",
+      "canonical_relative_path",
+      "resolved_target_path",
+      "target_parent_identity",
+      "path_policy_version",
+      "attestation_digest"
+    ],
+    "feature_gate_disabled_rule": "DISABLED_NO_OP_MAY_TERMINALIZE_ONCE_IN_CANONICAL_LEDGER_BUT_MUST_NOT_CREATE_AN_ACTION_SIDECAR_OR_SECOND_TERMINAL_EVENT",
+    "consumer_rule": "READ_ONLY_CANONICAL_ATTESTED_LEDGER_PATH_NESTED_OR_UNATTESTED_PATHS_ARE_NEVER_AUTO_DISCOVERED",
+    "append_rule": "OPEN_AND_APPEND_ONLY_AFTER_CANONICAL_PATH_ATTESTATION_SUCCEEDS"
+  },
+  "noncanonical_evidence_migration": {
+    "authority": "CURRENT_STORAGE_OWNER_WITH_EXACT_SOURCE_PATH_AND_HASH_MANIFEST",
+    "ordered_steps": [
+      "READ_NONCANONICAL_SOURCE_WITHOUT_TREATING_IT_AS_LEDGER_INPUT",
+      "FREEZE_SOURCE_PATH_SIZE_SHA256_AND_BYTE_IDENTITY",
+      "COPY_TO_CONTENT_ADDRESSED_QUARANTINE_OUTSIDE_ACTIVE_CONSUMER_DISCOVERY",
+      "READ_BACK_AND_VERIFY_EXACT_BYTES_SIZE_AND_SHA256",
+      "WRITE_AND_FSYNC_APPEND_ONLY_MIGRATION_MANIFEST",
+      "ATTEST_CANONICAL_SEQUENCE_635_SUPERSESSION_REMAINS_AUTHORITATIVE",
+      "RETAIN_ORIGINAL_UNTIL_SEPARATE_OWNER_AUTHORIZED_RETIREMENT"
+    ],
+    "required_manifest_fields": [
+      "schema",
+      "operation_id",
+      "source_path",
+      "source_size",
+      "source_sha256",
+      "quarantine_path",
+      "quarantine_size",
+      "quarantine_sha256",
+      "canonical_ledger_path",
+      "canonical_superseding_sequence",
+      "copied_at",
+      "verified_at"
+    ],
+    "byte_preservation": "SOURCE_AND_QUARANTINE_READBACK_SIZE_AND_SHA256_MUST_MATCH",
+    "canonical_event_rule": "DO_NOT_REAPPEND_RENUMBER_OR_REWRITE_CANONICAL_SEQUENCE_635",
+    "original_default": "RETAIN_NO_HAND_DELETE",
+    "destructive_retirement": "SEPARATE_CURRENT_OWNER_GRANT_AFTER_VERIFIED_MANIFEST_OR_NO_DELETE",
+    "consumer_effect": "ZERO_NEW_CANONICAL_EVENTS_ZERO_DUPLICATE_TERMINALIZATION_ZERO_NESTED_FILE_DISCOVERY"
+  },
+  "required_negative_and_mutation_tests": [
+    "TYPED_REPAIR_DATA_ROOT_WRITES_EXACT_CANONICAL_TARGET",
+    "ROOT_REPAIR_DATA_ESCALATIONS_IS_REJECTED_BEFORE_OPEN_WITH_ZERO_WRITES",
+    "ROOT_REPAIR_DATA_ESCALATIONS_ESCALATIONS_IS_REJECTED_BEFORE_OPEN_WITH_ZERO_WRITES",
+    "DOUBLED_ESCALATIONS_TARGET_FAILS_CANONICAL_PATH_ATTESTATION",
+    "ABSOLUTE_TRAVERSAL_AND_SYMLINK_ESCAPE_FAIL_WITH_ZERO_WRITES",
+    "DISABLED_FEATURE_GATE_CREATES_NO_ACTION_SIDECAR_AND_ONE_CANONICAL_TERMINAL_EVENT_MAXIMUM",
+    "NONCANONICAL_RECORD_IS_NEVER_AUTO_DISCOVERED_BY_LEDGER_CONSUMERS",
+    "QUARANTINE_COPY_PRESERVES_EXACT_BYTES_SIZE_AND_SHA256",
+    "HAND_DELETE_AND_UNMANIFESTED_MOVE_ARE_DENIED_WITH_ORIGINAL_PRESERVED",
+    "MIGRATION_DOES_NOT_DUPLICATE_RENUMBER_OR_REWRITE_CANONICAL_SEQUENCE_635",
+    "RESTART_AND_TWO_HUNDRED_POLLS_RETAIN_ONE_CANONICAL_TERMINALIZATION_AND_ZERO_NESTED_CONSUMPTION"
+  ],
+  "acceptance": {
+    "source_wheel_installed_cloud_parity": true,
+    "cross_pipeline_writer_consumer_inventory_required": true,
+    "real_filesystem_path_fixture_required": true,
+    "independent_review_required": true,
+    "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json"
+  }
+}

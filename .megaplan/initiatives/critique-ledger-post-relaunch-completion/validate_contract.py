@@ -34,6 +34,9 @@ PROVIDER_SCHEMA_DIALECT_CONTRACT = "provider-schema-dialect-family-contract.json
 ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT = (
     "artifact-archival-projection-cleanup-contract.json"
 )
+ESCALATION_SIDECAR_PATH_CONTRACT = (
+    "escalation-sidecar-path-normalization-migration-contract.json"
+)
 M11_ACCEPTANCE_GAP_EVIDENCE = (
     "evidence/m11-acceptance-dependency-gap-20260803.json"
 )
@@ -2100,6 +2103,12 @@ def _validate_chain_and_proof_map(chain: dict[str, Any], proof_map: dict[str, An
         raise ContractError("artifact archival/projection cleanup proof map drift")
     if (
         ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+        + ESCALATION_SIDECAR_PATH_CONTRACT
+        not in f1_proofs
+    ):
+        raise ContractError("escalation sidecar path contract proof map drift")
+    if (
+        ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
         + M7_RUNTIME_REBIND_PROJECTION_EVIDENCE
         not in f1_proofs
     ):
@@ -2449,6 +2458,160 @@ def _validate_r5_m7_runtime_rebind_projection_cursor_mismatch(
         }
     ):
         raise ContractError("M7 projection mutation-test acceptance drift")
+
+
+def _validate_escalation_sidecar_path_normalization_migration_contract(
+    contract: dict[str, Any],
+) -> None:
+    if (
+        contract.get("schema")
+        != "arnold.cross_pipeline.escalation_sidecar_path_normalization_migration.v1"
+        or contract.get("status")
+        != "NORMATIVE_DESIGN_TARGET_WITH_READ_ONLY_INCIDENT_EVIDENCE"
+        or contract.get("owner_milestone")
+        != "f1-owner-storage-recovery-hardening"
+        or contract.get("scope")
+        != "ALL_ESCALATION_EVENT_AND_SIDECAR_WRITERS_AND_CONSUMERS"
+        or contract.get("difficulty") != "4/5 HARD"
+    ):
+        raise ContractError("escalation sidecar path contract identity drift")
+
+    incident = contract.get("incident_fixture")
+    if incident != {
+        "transition": "V2_ESCALATION_TERMINALIZATION",
+        "feature_gate_outcome": "DISABLED_NO_OP",
+        "writer_root_fault": "OVER_SPECIFIC_ESCALATIONS_DIRECTORY_REUSED_AS_REPAIR_DATA_ROOT",
+        "causal_order": [
+            "FEATURE_GATED_ESCALATION_ACTION_RETURNED_DISABLED_NO_OP",
+            "TERMINALIZATION_SIDECAR_WRITER_APPENDED_ONE_RECORD_UNDER_DOUBLED_ESCALATIONS_SEGMENT",
+            "CANONICAL_SUPERSEDED_EVENT_WAS_APPENDED_AT_SEQUENCE_635",
+            "CANONICAL_CONSUMERS_IGNORED_THE_NONCANONICAL_NESTED_FILE",
+        ],
+        "noncanonical_record": {
+            "path": "repair-data/escalations/escalations/escalations.jsonl",
+            "record_count": 1,
+            "canonical_consumer_visible": False,
+            "classification": "IMMUTABLE_NONCANONICAL_AUDIT_EVIDENCE_NOT_LEDGER_AUTHORITY",
+        },
+        "canonical_superseding_event": {
+            "path": "repair-data/escalations/escalations.jsonl",
+            "event_sequence": 635,
+            "event": "SUPERSEDED",
+            "classification": "CANONICAL_TERMINALIZATION_AUTHORITY",
+        },
+        "live_mutation_authority": False,
+    }:
+        raise ContractError("exact escalation sidecar incident fixture drift")
+
+    writer = contract.get("writer_contract")
+    if (
+        not isinstance(writer, dict)
+        or writer.get("typed_root") != "REPAIR_DATA_ROOT"
+        or writer.get("accepted_root_relative_path") != "repair-data"
+        or writer.get("canonical_ledger_relative_path")
+        != "escalations/escalations.jsonl"
+        or writer.get("canonical_target")
+        != "repair-data/escalations/escalations.jsonl"
+        or writer.get("root_normalization_rule")
+        != "CALLER_MUST_SUPPLY_TYPED_REPAIR_DATA_ROOT_OVER_SPECIFIC_LEDGER_DIRECTORY_IS_REJECTED_BEFORE_OPEN"
+        or writer.get("path_construction_rule")
+        != "ONE_CANONICAL_BUILDER_JOINS_TYPED_ROOT_AND_CANONICAL_LEDGER_RELATIVE_PATH_EXACTLY_ONCE"
+        or writer.get("preflight_before_open")
+        != [
+            "RESOLVE_TYPED_ROOT_WITHOUT_FOLLOWING_UNTRUSTED_SYMLINKS",
+            "REJECT_ROOT_ALREADY_ENDING_IN_ESCALATIONS_OR_ESCALATIONS_JSONL",
+            "REJECT_ABSOLUTE_TRAVERSAL_SYMLINK_ESCAPE_AND_NON_REGULAR_TARGET",
+            "ATTEST_EXACT_CANONICAL_RELATIVE_AND_RESOLVED_TARGET_PATHS",
+            "ATTEST_EXPECTED_ESCALATIONS_SEGMENT_COUNT_AND_FILENAME",
+            "FAIL_CLOSED_WITH_ZERO_WRITES_ON_ANY_MISMATCH",
+        ]
+        or writer.get("canonical_path_attestation_fields")
+        != [
+            "operation_id",
+            "typed_root",
+            "typed_root_identity",
+            "canonical_relative_path",
+            "resolved_target_path",
+            "target_parent_identity",
+            "path_policy_version",
+            "attestation_digest",
+        ]
+        or writer.get("feature_gate_disabled_rule")
+        != "DISABLED_NO_OP_MAY_TERMINALIZE_ONCE_IN_CANONICAL_LEDGER_BUT_MUST_NOT_CREATE_AN_ACTION_SIDECAR_OR_SECOND_TERMINAL_EVENT"
+        or writer.get("consumer_rule")
+        != "READ_ONLY_CANONICAL_ATTESTED_LEDGER_PATH_NESTED_OR_UNATTESTED_PATHS_ARE_NEVER_AUTO_DISCOVERED"
+        or writer.get("append_rule")
+        != "OPEN_AND_APPEND_ONLY_AFTER_CANONICAL_PATH_ATTESTATION_SUCCEEDS"
+    ):
+        raise ContractError("canonical escalation writer root/preflight drift")
+
+    migration = contract.get("noncanonical_evidence_migration")
+    if (
+        not isinstance(migration, dict)
+        or migration.get("authority")
+        != "CURRENT_STORAGE_OWNER_WITH_EXACT_SOURCE_PATH_AND_HASH_MANIFEST"
+        or migration.get("ordered_steps")
+        != [
+            "READ_NONCANONICAL_SOURCE_WITHOUT_TREATING_IT_AS_LEDGER_INPUT",
+            "FREEZE_SOURCE_PATH_SIZE_SHA256_AND_BYTE_IDENTITY",
+            "COPY_TO_CONTENT_ADDRESSED_QUARANTINE_OUTSIDE_ACTIVE_CONSUMER_DISCOVERY",
+            "READ_BACK_AND_VERIFY_EXACT_BYTES_SIZE_AND_SHA256",
+            "WRITE_AND_FSYNC_APPEND_ONLY_MIGRATION_MANIFEST",
+            "ATTEST_CANONICAL_SEQUENCE_635_SUPERSESSION_REMAINS_AUTHORITATIVE",
+            "RETAIN_ORIGINAL_UNTIL_SEPARATE_OWNER_AUTHORIZED_RETIREMENT",
+        ]
+        or migration.get("required_manifest_fields")
+        != [
+            "schema",
+            "operation_id",
+            "source_path",
+            "source_size",
+            "source_sha256",
+            "quarantine_path",
+            "quarantine_size",
+            "quarantine_sha256",
+            "canonical_ledger_path",
+            "canonical_superseding_sequence",
+            "copied_at",
+            "verified_at",
+        ]
+        or migration.get("byte_preservation")
+        != "SOURCE_AND_QUARANTINE_READBACK_SIZE_AND_SHA256_MUST_MATCH"
+        or migration.get("canonical_event_rule")
+        != "DO_NOT_REAPPEND_RENUMBER_OR_REWRITE_CANONICAL_SEQUENCE_635"
+        or migration.get("original_default") != "RETAIN_NO_HAND_DELETE"
+        or migration.get("destructive_retirement")
+        != "SEPARATE_CURRENT_OWNER_GRANT_AFTER_VERIFIED_MANIFEST_OR_NO_DELETE"
+        or migration.get("consumer_effect")
+        != "ZERO_NEW_CANONICAL_EVENTS_ZERO_DUPLICATE_TERMINALIZATION_ZERO_NESTED_FILE_DISCOVERY"
+    ):
+        raise ContractError("noncanonical escalation evidence migration drift")
+
+    if (
+        contract.get("required_negative_and_mutation_tests")
+        != [
+            "TYPED_REPAIR_DATA_ROOT_WRITES_EXACT_CANONICAL_TARGET",
+            "ROOT_REPAIR_DATA_ESCALATIONS_IS_REJECTED_BEFORE_OPEN_WITH_ZERO_WRITES",
+            "ROOT_REPAIR_DATA_ESCALATIONS_ESCALATIONS_IS_REJECTED_BEFORE_OPEN_WITH_ZERO_WRITES",
+            "DOUBLED_ESCALATIONS_TARGET_FAILS_CANONICAL_PATH_ATTESTATION",
+            "ABSOLUTE_TRAVERSAL_AND_SYMLINK_ESCAPE_FAIL_WITH_ZERO_WRITES",
+            "DISABLED_FEATURE_GATE_CREATES_NO_ACTION_SIDECAR_AND_ONE_CANONICAL_TERMINAL_EVENT_MAXIMUM",
+            "NONCANONICAL_RECORD_IS_NEVER_AUTO_DISCOVERED_BY_LEDGER_CONSUMERS",
+            "QUARANTINE_COPY_PRESERVES_EXACT_BYTES_SIZE_AND_SHA256",
+            "HAND_DELETE_AND_UNMANIFESTED_MOVE_ARE_DENIED_WITH_ORIGINAL_PRESERVED",
+            "MIGRATION_DOES_NOT_DUPLICATE_RENUMBER_OR_REWRITE_CANONICAL_SEQUENCE_635",
+            "RESTART_AND_TWO_HUNDRED_POLLS_RETAIN_ONE_CANONICAL_TERMINALIZATION_AND_ZERO_NESTED_CONSUMPTION",
+        ]
+        or contract.get("acceptance")
+        != {
+            "source_wheel_installed_cloud_parity": True,
+            "cross_pipeline_writer_consumer_inventory_required": True,
+            "real_filesystem_path_fixture_required": True,
+            "independent_review_required": True,
+            "completion_evidence": "evidence/critique-ledger-recovery/T0.3/platform-capacity-and-storage-hardening/completion-manifest.json",
+        }
+    ):
+        raise ContractError("escalation sidecar mutation-test acceptance drift")
 
 
 def _validate_artifact_archival_projection_cleanup_contract(
@@ -3560,6 +3723,9 @@ def validate(*, require_live: bool = False) -> None:
     )
     _validate_r5_m7_runtime_rebind_projection_cursor_mismatch(
         _load_json(INITIATIVE / M7_RUNTIME_REBIND_PROJECTION_EVIDENCE)
+    )
+    _validate_escalation_sidecar_path_normalization_migration_contract(
+        _load_json(INITIATIVE / ESCALATION_SIDECAR_PATH_CONTRACT)
     )
     _validate_artifact_archival_projection_cleanup_contract(
         _load_json(INITIATIVE / ARTIFACT_ARCHIVAL_PROJECTION_CONTRACT)

@@ -122,6 +122,14 @@ def _artifact_archival_projection_fixture() -> dict:
     )
 
 
+def _escalation_sidecar_path_fixture() -> dict:
+    return contract._load_json(
+        Path(__file__).with_name(
+            "escalation-sidecar-path-normalization-migration-contract.json"
+        )
+    )
+
+
 def _m7_runtime_rebind_projection_fixture() -> dict:
     return contract._load_json(
         Path(__file__).with_name("evidence")
@@ -232,6 +240,104 @@ def test_container_replacement_and_spoof_mutations_remain_required() -> None:
         match="cross-container liveness mutation-test acceptance drift",
     ):
         contract._validate_r5_cross_container_liveness_observer_defect(evidence)
+
+
+def test_nested_escalation_record_cannot_be_promoted_to_canonical_authority() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["incident_fixture"]["noncanonical_record"][
+        "canonical_consumer_visible"
+    ] = True
+    with pytest.raises(
+        contract.ContractError,
+        match="exact escalation sidecar incident fixture drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
+
+
+def test_seq_635_canonical_supersession_cannot_be_rewritten() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["incident_fixture"]["canonical_superseding_event"][
+        "event_sequence"
+    ] = 636
+    with pytest.raises(
+        contract.ContractError,
+        match="exact escalation sidecar incident fixture drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
+
+
+def test_over_specific_escalation_root_must_fail_before_open() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["writer_contract"]["root_normalization_rule"] = (
+        "SILENTLY_ACCEPT_OVER_SPECIFIC_ROOT"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="canonical escalation writer root/preflight drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
+
+
+def test_doubled_escalation_segment_preflight_cannot_be_removed() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["writer_contract"]["preflight_before_open"].remove(
+        "REJECT_ROOT_ALREADY_ENDING_IN_ESCALATIONS_OR_ESCALATIONS_JSONL"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="canonical escalation writer root/preflight drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
+
+
+def test_disabled_gate_cannot_create_action_sidecar_or_duplicate_terminal_event() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["writer_contract"]["feature_gate_disabled_rule"] = (
+        "WRITE_ACTION_SIDECAR"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="canonical escalation writer root/preflight drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
+
+
+def test_noncanonical_escalation_evidence_cannot_be_hand_deleted() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["noncanonical_evidence_migration"]["original_default"] = (
+        "DELETE_AFTER_COPY"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="noncanonical escalation evidence migration drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
+
+
+def test_doubled_path_segment_mutations_remain_required() -> None:
+    sidecar_contract = _escalation_sidecar_path_fixture()
+    sidecar_contract["required_negative_and_mutation_tests"].remove(
+        "ROOT_REPAIR_DATA_ESCALATIONS_ESCALATIONS_IS_REJECTED_BEFORE_OPEN_WITH_ZERO_WRITES"
+    )
+    with pytest.raises(
+        contract.ContractError,
+        match="escalation sidecar mutation-test acceptance drift",
+    ):
+        contract._validate_escalation_sidecar_path_normalization_migration_contract(
+            sidecar_contract
+        )
 
 
 def test_m7_exact_runtime_rebind_record_counts_cannot_be_rewritten() -> None:

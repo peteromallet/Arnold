@@ -91,6 +91,15 @@ views must rebuild from lifecycle/supersession/incarnation authority so retired
 r2-r4 failures remain historical but only exact r5 appears current. The shared
 normative target is `artifact-archival-projection-cleanup-contract.json`.
 
+F1 also owns one exact escalation-sidecar cleanup audit. During v2 escalation
+terminalization, a feature-gated disabled no-op was followed by one write at
+noncanonical `repair-data/escalations/escalations/escalations.jsonl`. Canonical
+consumers ignored that nested file and the authoritative `SUPERSEDED` event was
+correctly appended as seq 635 at
+`repair-data/escalations/escalations.jsonl`. Treat the nested bytes as immutable
+audit evidence, not ledger authority. Exact design and incident fixture:
+`escalation-sidecar-path-normalization-migration-contract.json`.
+
 The exact-`18b` runtime rebind/relaunch also exposed an M7 chain-state
 projection mismatch: the persisted derived cursor recorded 645 rows while the
 rebound canonical source reported 630; canonical state remained intact. Treat
@@ -194,6 +203,15 @@ disabled fail closed. Exact audit evidence is
   epoch, incarnation and runtime identity. A runtime rebind may atomically
   supersede and rebuild a derived cursor; it may not hand-edit, truncate or bump
   a counter, and no projection can authorize control-plane or publication work.
+- Escalation writers accept one typed `repair-data` root and construct the
+  canonical `escalations/escalations.jsonl` suffix exactly once. An already-
+  specialized root, doubled segment, traversal, symlink escape or unattested
+  target fails before open with zero writes. Consumers never auto-discover
+  nested ledgers.
+- Noncanonical sidecar evidence is copied byte-for-byte to content-addressed
+  quarantine with readback hash/size and an fsynced append-only manifest. The
+  source remains by default; no hand deletion, canonical seq-635 rewrite,
+  renumbering or duplicate terminalization is allowed.
 - Process probes are namespace-scoped facts. `ps`, tmux or `os.kill` from a
   foreign container returns unknown, never proof of death. Cross-container
   liveness comes from the canonical lease's session/container generation/PID
@@ -320,6 +338,12 @@ receipts.
   and post-archive custody validation. Broad `critique_check_*` move/delete,
   late-writer/TOCTOU, missing source, symlink escape, collision, hash mismatch
   and absent manifest-row mutations all fail closed with originals preserved.
+- Real-filesystem escalation-writer tests reject roots ending in one or two
+  `escalations` segments, doubled constructed targets, traversal and symlink
+  escape before open. A disabled feature gate produces no action sidecar and at
+  most one canonical terminal event. Quarantine preserves exact nested bytes;
+  restart and 200 polls retain canonical seq 635 exactly once and never consume
+  the nested file.
 - A canonical observe-only full report joins plan/chain/incarnation/worker and
   repair request/decision/attempt/claim/goal/manifest evidence with bounded log
   references, emits a content digest, performs zero mutations, and reports
