@@ -2059,11 +2059,32 @@ def test_zero_recovery_runtime_accounts_for_and_seals_inert_unix_socket(
         assert (ipc, 0, 0, False) in ownership
 
 
-def test_zero_recovery_runtime_still_rejects_symlink(tmp_path: Path) -> None:
+def test_zero_recovery_runtime_accounts_for_and_unlinks_ephemeral_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(os, "chown", lambda *_args, **_kwargs: None)
     runtime = tmp_path / "runtime"
     runtime.mkdir()
-    (runtime / "target").write_text("trusted", encoding="utf-8")
-    (runtime / "alias").symlink_to("target")
+    target = tmp_path / "outside-target"
+    target.write_text("trusted", encoding="utf-8")
+    alias = runtime / "alias"
+    alias.symlink_to(target)
+
+    assert _zero_recovery_runtime_usage(runtime) == (
+        1,
+        len(os.fsencode(str(target))),
+    )
+    _reclaim_zero_recovery_tree(runtime)
+    assert not alias.exists() and not alias.is_symlink()
+    assert target.read_text(encoding="utf-8") == "trusted"
+
+
+def test_zero_recovery_runtime_still_rejects_fifo(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    fifo = runtime / "fifo"
+    os.mkfifo(fifo)
 
     with pytest.raises(CliError, match="forbidden or linked object"):
         _zero_recovery_runtime_usage(runtime)

@@ -357,7 +357,13 @@ def _prepare_zero_recovery_model_runtime(
 
 def _reclaim_zero_recovery_tree(path: Path) -> None:
     current = os.lstat(path)
-    if stat.S_ISLNK(current.st_mode) or (
+    if stat.S_ISLNK(current.st_mode):
+        # Ephemeral Codex arg0 wrappers are symlinks inside the isolated
+        # runtime.  The finite-model UID is process-empty before reclaim, so
+        # remove the link itself without following or touching its target.
+        path.unlink()
+        return
+    if (
         not stat.S_ISDIR(current.st_mode)
         and not stat.S_ISREG(current.st_mode)
         and not stat.S_ISSOCK(current.st_mode)
@@ -404,6 +410,13 @@ def _zero_recovery_runtime_usage(path: Path) -> tuple[int, int]:
             # runtime object.  Count it without opening or following it; the
             # subsequent reclaim seals its ownership and mode.
             files += 1
+            return
+        if stat.S_ISLNK(item_stat.st_mode):
+            # Account for the link itself and its bounded target text without
+            # resolving it.  Reclaim later unlinks this ephemeral runtime-only
+            # object after process emptiness has been established.
+            files += 1
+            total_bytes += len(os.fsencode(os.readlink(candidate)))
             return
         if not stat.S_ISREG(item_stat.st_mode) or item_stat.st_nlink != 1:
             raise CliError(
