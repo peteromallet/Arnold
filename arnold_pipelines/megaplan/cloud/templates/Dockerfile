@@ -91,8 +91,8 @@ RUN . "$NVM_DIR/nvm.sh" \
 ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"
 RUN pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC" \
     && arnold --help > /dev/null
-RUN groupadd --gid 65532 finite-model \
-    && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin finite-model \
+RUN /usr/sbin/groupadd --gid 65532 finite-model \
+    && /usr/sbin/useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin finite-model \
     && mkdir -p /run/megaplan-zero-recovery \
     && chown root:root /run/megaplan-zero-recovery \
     && chmod 0711 /run/megaplan-zero-recovery \

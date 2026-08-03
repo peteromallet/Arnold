@@ -236,10 +236,12 @@ def test_cloud_image_installs_account_management_before_finite_uid_creation() ->
 
     package_install = dockerfile.index("apt-get install -y --no-install-recommends")
     passwd_package = dockerfile.index("      passwd \\")
-    finite_group = dockerfile.index("groupadd --gid 65532 finite-model")
-    finite_user = dockerfile.index("useradd --uid 65532 --gid 65532")
+    finite_group = dockerfile.index("/usr/sbin/groupadd --gid 65532 finite-model")
+    finite_user = dockerfile.index("/usr/sbin/useradd --uid 65532 --gid 65532")
 
     assert package_install < passwd_package < finite_group < finite_user
+    assert "RUN groupadd " not in dockerfile
+    assert "&& useradd " not in dockerfile
 
 
 def test_entrypoint_persists_railway_auth_without_rendered_secret() -> None:
