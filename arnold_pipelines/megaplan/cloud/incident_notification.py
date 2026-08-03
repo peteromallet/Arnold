@@ -50,31 +50,7 @@ _TABLES = (
         notification_intent_id TEXT NOT NULL UNIQUE,
         state_version INTEGER NOT NULL,
         fingerprint TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        authority_state_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS notification_provider_attempts (
-        provider_attempt_id TEXT PRIMARY KEY,
-        notification_intent_id TEXT NOT NULL,
-        attempt_number INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        request_digest TEXT NOT NULL,
-        receipt_json TEXT,
-        created_at TEXT NOT NULL,
-        UNIQUE(notification_intent_id, attempt_number)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS incident_authority_transitions (
-        transition_id TEXT PRIMARY KEY,
-        occurrence_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        authority_id TEXT NOT NULL,
-        actor_id TEXT NOT NULL,
-        recorded_at TEXT NOT NULL,
-        UNIQUE(occurrence_id, action)
+        created_at TEXT NOT NULL
     )
     """,
 )
@@ -134,7 +110,13 @@ class NotificationAdmission:
 
 
 class IncidentNotificationStore:
-    """Small facade over the canonical SQLite WBC/ledger outbox."""
+    """Canonical notification admission and projection facade.
+
+    This class deliberately owns admission only. Delivery attempts, provider
+    receipts, Run Authority transitions, and custody belong to the resident
+    ``EffectProtocol`` path. The old local provider and authority tables are
+    retired by ``_migrate_legacy_schema``.
+    """
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).resolve()
@@ -147,12 +129,39 @@ class IncidentNotificationStore:
                     conn = self._store.conn
                     for ddl in _TABLES:
                         conn.execute(ddl)
+                    self._migrate_legacy_schema(conn)
                     break
                 except sqlite3.OperationalError as exc:
                     self._store.close()
                     if "locked" not in str(exc).lower() or attempt == 19:
                         raise
                     time.sleep(min(0.01 * (2**attempt), 0.5))
+
+    @staticmethod
+    def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
+        """Retire the pre-consolidation local authority/provider schema."""
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(incident_occurrences)").fetchall()
+        }
+        if "authority_state_json" in columns:
+            conn.execute("ALTER TABLE incident_occurrences RENAME TO incident_occurrences_legacy")
+            conn.execute(_TABLES[0])
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO incident_occurrences
+                    (occurrence_id, diagnostic_attempt_id, notification_intent_id,
+                     state_version, fingerprint, created_at)
+                SELECT occurrence_id, diagnostic_attempt_id, notification_intent_id,
+                       state_version, fingerprint, created_at
+                FROM incident_occurrences_legacy
+                """
+            )
+            conn.execute("DROP TABLE incident_occurrences_legacy")
+        # These records cannot be upgraded into a canonical reservation or
+        # incident event, so historical values are not authorization inputs.
+        conn.execute("DROP TABLE IF EXISTS notification_provider_attempts")
+        conn.execute("DROP TABLE IF EXISTS incident_authority_transitions")
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -173,14 +182,12 @@ class IncidentNotificationStore:
         occurrence_id: str,
         session: str,
         state: str,
-        owner: str,
         payload: Mapping[str, Any],
         marker: Mapping[str, Any],
     ) -> NotificationAdmission:
         occurrence_id = _required(occurrence_id, "occurrence_id")
         session = _required(session, "session")
         state = _required(state, "state")
-        owner = _required(owner, "owner")
         kind = str(payload.get("notification_kind") or "repair_exhaustion_diagnostic").strip()
         kind = _required(kind, "notification_kind")
         recipient = _stable_recipient(payload, marker)
@@ -220,7 +227,6 @@ class IncidentNotificationStore:
             "notification_intent_id": intent_id,
             "state": state,
             "state_version": state_version,
-            "owner": owner,
             "recipient": recipient,
             "notification_kind": kind,
             "payload_digest": payload_digest,
@@ -237,7 +243,10 @@ class IncidentNotificationStore:
             idempotency_key=event_key,
             event_type=AttemptEventType.STARTED,
             identity=identity,
-            provenance=AttemptProvenance(actor_id=owner, tool_id="watchdog-observer"),
+            provenance=AttemptProvenance(
+                actor_id="arnold.cloud.notification-admission",
+                tool_id="watchdog-observer",
+            ),
             adapter=RuntimeAdapter(AdapterKind.MEGAPLAN_CLOUD_REPAIR, "incident-notification-v1"),
             versions=VersionSet(code_version="incident-notification-v1"),
             grant_ref=GrantRef("run-authority:incident-notification-admission"),
@@ -251,9 +260,17 @@ class IncidentNotificationStore:
         )
         outbox_payload = {
             "outbox_id": intent_id,
-            "destination": "notification:discord",
+            # Migration evidence only: the resident completion effect is the
+            # sole dispatchable notification path.
+            "destination": "notification:discord.retired",
             "payload": {
                 "schema": "arnold.notification.intent.v1",
+                "dispatchable": False,
+                "retirement": {
+                    "status": "retired",
+                    "replacement": "resident-subagent-completion:<run_id>",
+                    "reason": "no in-tree consumer exists for this cloud destination",
+                },
                 "notification_intent_id": intent_id,
                 "incident_occurrence_id": occurrence_id,
                 "diagnostic_attempt_id": diagnostic_attempt_id,
@@ -265,32 +282,10 @@ class IncidentNotificationStore:
             },
         }
         result = self._outbox.append_event_with_outbox(attempt_id, event, [outbox_payload])
-        now = _now()
-        conn = self.conn
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            conn.execute(
-                """
-                INSERT INTO incident_occurrences
-                    (occurrence_id, diagnostic_attempt_id, notification_intent_id,
-                     state_version, fingerprint, created_at, authority_state_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(occurrence_id) DO NOTHING
-                """,
-                (
-                    occurrence_id,
-                    diagnostic_attempt_id,
-                    intent_id,
-                    state_version,
-                    fingerprint,
-                    now,
-                    _canonical({"acknowledged": False, "resolved": False}),
-                ),
-            )
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
+        # The event/outbox commit is canonical. The occurrence table is a
+        # rebuildable projection; repopulate it from the committed event so a
+        # crash between these operations cannot strand dedupe state.
+        self._project_occurrence(result.event, fingerprint=fingerprint)
         card_path = self.card_path(occurrence_id)
         return NotificationAdmission(
             occurrence_id=occurrence_id,
@@ -364,170 +359,47 @@ class IncidentNotificationStore:
         tmp.replace(path)
         return path
 
-    def record_provider_attempt(
-        self,
-        *,
-        intent_id: str,
-        attempt_number: int,
-        request_digest: str,
-    ) -> str:
-        intent_id = _required(intent_id, "notification_intent_id")
-        request_digest = _required(request_digest, "request_digest")
-        if not isinstance(attempt_number, int) or attempt_number < 1:
-            raise ValueError("attempt_number must be positive")
-        attempt_id = f"provider-{intent_id}-{attempt_number}"
-        conn = self.conn
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            conn.execute(
-                """
-                INSERT INTO notification_provider_attempts
-                    (provider_attempt_id, notification_intent_id, attempt_number,
-                     status, request_digest, created_at)
-                VALUES (?, ?, ?, 'PENDING', ?, ?)
-                ON CONFLICT(notification_intent_id, attempt_number) DO NOTHING
-                """,
-                (attempt_id, intent_id, attempt_number, request_digest, _now()),
-            )
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        return attempt_id
+    def _project_occurrence(self, event: LedgerEvent, *, fingerprint: str) -> None:
+        """Rebuild one occurrence row from a committed canonical event."""
+        payload = event.payload if isinstance(event.payload, Mapping) else {}
+        occurrence_id = _required(str(payload.get("incident_occurrence_id") or ""), "occurrence_id")
+        diagnostic_attempt_id = _required(str(payload.get("diagnostic_attempt_id") or event.identity.attempt_id), "diagnostic_attempt_id")
+        intent_id = _required(str(payload.get("notification_intent_id") or ""), "notification_intent_id")
+        self.conn.execute(
+            """
+            INSERT INTO incident_occurrences
+                (occurrence_id, diagnostic_attempt_id, notification_intent_id,
+                 state_version, fingerprint, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(occurrence_id) DO UPDATE SET
+                diagnostic_attempt_id=excluded.diagnostic_attempt_id,
+                notification_intent_id=excluded.notification_intent_id,
+                state_version=excluded.state_version,
+                fingerprint=excluded.fingerprint
+            """,
+            (
+                occurrence_id,
+                diagnostic_attempt_id,
+                intent_id,
+                int(payload.get("state_version") or 1),
+                fingerprint,
+                str(event.occurred_at),
+            ),
+        )
 
-    def record_provider_receipt(
-        self,
-        *,
-        intent_id: str,
-        attempt_number: int,
-        status: str,
-        receipt: Mapping[str, Any] | None,
-    ) -> str:
-        status = str(status).upper()
-        if status not in {"SUCCEEDED", "FAILED", "INDETERMINATE"}:
-            raise ValueError("provider status must be SUCCEEDED, FAILED, or INDETERMINATE")
+    def canonical_intent(self, intent_id: str) -> dict[str, Any]:
+        """Return a canonical retired intent; never a provider projection."""
         intent_id = _required(intent_id, "notification_intent_id")
-        receipt_json = _canonical(dict(receipt or {}))
-        conn = self.conn
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = conn.execute(
-                "SELECT status FROM notification_provider_attempts WHERE notification_intent_id = ? AND attempt_number = ?",
-                (intent_id, attempt_number),
-            ).fetchone()
-            if row is None:
-                raise ValueError("provider receipt has no durable provider attempt")
-            # INDETERMINATE is sticky: a timeout/unknown result may never be
-            # downgraded to FAILED or blindly redispatched.
-            if row[0] == "INDETERMINATE":
-                status = "INDETERMINATE"
-            conn.execute(
-                "UPDATE notification_provider_attempts SET status = ?, receipt_json = ? WHERE notification_intent_id = ? AND attempt_number = ?",
-                (status, receipt_json, intent_id, attempt_number),
-            )
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        occurrence_row = conn.execute(
-            "SELECT occurrence_id FROM incident_occurrences WHERE notification_intent_id = ?",
+        row = self.conn.execute(
+            "SELECT destination, payload_json FROM outbox_records WHERE json_extract(payload_json, '$.notification_intent_id') = ?",
             (intent_id,),
         ).fetchone()
-        if occurrence_row:
-            occurrence_id = str(occurrence_row[0])
-            card_path = self.card_path(occurrence_id)
-            try:
-                card = json.loads(card_path.read_text(encoding="utf-8"))
-                if isinstance(card, dict):
-                    card["ambiguity"] = status if status == "INDETERMINATE" else "NONE"
-                    card["next_action"] = (
-                        "reconcile provider receipt; do not blindly redispatch this intent"
-                        if status == "INDETERMINATE"
-                        else "notification delivery receipt recorded"
-                    )
-                    self.write_card(occurrence_id, card)
-            except (OSError, ValueError, TypeError):
-                # The ledger receipt is authoritative; a projection rebuild
-                # can repair an unavailable or malformed incident card.
-                pass
-        return status
-
-    def dispatch_eligible(self, intent_id: str) -> bool:
-        row = self.conn.execute(
-            "SELECT status FROM notification_provider_attempts WHERE notification_intent_id = ? ORDER BY attempt_number DESC LIMIT 1",
-            (_required(intent_id, "notification_intent_id"),),
-        ).fetchone()
-        # PENDING means a delivery worker may still be between provider call
-        # and receipt persistence. Treat it as ambiguous until a receipt is
-        # recorded; redispatching could duplicate the provider effect.
-        return row is None or row[0] == "FAILED"
-
-    def authority_transition(
-        self,
-        *,
-        occurrence_id: str,
-        action: str,
-        authority_id: str,
-        actor_id: str,
-    ) -> dict[str, Any]:
-        if action not in {"acknowledge", "resolve"}:
-            raise ValueError("unsupported incident authority transition")
-        occurrence_id = _required(occurrence_id, "occurrence_id")
-        authority_id = _required(authority_id, "authority_id")
-        actor_id = _required(actor_id, "actor_id")
-        transition_id = f"incident-authority-{uuid.uuid4().hex}"
-        conn = self.conn
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = conn.execute(
-                "SELECT 1 FROM incident_occurrences WHERE occurrence_id = ?", (occurrence_id,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("unknown incident occurrence")
-            current_row = conn.execute(
-                "SELECT authority_state_json FROM incident_occurrences WHERE occurrence_id = ?",
-                (occurrence_id,),
-            ).fetchone()
-            authority_state = json.loads(current_row[0]) if current_row and current_row[0] else {}
-            if not isinstance(authority_state, dict):
-                raise ValueError("incident authority state is not a JSON object")
-            authority_key = "acknowledged" if action == "acknowledge" else "resolved"
-            authority_state[authority_key] = True
-            authority_state["authority_state"] = "resolved" if action == "resolve" else "acknowledged"
-            conn.execute(
-                "INSERT INTO incident_authority_transitions VALUES (?, ?, ?, ?, ?, ?)",
-                (transition_id, occurrence_id, action, authority_id, actor_id, _now()),
-            )
-            conn.execute(
-                "UPDATE incident_occurrences SET authority_state_json = ? WHERE occurrence_id = ?",
-                (_canonical(authority_state), occurrence_id),
-            )
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        card_path = self.card_path(occurrence_id)
-        if card_path.exists():
-            try:
-                card = json.loads(card_path.read_text(encoding="utf-8"))
-                if isinstance(card, dict):
-                    state = dict(card.get("acknowledgement_resolution_authority") or {})
-                    state["acknowledged"] = bool(state.get("acknowledged")) or action == "acknowledge"
-                    state["resolved"] = bool(state.get("resolved")) or action == "resolve"
-                    state["authority_state"] = "resolved" if state["resolved"] else "acknowledged"
-                    card["acknowledgement_resolution_authority"] = state
-                    self.write_card(occurrence_id, card)
-            except (OSError, ValueError, TypeError):
-                # The authority table remains authoritative; a projection
-                # rebuild can repair a missing or malformed card.
-                pass
-        return {
-            "transition_id": transition_id,
-            "occurrence_id": occurrence_id,
-            "action": action,
-            "authority_id": authority_id,
-            "actor_id": actor_id,
-        }
+        if row is None:
+            raise ValueError("notification intent is not a canonical outbox intent")
+        payload = json.loads(str(row[1]))
+        if not isinstance(payload, dict) or payload.get("dispatchable") is not False:
+            raise ValueError("notification intent is not retired migration evidence")
+        return {"destination": str(row[0]), "payload": payload}
 
 
 def initial_incident_card(
@@ -553,11 +425,10 @@ def initial_incident_card(
         "ambiguity": "NONE",
         "storage_health": admission.storage_health,
         "runtime_generation": runtime_generation or "unknown",
-        "next_action": "durable diagnostic worker may consume the notification intent",
-        "acknowledgement_resolution_authority": {
-            "acknowledged": False,
-            "resolved": False,
-            "authority_state": "awaiting_authority",
+        "next_action": "resident completion effect owns user-facing notification delivery",
+        "acknowledgement_resolution_projection": {
+            "source": "canonical-incident-ledger",
+            "status": "not_recorded",
         },
         "recipient": admission.recipient,
         "notification_kind": admission.notification_kind,

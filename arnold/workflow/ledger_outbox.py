@@ -499,6 +499,11 @@ VALUES (?, ?, ?, ?, ?, ?)
                     if isinstance(requested_outbox_id, str) and requested_outbox_id.strip()
                     else str(uuid.uuid4())
                 )
+                initial_status = (
+                    OutboxStatus.TOMBSTONED.value
+                    if str(destination).endswith(".retired")
+                    else OutboxStatus.PENDING.value
+                )
                 cur.execute(
                     """\
 INSERT INTO outbox_records
@@ -513,7 +518,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         event.idempotency_key,
                         destination,
                         payload_json,
-                        OutboxStatus.PENDING.value,
+                        initial_status,
                         now_ns,
                     ),
                 )
@@ -525,7 +530,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         event_idempotency_key=event.idempotency_key,
                         destination=destination,
                         payload_json=payload_json,
-                        status=OutboxStatus.PENDING.value,
+                        status=initial_status,
                         created_at_ns=now_ns,
                     )
                 )

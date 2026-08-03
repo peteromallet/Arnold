@@ -15,7 +15,6 @@ import fcntl
 import hashlib
 import json
 import os
-import re
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -43,7 +42,6 @@ from arnold_pipelines.megaplan.resident.provenance import (
 from arnold_pipelines.megaplan.resident.subagent import launch_subagent_task
 
 SCHEMA = "arnold-human-review-diagnostic-v1"
-_ESCALATION_ID = re.compile(r"^(?:esc|gate)-[a-f0-9]{16}$")
 _MAX_EVIDENCE_CHARS = 18_000
 _MAX_ERROR_CHARS = 1_500
 _MAX_STABLE_GATE_LAUNCH_ATTEMPTS = 3
@@ -247,11 +245,9 @@ def _escalation_id(payload: Mapping[str, Any], session: str, repair_data_dir: Pa
             json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:16]
         return f"gate-{digest}"
-    supplied = str(payload.get("escalation_id") or "").strip()
-    if supplied:
-        if not _ESCALATION_ID.fullmatch(supplied):
-            raise ValueError("payload escalation_id is malformed")
-        return supplied
+    # Caller-provided escalation IDs are never identity inputs. Derive the
+    # occurrence from the canonical current-target tuple so a forged ID
+    # cannot create a second dedupe or authority resource.
     plan = payload.get("plan") if isinstance(payload.get("plan"), Mapping) else {}
     return compute_escalation_id(
         session,
@@ -438,7 +434,6 @@ def launch_human_review_diagnostic(
                 occurrence_id=escalation_id,
                 session=session,
                 state=observed_state,
-                owner="watchdog",
                 payload=payload,
                 marker=marker,
             )
@@ -648,57 +643,6 @@ def launch_human_review_diagnostic(
             return _result_from_state(launched_state, state_path)
 
 
-def record_fallback_delivery(
-    *, state_path: str | Path, result_path: str | Path
-) -> dict[str, Any]:
-    path = Path(state_path).resolve()
-    lock_path = path.parent / ".lock"
-    result = _read_optional_object(Path(result_path)) or {}
-    message_ids = [str(item) for item in result.get("message_ids", []) if str(item)]
-    accepted = bool(result.get("ok")) and (
-        bool(message_ids)
-        or isinstance(result.get("message_count"), int)
-        and int(result["message_count"]) > 0
-    )
-    with lock_path.open("a+b") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        state = _read_object(path)
-        current = state.get("fallback_delivery")
-        if isinstance(current, Mapping) and current.get("status") == "delivered":
-            return dict(current)
-        delivery = {
-            "status": "delivered" if accepted else "retry_pending",
-            "recorded_at": _utc_now(),
-            "reason": str(result.get("reason") or "")[:200],
-            "channel_id": str(result.get("channel_id") or "")[:40],
-            "message_ids": message_ids[:8],
-            "message_count": result.get("message_count"),
-        }
-        state["fallback_delivery"] = delivery
-        state["updated_at"] = delivery["recorded_at"]
-        _atomic_json(path, state)
-        intent_id = str(state.get("notification_intent_id") or "")
-        if intent_id:
-            try:
-                with IncidentNotificationStore(path.parents[2]) as custody:
-                    custody.record_provider_attempt(
-                        intent_id=intent_id,
-                        attempt_number=1,
-                        request_digest=str(state.get("payload_digest") or "sha256:legacy"),
-                    )
-                    custody.record_provider_receipt(
-                        intent_id=intent_id,
-                        attempt_number=1,
-                        status="SUCCEEDED" if accepted else "FAILED",
-                        receipt=result,
-                    )
-            except Exception:
-                # Compatibility recording must not rewrite the already durable
-                # diagnostic state or turn a known receipt into a false success.
-                pass
-        return delivery
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -707,24 +651,11 @@ def _parser() -> argparse.ArgumentParser:
     launch.add_argument("--marker-dir", required=True)
     launch.add_argument("--repair-data-dir", required=True)
     launch.add_argument("--project-dir", required=True)
-    fallback = sub.add_parser("record-fallback")
-    fallback.add_argument("--state-path", required=True)
-    fallback.add_argument("--result-file", required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.action == "record-fallback":
-        print(
-            json.dumps(
-                record_fallback_delivery(
-                    state_path=args.state_path, result_path=args.result_file
-                ),
-                sort_keys=True,
-            )
-        )
-        return 0
     try:
         result = launch_human_review_diagnostic(
             payload_path=args.payload_file,
