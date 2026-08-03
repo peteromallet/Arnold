@@ -59,6 +59,12 @@ dormant recovery/notification code and credentials.
 No expansion of v3 execution/publication authority, cloud relaunch, marker edit,
 or replacement of accepted owner evidence with projections.
 
+Repair of the finite-canary trusted host control-state root, marker/receipt path
+safety, fence emitter/parser parity, bounded unit settlement, crash-safe
+persistent masks, partial-reclaim reconciliation and built-image smoke is T6.2
+**PRELAUNCH** scope. None of it may be deferred to this F1 platform-hardening
+milestone or satisfied by F1 evidence after launch.
+
 ## Done criteria
 
 - Storage reserve/capacity and crash/ENOSPC behavior are proven platform-wide.

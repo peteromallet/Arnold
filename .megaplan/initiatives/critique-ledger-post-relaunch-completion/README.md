@@ -39,7 +39,7 @@ direct prelaunch dependency.
 
 Corrected launch-route authority:
 `.megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json`
-(SHA-256 `fe726e549e85e868c5e7fac591fa2d3eeac56b543b5eeaa057140d740c8332ce`).
+(SHA-256 `834e9665cbe7e95308d62da92f2a5524ced0e4a14057080e415ecaee454deeea`).
 It consumes the earlier post-T1.5 shortest-route rationale only together with
 the newer non-root privilege, mount, resource, effect and honest model-evidence
 bindings. The rationale document alone has no launch authority.
@@ -129,3 +129,23 @@ T0.3 is intentionally split rather than silently waived:
 The bootstrap may not delete the stopped predecessor, historical workspace,
 images, named volumes, or arbitrary cache. A capacity failure remains a hard
 NO-GO and the predecessor remains stopped and recoverable.
+
+## Prelaunch and stable-exit cut
+
+The closed-schema `prelaunch_release_gates` in `custody-manifest.json` are
+T6.2 prerequisites, not F1 work. They require an independently accepted exact
+A7/B7 candidate; a fixed root-owned symlink-free host control-state directory;
+bounded all-eight-unit settlement and crash-safe fencing before reclaim;
+durable failure/reconciliation evidence; the built-image four-phase smoke;
+fresh live capacity/predeploy authority; a finalized-then-stopped finite canary;
+and remotely anchored custody reconstructed from a fresh clone. Pending null
+evidence is deliberately non-authoritative and keeps the route closed.
+
+The follow-up chain may start only after both the strict finite-canary receipt
+and `stable-exit-receipt.json` exist. Stable exit means the exact v2 predecessor
+is preserved, stopped and persistently fenced; the exact v3 successor reached
+`finalized` and then stopped; no recovery/notifier/resident/watchdog/timer job,
+session or process remains; the exact source/tree/image and live receipt set are
+bound; and the updated follow-up authority is pushed under namespaced custody,
+prelaunch/postcanary tags and a runnable integration ref with an independently
+accepted fresh-clone reconstruction receipt.

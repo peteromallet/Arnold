@@ -8,10 +8,13 @@ anchors:
   north_star: NORTHSTAR.md
 launch_preconditions:
   - name: safe v3 finite canary completed with content-addressed proof
-    kind: artifact
+    kind: finite_canary_receipt
     path: .megaplan/initiatives/critique-ledger-safe-v3-canary/completion-receipt.json
+  - name: post-canary stable exit and remote custody independently verified
+    kind: artifact
+    path: .megaplan/initiatives/critique-ledger-safe-v3-canary/stable-exit-receipt.json
     check:
-      kind: finite_canary_receipt
+      kind: exists
   - name: complete finite-canary input and evidence is committed and clean
     kind: git_tracked
     path: .megaplan/initiatives/critique-ledger-safe-v3-canary
