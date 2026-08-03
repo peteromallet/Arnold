@@ -8,6 +8,7 @@ binds the resulting clearance to the exact finalized task graph.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ from arnold_pipelines.megaplan._core import (
     latest_plan_path,
     load_flag_registry,
     now_utc,
+    plan_lock,
     read_json,
     sha256_file,
     workflow_includes_step,
@@ -32,6 +34,9 @@ from arnold_pipelines.megaplan.types import PlanState
 
 
 CUSTODY_SCHEMA_VERSION = "megaplan-critique-custody-v2"
+LEGACY_CUSTODY_SCHEMA_VERSION = "megaplan-critique-custody-v1"
+LEGACY_MIGRATION_SCHEMA_VERSION = "megaplan-critique-custody-legacy-migration-v1"
+LEGACY_PRODUCER_BINDING_SCHEMA_VERSION = "megaplan-critique-legacy-producer-binding-v1"
 CLEARANCE_SCHEMA_VERSION = "megaplan-critique-clearance-v1"
 FINAL_BINDING_SCHEMA_VERSION = "megaplan-finalize-critique-binding-v1"
 _ALLOWED_FINDING_KEYS = {
@@ -172,6 +177,170 @@ def _publish_receipt_create_once(path: Path, receipt: dict[str, Any]) -> dict[st
             temp.unlink()
         except FileNotFoundError:
             pass
+
+
+def _legacy_migration_path(plan_dir: Path, iteration: int) -> Path:
+    return plan_dir / f"critique_custody_legacy_migration_v{iteration}.json"
+
+
+def _legacy_artifact_evidence(receipt: Mapping[str, Any]) -> list[dict[str, Any]]:
+    evidence = [
+        {
+            "role": "source_plan",
+            "artifact": receipt.get("plan_artifact"),
+            "sha256": receipt.get("plan_sha256"),
+        },
+        {
+            "role": "canonical_critique",
+            "artifact": receipt.get("critique_artifact"),
+            "sha256": receipt.get("critique_sha256"),
+        },
+    ]
+    for source in receipt.get("raw_sources", []):
+        if isinstance(source, Mapping):
+            name = source.get("artifact")
+            role = (
+                "producer_reduction"
+                if isinstance(name, str) and "_producer_v" in name
+                else "producer_raw_output"
+            )
+            evidence.append(
+                {"role": role, "artifact": name, "sha256": source.get("sha256")}
+            )
+    return evidence
+
+
+def _legacy_producer_evidence_binding(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe exactly what legacy evidence proves, without inventing an agent identity."""
+    raw_sources = receipt.get("raw_sources", [])
+    producer_artifacts = [
+        source.get("artifact")
+        for source in raw_sources
+        if isinstance(source, Mapping)
+        and isinstance(source.get("artifact"), str)
+        and "_producer_v" in source["artifact"]
+    ]
+    return {
+        "schema_version": LEGACY_PRODUCER_BINDING_SCHEMA_VERSION,
+        "authority": "persisted_artifact_hashes",
+        "producer_identity_status": "not_recorded_by_legacy_schema",
+        "producer_identity": None,
+        "invocation_identity": None,
+        "critique_artifact": receipt.get("critique_artifact"),
+        "critique_sha256": receipt.get("critique_sha256"),
+        "producer_artifacts": producer_artifacts,
+        "raw_sources_digest": _digest(raw_sources),
+        "expected_check_ids": receipt.get("expected_check_ids", []),
+    }
+
+
+def _legacy_lineage_evidence(
+    plan_dir: Path,
+    legacy_path: Path,
+    receipt: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Prove the old artifact was successfully produced, consumed, and cleared."""
+    iteration = int(receipt["iteration"])
+    names = {
+        "state_history": "state.json",
+        "critique_step_receipt": f"step_receipt_critique_v{iteration}.json",
+        "gate_signals": f"gate_signals_v{iteration}.json",
+        "gate_step_receipt": f"step_receipt_gate_v{iteration}.json",
+        "versioned_gate": f"gate_v{iteration}.json",
+        "critique_clearance": "critique_clearance.json",
+    }
+    documents: dict[str, Mapping[str, Any]] = {}
+    issues: list[str] = []
+    for role, name in names.items():
+        path = plan_dir / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
+            issues.append(f"legacy {role} artifact is missing or unsafe: {name}")
+            continue
+        value = read_json(path)
+        if not isinstance(value, Mapping):
+            issues.append(f"legacy {role} artifact is not an object: {name}")
+            continue
+        documents[role] = value
+
+    state = documents.get("state_history", {})
+    matching_history = [
+        row
+        for row in state.get("history", [])
+        if isinstance(row, Mapping)
+        and row.get("step") == "critique"
+        and row.get("result") == "success"
+        and row.get("output_file") == receipt.get("critique_artifact")
+        and row.get("artifact_hash") == receipt.get("critique_sha256")
+    ]
+    if len(matching_history) != 1:
+        issues.append("state history lacks exactly one matching successful critique result")
+
+    critique_step = documents.get("critique_step_receipt", {})
+    if critique_step.get("phase") != "critique" or critique_step.get("iteration") != iteration:
+        issues.append("critique step receipt phase/iteration mismatch")
+    if receipt.get("plan_sha256") not in critique_step.get("upstream_artifact_hashes", []):
+        issues.append("critique step receipt is not bound to the source plan hash")
+    if matching_history and critique_step.get("duration_ms") != matching_history[0].get("duration_ms"):
+        issues.append("critique step receipt does not match successful history duration")
+
+    gate_signals = documents.get("gate_signals", {})
+    gate_custody = gate_signals.get("signals", {}).get("critique_custody", {})
+    expected_gate_custody = {
+        "schema_version": LEGACY_CUSTODY_SCHEMA_VERSION,
+        "receipt": legacy_path.name,
+        "receipt_sha256": sha256_file(legacy_path),
+        "finding_count": receipt.get("finding_count"),
+        "finding_ids": receipt.get("finding_ids"),
+        "flag_ids": receipt.get("flag_ids"),
+        "loss_count": 0,
+        "admitted": True,
+    }
+    if gate_custody != expected_gate_custody:
+        issues.append("gate signals do not bind the exact legacy custody receipt")
+
+    gate_step = documents.get("gate_step_receipt", {})
+    if gate_step.get("phase") != "gate" or gate_step.get("iteration") != iteration:
+        issues.append("gate step receipt phase/iteration mismatch")
+    if receipt.get("critique_sha256") not in gate_step.get("upstream_artifact_hashes", []):
+        issues.append("gate step receipt is not bound to the critique hash")
+
+    versioned_gate = documents.get("versioned_gate", {})
+    if versioned_gate.get("recommendation") not in {"ITERATE", "PROCEED"}:
+        issues.append("versioned gate has no admitted ITERATE/PROCEED recommendation")
+    if versioned_gate.get("signals", {}).get("critique_custody") != expected_gate_custody:
+        issues.append("versioned gate does not bind the exact legacy custody receipt")
+
+    canonical_gate_path = plan_dir / "gate.json"
+    if canonical_gate_path.is_symlink() or not canonical_gate_path.is_file():
+        issues.append("canonical gate artifact is missing or unsafe: gate.json")
+    else:
+        canonical_gate = read_json(canonical_gate_path)
+        if canonical_gate.get("signals", {}).get("critique_custody") == expected_gate_custody:
+            if canonical_gate.get("recommendation") != "PROCEED":
+                issues.append("current canonical gate did not record PROCEED")
+            else:
+                names["canonical_gate"] = "gate.json"
+
+    clearance = documents.get("critique_clearance", {})
+    unsigned_clearance = dict(clearance)
+    clearance_digest = unsigned_clearance.pop("clearance_digest", None)
+    if clearance_digest != _digest(unsigned_clearance) or clearance.get("admitted") is not True:
+        issues.append("critique clearance is not an intact admitted receipt")
+    source_rows = [
+        row
+        for row in clearance.get("source_receipts", [])
+        if isinstance(row, Mapping)
+        and row.get("artifact") == legacy_path.name
+        and row.get("sha256") == sha256_file(legacy_path)
+    ]
+    if len(source_rows) != 1:
+        issues.append("critique clearance does not bind the exact legacy receipt")
+    if issues:
+        raise CritiqueCustodyError("critique_custody_legacy_lineage_invalid", issues)
+    return [
+        {"role": role, "artifact": name, "sha256": sha256_file(plan_dir / name)}
+        for role, name in names.items()
+    ]
 
 
 def _stable_finding_id(flag: Mapping[str, Any]) -> str:
@@ -433,9 +602,15 @@ def _validate_production_receipt(
     expected_iteration: int,
     expected_receipt_path: Path,
     expected_plan_artifact: str,
+    allow_legacy_schema: bool = False,
 ) -> None:
     issues: list[str] = []
-    if receipt.get("schema_version") != CUSTODY_SCHEMA_VERSION or receipt.get("admitted") is not True:
+    schema_version = receipt.get("schema_version")
+    legacy_schema = schema_version == LEGACY_CUSTODY_SCHEMA_VERSION
+    if (
+        schema_version != CUSTODY_SCHEMA_VERSION
+        and not (allow_legacy_schema and legacy_schema)
+    ) or receipt.get("admitted") is not True:
         issues.append("unsupported or non-admitted production receipt")
     unsigned_receipt = dict(receipt)
     stored_receipt_digest = unsigned_receipt.pop("receipt_digest", None)
@@ -463,11 +638,12 @@ def _validate_production_receipt(
         issues.append(
             f"source plan artifact must be exact current plan {expected_plan_artifact}"
         )
-    producer_binding = receipt.get("producer_binding")
-    issues.extend(_producer_binding_issues(producer_binding))
-    if isinstance(producer_binding, Mapping):
-        if receipt.get("producer_binding_digest") != _digest(producer_binding):
-            issues.append("producer binding digest mismatch")
+    if not legacy_schema:
+        producer_binding = receipt.get("producer_binding")
+        issues.extend(_producer_binding_issues(producer_binding))
+        if isinstance(producer_binding, Mapping):
+            if receipt.get("producer_binding_digest") != _digest(producer_binding):
+                issues.append("producer binding digest mismatch")
     for field in ("plan_artifact", "critique_artifact"):
         name = receipt.get(field)
         if not isinstance(name, str) or not name or Path(name).name != name:
@@ -545,6 +721,13 @@ def _validate_production_receipt(
                 issues.append(f"raw source artifact is missing or unsafe: {name!r}")
             elif source.get("sha256") != sha256_file(plan_dir / name):
                 issues.append(f"raw source hash mismatch for {name}")
+        if legacy_schema and not any(
+            isinstance(source, Mapping)
+            and isinstance(source.get("artifact"), str)
+            and "_producer_v" in source["artifact"]
+            for source in raw_sources
+        ):
+            issues.append("legacy receipt has no persisted producer reduction artifact")
     findings = receipt.get("findings")
     if not isinstance(findings, list):
         issues.append("receipt findings is not an array")
@@ -563,6 +746,192 @@ def _validate_production_receipt(
         issues.append("receipt reports lossy normalization")
     if issues:
         raise CritiqueCustodyError("critique_custody_receipt_invalid", issues)
+
+
+def _validate_legacy_migration_receipt(
+    plan_dir: Path,
+    legacy_path: Path,
+    legacy_receipt: Mapping[str, Any],
+    migration: Mapping[str, Any],
+) -> None:
+    match = re.fullmatch(r"critique_custody_v(\d+)\.json", legacy_path.name)
+    iteration = int(match.group(1)) if match else -1
+    migration_path = _legacy_migration_path(plan_dir, iteration)
+    issues: list[str] = []
+    if migration_path.is_symlink() or not migration_path.is_file():
+        issues.append(f"legacy migration receipt is missing or unsafe: {migration_path.name}")
+    elif migration_path.stat().st_nlink != 1:
+        issues.append(f"legacy migration receipt has multiple hard links: {migration_path.name}")
+    if migration.get("schema_version") != LEGACY_MIGRATION_SCHEMA_VERSION:
+        issues.append("legacy migration schema is unsupported")
+    if migration.get("iteration") != iteration:
+        issues.append("legacy migration iteration mismatch")
+    if migration.get("admitted") is not True:
+        issues.append("legacy migration receipt is not admitted")
+    unsigned = dict(migration)
+    stored_digest = unsigned.pop("receipt_digest", None)
+    if stored_digest != _digest(unsigned):
+        issues.append("legacy migration receipt digest mismatch")
+    source = migration.get("source_receipt")
+    expected_source = {
+        "artifact": legacy_path.name,
+        "sha256": sha256_file(legacy_path),
+        "schema_version": LEGACY_CUSTODY_SCHEMA_VERSION,
+        "receipt_digest": legacy_receipt.get("receipt_digest"),
+    }
+    if source != expected_source:
+        issues.append("legacy migration source receipt binding mismatch")
+    expected_evidence = _legacy_artifact_evidence(legacy_receipt)
+    if migration.get("artifact_evidence") != expected_evidence:
+        issues.append("legacy migration artifact evidence mismatch")
+    expected_binding = _legacy_producer_evidence_binding(legacy_receipt)
+    if migration.get("producer_binding") != expected_binding:
+        issues.append("legacy migration producer evidence binding mismatch")
+    if migration.get("producer_binding_digest") != _digest(expected_binding):
+        issues.append("legacy migration producer binding digest mismatch")
+    expected_lineage = _legacy_lineage_evidence(plan_dir, legacy_path, legacy_receipt)
+    if migration.get("lineage_evidence") != expected_lineage:
+        issues.append("legacy migration lineage evidence mismatch")
+    if migration.get("custody_status") != "legacy_unbound":
+        issues.append("legacy migration does not explicitly preserve unbound custody status")
+    if not isinstance(migration.get("actor"), str) or not migration.get("actor", "").strip():
+        issues.append("legacy migration actor is missing")
+    if not isinstance(migration.get("reason"), str) or not migration.get("reason", "").strip():
+        issues.append("legacy migration reason is missing")
+    if issues:
+        raise CritiqueCustodyError("critique_custody_legacy_migration_invalid", issues)
+
+
+def _migrate_legacy_critique_custody_locked(
+    plan_dir: Path,
+    *,
+    iteration: int,
+    expected_source_sha256: str,
+    actor: str,
+    reason: str,
+) -> list[dict[str, Any]]:
+    """Admit intact v1 receipts without rewriting or overstating their authority."""
+    plan_dir = plan_dir.resolve()
+    if not actor.strip() or not reason.strip():
+        raise CritiqueCustodyError(
+            "critique_custody_legacy_migration_invalid",
+            ["actor and reason must be non-empty"],
+        )
+    path = plan_dir / f"critique_custody_v{iteration}.json"
+    paths = [path]
+    migrated: list[dict[str, Any]] = []
+    for path in paths:
+        if not path.exists():
+            raise CritiqueCustodyError(
+                "critique_custody_missing", [f"missing legacy receipt {path.name}"]
+            )
+        receipt = read_json(path)
+        observed_source_sha = sha256_file(path)
+        if observed_source_sha != expected_source_sha256:
+            raise CritiqueCustodyError(
+                "critique_custody_legacy_source_conflict",
+                [
+                    f"{path.name} expected {expected_source_sha256}, "
+                    f"observed {observed_source_sha}"
+                ],
+            )
+        if receipt.get("schema_version") == CUSTODY_SCHEMA_VERSION:
+            continue
+        if receipt.get("schema_version") != LEGACY_CUSTODY_SCHEMA_VERSION:
+            raise CritiqueCustodyError(
+                "critique_custody_legacy_schema_unsupported",
+                [f"{path.name}: {receipt.get('schema_version')!r}"],
+            )
+        match = re.fullmatch(r"critique_custody_v(\d+)\.json", path.name)
+        if match is None:
+            raise CritiqueCustodyError(
+                "critique_custody_receipt_invalid", [f"non-canonical receipt {path.name}"]
+            )
+        receipt_iteration = int(match.group(1))
+        plan_name = receipt.get("plan_artifact")
+        if not isinstance(plan_name, str) or not plan_name:
+            raise CritiqueCustodyError(
+                "critique_custody_receipt_invalid", [f"{path.name} has no plan artifact"]
+            )
+        _validate_production_receipt(
+            plan_dir,
+            receipt,
+            expected_iteration=receipt_iteration,
+            expected_receipt_path=path,
+            expected_plan_artifact=plan_name,
+            allow_legacy_schema=True,
+        )
+        state = read_json(plan_dir / "state.json")
+        current_iteration = state.get("iteration")
+        if (
+            state.get("current_state") != "gated"
+            or not isinstance(current_iteration, int)
+            or current_iteration < receipt_iteration
+            or state.get("active_step") is not None
+        ):
+            raise CritiqueCustodyError(
+                "critique_custody_legacy_state_invalid",
+                [
+                    "legacy migration requires a gated plan at or beyond the receipt "
+                    "iteration with no active step"
+                ],
+            )
+        binding = _legacy_producer_evidence_binding(receipt)
+        lineage = _legacy_lineage_evidence(plan_dir, path, receipt)
+        migration = {
+            "schema_version": LEGACY_MIGRATION_SCHEMA_VERSION,
+            "iteration": receipt_iteration,
+            "produced_at": now_utc(),
+            "source_receipt": {
+                "artifact": path.name,
+                "sha256": sha256_file(path),
+                "schema_version": LEGACY_CUSTODY_SCHEMA_VERSION,
+                "receipt_digest": receipt.get("receipt_digest"),
+            },
+            "artifact_evidence": _legacy_artifact_evidence(receipt),
+            "lineage_evidence": lineage,
+            "producer_binding": binding,
+            "producer_binding_digest": _digest(binding),
+            "custody_status": "legacy_unbound",
+            "actor": actor.strip(),
+            "reason": reason.strip(),
+            "authority_limit": (
+                "producer and invocation identities were not recorded by v1; "
+                "admission proves only the immutable receipt-to-artifact hash chain"
+            ),
+            "admitted": True,
+        }
+        migration["receipt_digest"] = _digest(migration)
+        migration_path = _legacy_migration_path(plan_dir, receipt_iteration)
+        if sha256_file(path) != expected_source_sha256:
+            raise CritiqueCustodyError(
+                "critique_custody_legacy_source_conflict",
+                [f"{path.name} changed while migration evidence was gathered"],
+            )
+        published = _publish_receipt_create_once(migration_path, migration)
+        _validate_legacy_migration_receipt(plan_dir, path, receipt, published)
+        migrated.append(published)
+    return migrated
+
+
+def migrate_legacy_critique_custody(
+    plan_dir: Path,
+    *,
+    iteration: int,
+    expected_source_sha256: str,
+    actor: str,
+    reason: str,
+) -> list[dict[str, Any]]:
+    """CAS-migrate one gated legacy receipt while holding the canonical plan lock."""
+    plan_dir = plan_dir.resolve()
+    with plan_lock(plan_dir, step="migrate-legacy-critique-custody"):
+        return _migrate_legacy_critique_custody_locked(
+            plan_dir,
+            iteration=iteration,
+            expected_source_sha256=expected_source_sha256,
+            actor=actor,
+            reason=reason,
+        )
 
 
 def _validate_receipt_at_path(
@@ -584,13 +953,31 @@ def _validate_receipt_at_path(
             "critique_custody_receipt_invalid",
             ["receipt has no source plan artifact"],
         )
+    legacy_schema = receipt.get("schema_version") == LEGACY_CUSTODY_SCHEMA_VERSION
     _validate_production_receipt(
         plan_dir,
         receipt,
         expected_iteration=int(match.group(1)),
         expected_receipt_path=path,
         expected_plan_artifact=plan_name,
+        allow_legacy_schema=legacy_schema,
     )
+    if legacy_schema:
+        migration_path = _legacy_migration_path(plan_dir, int(match.group(1)))
+        if not migration_path.exists():
+            raise CritiqueCustodyError(
+                "critique_custody_legacy_migration_missing",
+                [
+                    f"{path.name} uses {LEGACY_CUSTODY_SCHEMA_VERSION}; run the "
+                    "explicit legacy custody migration before continuing"
+                ],
+            )
+        _validate_legacy_migration_receipt(
+            plan_dir,
+            path,
+            receipt,
+            read_json(migration_path),
+        )
 
 
 def validate_gate_input_custody(plan_dir: Path, state: PlanState) -> dict[str, Any]:
@@ -1024,9 +1411,36 @@ __all__ = [
     "CritiqueCustodyError",
     "assert_finalize_custody",
     "bind_finalize_custody",
+    "migrate_legacy_critique_custody",
     "prepare_critique_payload",
     "validate_gate_input_custody",
     "validate_finalize_resolution_coverage",
     "write_critique_clearance",
     "write_critique_production_receipt",
 ]
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Create fail-closed sidecar admissions for intact legacy critique custody receipts."
+    )
+    parser.add_argument("migrate-legacy", choices=["migrate-legacy"])
+    parser.add_argument("--plan-dir", type=Path, required=True)
+    parser.add_argument("--iteration", type=int, required=True)
+    parser.add_argument("--expected-source-sha256", required=True)
+    parser.add_argument("--actor", required=True)
+    parser.add_argument("--reason", required=True)
+    args = parser.parse_args(argv)
+    receipts = migrate_legacy_critique_custody(
+        args.plan_dir,
+        iteration=args.iteration,
+        expected_source_sha256=args.expected_source_sha256,
+        actor=args.actor,
+        reason=args.reason,
+    )
+    print(json.dumps({"migrated": receipts}, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
