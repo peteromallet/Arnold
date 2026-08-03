@@ -25,11 +25,45 @@ from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
 )
 from arnold_pipelines.megaplan.cloud.liveness_lease import LivenessLeasePublisher
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
+from tests.cloud.repair_identity_fixtures import (
+    identity_for_signature,
+    repair_identity,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
 SYSTEMD_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "systemd"
+
+
+def _enqueue_claimable_request(
+    marker_dir: Path,
+    *,
+    session: str,
+    signature: dict[str, object] | None = None,
+    identity: dict[str, object] | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    signature = signature or {
+        "failure_kind": "blocked_recovery_not_resolved",
+        "current_state": "blocked",
+        "phase_or_step": "execute",
+        "milestone_or_plan": "m3",
+        "gate_recommendation": "",
+        "blocked_task_id": "T1",
+    }
+    identity = identity or identity_for_signature(
+        session=session,
+        signature=signature,
+    )
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=repair_requests.repair_queue_dir(marker_dir),
+        session=session,
+        source="watchdog_fixture",
+        problem_signature=signature,
+        repair_identity=identity,
+    )
+    assert queued["status"] == "queued"
+    return queued, identity
 
 
 def _write_live_session_marker(
@@ -3881,23 +3915,44 @@ def test_watchdog_failed_launch_releases_only_exact_unbound_claim(tmp_path: Path
     marker_dir.mkdir()
     queue_dir = repair_requests.repair_queue_dir(marker_dir)
     owner_pid = os.getpid()
-    released_blocker = "blocker:v1:release"
-    retained_blocker = "blocker:v1:retained"
+    released_request, released_identity = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-session",
+    )
+    retained_signature = {
+        "failure_kind": "phase_failed",
+        "current_state": "blocked",
+        "phase_or_step": "finalize",
+        "milestone_or_plan": "m3",
+        "gate_recommendation": "",
+        "blocked_task_id": "phase:finalize",
+    }
+    retained_request, retained_identity = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-session",
+        signature=retained_signature,
+    )
+    released_blocker = str(released_request["request"]["blocker_id"])
+    released_request_id = str(released_request["request"]["request_id"])
+    retained_blocker = str(retained_request["request"]["blocker_id"])
+    retained_request_id = str(retained_request["request"]["request_id"])
     repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id=released_blocker,
-        request_id="req-release",
+        request_id=released_request_id,
         actor="arnold-watchdog",
         session="demo-session",
         pid=owner_pid,
+        repair_identity=released_identity,
     )
     repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id=retained_blocker,
-        request_id="req-retained",
+        request_id=retained_request_id,
         actor="arnold-watchdog",
         session="demo-session",
         pid=owner_pid,
+        repair_identity=retained_identity,
         extra={
             "managed_agent_run_id": "managed-run-live",
             "managed_manifest_path": "/tmp/managed-run-live/manifest.json",
@@ -3911,11 +3966,11 @@ def test_watchdog_failed_launch_releases_only_exact_unbound_claim(tmp_path: Path
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             (
-                "release_failed_repair_launch_claim demo-session req-release "
+                f"release_failed_repair_launch_claim demo-session {released_request_id} "
                 f"{released_blocker!r} 99999999 {owner_pid}; echo released:$?"
             ),
             (
-                "release_failed_repair_launch_claim demo-session req-retained "
+                f"release_failed_repair_launch_claim demo-session {retained_request_id} "
                 f"{retained_blocker!r} 99999999 {owner_pid}; echo retained:$?"
             ),
         ]
@@ -4210,8 +4265,12 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
         encoding="utf-8",
     )
     repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
-    blocker_id = "blocker:v1:test"
-    request_id = "req-test"
+    queued, repair_identity_fixture = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-claimed",
+    )
+    blocker_id = str(queued["request"]["blocker_id"])
+    request_id = str(queued["request"]["request_id"])
     repair_requests.claim_active_repair_request(
         repair_requests.repair_queue_dir(marker_dir),
         blocker_id=blocker_id,
@@ -4219,6 +4278,7 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
         actor="other-trigger",
         session="demo-claimed",
         pid=os.getpid(),
+        repair_identity=repair_identity_fixture,
     )
 
     script = "\n\n".join(
@@ -4255,12 +4315,12 @@ echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["status:busy"]
     assert not launch_log.exists()
-    assert "repair request already claimed; skipping dispatch session=demo-claimed request=req-test" in log_path.read_text(
+    assert f"repair request already claimed; skipping dispatch session=demo-claimed request={request_id}" in log_path.read_text(
         encoding="utf-8"
     )
 
 
-def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: Path) -> None:
+def test_watchdog_dispatch_does_not_reclaim_stale_request_claim(tmp_path: Path) -> None:
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     marker_dir.mkdir(parents=True)
     launch_log = tmp_path / "repair-launches.log"
@@ -4272,17 +4332,42 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
         encoding="utf-8",
     )
     repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
-    blocker_id = "blocker:v1:test-stale"
-    request_id = "req-live"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    stale_queued, stale_identity = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-a",
+    )
+    live_identity = repair_identity(
+        session="demo-a",
+        plan="m3",
+        failure_kind="blocked_recovery_not_resolved",
+        phase="execute",
+        task="T1",
+        attempt=2,
+        run_incarnation_id="live-run-incarnation",
+        coordinator_attempt_id="live-coordinator-attempt",
+        fence_token=2,
+        run_authority_grant_id="live-grant",
+        lease_id="live-lease",
+        custody_epoch=2,
+    )
+    live_queued, _ = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-a",
+        identity=live_identity,
+    )
+    blocker_id = str(stale_queued["request"]["blocker_id"])
+    assert live_queued["request"]["blocker_id"] == blocker_id
+    request_id = str(live_queued["request"]["request_id"])
     repair_requests.claim_active_repair_request(
         repair_requests.repair_queue_dir(marker_dir),
         blocker_id=blocker_id,
-        request_id="req-stale",
+        request_id=str(stale_queued["request"]["request_id"]),
         actor="other-trigger",
         session="demo-a",
         pid=99999999,
+        repair_identity=stale_identity,
     )
 
     script = "\n\n".join(
@@ -4303,7 +4388,10 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "claimed"
+    assert result.stdout.strip() == "stale"
+    assert repair_requests.active_repair_claim_lock_dir(
+        repair_requests.repair_queue_dir(marker_dir), blocker_id
+    ).exists()
     assert not launch_log.exists()
 
 
@@ -4334,6 +4422,12 @@ def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
 ) -> None:
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     marker_dir.mkdir(parents=True)
+    queued, _ = _enqueue_claimable_request(
+        marker_dir,
+        session="demo-session",
+    )
+    blocker_id = str(queued["request"]["blocker_id"])
+    request_id = str(queued["request"]["request_id"])
     script = "\n\n".join(
         [
             _extract_wrapper_function("claim_active_repair_launch"),
@@ -4343,7 +4437,7 @@ def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
             "PLAN_STATUS_DISPATCH_DECISION=",
             (
                 "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec "
-                "blocker:v1:goal-owner-missing request-current-plan"
+                f"{blocker_id} {request_id}"
             ),
         ]
     )
@@ -5508,21 +5602,22 @@ tmux() { printf 'TMUX %s\n' "$*" >> "$CALL_LOG"; return 0; }
     assert result.returncode == 0, result.stderr
     calls = call_log.read_text(encoding="utf-8")
     assert "gh pr view 43 --json state,mergeCommit" in calls
-    assert "session awaiting PR merge: demo-session detail=PR #43 state=open evidence=queued" in calls
+    assert "session awaiting PR merge: demo-session detail=PR #43 state=open evidence=read_only" in calls
     assert "TMUX" not in calls
     report = report_path.read_text(encoding="utf-8")
     assert "\tnotify\thuman_gate_notification_queued\tawaiting_human halt; state=awaiting_pr_merge;" in report
     queued = list((tmp_path / ".megaplan" / "repair-queue" / "requests").glob("*.json"))
-    assert len(queued) == 1
-    payload = json.loads(queued[0].read_text(encoding="utf-8"))
-    assert payload["source"] == "watchdog_pr_merge_reconciliation"
-    assert payload["target"]["pr_number"] == 43
+    assert queued == []
+    chain_payload = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert chain_payload["metadata"]["watchdog_pr_merge_reconciliation"]["pr_number"] == 43
 
 
 def test_watchdog_queue_writers_use_explicit_central_queue_root() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert text.count("queue_root=repair_queue_dir(marker_dir)") >= 2
+    assert text.count("queue_root=repair_queue_dir(marker_dir)") == 1
+    assert "occurrence_identity=None" not in text
+    assert 'return "read_only"' in text
 
 
 def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace() -> None:
@@ -7939,11 +8034,21 @@ def test_phase_contract_failure_projects_request_identity_and_can_be_claimed(
     spec_path = workspace / ".megaplan" / "initiatives" / "critique-ledger" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
+    session = "critique-r5"
+    phase_identity = repair_identity(
+        session=session,
+        plan=plan_name,
+        failure_kind="deterministic_phase_failure",
+        phase="critique",
+        task="phase:critique",
+        chain=str(spec_path),
+    )
     _write_plan(
         workspace / ".megaplan" / "plans" / plan_name,
         {
             "iteration": 2,
             "current_state": "blocked",
+            "repair_identity": phase_identity,
             "active_step": None,
             "resume_cursor": {
                 "phase": "critique",
@@ -7957,7 +8062,6 @@ def test_phase_contract_failure_projects_request_identity_and_can_be_claimed(
         },
         events_body="{}\n",
     )
-    session = "critique-r5"
     (marker_dir / f"{session}.json").write_text(
         json.dumps(
             {
@@ -7970,6 +8074,26 @@ def test_phase_contract_failure_projects_request_identity_and_can_be_claimed(
         ),
         encoding="utf-8",
     )
+    phase_signature = {
+        "failure_kind": "deterministic_phase_failure",
+        "current_state": "blocked",
+        "phase_or_step": "critique",
+        "milestone_or_plan": plan_name,
+        "gate_recommendation": "repair the deterministic phase contract",
+        "blocked_task_id": "phase:critique",
+    }
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=repair_requests.repair_queue_dir(marker_dir),
+        marker_dir=marker_dir,
+        session=session,
+        source="lifecycle_failure",
+        workspace=workspace,
+        run_kind="plan",
+        target={"plan_name": plan_name},
+        problem_signature=phase_signature,
+        repair_identity=phase_identity,
+    )
+    assert queued["status"] == "queued"
 
     script = "\n\n".join(
         [

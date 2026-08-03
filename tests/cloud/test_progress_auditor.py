@@ -23,6 +23,7 @@ import pytest
 from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
@@ -4434,6 +4435,13 @@ class TestLiveSignalFiltering:
                 "blocked_task_id": "phase:critique",
             },
             root_cause_hint="ordinary repair completed without cursor advancement",
+            repair_identity=repair_identity(
+                session=session,
+                plan=plan,
+                failure_kind="completed_repair_without_cursor_advance",
+                phase="critique",
+                task="phase:critique",
+            ),
         )
         request_path = Path(queued["path"])
         persisted = json.loads(request_path.read_text(encoding="utf-8"))
@@ -4551,6 +4559,13 @@ class TestLiveSignalFiltering:
             },
             root_cause_hint="machine repair exhausted without advancement",
             target={"plan_name": plan},
+            repair_identity=repair_identity(
+                session=session,
+                plan=plan,
+                failure_kind="blocked_recovery_not_resolved",
+                phase="execute",
+                task="phase:execute",
+            ),
         )
         assert queued["status"] == "queued"
 

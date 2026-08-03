@@ -2477,7 +2477,19 @@ def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
         queue_root, marker_dir, repair_session, repair_run_kind = (
             _lifecycle_repair_request_route(plan_dir)
         )
-        metadata = failure.get("metadata")
+        metadata = (
+            dict(failure.get("metadata"))
+            if isinstance(failure.get("metadata"), dict)
+            else {}
+        )
+        # The terminal mirror runs after the handler has relinquished its
+        # active step.  Reuse only the exact identity already persisted by the
+        # lifecycle owner; never reconstruct authority from the terminal
+        # failure labels.
+        if "repair_identity" not in metadata and isinstance(
+            state.get("repair_identity"), dict
+        ):
+            metadata["repair_identity"] = dict(state["repair_identity"])
         _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
             queue_root=queue_root,
@@ -2489,7 +2501,7 @@ def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
             current_state=str(state.get("current_state") or STATE_BLOCKED),
             phase=str(failure.get("phase") or "") or None,
             suggested_action=str(failure.get("suggested_action") or "") or None,
-            metadata=metadata if isinstance(metadata, dict) else None,
+            metadata=metadata,
             retry_strategy=str(
                 (state.get("resume_cursor") or {}).get("retry_strategy")
                 if isinstance(state.get("resume_cursor"), dict)

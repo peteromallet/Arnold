@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
@@ -104,7 +103,7 @@ try:
     )
     from arnold_pipelines.megaplan.custody.contracts import (
         CustodyTargetKey,
-        build_custody_target_key,
+        normalize_custody_target_key,
     )
 except Exception:
     _runtime_failure("readiness_import_failed")
@@ -1012,46 +1011,9 @@ def _dispatch(
         return 0
 
     try:
-        signature = (
-            dict(request.get("problem_signature") or {})
-            if isinstance(request.get("problem_signature"), Mapping)
-            else {}
-        )
-        occurrence_target = build_custody_target_key(
-            environment=str(repair_identity.get("environment_id") or workspace),
-            session=str(repair_identity.get("session_id") or session),
-            chain=str(repair_identity.get("chain_id") or remote_spec),
-            plan_revision=str(
-                repair_identity.get("plan_revision")
-                or signature.get("milestone_or_plan")
-                or refs.get("current_plan_name")
-                or ""
-            ),
-            phase=str(
-                repair_identity.get("phase")
-                or signature.get("phase_or_step")
-                or ""
-            ),
-            task=str(
-                repair_identity.get("task_id")
-                or signature.get("blocked_task_id")
-                or ""
-            ),
-            attempt=str(repair_identity.get("attempt_number") or "1"),
-            normalized_failure_kind=str(
-                repair_identity.get("failure_kind")
-                or signature.get("failure_kind")
-                or ""
-            ),
-            blocker_or_phase_result_hash=str(
-                repair_identity.get("blocker_digest")
-                or blocker_id
-            ),
-            fence=str(
-                repair_identity.get("coordinator_fence_token")
-                or goal_payload.get("checkpoint_digest")
-                or ""
-            ),
+        occurrence = repair_identity.get("occurrence")
+        occurrence_target = normalize_custody_target_key(
+            occurrence.get("target") if isinstance(occurrence, Mapping) else None
         )
         if occurrence_target is None:
             repair_requests.release_active_repair_request_claim(

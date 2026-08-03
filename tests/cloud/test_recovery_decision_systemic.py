@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.cloud.status_snapshot import (
 from arnold_pipelines.megaplan.cloud.status_format import format_cloud_status_detailed
 from arnold_pipelines.megaplan.handlers.review import _review_quality_block_failure
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+from tests.cloud.repair_identity_fixtures import identity_for_signature
 
 
 def _target(plan_state: dict[str, object], *, cursor: str = "sha256:cursor-1") -> dict[str, object]:
@@ -84,21 +85,26 @@ def _quality_state(review_hash: str = "sha256:review-1") -> dict[str, object]:
 
 
 def _enqueue_quality(queue_root: Path, target: dict[str, object]) -> dict[str, object]:
+    signature = {
+        "failure_kind": "quality_gate_blocked",
+        "current_state": "blocked",
+        "phase_or_step": "review",
+        "milestone_or_plan": "c1",
+        "gate_recommendation": "",
+        "blocked_task_id": "T1",
+        "event_signature": "",
+    }
     return repair_requests.enqueue_repair_request(
         queue_root=queue_root,
         session="wbc",
         source="watchdog",
         target={"plan_name": "c1"},
-        problem_signature={
-            "failure_kind": "quality_gate_blocked",
-            "current_state": "blocked",
-            "phase_or_step": "review",
-            "milestone_or_plan": "c1",
-            "gate_recommendation": "",
-            "blocked_task_id": "T1",
-            "event_signature": "",
-        },
+        problem_signature=signature,
         root_cause_hint={"target": target, "class": "deterministic_quality"},
+        repair_identity=identity_for_signature(
+            session="wbc",
+            signature=signature,
+        ),
     )
 
 

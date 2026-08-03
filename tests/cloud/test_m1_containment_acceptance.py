@@ -41,6 +41,7 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     validate_audit_model_inputs,
 )
 from arnold_pipelines.megaplan.receipts import writer as receipt_writer
+from tests.cloud.repair_identity_fixtures import identity_for_signature
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -268,18 +269,23 @@ def test_master_plus_path_gate_and_real_l1_wrapper_fail_closed(tmp_path: Path) -
 def test_all_repair_producers_share_explicit_central_queue(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     queue_root = workspace / ".megaplan" / "repair-queue"
+    signature = {
+        "failure_kind": "execute_failed",
+        "current_state": "blocked",
+        "phase_or_step": "execute",
+        "milestone_or_plan": "m1",
+        "blocked_task_id": "T1",
+    }
     generic = repair_requests.enqueue_repair_request(
         queue_root=queue_root,
         session="generic",
         source="m1_acceptance",
         workspace=workspace,
-        problem_signature={
-            "failure_kind": "execute_failed",
-            "current_state": "blocked",
-            "phase_or_step": "execute",
-            "milestone_or_plan": "m1",
-            "blocked_task_id": "T1",
-        },
+        problem_signature=signature,
+        repair_identity=identity_for_signature(
+            session="generic",
+            signature=signature,
+        ),
     )
     human = repair_requests.enqueue_human_gate_repair_request(
         queue_root=queue_root,

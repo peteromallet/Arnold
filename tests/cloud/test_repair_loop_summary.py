@@ -276,10 +276,6 @@ class TestIsKnownRepairableShapeWithSemanticFindings:
 class TestClassifyRepairDispatchWithSemanticFindings:
     def test_no_latest_failure_does_not_mint_dispatch_authority(self) -> None:
         """Semantic findings alone cannot replace canonical blocker identity."""
-        from arnold_pipelines.megaplan.cloud.repair_contract import (
-            DISPATCH_DECISION_HUMAN_REQUIRED,
-        )
-
         plan_state = {
             "name": "test-plan",
             "current_state": "blocked",
@@ -304,7 +300,7 @@ class TestClassifyRepairDispatchWithSemanticFindings:
             queue_root = megaplan_dir / "repair-queue"
             queue_root.mkdir()
 
-            enqueue_repair_request(
+            enqueue_result = enqueue_repair_request(
                 queue_root=queue_root,
                 session="test-session",
                 source="watchdog",
@@ -316,6 +312,7 @@ class TestClassifyRepairDispatchWithSemanticFindings:
                 },
                 target=current_target,
             )
+            assert enqueue_result["status"] == "zero_authority_rejected"
 
             from arnold_pipelines.megaplan.cloud.repair_contract import project_repair_custody
 
@@ -333,8 +330,8 @@ class TestClassifyRepairDispatchWithSemanticFindings:
             )
             # Semantic evidence alone cannot mint dispatch authority when the
             # canonical latest failure does not identify a repairable shape.
-            assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
-            assert "not a whitelisted repairable shape" in decision.rationale[0]
+            assert decision.decision == "no_action"
+            assert not custody["active_request_ids"]
 
 
 # ── S4: wrapper regression — semantic_health in repair initial_facts ────────

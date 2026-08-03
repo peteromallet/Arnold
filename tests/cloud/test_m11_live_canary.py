@@ -18,21 +18,20 @@ from arnold_pipelines.megaplan.cloud.m11_live_canary import (
     verify_slot,
 )
 from arnold_pipelines.megaplan.custody.action_validator import GateResult
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 
-def _occurrence() -> dict[str, str]:
-    return {
-        "environment": "canary",
-        "session": "m11-genuine-block-test",
-        "chain": "canary-chain",
-        "plan_revision": "abc123",
-        "phase": "execute",
-        "task": "T1",
-        "attempt": "1",
-        "normalized_failure_kind": "supervised_run_exhausted",
-        "blocker_or_phase_result_hash": "sha256:blocker",
-        "fence": "fence:1",
-    }
+def _occurrence() -> dict[str, object]:
+    return repair_identity(
+        session="m11-genuine-block-test",
+        plan="m11-canary",
+        failure_kind="supervised_run_exhausted",
+        phase="execute",
+        task="T1",
+        environment="canary",
+        chain="canary-chain",
+        plan_revision="abc123",
+    )
 
 
 class _Authorized:

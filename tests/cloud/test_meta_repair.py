@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
 from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
@@ -2529,6 +2530,13 @@ def test_retrigger_effect_boundary_requires_master_and_l2_path(
                 expected_lock_pid=42,
                 runner=runner,
                 release_lock=release,
+                repair_identity=repair_identity(
+                    session="session",
+                    plan="meta-repair",
+                    failure_kind="ordinary_repair_retrigger",
+                    phase="repair",
+                    task="repair-loop",
+                ),
             )
         assert calls == []
         return
@@ -2539,6 +2547,13 @@ def test_retrigger_effect_boundary_requires_master_and_l2_path(
         expected_lock_pid=42,
         runner=runner,
         release_lock=release,
+        repair_identity=repair_identity(
+            session="session",
+            plan="meta-repair",
+            failure_kind="ordinary_repair_retrigger",
+            phase="repair",
+            task="repair-loop",
+        ),
     )
     assert result.returncode == 0
     assert calls == ["release:42", "launch"]

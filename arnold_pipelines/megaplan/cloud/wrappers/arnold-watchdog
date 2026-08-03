@@ -5335,35 +5335,9 @@ result = repair_requests.claim_active_repair_request(
     is_pid_live=_pid_is_live,
     extra={"workspace": workspace, "remote_spec": remote_spec},
 )
-if result.status == "stale":
-    reasons = set((result.evidence or {}).get("stale_evidence", {}).get("reasons", []))
-    if not reasons.intersection({"owner_pid_not_live", "owner_process_mismatch"}):
-        print(result.status)
-        raise SystemExit(0)
-    owner = result.owner if isinstance(result.owner, dict) else {}
-    owner_pid = owner.get("pid")
-    if not isinstance(owner_pid, int):
-        owner_pid = None
-    released = repair_requests.release_active_repair_request_claim(
-        repair_requests.repair_queue_dir(marker_dir),
-        blocker_id=blocker_id,
-        owner=owner,
-        expected_pid=owner_pid,
-    )
-    if released:
-        result = repair_requests.claim_active_repair_request(
-            repair_requests.repair_queue_dir(marker_dir),
-            blocker_id=blocker_id,
-            request_id=request_id,
-            actor="arnold-watchdog",
-            session=session,
-            repair_identity=repair_identity,
-            pid=pid,
-            command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
-            cwd=workspace,
-            is_pid_live=_pid_is_live,
-            extra={"workspace": workspace, "remote_spec": remote_spec},
-        )
+# A stale owner is evidence, never authority for this watchdog to delete a
+# claim and seize it.  Explicit simple_fixer recovery owns any retirement and
+# reacquisition after revalidating the exact occurrence.
 print(result.status)
 PY
 }
@@ -7088,46 +7062,12 @@ def gh_pr_state(pr_number: int) -> tuple[str, str, str]:
 
 
 def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> str:
-    try:
-        from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            enqueue_occurrence_bound_repair_request,
-            repair_queue_dir,
-        )
-
-        if not repair_request_queue_enabled():
-            return "queue_disabled"
-        result = enqueue_occurrence_bound_repair_request(
-            queue_root=repair_queue_dir(marker_dir),
-            marker_dir=marker_dir,
-            session=session,
-            source="watchdog_pr_merge_reconciliation",
-            workspace=str(workspace),
-            run_kind="chain",
-            target={
-                "chain_state_path": str(path),
-                "remote_spec": str(remote_spec or ""),
-                "pr_number": pr_number,
-                "pr_state": pr_state or "unknown",
-            },
-            problem_signature={
-                "failure_kind": "awaiting_pr_merge",
-                "current_state": pr_state or "unknown",
-                "phase_or_step": "watchdog_pr_merge_reconciliation",
-                "milestone_or_plan": str(path),
-                "gate_recommendation": "",
-                "blocked_task_id": f"pr:{pr_number}",
-            },
-            root_cause_hint={
-                "reason": "auto-policy chain is still awaiting PR merge",
-                "pr_number": pr_number,
-                "pr_state": pr_state or "unknown",
-            },
-            occurrence_identity=None,
-        )
-        return str(result.get("status") or "queued")
-    except Exception as exc:
-        return f"queue_error:{exc}"
+    # Awaiting a PR merge is expected wait state, not a repair occurrence.
+    # ``watchdog_pr_merge_reconciliation`` and ``pr_boundary_evidence`` are
+    # persisted on the chain state immediately above this call.  Do not mint a
+    # repair identity from PR labels or enqueue an unclaimable repair request.
+    del path, pr_number, pr_state
+    return "read_only"
 
 
 automatic_progression, policy_reason = advancement_policy()

@@ -14,6 +14,7 @@ from tests.cloud.test_progress_auditor_escalation import (
     _true_stall,
     _valid_manifest,
 )
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 
 def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path: Path) -> None:
@@ -129,6 +130,13 @@ def test_valid_canonical_d9_manifest_is_correlated_and_deduped(tmp_path: Path) -
     finding["repair_custody_summary"]["retry_budget"] = {
         "claim_retries_used": 0, "claim_retries_remaining": 3
     }
+    finding["repair_identity"] = repair_identity(
+        session=str(finding.get("session") or "audit-session"),
+        plan=str(finding.get("plan") or "audit-plan"),
+        failure_kind="L3_TRUE_STALL",
+        phase="progress_auditor",
+        task="d9-root-repair",
+    )
     finding["meta_repair_summary"]["repair_goal"] = {
         "goal_id": "repair-goal-active-unowned",
         "status": "active",
