@@ -36,9 +36,113 @@ def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
     text = _wrapper("arnold-progress-auditor")
     hot_env_at = text.index(". /workspace/.cloud-hot-env")
     source_root_at = text.index('AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-')
-    reexec_at = text.index('exec "$SOURCE_AUDITOR" "$@"')
-    assert hot_env_at < source_root_at < reexec_at
+    snapshot_guard_at = text.index("progress_auditor_running_snapshot=0")
+    reexec_at = text.index('exec "$source_real" "$@"')
+    assert hot_env_at < source_root_at < snapshot_guard_at < reexec_at
+    assert 'if [[ "$progress_auditor_running_snapshot" != "1" && -x "$SOURCE_AUDITOR" ]]' in text
     assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
+
+
+def _write_bounded_mktemp(bin_dir: Path) -> None:
+    mktemp = bin_dir / "mktemp"
+    mktemp.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "if [[ \"${1:-}\" == *arnold-progress-auditor.XXXXXXXX ]]; then\n"
+        "  count_file=\"$TMPDIR/snapshot-count\"\n"
+        "  count=0\n"
+        "  [[ ! -f \"$count_file\" ]] || read -r count < \"$count_file\"\n"
+        "  count=$((count + 1))\n"
+        "  printf '%s\\n' \"$count\" > \"$count_file\"\n"
+        "  (( count <= 4 )) || exit 70\n"
+        "  path=\"$TMPDIR/arnold-progress-auditor.$count\"\n"
+        "  : > \"$path\"\n"
+        "elif [[ \"${1:-}\" == -d ]]; then\n"
+        "  path=\"$TMPDIR/gather\"\n"
+        "  mkdir \"$path\"\n"
+        "else\n"
+        "  path=\"$TMPDIR/worklist\"\n"
+        "  : > \"$path\"\n"
+        "fi\n"
+        "printf '%s\\n' \"$path\"\n",
+        encoding="utf-8",
+    )
+    mktemp.chmod(mktemp.stat().st_mode | stat.S_IXUSR)
+
+
+def _bounded_progress_auditor_wrapper(container_sentinel: Path, hot_env: Path) -> str:
+    """Keep the real selection/snapshot/cleanup control flow, then stop."""
+    text = _wrapper("arnold-progress-auditor")
+    prefix = text[: text.index('\nWRAPPER_REPO_ROOT="$(cd ')]
+    work_start = text.index('WORKLIST="$(mktemp)"')
+    work_end_marker = 'register_progress_auditor_cleanup "$GATHER_DIR"'
+    work_end = text.index(work_end_marker, work_start) + len(work_end_marker)
+    bounded = (
+        prefix
+        + "\n"
+        + text[work_start:work_end]
+        + "\nprintf '%s|%s|%s|%s\\n' \"$ARNOLD_PROGRESS_AUDITOR_ORIGIN\" "
+        '"$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH" "$WORKLIST" "$GATHER_DIR" > "$PROBE"\n'
+        + 'if [[ "${PROBE_TERMINATE:-0}" == "1" ]]; then kill -TERM "$$"; fi\n'
+        + "exit 0\n"
+    )
+    return bounded.replace("/workspace/arnold", str(container_sentinel)).replace(
+        "/workspace/.cloud-hot-env", str(hot_env)
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["installed", "source"])
+@pytest.mark.parametrize(("terminate", "expected_returncode"), [(False, 0), (True, 143)])
+def test_auditor_source_selection_snapshot_and_cleanup_are_bounded(
+    tmp_path: Path,
+    entrypoint: str,
+    terminate: bool,
+    expected_returncode: int,
+) -> None:
+    """Installed and direct source runs create one snapshot and clean every temp path."""
+    source_root = tmp_path / "alternate-source"
+    source = source_root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
+    installed = tmp_path / "installed" / "arnold-progress-auditor"
+    snapshot_dir = tmp_path / "snapshots"
+    bin_dir = tmp_path / "bin"
+    container_sentinel = tmp_path / "container-arnold"
+    hot_env = tmp_path / "missing-cloud-hot-env"
+    probe = tmp_path / f"probe-{entrypoint}-{terminate}"
+    for directory in (source.parent, installed.parent, snapshot_dir, bin_dir, container_sentinel):
+        directory.mkdir(parents=True, exist_ok=True)
+    bounded = _bounded_progress_auditor_wrapper(container_sentinel, hot_env)
+    source.write_text(bounded, encoding="utf-8")
+    installed.write_text(bounded, encoding="utf-8")
+    source.chmod(source.stat().st_mode | stat.S_IXUSR)
+    installed.chmod(installed.stat().st_mode | stat.S_IXUSR)
+    _write_bounded_mktemp(bin_dir)
+
+    selected_entrypoint = installed if entrypoint == "installed" else source
+    result = subprocess.run(
+        ["bash", str(selected_entrypoint)],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "TMPDIR": str(snapshot_dir),
+            "MEGAPLAN_AUDIT_ARNOLD_SRC": str(source_root),
+            "PROBE": str(probe),
+            "PROBE_TERMINATE": "1" if terminate else "0",
+        },
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == expected_returncode, result.stderr
+    origin, snapshot, worklist, gather = probe.read_text(encoding="utf-8").strip().split("|")
+    assert Path(origin).resolve() == source.resolve()
+    assert Path(snapshot).parent == snapshot_dir
+    assert (snapshot_dir / "snapshot-count").read_text(encoding="utf-8").strip() == "1"
+    assert not Path(snapshot).exists()
+    assert not Path(worklist).exists()
+    assert not Path(gather).exists()
+    assert not list(snapshot_dir.glob("arnold-progress-auditor.*"))
 
 
 def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:

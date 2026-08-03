@@ -39,9 +39,11 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     workspace = tmp_path / "workspace"
     marker_dir = workspace / ".megaplan" / "cloud-sessions"
     bin_dir = tmp_path / "bin"
+    snapshot_dir = tmp_path / "snapshots"
     marker_dir.mkdir(parents=True)
     repair_root.mkdir()
     bin_dir.mkdir()
+    snapshot_dir.mkdir()
 
     (marker_dir / "demo-session.json").write_text(
         json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
@@ -109,6 +111,7 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = request_id
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
     env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
+    env["TMPDIR"] = str(snapshot_dir)
 
     proc = subprocess.Popen(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],
@@ -126,3 +129,4 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     )
     assert not claim_lock_dir.exists()
     assert repair_requests.active_repair_claim_lock_dir(decoy_queue_root, blocker_id).exists()
+    assert not list(snapshot_dir.glob("arnold-repair-loop.*"))
