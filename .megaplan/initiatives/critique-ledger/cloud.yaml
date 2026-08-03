@@ -5,6 +5,11 @@ repo:
   branch: megaplan/critique-ledger-accountability-v3-20260803
   workspace: /workspace/critique-ledger-accountability-v3-20260803/Arnold
 
+extra_repos:
+  - url: https://github.com/peteromallet/Arnold.git
+    branch: fix/isolated-chain-runner-20260803
+    workspace: /workspace/runtime-candidates/arnold-a8e7ef6c345bbc1aceb19af67e7e25b1e05ad4e4
+
 agents:
   default: codex
 
