@@ -9,6 +9,7 @@ selects exact local JSON parsing plus canonical schema validation.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -158,6 +159,10 @@ def _provider_strict_rejection(schema: Any, path: tuple[str, ...] = ()) -> str |
             return f"unsupported_keyword:{key}@{location}"
 
     schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        return f"unsupported_type_union@{'/'.join(path) or '$'}"
+    if not path and schema_type != "object":
+        return "root_schema_must_be_object@$"
     if schema_type == "object" or (
         isinstance(schema_type, list) and "object" in schema_type
     ):
@@ -170,7 +175,11 @@ def _provider_strict_rejection(schema: Any, path: tuple[str, ...] = ()) -> str |
             location = "/".join(path) or "$"
             return f"object_without_closed_properties@{location}"
         required = schema.get("required")
-        if not isinstance(required, list) or set(required) != set(properties):
+        if (
+            not isinstance(required, list)
+            or len(required) != len(set(required))
+            or set(required) != set(properties)
+        ):
             location = "/".join(path) or "$"
             return f"optional_object_properties@{location}"
         for name, child in properties.items():
@@ -180,6 +189,8 @@ def _provider_strict_rejection(schema: Any, path: tuple[str, ...] = ()) -> str |
             if reason:
                 return reason
 
+    if schema_type == "array" and not isinstance(schema.get("items"), dict):
+        return f"array_without_item_schema@{'/'.join(path) or '$'}"
     if "items" in schema:
         reason = _provider_strict_rejection(schema["items"], path + ("items",))
         if reason:
@@ -260,14 +271,33 @@ def persist_response_enforcement_attestation(
     """Durably append one response-enforcement decision to the plan ledger."""
 
     path = plan_dir / "response_enforcement.ndjson"
+    lock_path = plan_dir / ".response_enforcement.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _canonical_json(attestation.to_json()) + b"\n"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    created = not path.exists()
+    lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
     try:
-        os.write(fd, data)
-        os.fsync(fd)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short response-attestation append")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if created:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
-        os.close(fd)
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
     return path
 
 

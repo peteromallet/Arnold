@@ -247,7 +247,10 @@ def test_provider_failure_event_does_not_reset_stall_progress(
     assert latest_kind is None
 
 
-def test_recover_provider_contract_requires_commit_bound_receipt(tmp_path: Path) -> None:
+def test_recover_provider_contract_requires_commit_bound_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
     plan_dir.mkdir(parents=True)
     state = {
@@ -286,6 +289,10 @@ def test_recover_provider_contract_requires_commit_bound_receipt(tmp_path: Path)
         capture_output=True,
         text=True,
     ).stdout.strip()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.runtime.process.megaplan_engine_root",
+        lambda: tmp_path,
+    )
 
     with pytest.raises(CliError, match="exact current failure fingerprint"):
         validated_deterministic_phase_repair(
@@ -307,6 +314,9 @@ def test_recover_provider_contract_requires_commit_bound_receipt(tmp_path: Path)
     assert evidence["failure_kind"] == "provider_contract_failure"
     assert evidence["repair_commit"] == head
     assert evidence["failure_fingerprint"] == failure_fingerprint
+    assert evidence["repair_scope"] == "engine_runtime"
+    assert evidence["engine_head"] == head
+    assert "workspace_head" not in evidence
 
     atomic_write_phase_result(
         plan_dir,

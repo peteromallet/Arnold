@@ -282,6 +282,8 @@ def _capture_payload(
         raise TypeError(
             f"model output must be a mapping or JSON string, got {type(output).__name__}"
         )
+    if _uses_local_strict_json(invocation):
+        return _capture_local_strict_json(invocation, output)
     recovery = invocation.metadata.get("capture_recovery")
     if isinstance(recovery, Mapping) and bool(recovery.get("prefer_output_file", False)):
         recovered = _recover_payload_for_invocation(invocation, output)
@@ -297,6 +299,95 @@ def _capture_payload(
     if not isinstance(parsed, Mapping):
         raise TypeError("model output JSON must contain an object")
     return dict(parsed), ("model_step_output",)
+
+
+def _uses_local_strict_json(invocation: StepInvocation) -> bool:
+    attestation = invocation.metadata.get("response_enforcement_attestation")
+    return bool(
+        isinstance(attestation, Mapping)
+        and attestation.get("response_enforcement") == "local_strict_json"
+    )
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ModelStructuralAuditError(
+                f"duplicate JSON object key: {key!r}"
+            )
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json_constant(value: str) -> None:
+    raise ModelStructuralAuditError(
+        f"non-finite JSON number is forbidden: {value}"
+    )
+
+
+def _parse_exact_json_object(raw: str) -> dict[str, Any]:
+    """Parse one RFC-JSON object without the legacy candidate recovery path."""
+
+    parsed = json.loads(
+        raw,
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_constant=_reject_non_finite_json_constant,
+    )
+    if not isinstance(parsed, Mapping):
+        raise ModelStructuralAuditError(
+            "model output JSON must contain exactly one object"
+        )
+    return dict(parsed)
+
+
+def _capture_local_strict_json(
+    invocation: StepInvocation,
+    raw: str,
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Capture the exact Codex output selected for local response enforcement.
+
+    Local-strict mode exists specifically because the provider cannot enforce
+    the canonical schema.  Falling back to fenced/prose/template candidate
+    extraction here would quietly weaken that boundary, so only the dedicated
+    ``-o`` response file (or, when absent, the exact supplied string) is parsed.
+    """
+
+    from arnold_pipelines.megaplan.provider_response import schema_sha256
+
+    attestation = invocation.metadata.get("response_enforcement_attestation")
+    if not isinstance(attestation, Mapping):
+        raise ModelStructuralAuditError(
+            "local-strict JSON capture requires a response-enforcement attestation"
+        )
+    schema = invocation.metadata.get("schema")
+    if not isinstance(schema, Mapping):
+        raise ModelStructuralAuditError(
+            "local-strict JSON capture requires the attested canonical schema"
+        )
+    expected_hash = schema_sha256(schema)
+    if attestation.get("canonical_schema_hash") != expected_hash:
+        raise ModelStructuralAuditError(
+            "local-strict response attestation does not bind the active schema"
+        )
+
+    selected = raw
+    provenance = "model_step_output"
+    recovery = invocation.metadata.get("capture_recovery")
+    if isinstance(recovery, Mapping):
+        output_path = recovery.get("output_path")
+        if output_path is not None:
+            try:
+                output_text = Path(output_path).read_text(encoding="utf-8")
+            except (FileNotFoundError, OSError, UnicodeDecodeError):
+                output_text = ""
+            if output_text.strip():
+                selected = output_text
+                provenance = "output_file_exact_json"
+    return _parse_exact_json_object(selected), (
+        "model_step_output",
+        f"codex_capture:{provenance}",
+    )
 
 
 # --------------------------------------------------------------------------- #
