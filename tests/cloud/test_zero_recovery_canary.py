@@ -52,6 +52,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     _record_zero_recovery_dispatch,
     _record_zero_recovery_dispatch_terminal,
     _prepare_zero_recovery_schema_input,
+    _quiesce_zero_recovery_model_uid,
     _reclaim_zero_recovery_tree,
     _restore_zero_recovery_schema_input,
     run_command,
@@ -2124,6 +2125,7 @@ def test_zero_deploy_mounts_only_fresh_child_without_shared_caches(
     argv = shlex.split(run_command)
     assert argv[:3] == ["docker", "run", "-d"]
     assert "--restart" in argv and argv[argv.index("--restart") + 1] == "no"
+    assert "--init" in argv
     mounts = [argv[index + 1] for index, value in enumerate(argv) if value == "-v"]
     assert mounts == [
         f"{provider._spec.zero_recovery_workspace_dir}:/workspace"
@@ -2158,6 +2160,7 @@ def test_runtime_rejects_any_mount_beyond_exact_isolated_workspace() -> None:
             ["MEGAPLAN_ZERO_RECOVERY_CANARY=1"],
             ["/usr/local/bin/entrypoint.sh"],
             {"Name": "no", "MaximumRetryCount": 0},
+            True,
             mounts,
             ["ALL"],
             [
@@ -2178,6 +2181,7 @@ def test_runtime_rejects_any_mount_beyond_exact_isolated_workspace() -> None:
     )
     observed = provider._observe_zero_recovery_canary_runtime()
     assert observed["host_bind_count"] == 1
+    assert observed["init"] is True
     assert observed["cap_add"] == [
         "CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP", "SETUID"
     ]
@@ -2446,6 +2450,69 @@ def test_zero_recovery_boundary_revokes_at_empty_milestone_before_late_failure(
     assert events == ["empty", "revoke", "source", "plan"]
 
 
+def test_zero_recovery_quiescence_rekills_then_requires_consecutive_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations = iter(
+        [
+            "101 1 S Mon Aug  3 07:00:00 2026\n",
+            "101 1 Z Mon Aug  3 07:00:00 2026\n",
+            "",
+            "",
+        ]
+    )
+    kills: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "/usr/bin/ps":
+            return subprocess.CompletedProcess(argv, 0, next(observations), "")
+        assert argv[0] == "/bin/kill"
+        kills.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monotonic = iter([0.0, 0.1, 0.2, 0.3])
+    monkeypatch.setattr(worker_impl.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_impl.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(worker_impl.time, "sleep", lambda _seconds: None)
+
+    _quiesce_zero_recovery_model_uid()
+
+    assert kills == [["/bin/kill", "-KILL", "101"]]
+
+
+@pytest.mark.parametrize(
+    ("process_state", "classification"),
+    [("Z", "unreaped zombies"), ("S", "surviving processes")],
+)
+def test_zero_recovery_quiescence_reports_exact_persistent_process(
+    monkeypatch: pytest.MonkeyPatch,
+    process_state: str,
+    classification: str,
+) -> None:
+    def fake_run(argv, **kwargs):
+        if argv[0] == "/usr/bin/ps":
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                f"202 7 {process_state} Mon Aug  3 07:01:00 2026\n",
+                "",
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monotonic = iter([0.0, 6.0])
+    monkeypatch.setattr(worker_impl.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_impl.time, "monotonic", lambda: next(monotonic))
+
+    with pytest.raises(CliError) as exc:
+        _quiesce_zero_recovery_model_uid()
+
+    detail = str(exc.value)
+    assert classification in detail
+    assert "pid=202 ppid=7" in detail
+    assert f"stat={process_state}" in detail
+    assert "started=Mon Aug  3 07:01:00 2026" in detail
+
+
 def test_zero_recovery_runtime_accounts_for_and_seals_inert_unix_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2670,6 +2737,26 @@ def test_runner_post_init_binds_canonical_schema_runtime_and_rejects_drift(
     assert exc.value.code == "zero_recovery_worker_mutation_denied"
 
 
+def test_runner_binds_primary_phase_failure_artifact_without_copying_content(
+    tmp_path: Path,
+) -> None:
+    runner = runpy.run_path(
+        str(Path(".megaplan/initiatives/critique-ledger-safe-v3-canary/run_canary.py"))
+    )
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    raw = plan_dir / "plan_v1_raw.txt"
+    raw.write_text("finite-model UID retained an unreaped child\n", encoding="utf-8")
+    raw.chmod(0o600)
+
+    evidence = runner["trusted_phase_failure_artifact"](plan_dir, "plan")
+
+    assert evidence == f"plan_v1_raw.txt:sha256={hashlib.sha256(raw.read_bytes()).hexdigest()}"
+    assert "retained" not in evidence
+    raw.chmod(0o666)
+    assert runner["trusted_phase_failure_artifact"](plan_dir, "plan") == "untrusted"
+
+
 def test_zero_recovery_schema_mode_drift_reports_exact_transition(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2803,6 +2890,8 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     source = fake.read_text(encoding="utf-8")
     assert source.startswith("#!/usr/local/bin/node\n")
     assert "socket" not in source
+    assert 'require("child_process")' in source
+    assert "orphan.unref()" in source
     assert "urllib" not in source
     assert "requests" not in source
     schema_name = "finalize_capture" if phase == "finalize" else phase
@@ -3163,6 +3252,7 @@ def test_offline_structural_smoke_failure_preserves_typed_evidence(
         "image_ports",
         "host_ports",
         "runtime_ports",
+        "init",
     ],
 )
 def test_offline_structural_smoke_inspect_rejects_runtime_drift(
@@ -3182,6 +3272,7 @@ def test_offline_structural_smoke_inspect_rejects_runtime_drift(
             "HostConfig": {
                 "NetworkMode": "none",
                 "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+                "Init": True,
                 "CapDrop": ["ALL"],
                 "CapAdd": [
                     "CAP_CHOWN",
@@ -3224,6 +3315,8 @@ def test_offline_structural_smoke_inspect_rejects_runtime_drift(
         inspect_payload[0]["HostConfig"]["NetworkMode"] = "bridge"
     elif mutation == "restart":
         inspect_payload[0]["HostConfig"]["RestartPolicy"]["Name"] = "always"
+    elif mutation == "init":
+        inspect_payload[0]["HostConfig"]["Init"] = False
     elif mutation == "capabilities":
         inspect_payload[0]["HostConfig"]["CapAdd"].append("SYS_ADMIN")
     elif mutation == "security":
@@ -3297,6 +3390,7 @@ def test_offline_structural_smoke_inspect_emits_normalized_runtime_summary(
             "HostConfig": {
                 "NetworkMode": "none",
                 "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+                "Init": True,
                 "CapDrop": ["ALL"],
                 "CapAdd": [
                     "CAP_CHOWN", "CAP_DAC_READ_SEARCH", "CAP_KILL",

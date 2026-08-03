@@ -263,6 +263,7 @@ INNER
 container_id=$(docker create \
   --name "$container_name" \
   --restart no \
+  --init \
   --network none \
   --cap-drop ALL \
   --cap-add CHOWN --cap-add DAC_READ_SEARCH --cap-add KILL \
