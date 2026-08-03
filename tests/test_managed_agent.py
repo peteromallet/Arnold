@@ -694,7 +694,9 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
     assert "--run-kind automatic_meta_repair_worker" in meta
     assert "ManagedCommandSpec(" in meta and "meta_repair_retrigger" in meta
     assert 'proc = getattr(subprocess, "Popen")(' in trigger
-    assert "legacy_manager_args," in trigger
+    assert "managed_manager_args," in trigger
+    assert 'run_kind = "automatic_repair"' in trigger
+    assert 'sys.executable,\n                "-P",' in trigger
     assert "subprocess.Popen(cmd" not in trigger
     assert "--run-kind automatic_progress_audit_agent" in auditor
     assert "--run-kind automatic_legacy_fixer" in legacy
