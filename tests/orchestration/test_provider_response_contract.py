@@ -22,12 +22,23 @@ from arnold_pipelines.megaplan.provider_response import (
 )
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.workers._impl import (
+    _codex_repair_input,
     _codex_provider_contract_error,
     _codex_response_schema_args,
     _is_codex_provider_schema_rejection,
     _local_response_contract_error,
     _prepare_local_strict_artifact_handoff,
 )
+
+
+def test_codex_repair_diagnoses_canonical_output_not_jsonl_transport() -> None:
+    transport = '{"type":"thread.started"}\n{"type":"turn.completed"}\n'
+    canonical = '{"tasks":[],"user_actions":[]}'
+
+    selected, parse_error = _codex_repair_input(transport, canonical)
+
+    assert selected == canonical
+    assert parse_error is None
 from arnold_pipelines.megaplan.auto import _is_retryable_external_error
 from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
 from arnold_pipelines.megaplan.orchestration.phase_result_classify import (

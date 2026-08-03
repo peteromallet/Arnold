@@ -73,3 +73,15 @@ def test_finalize_prompt_forbids_routing_only_dependencies_and_model_full_suite(
     assert "auto-split by the harness into implementation + proof subtasks" in prompt
     assert "no-file deterministic checks" in prompt
     assert "placeholder commands, and file-producing jobs" in prompt
+
+
+def test_finalize_prompt_user_action_fields_match_canonical_schema(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    prompt = _finalize_prompt(state, tmp_path / "plan", root=tmp_path)
+
+    assert "`id`, `description`, `phase`, and `requires_human_only_reason`" in prompt
+    assert '"description":"Set ANTHROPIC_API_KEY in .env"' in prompt
+    assert '"phase":"before_execute"' in prompt
+    assert "do not use the legacy aliases `action` or `timing`" in prompt
