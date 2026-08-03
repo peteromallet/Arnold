@@ -69,6 +69,9 @@ waits for all checked items and one exact integration commit.
   liveness; tmux/`ps` evidence is diagnostic only. Replace the collided SSH
   `arnold status --plan` invocation with the exact runtime-attested Megaplan
   module entrypoint; prove the native Arnold CLI is never selected.
+- [ ] Migrate the legacy r5 marker to managed run/runtime identity through the
+  one-time external-provenance-bound CAS path; never hand-edit or fresh-restart
+  the preserved session.
 - [ ] Run combined regression, adversarial stale-writer/replay tests, and real
   sibling-container/provider canaries against one candidate commit.
 - [ ] Deploy that exact commit to the cloud runtime candidate; verify remote
