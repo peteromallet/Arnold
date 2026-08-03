@@ -26,9 +26,11 @@
       "B22-smoke", "B23-smoke", "B24-smoke", "B25-smoke"
     ],
     "passing_successor": "B38-production-acceptance-smoke",
-    "pending_successor": "B39",
+    "pending_successor": null,
+    "terminal_safe_nonproceed": "B39-live-attempt-13",
+    "pending_decision": "A40",
     "accepted_successor": "B26-smoke",
-    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ALL_GATES_PENDING",
+    "status": "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_AND_ALL_ACCEPTANCE_GATES_PENDING",
     "rule": "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
   },
   "superseded": [

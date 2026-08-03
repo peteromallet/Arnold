@@ -19,8 +19,17 @@ Verify all of the following from committed evidence bytes:
 - A31-B34's schema-access diagnostic/rejected history remains preserved, and
   B35's passing diagnostic/production-smoke evidence plus attempt 9's terminal
   status-poll collision remain preserved;
-- B36's offline and independent evidence is accepted before it becomes the
-  launch candidate, and live/stable-exit evidence remains independently bound;
+- B39 attempt 13 is preserved as a terminal, safely stopped non-PROCEED result:
+  plan, critique and gate returned, the gate recommended `ITERATE`, state
+  remained `critiqued`, eight blocking changes were recorded, and finalize did
+  not run; neither the runner's current `unexpected_or_active_state` diagnostic
+  nor process absence may be promoted into success;
+- A40 has truthfully decided whether B39 is a complete bounded safe-
+  non-PROCEED canary or whether its eight blocking changes are a bounded revise
+  or product prerequisite. F0 is the sole explicit bridge from that decision
+  into the follow-up epic: it may admit only an independently accepted,
+  content-addressed disposition and may not launch, revise, finalize, or replay
+  the canary itself;
 - every immutable operation intent has one independently reviewed effective
   terminal outcome in `operation-reconciliation-manifest.json`, with no effect
   dispatched more than its declared maximum and no ambiguous operation left

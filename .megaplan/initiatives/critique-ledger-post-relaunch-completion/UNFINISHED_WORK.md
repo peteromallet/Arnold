@@ -417,7 +417,33 @@ deliberately pending import; it is not permission to recreate a receipt.
   `11305b7c2c1891614b85322f8e0f3c766d2586d6` / tree
   `8adcb18fa955544a7a1da1777b6d9ffbb8d5b9a0`, with 187 passed / 1 skipped,
   fresh attempt-13 workspace and `megaplan-cloud-agent-finite-canary-13`.
-  Offline, independent, live and stable-exit gates all remain pending.
+  Diagnostic file SHA/digest are
+  `c0949f6f2e40b0db1bbc6e3e251c1b701930ca2750a7cc9fcd87f4e64b4488d6` /
+  `84667d967794d93dc753076350d6d34face8d755aee5251d5340629812ef4ed1`;
+  verifier digest is known only by prefix `36c31861`. Production file
+  SHA/digest are
+  `087007324e255ebd42e82daf93781bf7032eb96bdee9643527984ce6240c6fc3` /
+  `1e956fb442e06d7e0520a4f21de04a6eec246e42209e23fcd88ad0da2f72046d`;
+  verifier and image are known only by prefixes `a1bf4eb8` and
+  `sha256:d38b921f`. Prefixes must not be expanded or treated as full identity.
+- [ ] Preserve B39 attempt 13's exact terminal safe-non-PROCEED outcome. Live
+  receipt digest/file SHA are
+  `72e4efaf37ea9b416cdada8e4447a30d2228d837b3029c9f163fee944bf85c11` /
+  `ece98b8f99d4613dce1ec17888328a7cbc033df610d25e4855aec1b214c04b9b`.
+  Real plan, critique and gate returned; gate recommendation was `ITERATE`,
+  state remained `critiqued`, and eight blocking changes were recorded.
+  Finalize did not run. The runner currently reports
+  `unexpected_or_active_state` because state validation precedes gate
+  recommendation classification; that diagnostic is not a live success gate.
+  Container prefix `6cb81b` is stopped at exit 143, OOM false, after terminal
+  reconciliation. The workspace is sealed root:0700 at inode 1317407 and no
+  notification was sent. Offline, independent, live and stable-exit gates all
+  remain pending.
+- [ ] Complete A40 without launching: truthfully classify B39 as a complete
+  bounded safe-non-PROCEED canary or route its eight blockers into a bounded
+  revise/product prerequisite. F0 is the sole explicit, read-only bridge from
+  the independently accepted A40 decision into follow-up admission; A40/F0 may
+  not promote gates, replay finalize, or fabricate missing identity bytes.
 - [ ] Preserve the bounded retirement of the temporary clean B38 diagnostic
   checkout: O_EXCL intent/receipt digest prefixes `2568` / `533399`, exact B38
   commit/tree, size 128,547,498 bytes, and free-space transition
@@ -435,8 +461,9 @@ deliberately pending import; it is not permission to recreate a receipt.
   offline history, B27-B30 are terminal failed-live history, B31-B34 are
   diagnostic/rejected history, B35 is passing production-smoke history with
   terminal attempt-9 history, B38 has passing diagnostic/production smoke but
-  terminal failed live attempt 12, and B39 is the fresh pending successor with
-  no accepted offline/live authority. No missing receipt may be synthesized.
+  terminal failed live attempt 12, and B39 has terminal safely stopped
+  non-PROCEED attempt 13 pending A40 classification and every acceptance gate.
+  No missing receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 

@@ -29,7 +29,7 @@ milestones:
     depth: high
     with_prep: true
     prep_clarify: false
-    notes: Difficulty 3/5. Read-only admission of exact finite-canary, stable-exit, operation-reconciliation and fresh-clone evidence; completes no F1-F8 obligation.
+    notes: Difficulty 3/5. Sole read-only bridge from the independently accepted A40 disposition into exact finite-canary, stable-exit, operation-reconciliation and fresh-clone admission; cannot launch/revise/finalize and completes no F1-F8 obligation.
   - label: f1-owner-storage-recovery-hardening
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f1-owner-storage-recovery-hardening.md
     branch: epic/critique-ledger-v3/f1-owner-storage-recovery-hardening

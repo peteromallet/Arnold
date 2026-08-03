@@ -76,8 +76,11 @@ canary, B28-B30's terminal/reconciled failed live retries, the full A31-B35
 schema-access recovery lineage, B35 attempt 9's status-poll-induced terminal
 stop, A36/B36's terminal publication NO-GO, A37-B39 repair/launch lineage,
 B38 attempt 12's terminal process-leak failure, the accepted reclaim-v2 and
-bounded diagnostic-checkout retirement receipts, and B39's fresh attempt 13.
-B39 offline, independent, live and stable-exit gates remain pending. The five
+bounded diagnostic-checkout retirement receipts, and B39 attempt 13's terminal,
+safely stopped `ITERATE` result. A40 must classify that result as bounded safe
+non-PROCEED or as requiring a bounded revise/product prerequisite; F0 is the
+sole read-only bridge from the independently accepted A40 disposition into the
+epic. B39 offline, independent, live and stable-exit gates remain pending. The five
 historical operations still require receipt import and independent
 reconciliation; the unrelated terminal checkout retirement does not discharge
 them.

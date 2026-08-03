@@ -1,7 +1,7 @@
 {
   "schema": "arnold.critique_ledger.unfinished_work_custody.v4",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T06:39:47Z",
+  "contract_updated_at": "2026-08-03T08:17:40Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -36,7 +36,7 @@
   },
   "current_canary_lineage": {
     "schema": "arnold.critique_ledger.current_canary_lineage.v1",
-    "status": "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_FRESH_RETRY_ALL_ACCEPTANCE_GATES_PENDING",
+    "status": "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_PENDING_ALL_ACCEPTANCE_GATES_PENDING",
     "publication_gate": {
       "generation": "A36/B36",
       "status": "TERMINAL_NO_GO",
@@ -68,9 +68,47 @@
           "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-13-20260803",
           "container": "megaplan-cloud-agent-finite-canary-13"
         },
+        "diagnostic_receipt": {
+          "file_sha256": "c0949f6f2e40b0db1bbc6e3e251c1b701930ca2750a7cc9fcd87f4e64b4488d6",
+          "receipt_digest": "84667d967794d93dc753076350d6d34face8d755aee5251d5340629812ef4ed1",
+          "verifier_receipt_digest_prefix": "36c31861",
+          "status": "EVIDENCE_PRESENT_GATE_PENDING"
+        },
+        "production_receipt": {
+          "file_sha256": "087007324e255ebd42e82daf93781bf7032eb96bdee9643527984ce6240c6fc3",
+          "receipt_digest": "1e956fb442e06d7e0520a4f21de04a6eec246e42209e23fcd88ad0da2f72046d",
+          "verifier_receipt_digest_prefix": "a1bf4eb8",
+          "image_id_prefix": "sha256:d38b921f",
+          "status": "EVIDENCE_PRESENT_GATE_PENDING"
+        },
+        "live_attempt_13": {
+          "status": "TERMINAL_SAFE_NONPROCEED_NOT_ACCEPTED",
+          "run_receipt": {
+            "file_sha256": "ece98b8f99d4613dce1ec17888328a7cbc033df610d25e4855aec1b214c04b9b",
+            "receipt_digest": "72e4efaf37ea9b416cdada8e4447a30d2228d837b3029c9f163fee944bf85c11"
+          },
+          "returned_phases": ["plan", "critique", "gate"],
+          "gate": {"recommendation": "ITERATE", "state": "critiqued", "blocking_change_count": 8},
+          "runner_diagnostic": {
+            "classification": "unexpected_or_active_state",
+            "cause": "STATE_CHECK_PRECEDES_GATE_RECOMMENDATION_CLASSIFICATION"
+          },
+          "finalize": {"run": false, "reason": "GATE_DID_NOT_RECOMMEND_PROCEED"},
+          "container": {"id_prefix": "6cb81b", "stopped": true, "exit_code": 143, "oom_killed": false},
+          "workspace": {"sealed": true, "inode": 1317407, "owner": "root", "mode": "0700"},
+          "notifications_sent": false,
+          "reconciliation": "TERMINAL_RECONCILED"
+        },
         "gates": {"offline": "PENDING", "independent": "PENDING", "live": "PENDING", "stable_exit": "PENDING"}
       }
     ],
+    "pending_decision": {
+      "id": "A40",
+      "status": "PENDING_NO_AUTHORITY_EXPANSION",
+      "task": "TRUTHFULLY_CLASSIFY_SAFE_NONPROCEED_VS_BOUNDED_REVISE_OR_PRODUCT_PREREQUISITE",
+      "f0_bridge": "REQUIRED_EXPLICIT_HANDOFF_ADMISSION",
+      "constraints": ["NO_LAUNCH", "NO_GATE_PROMOTION", "NO_FINALIZE_REPLAY", "NO_RECEIPT_FABRICATION"]
+    },
     "official_reclaim_v2": {
       "transaction_id_prefix": "f0070",
       "status": "PASSED",

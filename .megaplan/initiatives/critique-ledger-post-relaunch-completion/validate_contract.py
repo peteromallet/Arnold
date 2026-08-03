@@ -728,6 +728,7 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
     lineage = custody.get("current_canary_lineage")
     if not isinstance(lineage, dict) or set(lineage) != {
         "schema", "status", "publication_gate", "generations",
+        "pending_decision",
         "official_reclaim_v2", "live_attempt_12", "capacity_disposition",
         "temporary_b38_diagnostic_checkout_retirement",
         "unresolved_operation_reconciliation",
@@ -751,7 +752,7 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
     if (
         lineage.get("schema") != "arnold.critique_ledger.current_canary_lineage.v1"
         or lineage.get("status")
-        != "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_FRESH_RETRY_ALL_ACCEPTANCE_GATES_PENDING"
+        != "B38_LIVE_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_PENDING_ALL_ACCEPTANCE_GATES_PENDING"
         or lineage.get("publication_gate") != {
             "generation": "A36/B36",
             "status": "TERMINAL_NO_GO",
@@ -779,9 +780,60 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
             "workspace": "/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-13-20260803",
             "container": "megaplan-cloud-agent-finite-canary-13",
         }
+        or b39.get("diagnostic_receipt") != {
+            "file_sha256": "c0949f6f2e40b0db1bbc6e3e251c1b701930ca2750a7cc9fcd87f4e64b4488d6",
+            "receipt_digest": "84667d967794d93dc753076350d6d34face8d755aee5251d5340629812ef4ed1",
+            "verifier_receipt_digest_prefix": "36c31861",
+            "status": "EVIDENCE_PRESENT_GATE_PENDING",
+        }
+        or b39.get("production_receipt") != {
+            "file_sha256": "087007324e255ebd42e82daf93781bf7032eb96bdee9643527984ce6240c6fc3",
+            "receipt_digest": "1e956fb442e06d7e0520a4f21de04a6eec246e42209e23fcd88ad0da2f72046d",
+            "verifier_receipt_digest_prefix": "a1bf4eb8",
+            "image_id_prefix": "sha256:d38b921f",
+            "status": "EVIDENCE_PRESENT_GATE_PENDING",
+        }
+        or b39.get("live_attempt_13") != {
+            "status": "TERMINAL_SAFE_NONPROCEED_NOT_ACCEPTED",
+            "run_receipt": {
+                "file_sha256": "ece98b8f99d4613dce1ec17888328a7cbc033df610d25e4855aec1b214c04b9b",
+                "receipt_digest": "72e4efaf37ea9b416cdada8e4447a30d2228d837b3029c9f163fee944bf85c11",
+            },
+            "returned_phases": ["plan", "critique", "gate"],
+            "gate": {
+                "recommendation": "ITERATE",
+                "state": "critiqued",
+                "blocking_change_count": 8,
+            },
+            "runner_diagnostic": {
+                "classification": "unexpected_or_active_state",
+                "cause": "STATE_CHECK_PRECEDES_GATE_RECOMMENDATION_CLASSIFICATION",
+            },
+            "finalize": {"run": False, "reason": "GATE_DID_NOT_RECOMMEND_PROCEED"},
+            "container": {
+                "id_prefix": "6cb81b", "stopped": True,
+                "exit_code": 143, "oom_killed": False,
+            },
+            "workspace": {
+                "sealed": True, "inode": 1317407,
+                "owner": "root", "mode": "0700",
+            },
+            "notifications_sent": False,
+            "reconciliation": "TERMINAL_RECONCILED",
+        }
         or b39.get("gates") != {
             "offline": "PENDING", "independent": "PENDING",
             "live": "PENDING", "stable_exit": "PENDING",
+        }
+        or lineage.get("pending_decision") != {
+            "id": "A40",
+            "status": "PENDING_NO_AUTHORITY_EXPANSION",
+            "task": "TRUTHFULLY_CLASSIFY_SAFE_NONPROCEED_VS_BOUNDED_REVISE_OR_PRODUCT_PREREQUISITE",
+            "f0_bridge": "REQUIRED_EXPLICIT_HANDOFF_ADMISSION",
+            "constraints": [
+                "NO_LAUNCH", "NO_GATE_PROMOTION", "NO_FINALIZE_REPLAY",
+                "NO_RECEIPT_FABRICATION",
+            ],
         }
         or not isinstance(reclaim, dict)
         or reclaim.get("status") != "PASSED"
@@ -821,7 +873,7 @@ def _validate_current_canary_lineage(custody: dict[str, Any], *, require_live: b
     ):
         raise ContractError("A37-B39 current canary evidence drift")
     if require_live:
-        raise ContractError("B39 offline, independent, live, and stable-exit gates are pending")
+        raise ContractError("A40 decision and B39 offline, independent, live, and stable-exit gates are pending")
 
 
 def _validate_live_canary_attempts(custody: dict[str, Any]) -> None:
@@ -1275,7 +1327,9 @@ def _validate_supersession(*, require_live: bool) -> None:
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
         or attempts.get("passing_successor") != "B38-production-acceptance-smoke"
-        or attempts.get("pending_successor") != "B39"
+        or attempts.get("pending_successor") is not None
+        or attempts.get("terminal_safe_nonproceed") != "B39-live-attempt-13"
+        or attempts.get("pending_decision") != "A40"
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
@@ -1286,7 +1340,7 @@ def _validate_supersession(*, require_live: bool) -> None:
         if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
             raise ContractError("strictly later smoke is not accepted")
     elif accepted == B26_PASS["id"]:
-        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ALL_GATES_PENDING":
+        if attempts.get("status") != "B26_SOL_GO_B27_TO_B30_LIVE_FAILED_B35_STATUS_POLL_TERMINATED_A36_B36_PUBLICATION_NO_GO_B38_ATTEMPT_12_TERMINAL_FAILED_B39_ATTEMPT_13_TERMINAL_SAFE_NONPROCEED_A40_DECISION_AND_ALL_ACCEPTANCE_GATES_PENDING":
             raise ContractError("latest passing smoke pending disposition drift")
     elif accepted != "B38-production-acceptance-smoke" or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")

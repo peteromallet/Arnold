@@ -71,6 +71,20 @@ def test_current_b39_lineage_cannot_promote_pending_live_gate() -> None:
         contract._validate_current_canary_lineage(custody, require_live=False)
 
 
+def test_current_b39_lineage_preserves_a40_pending_nonproceed() -> None:
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    lineage = custody["current_canary_lineage"]
+    lineage["pending_decision"]["status"] = "ACCEPTED"
+    with pytest.raises(contract.ContractError, match="current canary evidence drift"):
+        contract._validate_current_canary_lineage(custody, require_live=False)
+
+    custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
+    attempt = custody["current_canary_lineage"]["generations"][2]["live_attempt_13"]
+    attempt["gate"]["recommendation"] = "PROCEED"
+    with pytest.raises(contract.ContractError, match="current canary evidence drift"):
+        contract._validate_current_canary_lineage(custody, require_live=False)
+
+
 def test_failure_evidence_cannot_claim_pre_intent_host_durability() -> None:
     custody = contract._load_json(Path(__file__).with_name("custody-manifest.json"))
     custody["trusted_host_control_state_contract"]["failure_evidence"]["pre_intent"] = (
