@@ -462,16 +462,21 @@ def _legacy_lineage_evidence_issues(
     stored: object,
     current: Sequence[Mapping[str, Any]],
 ) -> list[str]:
-    """Compare durable lineage without pinning a rewritable clearance byte stream.
+    """Compare durable lineage without pinning rewritable projection byte streams.
 
     The migration sidecar is an immutable record of the evidence inspected at
-    migration time.  ``critique_clearance.json`` is intentionally regenerated
-    as resolution evidence advances (and includes ``produced_at``), so its
-    historical hash must remain in the sidecar without becoming a permanent
-    hash pin on the current clearance.  ``_legacy_lineage_evidence`` already
-    validates the current clearance's own digest and exact source-receipt row;
-    here we compare every immutable lineage artifact byte-for-byte and compare
-    the clearance by stable role/artifact identity only.
+    migration time.  ``state.json`` is an append-only workflow projection and
+    ``critique_clearance.json`` is intentionally regenerated as resolution
+    evidence advances (and includes ``produced_at``).  Their historical hashes
+    must remain in the sidecar without becoming permanent pins on their current
+    byte streams.
+
+    ``_legacy_lineage_evidence`` revalidates both live projections before this
+    comparison: state must still contain exactly one successful critique row
+    bound to the admitted critique hash and immutable critique-step duration,
+    while clearance must have an intact digest and exact source-receipt row.
+    Therefore these two roles are compared by stable role/artifact identity;
+    actual source, step, signal, and versioned-gate evidence remains byte-pinned.
     """
     if not isinstance(stored, list):
         return ["legacy lineage_evidence is not an array"]
@@ -504,11 +509,12 @@ def _legacy_lineage_evidence_issues(
     if set(stored_by_role) != set(current_by_role):
         issues.append("legacy lineage roles differ from the admitted lineage")
         return issues
+    mutable_projection_roles = {"state_history", "critique_clearance"}
     for role, current_row in current_by_role.items():
         stored_row = stored_by_role[role]
-        if role == "critique_clearance":
+        if role in mutable_projection_roles:
             if stored_row.get("artifact") != current_row.get("artifact"):
-                issues.append("legacy clearance artifact identity changed")
+                issues.append(f"legacy {role} artifact identity changed")
             continue
         if dict(stored_row) != dict(current_row):
             issues.append(f"legacy immutable lineage changed for {role}")
