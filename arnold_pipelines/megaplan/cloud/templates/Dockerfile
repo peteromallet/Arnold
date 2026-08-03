@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl-dev \
       util-linux \
       openssh-client \
+      passwd \
       procps \
       ripgrep \
       sudo \
