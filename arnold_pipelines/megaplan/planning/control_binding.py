@@ -12,12 +12,8 @@ gated by M10 control-path migration readiness.
 
 from __future__ import annotations
 
-# M9: _non_authoritative marker at module level
-# This module's control-path decisions are not yet backed by the shared
-# SourceCursorVector contract.  Consumers must treat output as orientation
-# only until M10 integrates the reread obligations.
-_m9_non_authoritative = True
-
+import hashlib
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -104,6 +100,12 @@ from arnold_pipelines.megaplan.orchestration.force_proceed_custody import (
     critique_resolution_rows,
     project_force_proceed_custody,
 )
+
+# M9: _non_authoritative marker at module level
+# This module's control-path decisions are not yet backed by the shared
+# SourceCursorVector contract.  Consumers must treat output as orientation
+# only until M10 integrates the reread obligations.
+_m9_non_authoritative = True
 
 
 def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
@@ -366,6 +368,16 @@ def _replace_delta(state: Mapping[str, object], key: str, value: object) -> Stat
         value=value,
         version=_state_version(state, key),
     )
+
+
+def _routing_sha256(config: Mapping[str, Any]) -> str:
+    routing = {
+        "phase_model": config.get("phase_model") or [],
+        "tier_models": config.get("tier_models") or {},
+    }
+    return hashlib.sha256(
+        json.dumps(routing, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _next_meta(
@@ -1419,7 +1431,9 @@ class PlanningControlBinding:
                     f"'{state['current_state']}'",
                 )
             from arnold_pipelines.megaplan.profiles import (
+                _canonicalize_tier_models_for_json,
                 _resolve_prep_models_with_inheritance,
+                _resolve_tier_models_with_inheritance,
                 load_profile_metadata,
                 load_profiles,
                 profile_to_phase_models,
@@ -1429,6 +1443,16 @@ class PlanningControlBinding:
             profiles = load_profiles(project_dir=_project_dir(state))
             metadata = load_profile_metadata(project_dir=_project_dir(state))
             resolved = resolve_profile(new_profile, profiles)
+            try:
+                tier_models = _resolve_tier_models_with_inheritance(
+                    new_profile,
+                    system_profiles=profiles,
+                    system_metadata=metadata,
+                    pipeline_local_profiles={},
+                    pipeline_local_metadata={},
+                )
+            except CliError:
+                tier_models = {}
             try:
                 inherited_prep_models = _resolve_prep_models_with_inheritance(
                     new_profile,
@@ -1443,6 +1467,12 @@ class PlanningControlBinding:
             next_config = dict(state["config"])
             next_config["profile"] = new_profile
             next_config["phase_model"] = profile_to_phase_models(resolved)
+            if tier_models:
+                next_config["tier_models"] = _canonicalize_tier_models_for_json(
+                    tier_models
+                )
+            else:
+                next_config.pop("tier_models", None)
             if _profile_has_premium_slots(resolved):
                 next_config["vendor"] = effective_premium_vendor(config=state.get("config", {}))
             else:
@@ -1457,10 +1487,17 @@ class PlanningControlBinding:
             else:
                 next_config.pop("prep_models", None)
                 next_config.pop("prep_model_resolver_trace", None)
+            profile_refresh_receipt = {
+                "profile": new_profile,
+                "same_profile_refresh": previous_profile == new_profile,
+                "from_routing_sha256": _routing_sha256(state["config"]),
+                "to_routing_sha256": _routing_sha256(next_config),
+            }
             return ControlTransitionResult(
                 accepted=True,
                 mutated=True,
                 reason="set-profile",
+                artifacts={"profile_refresh_receipt": profile_refresh_receipt},
                 state_deltas=(
                     _replace_delta(state, "config", next_config),
                     _replace_delta(
@@ -1474,6 +1511,7 @@ class PlanningControlBinding:
                                 "from": previous_profile,
                                 "to": new_profile,
                                 "reason": transition.payload.get("reason"),
+                                **profile_refresh_receipt,
                             },
                         ),
                     ),
