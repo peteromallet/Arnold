@@ -453,12 +453,14 @@ def validate_bootstrap_reclaim_transaction(
 
 _BOOTSTRAP_RECLAIM_SCRIPT = r"""
 import base64
+import hashlib
 import json
 import os
 import pathlib
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 config = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
@@ -466,19 +468,150 @@ workspace = config["target"]["workspace"]
 expected_container = config["container_observation"]
 expected_inventory = config["capacity_inventory"]
 units = config["units"]
+failure_stage = "before_intent"
+prune_started = False
+settle_observations = []
+last_systemd_jobs = []
 
-def run(argv):
-    timeout = 300 if argv[:4] == ["docker", "builder", "prune", "-f"] else 30
+def run(argv, timeout_seconds=None):
+    timeout = timeout_seconds
+    if timeout is None:
+        timeout = 300 if argv[:4] == ["docker", "builder", "prune", "-f"] else 30
     return subprocess.run(argv, text=True, capture_output=True, check=False, timeout=timeout)
 
-def show_unit(unit):
-    result = run(["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=UnitFileState", "--value"])
+def show_unit(unit, timeout_seconds=None):
+    result = run(["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=UnitFileState", "--value"], timeout_seconds=timeout_seconds)
     values = result.stdout.splitlines()
     if result.returncode != 0 or len(values) != 3 or not values[0] or not values[1]:
         raise RuntimeError("unit_observation_unknown:" + unit)
     persistent = pathlib.Path("/etc/systemd/system") / unit
     persistent_mask = os.path.lexists(persistent) and persistent.is_symlink() and os.readlink(persistent) == "/dev/null"
     return {"unit": unit, "load_state": values[0], "active_state": values[1], "unit_file_state": values[2], "persistent_mask": persistent_mask}
+
+def settle_units(before_items):
+    global settle_observations
+    deadline = time.monotonic() + 5.0
+    reset_units = set()
+    originally_absent = {
+        item["unit"] for item in before_items if item["load_state"] == "not-found"
+    }
+    while True:
+        current = []
+        for before_item in before_items:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("unit_settle_timeout")
+            try:
+                current.append(show_unit(before_item["unit"], timeout_seconds=min(0.5, remaining)))
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("unit_settle_observation_timeout:" + before_item["unit"]) from exc
+        settle_observations.append(current)
+        pending = False
+        for item in current:
+            unit = item["unit"]
+            if unit in originally_absent:
+                if item["load_state"] != "not-found":
+                    raise RuntimeError("unit_appeared_during_settle:" + unit)
+                continue
+            if item["load_state"] not in {"loaded", "masked"}:
+                raise RuntimeError("unit_load_state_drift_during_settle:" + unit)
+            if item["unit_file_state"] not in {"masked-runtime", "masked"}:
+                raise RuntimeError("unit_mask_state_drift_during_settle:" + unit)
+            active = item["active_state"]
+            if active == "inactive":
+                continue
+            if active == "failed":
+                if unit in reset_units:
+                    raise RuntimeError("unit_failed_after_reset:" + unit)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("unit_settle_timeout")
+                try:
+                    reset = run(
+                        ["systemctl", "reset-failed", unit],
+                        timeout_seconds=min(1.0, remaining),
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise RuntimeError("unit_reset_failed:" + unit) from exc
+                if reset.returncode != 0:
+                    raise RuntimeError("unit_reset_failed:" + unit)
+                reset_units.add(unit)
+                pending = True
+                continue
+            if active in {"activating", "deactivating"}:
+                pending = True
+                continue
+            raise RuntimeError("unit_invalid_active_state_during_settle:" + unit + ":" + active)
+        if not pending:
+            return current
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("unit_settle_timeout")
+        time.sleep(min(0.2, remaining))
+
+def require_no_recovery_unit_jobs():
+    global last_systemd_jobs
+    jobs = run(["systemctl", "list-jobs", "--no-legend", "--no-pager"])
+    if jobs.returncode != 0:
+        raise RuntimeError("systemd_jobs_observation_unknown")
+    last_systemd_jobs = [line.strip() for line in jobs.stdout.splitlines() if line.strip()]
+    for line in last_systemd_jobs:
+        if any(unit in line.split() for unit in units):
+            raise RuntimeError("recovery_unit_job_queued:" + line)
+    return last_systemd_jobs
+
+def safe_unit_observations():
+    observed = []
+    for unit in units:
+        try:
+            observed.append(show_unit(unit, timeout_seconds=0.5))
+        except Exception as exc:
+            observed.append({"unit": unit, "observation_error": str(exc)})
+    return observed
+
+def write_failure_receipt(exc_type, exc):
+    root = pathlib.Path(workspace) / ".megaplan" / "zero-recovery"
+    path = root / (config["transaction_id"] + ".bootstrap-fence-reclaim-failure.json")
+    receipt = {
+        "schema": "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_failure.v1",
+        "status": "failed",
+        "transaction_id": config["transaction_id"],
+        "transaction_digest": config["transaction_digest"],
+        "stage": failure_stage,
+        "error_type": exc_type.__name__,
+        "error": str(exc),
+        "prune_started": prune_started,
+        "units_observed": safe_unit_observations(),
+        "settle_observations": settle_observations,
+        "systemd_jobs": last_systemd_jobs,
+        "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "receipt_path": str(path),
+    }
+    receipt["receipt_digest"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    emitted = dict(receipt)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(receipt, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        emitted["durable_receipt_written"] = True
+    except Exception as receipt_exc:
+        emitted["durable_receipt_written"] = False
+        emitted["durable_receipt_error"] = type(receipt_exc).__name__ + ":" + str(receipt_exc)
+    print(json.dumps(emitted, sort_keys=True), file=sys.stderr)
+
+def failure_excepthook(exc_type, exc, traceback):
+    write_failure_receipt(exc_type, exc)
 
 def observe_container():
     result = run([
@@ -597,8 +730,11 @@ with os.fdopen(intent_fd, "w", encoding="utf-8") as handle:
     handle.write(config["transaction_digest"] + "\n")
     handle.flush()
     os.fsync(handle.fileno())
+sys.excepthook = failure_excepthook
 
+failure_stage = "observe_units_before_fence"
 before = [show_unit(unit) for unit in units]
+failure_stage = "stop_units"
 for item in before:
     if item["load_state"] not in {"not-found", "loaded", "masked"}:
         raise RuntimeError("unit_load_state_unknown:" + item["unit"])
@@ -607,28 +743,22 @@ for item in before:
         if stopped.returncode != 0:
             raise RuntimeError("unit_stop_failed:" + item["unit"])
 
+failure_stage = "runtime_mask_units"
 for item in before:
     if item["load_state"] != "not-found":
         masked = run(["systemctl", "mask", "--runtime", "--now", item["unit"]])
         if masked.returncode != 0:
             raise RuntimeError("unit_runtime_mask_failed:" + item["unit"])
 
-stopped_units = [show_unit(unit) for unit in units]
-for item in stopped_units:
-    if item["load_state"] != "not-found" and (
-        item["active_state"] != "inactive"
-        or item["unit_file_state"] not in {"masked-runtime", "masked"}
-    ):
-        raise RuntimeError("unit_not_inactive_before_prune:" + item["unit"])
+failure_stage = "settle_units_before_prune"
+stopped_units = settle_units(before)
+failure_stage = "observe_container_after_stop"
 container_after_stop = observe_container()
 
-jobs = run(["systemctl", "list-jobs", "--no-legend", "--no-pager"])
-if jobs.returncode != 0:
-    raise RuntimeError("systemd_jobs_observation_unknown")
-for line in jobs.stdout.splitlines():
-    if any(unit in line.split() for unit in units):
-        raise RuntimeError("recovery_unit_job_queued")
+failure_stage = "verify_no_recovery_unit_jobs_before_prune"
+require_no_recovery_unit_jobs()
 
+failure_stage = "verify_no_recovery_sessions_before_prune"
 tmux_before = run(["tmux", "list-sessions", "-F", "#S"])
 if tmux_before.returncode == 0:
     sessions_before = [line.strip() for line in tmux_before.stdout.splitlines() if line.strip()]
@@ -638,6 +768,7 @@ else:
     raise RuntimeError("tmux_observation_unknown")
 if set(sessions_before) & set(config["sessions"]):
     raise RuntimeError("forbidden_recovery_session_before_prune")
+failure_stage = "verify_no_recovery_processes_before_prune"
 ps_before = run(["ps", "-eo", "pid=,args="])
 if ps_before.returncode != 0:
     raise RuntimeError("process_observation_unknown")
@@ -649,11 +780,14 @@ for line in ps_before.stdout.splitlines():
 
 # The only destructive command in this route. No -a, image, container, volume,
 # workspace, deploy, or host-cache deletion is reachable from the config.
+failure_stage = "docker_dangling_build_cache_prune"
+prune_started = True
 prune = run(["docker", "builder", "prune", "-f"])
 if prune.returncode != 0:
     raise RuntimeError("docker_dangling_build_cache_prune_failed")
 container_after_prune = observe_container()
 
+failure_stage = "install_persistent_unit_masks"
 for item in before:
     if item["load_state"] != "not-found":
         persistent = pathlib.Path("/etc/systemd/system") / item["unit"]
@@ -803,7 +937,8 @@ def parse_bootstrap_reclaim_receipt(
         "pre_free_bytes", "pre_free_inodes", "post_free_bytes", "post_free_inodes",
         "reclaimed_bytes_delta", "units_before",
         "units_after_stop", "units", "container_pre", "container_after_stop", "container_after_prune", "container",
-        "forbidden_sessions", "forbidden_processes", "observed_at",
+        "forbidden_sessions", "forbidden_processes", "systemd_jobs",
+        "observed_at",
     }
     units = payload.get("units") if isinstance(payload, dict) else None
     if (
@@ -832,6 +967,7 @@ def parse_bootstrap_reclaim_receipt(
         or payload.get("container_after_prune") != payload.get("container")
         or payload.get("forbidden_sessions") != []
         or payload.get("forbidden_processes") != []
+        or payload.get("systemd_jobs") != []
         or _parse_time(payload.get("observed_at")) is None
     ):
         raise CliError("zero_recovery_bootstrap_unknown", "reclaim receipt failed strict verification")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import copy
 import hashlib
@@ -252,8 +253,298 @@ def test_bootstrap_remote_program_orders_fence_before_bounded_prune() -> None:
     config = json.loads(base64.b64decode(argv[3]))
     assert config["command_argv"] == ["docker", "builder", "prune", "-f"]
     assert script.index('"systemctl", "mask", "--runtime", "--now"') < script.index('prune = run(["docker", "builder", "prune", "-f"])')
+    assert script.index("stopped_units = settle_units(before)") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
+    assert script.index("require_no_recovery_unit_jobs()") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
+    assert script.index("prune_started = True") < script.index('prune = run(["docker", "builder", "prune", "-f"])')
+    assert "bootstrap_fence_reclaim_failure.v1" in script
+    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL" in script
+    assert '"prune_started": prune_started' in script
+    assert "file=sys.stderr" in script
     for forbidden in ("docker system prune", "docker container prune", "docker image prune", "docker volume prune", "docker rm", "rm -rf", '"-a"', '"--all"'):
         assert forbidden not in script
+
+
+def _remote_bootstrap_function(
+    name: str, namespace: dict[str, object]
+) -> dict[str, object]:
+    tree = ast.parse(zero_recovery._BOOTSTRAP_RECLAIM_SCRIPT)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    compiled = compile(
+        ast.Module(body=[function], type_ignores=[]),
+        filename=f"<bootstrap-{name}>",
+        mode="exec",
+    )
+    exec(compiled, namespace)
+    return namespace
+
+
+class _FakeSettleTime:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, value: float) -> None:
+        self.sleeps.append(value)
+        self.now += value
+
+
+def _settle_namespace(
+    states: list[str], *, reset_returncode: int = 0
+) -> tuple[dict[str, object], list[list[str]], _FakeSettleTime]:
+    remaining = list(states)
+    calls: list[list[str]] = []
+    fake_time = _FakeSettleTime()
+
+    def show_unit(
+        unit: str, timeout_seconds: float | None = None
+    ) -> dict[str, object]:
+        assert timeout_seconds is not None and 0 < timeout_seconds <= 0.5
+        active = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return {
+            "unit": unit,
+            "load_state": "loaded",
+            "active_state": active,
+            "unit_file_state": "masked-runtime",
+            "persistent_mask": False,
+        }
+
+    def run(
+        argv: list[str], timeout_seconds: float | None = None
+    ) -> SimpleNamespace:
+        assert timeout_seconds is not None and 0 < timeout_seconds <= 1.0
+        calls.append(argv)
+        return SimpleNamespace(returncode=reset_returncode, stdout="", stderr="")
+
+    namespace: dict[str, object] = {
+        "time": fake_time,
+        "show_unit": show_unit,
+        "run": run,
+        "settle_observations": [],
+        "RuntimeError": RuntimeError,
+        "subprocess": subprocess,
+        "set": set,
+        "min": min,
+    }
+    return _remote_bootstrap_function("settle_units", namespace), calls, fake_time
+
+
+def test_bootstrap_unit_settle_accepts_already_inactive_masked_unit() -> None:
+    namespace, calls, fake_time = _settle_namespace(["inactive"])
+    result = namespace["settle_units"](
+        [{"unit": "unit.service", "load_state": "loaded"}]
+    )
+    assert result[0]["active_state"] == "inactive"
+    assert calls == []
+    assert fake_time.sleeps == []
+
+
+def test_bootstrap_unit_settle_resets_failed_then_requires_inactive() -> None:
+    namespace, calls, fake_time = _settle_namespace(["failed", "inactive"])
+    result = namespace["settle_units"](
+        [{"unit": "unit.service", "load_state": "loaded"}]
+    )
+    assert result[0]["active_state"] == "inactive"
+    assert calls == [["systemctl", "reset-failed", "unit.service"]]
+    assert fake_time.sleeps == [0.2]
+
+
+def test_bootstrap_unit_settle_polls_deactivating_then_inactive() -> None:
+    namespace, calls, fake_time = _settle_namespace(["deactivating", "inactive"])
+    result = namespace["settle_units"](
+        [{"unit": "unit.service", "load_state": "loaded"}]
+    )
+    assert result[0]["active_state"] == "inactive"
+    assert calls == []
+    assert fake_time.sleeps == [0.2]
+
+
+def test_bootstrap_unit_settle_timeout_cannot_reach_prune() -> None:
+    namespace, calls, fake_time = _settle_namespace(["deactivating"])
+    with pytest.raises(RuntimeError, match="unit_settle_timeout"):
+        namespace["settle_units"](
+            [{"unit": "unit.service", "load_state": "loaded"}]
+        )
+    assert fake_time.now >= 5.0
+    assert not any(argv[:3] == ["docker", "builder", "prune"] for argv in calls)
+
+
+def test_bootstrap_unit_settle_reset_failure_cannot_reach_prune() -> None:
+    namespace, calls, _ = _settle_namespace(["failed"], reset_returncode=1)
+    with pytest.raises(RuntimeError, match="unit_reset_failed:unit.service"):
+        namespace["settle_units"](
+            [{"unit": "unit.service", "load_state": "loaded"}]
+        )
+    assert calls == [["systemctl", "reset-failed", "unit.service"]]
+    assert not any(argv[:3] == ["docker", "builder", "prune"] for argv in calls)
+
+
+def test_bootstrap_unit_settle_rejects_active_without_polling() -> None:
+    namespace, calls, fake_time = _settle_namespace(["active"])
+    with pytest.raises(
+        RuntimeError,
+        match="unit_invalid_active_state_during_settle:unit.service:active",
+    ):
+        namespace["settle_units"](
+            [{"unit": "unit.service", "load_state": "loaded"}]
+        )
+    assert calls == []
+    assert fake_time.sleeps == []
+
+
+def test_bootstrap_queued_recovery_job_cannot_reach_prune() -> None:
+    calls: list[list[str]] = []
+
+    def run(argv: list[str]) -> SimpleNamespace:
+        calls.append(argv)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="42 unit.service stop running\n",
+            stderr="",
+        )
+
+    namespace = _remote_bootstrap_function(
+        "require_no_recovery_unit_jobs",
+        {
+            "run": run,
+            "units": ["unit.service"],
+            "last_systemd_jobs": [],
+            "RuntimeError": RuntimeError,
+        },
+    )
+    with pytest.raises(RuntimeError, match="recovery_unit_job_queued"):
+        namespace["require_no_recovery_unit_jobs"]()
+    assert calls == [["systemctl", "list-jobs", "--no-legend", "--no-pager"]]
+    assert not any(argv[:3] == ["docker", "builder", "prune"] for argv in calls)
+
+
+def test_bootstrap_failure_receipt_is_typed_durable_and_never_overwritten(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observations = [
+        {
+            "unit": unit,
+            "load_state": "loaded",
+            "active_state": "deactivating",
+            "unit_file_state": "masked-runtime",
+            "persistent_mask": False,
+        }
+        for unit in zero_recovery.ZERO_RECOVERY_UNITS
+    ]
+    namespace = _remote_bootstrap_function(
+        "write_failure_receipt",
+        {
+            "pathlib": __import__("pathlib"),
+            "workspace": str(tmp_path),
+            "config": {
+                "transaction_id": "tx-1",
+                "transaction_digest": "d" * 64,
+            },
+            "failure_stage": "settle_units_before_prune",
+            "prune_started": False,
+            "safe_unit_observations": lambda: observations,
+            "settle_observations": [observations],
+            "last_systemd_jobs": [],
+            "datetime": datetime,
+            "timezone": timezone,
+            "hashlib": hashlib,
+            "json": json,
+            "os": os,
+            "sys": sys,
+        },
+    )
+    writer = namespace["write_failure_receipt"]
+    writer(RuntimeError, RuntimeError("unit_settle_timeout"))
+    path = (
+        tmp_path
+        / ".megaplan/zero-recovery/tx-1.bootstrap-fence-reclaim-failure.json"
+    )
+    before = path.read_bytes()
+    payload = json.loads(before)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert payload["schema"] == (
+        "arnold.cloud.zero_recovery_bootstrap_fence_reclaim_failure.v1"
+    )
+    assert payload["stage"] == "settle_units_before_prune"
+    assert payload["prune_started"] is False
+    assert payload["units_observed"] == observations
+    unsigned = dict(payload)
+    digest = unsigned.pop("receipt_digest")
+    assert digest == hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    writer(RuntimeError, RuntimeError("must-not-overwrite"))
+    assert path.read_bytes() == before
+    emitted = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert emitted[0]["durable_receipt_written"] is True
+    assert emitted[1]["durable_receipt_written"] is False
+    assert emitted[1]["durable_receipt_error"].startswith("FileExistsError:")
+
+
+def test_bootstrap_success_receipt_parser_binds_empty_systemd_jobs() -> None:
+    transaction_id = "tx-1"
+    transaction_digest = "d" * 64
+    container = {"lifecycle": "stopped"}
+    units = [
+        {
+            "unit": unit,
+            "load_state": "loaded",
+            "active_state": "inactive",
+            "unit_file_state": "masked",
+            "persistent_mask": True,
+            "state": "masked",
+        }
+        for unit in zero_recovery.ZERO_RECOVERY_UNITS
+    ]
+    receipt = {
+        "schema": zero_recovery.BOOTSTRAP_RECLAIM_RECEIPT_SCHEMA,
+        "status": "passed",
+        "transaction_id": transaction_id,
+        "transaction_digest": transaction_digest,
+        "command_class": "docker_dangling_build_cache_prune",
+        "command_argv": ["docker", "builder", "prune", "-f"],
+        "returncode": 0,
+        "pre_inventory_digest": "a" * 64,
+        "pre_mount": {"st_dev": 1},
+        "post_mount": {"st_dev": 1},
+        "pre_free_bytes": 1,
+        "pre_free_inodes": 2,
+        "post_free_bytes": 3,
+        "post_free_inodes": 2,
+        "reclaimed_bytes_delta": 2,
+        "units_before": units,
+        "units_after_stop": units,
+        "units": units,
+        "container_pre": container,
+        "container_after_stop": container,
+        "container_after_prune": container,
+        "container": container,
+        "forbidden_sessions": [],
+        "forbidden_processes": [],
+        "systemd_jobs": [],
+        "observed_at": "2026-08-03T00:00:00Z",
+    }
+    assert zero_recovery.parse_bootstrap_reclaim_receipt(
+        stdout=json.dumps(receipt),
+        transaction_id=transaction_id,
+        transaction_digest=transaction_digest,
+    ) == receipt
+    hostile = dict(receipt)
+    hostile["systemd_jobs"] = ["42 hostile.service start running"]
+    with pytest.raises(CliError, match="strict verification"):
+        zero_recovery.parse_bootstrap_reclaim_receipt(
+            stdout=json.dumps(hostile),
+            transaction_id=transaction_id,
+            transaction_digest=transaction_digest,
+        )
 
 
 def test_inventory_command_and_parser_reject_scope_or_docker_ambiguity() -> None:
