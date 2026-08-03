@@ -12,8 +12,17 @@ The recovery boundary is:
 3. durably cancel attempt 8 in its WBC ledger;
 4. bind the legacy r5 marker to its proven old runtime, then cut both chain and
    marker runtime custody to the exact deployed engine;
-5. explicitly resume the same chain with `--no-push`;
-6. observe a new Finalize WBC owner with ordinal 9, then GLM Execute.
+5. while the chain remains paused and the plan lifecycle remains `gated`, invoke
+   exactly one direct Finalize command under that exact new runtime;
+6. verify the new Finalize WBC is ordinal 9 and completes with lifecycle state
+   `finalized` and `next_step=execute`;
+7. only then explicitly resume the same chain with `--no-push` into GLM-family
+   Execute.
+
+This ordering is the integrated launch contract in
+`docs/arnold/critique-attempt9-launch-contract.md` (commit `6d4314207d`). In
+particular, resuming the chain from `gated` is forbidden: chain resume must not
+be used to create attempt 9.
 
 Do not directly adopt the recovered attempt-7 candidate. It passed model
 schema, semantic, critique-coverage, and feasibility checks, but it is only the
@@ -73,6 +82,10 @@ file-receipt protocol.
   `eb5596a93a`: 14 focused marker tests, 46 adjacent runtime/chain-binding
   tests, and the earlier 74 cancellation/profile/handoff/control tests passed;
   Ruff and `git diff --check` passed.
+- Integrated launch contract `6d4314207d` locks Finalize to a one-shot direct
+  phase invocation and maps Execute's coordinator and every complexity tier
+  1–10 to GLM-family routes. DeepSeek remains available only outside Execute;
+  GPT-5.6 Sol high remains exclusive to Finalize.
 
 ## Preconditions — all must pass
 
@@ -97,7 +110,8 @@ Before mutation, re-read and compare:
 - the exact attempt/WBC/run/ordinal tuple above;
 - all five PID start ticks and command lines (or prove all are already absent);
 - old runtime provenance still equals `CUTOVER_OLD_RUNTIME_SHA`;
-- persisted profile routes still pin Finalize to Sol high and Execute to GLM;
+- persisted profile routes still pin Finalize to Sol high and Execute's
+  coordinator plus every complexity tier 1–10 to GLM-family routes;
 - recovered candidate, manifest, rollout, and output-receipt hashes still match;
 - no `finalize.json` exists;
 - no second r5 tmux/session/runner exists;
@@ -222,7 +236,40 @@ If either side fails, remain paused. If chain rebind succeeds but marker update
 fails, use the ordinary guarded chain runtime rollback with the old identity
 and receipt; do not resume in a split-brain state.
 
-### 6. Resume the same r5 chain
+### 6. Launch exactly one direct Finalize attempt while paused
+
+Keep the chain runner stopped, both operator-pause authorities present, and the
+r5 marker at `should_run=false`. The plan lifecycle state itself remains
+`gated`; the direct `finalize` phase command accepts `gated` and would reject a
+durable plan lifecycle state of `paused`.
+
+From the runtime-attested exact new engine checkout, with the r5 workspace as
+the current directory, invoke exactly once:
+
+```bash
+python -P -m arnold_pipelines.megaplan finalize \
+  --plan cl2-wbc-backed-ledger-20260803-1357
+```
+
+Do not wrap this command in `auto`, `chain`, a shell retry, or a deterministic
+three-attempt loop. Do not resume the chain from `gated`. The direct phase
+command is the sole authorized creator of immutable Finalize attempt 9.
+
+Before any resume, reread state and the WBC ledger and require:
+
+- exactly one new Finalize WBC stream with ordinal 9;
+- attempt 9 is `STARTED -> COMPLETED`, with no active Finalize owner;
+- attempt 8 remains `STARTED -> CANCELLED`;
+- lifecycle state is `finalized` and `next_step=execute`;
+- `finalize.json` and its immutable publication/mutation receipts exist and
+  match the completed attempt.
+
+If the direct command fails, require exactly one terminal attempt-9 stream, no
+attempt 10, no active Finalize owner, and lifecycle state still `gated` (or its
+explicit terminal/manual-review projection). Keep the runner stopped and both
+pause authorities intact. Diagnose before any new operator action.
+
+### 7. Resume the same r5 chain into Execute
 
 Invoke `cloud.operator_control resume` directly from the exact new engine with
 the exact spec/workspace/session/marker and `--no-push`. Do not use
@@ -230,18 +277,23 @@ the exact spec/workspace/session/marker and `--no-push`. Do not use
 use `--fresh`, and do not run `init`.
 
 `--no-push` preserves the existing milestone checkout and its plan artifacts;
-the relaunch command must be the marker's newly attested command. Resume must
-clear both pause authorities, set only r5 `should_run=true`, and launch one r5
-tmux runner.
+the relaunch command must be the marker's newly attested command. Resume is
+authorized only from the verified `finalized` / `next_step=execute` state; it
+must clear both pause authorities, set only r5 `should_run=true`, and launch one
+r5 tmux runner. The resumed chain must enter Execute and cannot redispatch
+Finalize.
 
 ## Launch canaries and success criteria
 
-Check immediately, then after 10–15 minutes:
+Check Finalize completion before resume, then check immediately after resume
+and again after 10–15 minutes:
 
 1. Exactly one active Critique session: r5. All older markers remain paused.
 2. Same chain state, milestone 0, same plan; no Prep/Plan/Critique replay.
-3. New active Finalize owner has ordinal **9**, a new run/WBC/invocation ID,
-   `codex:gpt-5.6-sol:high`, and no relationship to attempt-8 PIDs.
+3. The direct paused-state Finalize invocation created exactly one ordinal-9
+   WBC with a new run/WBC/invocation ID, `codex:gpt-5.6-sol:high`, no
+   relationship to attempt-8 PIDs, and terminal `COMPLETED` status before chain
+   resume.
 4. Attempt 8 stays `CANCELLED`; attempt 7 stays failed/indeterminate. Neither is
    rewritten as success.
 5. Local-strict Sol output uses the fresh authorized candidate path plus exact
@@ -251,7 +303,10 @@ Check immediately, then after 10–15 minutes:
 6. Successful Finalize publishes `finalize.json` through sole Finalize
    authority with immutable mutation receipt, then writes phase/WBC success and
    advances state to `finalized`.
-7. Execute starts through `hermes:zhipu:glm-5.2` (not DeepSeek and not Codex).
+7. After operator-controlled resume from `finalized`, Execute starts through a
+   GLM-family route; its coordinator and every complexity tier 1–10 exclude
+   DeepSeek and Codex. The preferred route is direct Zhipu GLM 5.2, followed by
+   Fireworks GLM 5p2 and then direct Zhipu retry.
 8. `/whats-cooking` responds and shows one current r5 chain. Raw tmux/PID facts
    are diagnostic only; canonical current-target liveness is authoritative.
 9. Poll unchanged stopped/healthy status repeatedly (including 200 notification
@@ -263,7 +318,8 @@ durable after criteria 8–9 also pass.
 
 ## Rollback / fail-closed rules
 
-- Before resume, every failure leaves the chain paused and `should_run=false`.
+- Before resume, every failure leaves the chain paused and `should_run=false`;
+  never resume from `gated` or use resume to manufacture attempt 9.
 - Never restore attempt 8 to STARTED or delete its terminal evidence.
 - Never copy the recovered candidate over `finalize.json` manually.
 - Never run a second driver, `--fresh`, broad workspace cleanup, or global
