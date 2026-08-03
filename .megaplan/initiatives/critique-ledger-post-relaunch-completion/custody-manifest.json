@@ -1,5 +1,5 @@
 {
-  "schema": "arnold.critique_ledger.unfinished_work_custody.v1",
+  "schema": "arnold.critique_ledger.unfinished_work_custody.v2",
   "captured_at": "2026-08-02T23:15:00+02:00",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
@@ -157,6 +157,108 @@
     "index_diff_sha256": "sha256(raw stdout bytes from: git diff --binary --no-ext-diff --cached HEAD --)",
     "untracked_files": "git ls-files --others --exclude-standard -z; record each repo-relative path, POSIX mode and sha256(raw file bytes)"
   },
+  "operational_substrates": [
+    {
+      "id": "cloud-observation-preflight-repair-v2",
+      "disposition": "CONSUMED_BOUNDED_SUBSTRATE"
+    },
+    {
+      "id": "t1.9-zero-recovery-launcher",
+      "disposition": "CONSUMED_ON_SUCCESS"
+    }
+  ],
+  "deferred_obligations": [
+    {
+      "id": "F1.platform_capacity_storage_hardening",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.physically_minimal_image",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.cross_pipeline_model_isolation",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.t1_5_monotonic_consumed_grant",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.production_recovery_owner",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.exact_occurrence_handoff",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.notification_occurrence_version_custody",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.t1_5_topology_retirement",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.t1_7_transactional_storage",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F1.t1_10_notification_policy",
+      "phase": "F1",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F2.t1_1_universal_admission",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F2.t1_2_attempt_model_handling",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F2.provider_attested_model_identity",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F2.t1_3_transport_integration",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    },
+    {
+      "id": "F2.t1_4_t1_6_release_closure",
+      "phase": "F2",
+      "status": "DEFERRED_POST_CANARY",
+      "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY"
+    }
+  ],
   "items": [
     {
       "id": "cloud-observation-preflight-rejected-v1",
@@ -335,7 +437,7 @@
     },
     {
       "id": "t1.9-zero-recovery-launcher",
-      "status": "SPECIFICATION_PENDING_IMPLEMENTATION",
+      "status": "IMPLEMENTED_FINITE_CANARY_LAUNCHER_PENDING_LIVE_ACCEPTANCE",
       "evidence": ".megaplan/subagents/critique-ledger-recovery/T1.9/t1-9-stage-a-implementation-delta-v2-sol.md",
       "evidence_sha256": "9a604b05637d2f9eba54db6a6f42e488e2d2979105a6b0d1d6dcb5665688ad11",
       "zero_recovery_brief": ".megaplan/subagents/critique-ledger-recovery/T1.9/t1-9-zero-recovery-implementation-brief-luna.md",

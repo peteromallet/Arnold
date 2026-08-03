@@ -49,8 +49,33 @@ machine-readable authority; the paths and counts below are operator guidance.
 - [ ] Any canary runner failure fences and stops without invoking T1.5/T1.10.
 - [ ] The canary is stopped at its declared finite boundary; no background
   wrapper, timer, resident, or watchdog can continue mutating or messaging.
-- [ ] Every item below is emitted as `NOT_CONSUMED_OPERATIONAL_CANARY` in the
-  T6.2 handoff with its evidence and preserved-work location.
+- [ ] Operational substrate is a separate typed collection, never inferred
+  from the archival `items` collection. The accepted provider-v2 implementation
+  is `CONSUMED_BOUNDED_SUBSTRATE`; the finite T1.9 launcher is
+  `CONSUMED_ON_SUCCESS` only in a passing completion receipt that binds the
+  exact successful run. Neither is emitted as deferred work.
+- [ ] All fifteen F1/F2 obligations below are emitted unchanged as
+  `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`. Omissions,
+  additions, duplicates, phase drift, status drift, and disposition drift fail
+  the T6.2 completion gate.
+
+## Exact deferred-obligation contract
+
+- [ ] `F1.platform_capacity_storage_hardening` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.physically_minimal_image` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.cross_pipeline_model_isolation` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.t1_5_monotonic_consumed_grant` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.production_recovery_owner` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.exact_occurrence_handoff` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.notification_occurrence_version_custody` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.t1_5_topology_retirement` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.t1_7_transactional_storage` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F1.t1_10_notification_policy` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F2.t1_1_universal_admission` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F2.t1_2_attempt_model_handling` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F2.provider_attested_model_identity` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F2.t1_3_transport_integration` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
+- [ ] `F2.t1_4_t1_6_release_closure` — `DEFERRED_POST_CANARY` / `NOT_CONSUMED_OPERATIONAL_CANARY`
 
 ## F1 — owner, storage and recovery root fixes
 
