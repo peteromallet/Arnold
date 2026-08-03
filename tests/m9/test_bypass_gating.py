@@ -25,7 +25,13 @@ TARGETED_WRAPPERS = {
 GATED_CALL_RE = re.compile(
     r"authority_(?:gap_continue|fail_closed|gap_record)\s+\"(T29-BYPASS-\d+)\""
 )
-EXPECTED_AUTHORITY_RISK_IDS = {
+RETIRED_AUTHORITY_RISK_IDS = {
+    # The permissive arnold-chain acceptance fallback was deleted. The wrapper
+    # now validates one schema-bound canonical decision and fails closed before
+    # launching, so this historical bypass has no call site to gate.
+    "T29-BYPASS-183",
+}
+EXPECTED_AUTHORITY_RISK_IDS = ({
     f"T29-BYPASS-{number:03d}"
     for number in (
         24,
@@ -57,7 +63,7 @@ EXPECTED_AUTHORITY_RISK_IDS = {
         208,
         *range(212, 215),
     )
-} - {"T29-BYPASS-163"}
+} - {"T29-BYPASS-163"}) - RETIRED_AUTHORITY_RISK_IDS
 
 
 def _wrapper_text(path: str) -> str:
