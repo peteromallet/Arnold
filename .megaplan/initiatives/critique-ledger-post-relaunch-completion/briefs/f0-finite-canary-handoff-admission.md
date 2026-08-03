@@ -10,7 +10,7 @@ Verify all of the following from committed evidence bytes:
 - every T6.2 prelaunch gate is accepted and its declared SHA-256 recomputes;
 - the accepted build, smoke, predeploy, fence, canary, stop, stable-exit and
   fresh-clone receipts bind one exact commit/tree/image lineage;
-- all B8-B10 failed builds and B10-B20 failed smokes remain preserved as
+- all B8-B10 failed builds and B10-B24 failed smokes remain preserved as
   rejected history and a strictly later smoke is the accepted one;
 - every immutable operation intent has one independently reviewed effective
   terminal outcome in `operation-reconciliation-manifest.json`, with no effect

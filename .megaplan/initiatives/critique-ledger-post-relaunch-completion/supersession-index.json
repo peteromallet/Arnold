@@ -22,7 +22,8 @@
     "ordered_rejected_attempts": [
       "B8-build", "B9-build", "B10-build", "B10-smoke", "B11-smoke",
       "B12-smoke", "B13-smoke", "B14-smoke", "B15-smoke", "B16-smoke",
-      "B17-smoke", "B18-smoke", "B19-smoke", "B20-smoke"
+      "B17-smoke", "B18-smoke", "B19-smoke", "B20-smoke", "B21-smoke",
+      "B22-smoke", "B23-smoke", "B24-smoke"
     ],
     "accepted_successor": null,
     "status": "HARD_NO_GO_UNTIL_STRICTLY_LATER_INDEPENDENTLY_ACCEPTED_SMOKE",

@@ -144,8 +144,17 @@ deliberately pending import; it is not permission to recreate a receipt.
   B19 (`301abcae...` / `f743e9ec...`) rejected its streaming stdin tempfile;
   and B20 (`be3ca786...` / `602e5311...`) passed init but failed plan because
   `/usr/bin/env` could not resolve `python3` in the admitted model runtime PATH.
-- [ ] Copy and reconcile every available B10-B20 receipt/evidence directory;
-  obtain a strictly later independently accepted smoke. No B8-B20 attempt is
+- [ ] Preserve B21-B24 at the same immutable path pattern. B21
+  (`29ee2bfd...` / `d78c2e2f...`) failed plan with EACCES because the smoke top
+  checkout remained mode 0700; B22 (`4e2fca8a...` / `a38dbd6a...`) failed
+  critique because required semantic checks were missing; B23 (`7c9256b2...` /
+  `55161ca5...`) failed finalize because the offline fake omitted the
+  `finalize_capture` schema; and B24 (`a172a7a7...` / `461672f9...`) passed
+  init/plan/critique/gate but returned `planner_repair_required` at finalize,
+  exposing a real product mismatch: the prompt/feasibility contract requires
+  task-contract v2 while the capture schema forbids or omits its v2 fields.
+- [ ] Copy and reconcile every available B10-B24 receipt/evidence directory;
+  obtain a strictly later independently accepted smoke. No B8-B24 attempt is
   current acceptance authority, and no missing build receipt may be synthesized.
 
 ## Exact deferred-obligation contract

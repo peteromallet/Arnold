@@ -1,7 +1,7 @@
 {
   "schema": "arnold.critique_ledger.unfinished_work_custody.v4",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T05:01:58Z",
+  "contract_updated_at": "2026-08-03T05:04:43Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -146,6 +146,38 @@
       "status": "FAILED_NOT_ACCEPTED",
       "failure": "init passed but plan failed because /usr/bin/env could not resolve python3 in the admitted model runtime PATH",
       "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b20-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B21-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "29ee2bfd63b6f466c10e60baaaaffee45aa8bd81", "tree": "d78c2e2facea5ff0b14bb503c4cb0b7d9901caea"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "plan failed with EACCES because the smoke top checkout remained mode 0700",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b21-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B22-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "4e2fca8a294eb18526aa88576c0818487730d26c", "tree": "a38dbd6a84e1205286f9e65c04996b23116071f2"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "critique failed because required semantic checks were missing",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b22-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B23-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "7c9256b210cefb998dec57929e41b5a799faf314", "tree": "55161ca5def9fb1688ca911d80afd94ba2df7eb4"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "finalize failed because the offline fake omitted the finalize_capture schema",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b23-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
+    },
+    {
+      "id": "B24-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "a172a7a7556984f76d86625f3d0953d089f45004", "tree": "461672f91b169fa961b9839ab51a6647bdd6f0f9"},
+      "status": "FAILED_NOT_ACCEPTED",
+      "failure": "init, plan, critique and gate passed; finalize returned planner_repair_required because the prompt/feasibility contract requires task-contract v2 while finalize_capture forbids or omits the v2 fields",
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b24-offline-smoke.json", "sha256": null, "status": "REMOTE_COPY_REQUIRED"}
     }
   ],
   "prelaunch_release_gates": [

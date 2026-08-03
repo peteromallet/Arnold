@@ -72,6 +72,10 @@ KNOWN_ATTEMPTS = [
     ("B18-smoke", "OFFLINE_STRUCTURAL_SMOKE", "e1d26430b54d3121fa545a677eb6a5189fbb248e", "75bd6a645cfb49d267e4d985f88881beeda94b7b", "/var/lib/arnold-zero-recovery/critique-ledger-b18-offline-smoke.json"),
     ("B19-smoke", "OFFLINE_STRUCTURAL_SMOKE", "301abcae4187931eac4f97efdd4fac0120b068d9", "f743e9ecddccdaf95b0546960018630771f9468f", "/var/lib/arnold-zero-recovery/critique-ledger-b19-offline-smoke.json"),
     ("B20-smoke", "OFFLINE_STRUCTURAL_SMOKE", "be3ca786094013c3a0350b6860bbb042b63b1cc2", "602e5311d76d1163069834da9186e5380168c005", "/var/lib/arnold-zero-recovery/critique-ledger-b20-offline-smoke.json"),
+    ("B21-smoke", "OFFLINE_STRUCTURAL_SMOKE", "29ee2bfd63b6f466c10e60baaaaffee45aa8bd81", "d78c2e2facea5ff0b14bb503c4cb0b7d9901caea", "/var/lib/arnold-zero-recovery/critique-ledger-b21-offline-smoke.json"),
+    ("B22-smoke", "OFFLINE_STRUCTURAL_SMOKE", "4e2fca8a294eb18526aa88576c0818487730d26c", "a38dbd6a84e1205286f9e65c04996b23116071f2", "/var/lib/arnold-zero-recovery/critique-ledger-b22-offline-smoke.json"),
+    ("B23-smoke", "OFFLINE_STRUCTURAL_SMOKE", "7c9256b210cefb998dec57929e41b5a799faf314", "55161ca5def9fb1688ca911d80afd94ba2df7eb4", "/var/lib/arnold-zero-recovery/critique-ledger-b23-offline-smoke.json"),
+    ("B24-smoke", "OFFLINE_STRUCTURAL_SMOKE", "a172a7a7556984f76d86625f3d0953d089f45004", "461672f91b169fa961b9839ab51a6647bdd6f0f9", "/var/lib/arnold-zero-recovery/critique-ledger-b24-offline-smoke.json"),
 ]
 
 OPERATION_IDS = [

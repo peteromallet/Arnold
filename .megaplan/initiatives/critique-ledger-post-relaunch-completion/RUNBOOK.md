@@ -9,7 +9,7 @@ incident. None of those routes reconciles the immutable one-dispatch intents.
 ## Hard NO-GO default
 
 The follow-up chain remains closed while any prelaunch gate is pending, any
-historical operation lacks an effective terminal reconciliation, B11-B20 remain
+historical operation lacks an effective terminal reconciliation, B11-B24 remain
 the latest smokes, or F0 has not admitted the exact stable-exit handoff. There
 is intentionally no launch command in this runbook until an accepted installed
 authority path and its exact invocation are committed and independently
@@ -45,7 +45,7 @@ backdated or reconstructed receipt.
    notification-provider zero-call observations. Process absence alone is not
    notification evidence.
 4. Build a strictly later candidate and run a new non-overwriting offline smoke.
-   B8-B10 build failures and B10-B20 smoke failures remain immutable evidence.
+   B8-B10 build failures and B10-B24 smoke failures remain immutable evidence.
 5. Only after an accepted built-image smoke: obtain fresh predeploy authority,
    apply and verify the fence, run the one finite canary, record conformance and
    completion, stop it, and prove stable exit.
