@@ -320,21 +320,57 @@ deliberately pending import; it is not permission to recreate a receipt.
   `sha256:375ccaca36c9727cffd9ce8dab6615bbb163a5f0f62f17b06784c8044e266f6f`,
   and derived image is
   `sha256:f3d8df941bb2bb6d35e23aa3e61c10b3f16de4bd53f4edeeb28161dc40833ccb`.
-  Independent and live gates remain pending.
-- [ ] Run B30 only as a fresh supported live attempt in workspace
-  `/opt/megaplan-cloud/workspace/critique-ledger-safe-v3-canary-attempt-4-20260803`
-  and container `megaplan-cloud-agent-finite-canary-4`; preserve B27-B29.
-- [ ] Import the outstanding failed-fence, B27-B29 live and future B30 live
-  receipt bytes; no missing receipt may be synthesized. B27-B29 outcomes are
-  already terminal/reconciled, while B30 live execution remains pending.
+  Independent acceptance remains unrecorded; the later live failure does not
+  retroactively satisfy it.
+- [ ] Import B30 live attempt 4's stopped/reconciled receipt. Declared file
+  SHA-256 is
+  `c4aa925f98ffc5a41992f2347366e6d3175e089b6982708a0e6cac0a5b021080`
+  and digest is
+  `482910834d106e6ee4281cb930918d7f793d17b4a1140a63a9c1b796fcc662ee`;
+  no local path was supplied. Its root failure was denial reading the schema
+  while it remained root-owned mode 0600. No further terminal effect is
+  claimed beyond the supplied stopped/reconciled state.
+- [ ] Preserve the exact schema-access lineage:
+  A31/B31 `5ae02bb84b98d784cd230e69b633e89f77c95462` /
+  `b0437d698a3806cfa2fed85a7e64cea99468aea5` granted model read-only schema
+  access but B31 offline failed source identity; A32/B32
+  `9a09b25a3f6596e641b6a88329ccb280a8957bb4` /
+  `f1de9294ff19f842cdc82e3736335b5289cf2f4a` captured exact source-integrity
+  diagnostics; A33/B33 `64afbf29cd381de63cdcfa07d5cb80dd44fc7acc` /
+  `109fa8c2f35f3094c7c005a264a14d48390a8b08` proved 0600→0644 with unchanged
+  content hash; and A34/B34 `eb057201716d4a161465669677d76fb636bddca0` /
+  `c9b403d431f21174e0940433a17265a3978b9a78` passed happy-path grant/revoke but
+  received independent **NO-GO** because failure cleanup was incomplete.
+- [ ] Preserve A35/B35 total-cleanup lineage:
+  `aa493800750e3547a78a4ef0bf00edc9ac4a9b50` / tree
+  `d0ff36acc353fd95eccdb6162fcdfdde54f9abc7`, then
+  `665851a8af14c895545a0b9f8d67251e0958f3c8` / tree
+  `2d5e49eab5e5f27ab522accb37b97039ae1e3988`, with 177 passed and 1 skipped.
+- [ ] Import B35's diagnostic pass: SHA-256
+  `f68b132bfe918ed8028597f25a38330edf3c3d9e23ad924eb55d424a1307e2b8`.
+  Only digest prefix `0a5d477d` was supplied; path and full digest remain
+  unknown and must not be synthesized.
+- [ ] Import and independently review B35's production acceptance smoke:
+  SHA-256
+  `901e677c85f7fd213f8e0129712f146024b36dc578225e3f86091e0f3fcae383`,
+  supplied digest prefix `8668387b`, and supplied production-image prefix
+  `sha256:fec327f1`. Path, full digest and full image identity remain unknown.
+  The smoke passed and fresh predeploy observed GO with 1,343,115,264 free
+  bytes, but independent acceptance remains pending.
+- [ ] Import the outstanding failed-fence and B27-B30 live receipt bytes; no
+  missing receipt may be synthesized. B27-B30 outcomes are already
+  terminal/reconciled.
+- [ ] Obtain B35 independent acceptance and run a fresh live canary only after
+  its exact evidence is complete. Live and stable-exit gates remain pending.
 - [ ] Produce and independently accept the canary completion, stop and
   stable-exit proofs. These remain pending even after a successful offline
   smoke.
-- [ ] Copy and reconcile every available B10-B30 receipt/evidence directory.
+- [ ] Copy and reconcile every available B10-B35 receipt/evidence directory.
   No B8-B25 failed attempt is current acceptance authority; B26 is accepted
-  offline history, B27-B29 are terminal failed-live history, B30 is the latest
-  passing offline candidate pending Sol acceptance and live execution, and no
-  missing receipt may be synthesized.
+  offline history, B27-B30 are terminal failed-live history, B31-B34 are
+  diagnostic/rejected history, and B35 is the latest passing production-smoke
+  candidate pending independent acceptance and live execution. No missing
+  receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 
