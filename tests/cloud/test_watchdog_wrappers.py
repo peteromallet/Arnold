@@ -39,6 +39,10 @@ def _write_live_session_marker(
     remote_spec: str,
     **extra: object,
 ) -> Path:
+    # This helper represents a managed, live launch.  Keep its fixture
+    # identity aligned with the production lease contract; tests that need an
+    # unbound/legacy marker write that marker directly.
+    extra.setdefault("run_id", f"run-{session}")
     marker_path = marker_dir / f"{session}.json"
     marker_path.write_text(
         json.dumps(
@@ -12461,6 +12465,11 @@ def _run_chain_health(
     prog_path = workspace.parent / "_chain_health_prog.py"
     prog_path.write_text(program, encoding="utf-8")
     env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part
+        for part in (str(REPO_ROOT), env.get("PYTHONPATH", ""))
+        if part
+    )
     if env_overrides:
         env.update(env_overrides)
     result = subprocess.run(
