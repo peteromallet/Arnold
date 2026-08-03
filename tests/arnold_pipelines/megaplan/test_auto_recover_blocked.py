@@ -685,6 +685,155 @@ def test_drive_bounds_identical_structural_phase_failures(monkeypatch, tmp_path:
     assert terminal["metadata"]["count"] == 3
 
 
+def test_drive_does_not_latch_distinct_critique_validation_failures(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "planned"}),
+        encoding="utf-8",
+    )
+    messages = [
+        "Critique output failed check validation: issue_hints, correctness",
+        "Critique output failed check validation: issue_hints, correctness, scope",
+        (
+            "Critique output failed check validation: "
+            "issue_hints, correctness, scope, conventions"
+        ),
+    ]
+    call_count = 0
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "planned",
+            "next_step": "critique",
+            "valid_next": ["critique"],
+            "progress": {},
+        },
+    )
+
+    def fail_critique(args, **kwargs):
+        nonlocal call_count
+        message = messages[call_count]
+        call_count += 1
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="critique",
+                invocation_id=f"attempt-{call_count}",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_critique",
+                    "message": message,
+                    "details": {"raw_output": "parallel"},
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_critique)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=3, poll_sleep=0)
+
+    assert outcome.status == "cap"
+    assert outcome.iterations == 3
+    assert call_count == 3
+    phase_failures = [
+        failure for failure in failures if failure["kind"] == "phase_failed"
+    ]
+    assert len(phase_failures) == 3
+    assert not any(
+        failure["kind"] == "deterministic_phase_failure" for failure in failures
+    )
+    for failure, message in zip(phase_failures, messages, strict=True):
+        assert message in str(failure["message"])
+        assert "inspect critique_check_* artifacts" in str(failure["message"])
+        assert '"raw_output": "parallel"' not in str(failure["message"])
+
+
+def test_drive_still_latches_identical_critique_validation_failures(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "planned"}),
+        encoding="utf-8",
+    )
+    message = "Critique output failed check validation: issue_hints, correctness"
+    call_count = 0
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "planned",
+            "next_step": "critique",
+            "valid_next": ["critique"],
+            "progress": {},
+        },
+    )
+
+    def fail_critique(args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="critique",
+                invocation_id=f"attempt-{call_count}",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_critique",
+                    "message": message,
+                    "details": {"raw_output": "parallel"},
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_critique)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=10, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 3
+    assert call_count == 3
+    terminal = failures[-1]
+    assert terminal["kind"] == "deterministic_phase_failure"
+    assert terminal["metadata"]["count"] == 3
+    assert message in str(terminal["message"])
+
+
 def test_drive_phase_failure_preserves_native_exception_forensics(
     monkeypatch,
     tmp_path: Path,

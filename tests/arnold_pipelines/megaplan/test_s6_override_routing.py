@@ -9,6 +9,8 @@ from typing import Any
 import pytest
 
 from arnold.control.interface import ControlTransition
+from arnold_pipelines.megaplan.blocker_recovery import compact_failure_identity
+from arnold_pipelines.megaplan.types import CliError
 from arnold.workflow import authoring
 from arnold.workflow.compiler import compile_pipeline
 from arnold_pipelines.megaplan.control_interface import DECLARED_OVERRIDE_POLICY_TARGETS
@@ -524,7 +526,7 @@ def test_recover_blocked_emits_authority_receipt_and_stale_state_fails(
     )
 
 
-def test_recover_blocked_accepts_phase_matched_contract_failure_without_result(
+def test_recover_blocked_requires_receipt_for_phase_contract_failure_without_result(
     tmp_path: Path,
 ) -> None:
     plan_dir = _plan_dir(tmp_path)
@@ -542,22 +544,69 @@ def test_recover_blocked_accepts_phase_matched_contract_failure_without_result(
     _write_json(plan_dir / "state.json", state)
     _write_json(plan_dir / "finalize.json", {"tasks": []})
 
-    result = apply_transition(
-        planning_run_state_view(state),
-        ControlTransition(
-            op="override",
-            target_id="recover-blocked",
-            payload={"reason": "repaired finalize phase contract"},
-        ),
-        "megaplan",
-        plan_dir=plan_dir,
+    with pytest.raises(CliError, match="exact current failure fingerprint"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={"reason": "repaired finalize phase contract"},
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
+
+
+def test_recover_blocked_does_not_use_stale_phase_result_to_bypass_repair_gate(
+    tmp_path: Path,
+) -> None:
+    """The r5 plan retained a revise result after critique failed."""
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {
+        "phase": "critique",
+        "retry_strategy": "repair_phase_contract",
+    }
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "critique",
+        "message": "parallel critique aggregate rejected valid check payloads",
+    }
+    failure_fingerprint = compact_failure_identity(state["latest_failure"])[
+        "fingerprint"
+    ]
+    _write_json(plan_dir / "state.json", state)
+    _write_json(
+        plan_dir / "phase_result.json",
+        {
+            "schema": "megaplan.phase_result",
+            "schema_version": 1,
+            "phase_result_contract_version": 1,
+            "phase": "revise",
+            "invocation_id": "older-revise-invocation",
+            "exit_kind": "success",
+            "blocked_tasks": [],
+            "deviations": [],
+            "artifacts_written": ["plan_v2.md"],
+            "cli_provenance": {},
+            "external_error": None,
+        },
     )
 
-    assert result.accepted is True
-    assert result.artifacts["blockers"] == []
-    persisted_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert persisted_state["current_state"] == "gated"
-    assert "latest_failure" not in persisted_state
+    with pytest.raises(CliError, match="requires --repair-commit"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={
+                    "reason": "must not trust the old revise result",
+                    "failure_fingerprint": failure_fingerprint,
+                },
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
 
 
 def test_recover_blocked_rejects_mismatched_contract_failure_without_result(
@@ -577,7 +626,7 @@ def test_recover_blocked_rejects_mismatched_contract_failure_without_result(
     }
     _write_json(plan_dir / "state.json", state)
 
-    with pytest.raises(Exception, match="requires phase_result.json"):
+    with pytest.raises(CliError, match="match the current failure and resume phase"):
         apply_transition(
             planning_run_state_view(state),
             ControlTransition(
