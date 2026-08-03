@@ -5,31 +5,33 @@ milestones:
 - label: cl2-ledger-replay
   idea: .megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md
   branch: megaplan/critique-ledger-accountability-v3-r5/cl2-ledger-replay
-  profile: all-codex
+  profile: partnered-5-glm
   robustness: thorough
   depth: high
   with_prep: true
+  deepseek_provider: direct
   prep_direction: Consume the landed CL1 contract/oracle and the reviewed 2026-07-28
     safety amendment. Additively correct the occurrence/reconciliation contract, then
     implement append/replay, outcome history, active projections, region freshness,
     and the one-time migration reader. Preserve and audit the cancelled CL2 archive;
     never adopt its uncommitted work implicitly.
-  notes: Overall plan difficulty 5/5; all-codex/thorough/high. Append-only schema
+  notes: Overall plan difficulty 5/5; partnered-5-glm/thorough/high. Append-only schema
     and replay defects can preserve local tests while corrupting cross-round custody.
 - label: cl3-routing-briefings
   depends_on:
   - cl2-ledger-replay
   idea: .megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md
   branch: megaplan/critique-ledger-accountability-v3-r5/cl3-routing-briefings
-  profile: all-codex
+  profile: partnered-5-glm
   robustness: full
   depth: medium
   with_prep: true
+  deepseek_provider: direct
   prep_direction: Trace current evaluator selection, critique runtime, parallel fanout,
     prompt projection, token budgets, and critic model routing; preserve the amended
     CL1/CL2 contracts and prove the mandatory blind floor, prompt isolation, and bounded
     complete domain briefings.
-  notes: Overall plan difficulty 5/5; all-codex/full/medium. The architecture is locked,
+  notes: Overall plan difficulty 5/5; partnered-5-glm/full/medium. The architecture is locked,
     but subtle routing and context-budget errors can suppress findings while all individual
     workers appear healthy.
 - label: cl4-reconcile-role-flow
@@ -37,15 +39,16 @@ milestones:
   - cl3-routing-briefings
   idea: .megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md
   branch: megaplan/critique-ledger-accountability-v3-r5/cl4-reconcile-role-flow
-  profile: all-codex
+  profile: partnered-5-glm
   robustness: full
   depth: medium
   with_prep: true
+  deepseek_provider: direct
   prep_direction: Trace evaluator output validation, flag lifecycle, revise metadata,
     gate signals/carry, finalize custody, and WBC boundary receipts before wiring
     correctable reconciliation, independent disposition/outcome audit, bounded active
     work, round accountability, and explicit disposition consumption.
-  notes: Overall plan difficulty 5/5; all-codex/full/medium. A plausible role-flow
+  notes: Overall plan difficulty 5/5; partnered-5-glm/full/medium. A plausible role-flow
     change can pass phase tests yet silently omit non-actioned findings or let semantic
     prose mutate authoritative state.
 - label: cl5-cutover-retirement
@@ -53,15 +56,16 @@ milestones:
   - cl4-reconcile-role-flow
   idea: .megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md
   branch: megaplan/critique-ledger-accountability-v3-r5/cl5-cutover-retirement
-  profile: all-codex
+  profile: partnered-5-glm
   robustness: thorough
   depth: high
   with_prep: true
+  deepseek_provider: direct
   prep_direction: Revalidate the frozen M6 oracle, amended semantic/accountability
     loop, mandatory blind and audit floors, WBC custody, exact target revision, one-time
     import, backup/restore, and operator authority; then prepare one atomic cutover
     and legacy-path retirement checklist.
-  notes: Overall plan difficulty 5/5; all-codex/thorough/high. This is the single
+  notes: Overall plan difficulty 5/5; partnered-5-glm/thorough/high. This is the single
     authority-changing migration boundary; false success could corrupt custody or
     retire the only recoverable path.
 on_failure:
