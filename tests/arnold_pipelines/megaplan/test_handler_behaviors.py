@@ -2484,6 +2484,9 @@ class TestAutoExecuteRecovery:
         from arnold_pipelines.megaplan.auto import (
             _recover_completed_gate_artifact_after_failure,
         )
+        from arnold_pipelines.megaplan._core.phase_runtime import (
+            current_runner_incarnation,
+        )
 
         plan_dir = tmp_path / ".megaplan" / "plans" / "p"
         plan_dir.mkdir(parents=True)
@@ -2491,7 +2494,14 @@ class TestAutoExecuteRecovery:
             json.dumps(
                 {
                     "current_state": "critiqued",
-                    "active_step": {"phase": "gate"},
+                    "active_step": {
+                        "phase": "gate",
+                        "worker_pid": os.getpid(),
+                        "runner_incarnation": {
+                            **current_runner_incarnation(),
+                            "worker_process_start_identity": "reused-process-start",
+                        },
+                    },
                     "iteration": 2,
                     "history": [
                         {

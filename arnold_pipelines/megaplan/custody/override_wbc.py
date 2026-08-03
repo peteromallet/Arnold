@@ -51,6 +51,7 @@ class _OverrideWriterSpec:
     function_name: str
     action_type: str
     required_capability: str
+    source_file: str = "arnold_pipelines/megaplan/handlers/override.py"
 
 
 def _controlled_writer(spec: _OverrideWriterSpec) -> ControlledWriter:
@@ -59,7 +60,7 @@ def _controlled_writer(spec: _OverrideWriterSpec) -> ControlledWriter:
         surface_name=spec.surface_name,
         cohort=Cohort.ACTIVE,
         contract_ids=(spec.contract_id,),
-        source_file="arnold_pipelines/megaplan/handlers/override.py",
+        source_file=spec.source_file,
         function_name=spec.function_name,
         required_wbc_phases=("source_lookup", "grant_lease_matrix", "fixture_authorization"),
         action_kind="override_transition",
@@ -81,9 +82,10 @@ _WRITER_SPECS: tuple[_OverrideWriterSpec, ...] = (
         writer_id="megaplan.override.wbc.force_proceed",
         surface_name="megaplan.override.wbc.force_proceed",
         contract_id="megaplan.override.wbc.force_proceed.v1",
-        function_name="_override_force_proceed",
+        function_name="PlanningControlBinding.apply_transition",
         action_type="completion",
         required_capability="override.force_proceed",
+        source_file="arnold_pipelines/megaplan/planning/control_binding.py",
     ),
     _OverrideWriterSpec(
         transition="replan",

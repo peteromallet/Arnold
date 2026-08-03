@@ -145,17 +145,18 @@ def _assert_routed_force_proceed_is_custodied(
     from_state: str,
     reason: str,
 ) -> None:
-    """Prove the routed path is an intentional, authority-preserving superset."""
+    """Prove default and flag-enabled delivery share canonical custody."""
 
     assert legacy.accepted is routed.accepted is True
     assert legacy.response["state"] == routed.response["state"] == STATE_GATED
-    assert "force_proceed_custody" not in legacy.state["meta"]
+    for snapshot in (legacy, routed):
+        custody = snapshot.state["meta"]["force_proceed_custody"]
+        assert custody["schema_version"] == "megaplan.force_proceed_custody.v1"
+        assert custody["from_state"] == from_state
+        assert custody["reason"] == reason
+        assert custody["transaction_id"].startswith("force-proceed:")
 
     custody = routed.state["meta"]["force_proceed_custody"]
-    assert custody["schema_version"] == "megaplan.force_proceed_custody.v1"
-    assert custody["from_state"] == from_state
-    assert custody["reason"] == reason
-    assert custody["transaction_id"].startswith("force-proceed:")
     dispositions = custody["critique_dispositions"]
     assert dispositions
     assert all(row["disposition"] == "waived_to_debt" for row in dispositions)
@@ -219,7 +220,7 @@ def test_replay_oracle_captures_legacy_action_without_requiring_routed_parity(
 
 
 @pytest.mark.replay_oracle
-def test_replay_oracle_captures_legacy_artifacts_for_later_routed_assertions(
+def test_default_force_proceed_captures_canonical_custody_and_artifact(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -245,10 +246,10 @@ def test_replay_oracle_captures_legacy_artifacts_for_later_routed_assertions(
     assert legacy.response["state"] == STATE_GATED
     assert legacy.artifacts["gate.json"]["recommendation"] == "PROCEED"
     assert legacy.artifacts["gate.json"]["override_forced"] is True
-    assert legacy.events[0]["kind"] == "artifact_written"
-    assert legacy.events[0]["payload"]["path"].endswith("/gate.json")
-    assert legacy.events[0]["payload"]["size_bytes"] > 0
-    assert legacy.events[1:] == (
+    assert legacy.state["meta"]["force_proceed_custody"]["transaction_id"].startswith(
+        "force-proceed:"
+    )
+    assert legacy.events == (
         {
             "kind": "override_applied",
             "payload": {
@@ -927,9 +928,10 @@ def test_routed_replan_matches_legacy_structural_rewrite(
 @pytest.mark.replay_oracle
 def test_routed_override_registry_covers_all_ten_characterized_actions() -> None:
     routed_actions = override_handler._control_routed_override_actions()
-    assert set(routed_actions) == set(override_handler._OVERRIDE_ACTIONS) - {
-        "adopt-execution"
-    }
+    assert set(routed_actions) == (
+        set(override_handler._OVERRIDE_ACTIONS) - {"adopt-execution"}
+    ) | {"force-proceed"}
+    assert "force-proceed" not in override_handler._OVERRIDE_ACTIONS
     assert len(routed_actions) == 10
 
 

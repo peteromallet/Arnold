@@ -46,21 +46,14 @@ from arnold_pipelines.megaplan.custody.phase_wbc import (
     resume_clarification_phase_wbc_if_present,
 )
 from arnold_pipelines.megaplan._core import (
-    add_or_increment_debt,
     append_history,
-    extract_subsystem_tag,
-    find_command,
     infer_next_steps,
     latest_plan_path,
-    load_debt_registry,
-    load_flag_registry,
     load_plan,
     now_utc,
     read_json,
-    save_debt_registry,
     save_state_merge_meta,
     sha256_file,
-    unresolved_significant_flags,
     workflow_next,
 )
 from arnold_pipelines.megaplan._core import topology as _topology
@@ -75,14 +68,10 @@ from arnold_pipelines.megaplan.blocker_recovery import (
     validated_deterministic_phase_repair,
 )
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
-    build_gate_artifact,
-    failed_preflight_checks,
     has_high_complexity_unverifiable_checks,
     is_operational_unverifiable_check,
     only_agent_availability_preflight_failed,
-    run_gate_checks,
 )
-from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold_pipelines.megaplan.workflows.handler_contract import (
     apply_response_projection,
     apply_state_projection,
@@ -98,7 +87,7 @@ from arnold_pipelines.megaplan.replan_state import (
     invalidate_replan_derived_artifacts,
     reset_replan_loop_state,
 )
-from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
+from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
@@ -1024,155 +1013,6 @@ def _override_adopt_execution(
         ),
         "state": STATE_EXECUTED,
         "previous_state": previous_state,
-    }
-    return response
-
-
-def _override_force_proceed(
-    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
-) -> StepResponse:
-    # Strict-notes invariants. Off by default; on for plans initialized with
-    # --strict-notes (and auto-on for --mode metaplan/doc). Two checks:
-    #   (1) Reject if any user-source note has been attached after the most
-    #       recent absorption event (revise / structural-edit / replan).
-    #   (2) If the last gate ESCALATEd, require explicit --user-approved.
-    # Note: finalize is not an override path; strict-notes does not block it.
-    if state["config"].get("strict_notes", False):
-        unabsorbed = _unabsorbed_user_notes(plan_dir, state)
-        if unabsorbed:
-            raise CliError(
-                "unabsorbed_notes_exist",
-                (
-                    f"strict_notes: {len(unabsorbed)} note(s) attached after the last "
-                    "revise; run revise (or replan / step-edit) before force-proceed."
-                ),
-                extra={
-                    "unabsorbed_note_timestamps": [n["timestamp"] for n in unabsorbed]
-                },
-            )
-        last_recommendation = (state.get("last_gate") or {}).get("recommendation")
-        if last_recommendation == "ESCALATE" and not getattr(
-            args, "user_approved", False
-        ):
-            raise CliError(
-                "escalate_requires_user_approval",
-                (
-                    "strict_notes: gate escalated and requires --user-approved "
-                    "before force-proceed."
-                ),
-            )
-    if state["current_state"] == STATE_EXECUTED:
-        # Force-proceed from review loop: mark as done despite review issues
-        _append_to_meta(
-            state,
-            "overrides",
-            {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
-        )
-        apply_state_projection(state, STATE_DONE, route_signal="force-proceed")
-        save_state_merge_meta(plan_dir, state)
-        return {
-            "success": True,
-            "step": "override",
-            "summary": "Force-proceeded past review into done state.",
-            "state": STATE_DONE,
-        }
-    if state["current_state"] == STATE_BLOCKED:
-        if not (
-            _last_gate_is_agent_availability_preflight_block(state)
-            or _blocked_plan_has_operational_unverifiable_evidence(plan_dir, state)
-            or getattr(args, "user_approved", False)
-        ):
-            raise CliError(
-                "invalid_transition",
-                "force-proceed from blocked is only supported for recoverable gate blocks (pass --user-approved to override)",
-                valid_next=infer_next_steps(state),
-            )
-    elif state["current_state"] != STATE_CRITIQUED:
-        raise CliError(
-            "invalid_transition",
-            "force-proceed is only supported from critiqued, executed, or recoverable blocked state",
-            valid_next=infer_next_steps(state),
-        )
-    gate_checks = run_gate_checks(plan_dir, state, command_lookup=find_command)
-    hard_failed = [
-        name
-        for name in failed_preflight_checks(gate_checks["preflight_results"])
-        if name not in {"claude_available", "codex_available"}
-    ]
-    if hard_failed:
-        labels = {
-            "project_dir_exists": "project directory",
-            "project_dir_writable": "project directory writable",
-            "success_criteria_present": "success criteria",
-        }
-        readable = [labels.get(name, name) for name in hard_failed]
-        raise CliError(
-            "unsafe_override",
-            "force-proceed cannot bypass hard preflight failures: " + ", ".join(readable),
-        )
-    signals = build_gate_signals(plan_dir, state, root=root)
-    merged_signals = {
-        "robustness": signals["robustness"],
-        "signals": signals["signals"],
-        "warnings": signals.get("warnings", []),
-        "criteria_check": gate_checks["criteria_check"],
-        "preflight_results": gate_checks["preflight_results"],
-        "unresolved_flags": gate_checks["unresolved_flags"],
-    }
-    gate = build_gate_artifact(
-        merged_signals,
-        {
-            "recommendation": "PROCEED",
-            "rationale": args.reason or "User forced execution past the gate.",
-            "signals_assessment": "Forced proceed override applied by the orchestrator.",
-            "warnings": signals.get("warnings", []),
-            "settled_decisions": [],
-            "flag_resolutions": [],
-            "accepted_tradeoffs": [],
-            "north_star_actions": [],
-        },
-        override_forced=True,
-        orchestrator_guidance="Force-proceed override applied. Proceed to finalize.",
-    )
-    _write_gate_json(plan_dir, gate)
-    flag_registry = load_flag_registry(plan_dir)
-    unresolved_flags = unresolved_significant_flags(flag_registry)
-    debt_registry = load_debt_registry(root)
-    for flag in unresolved_flags:
-        add_or_increment_debt(
-            debt_registry,
-            subsystem=extract_subsystem_tag(flag["concern"]),
-            concern=flag["concern"],
-            flag_ids=[flag["id"]],
-            plan_id=state["name"],
-        )
-    save_debt_registry(root, debt_registry)
-    apply_state_projection(state, STATE_GATED, route_signal="force-proceed")
-    state["meta"].pop("user_approved_gate", None)
-    state["last_gate"] = {}
-    _append_to_meta(
-        state,
-        "overrides",
-        {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
-    )
-    save_state_merge_meta(plan_dir, state)
-    try:
-        from arnold_pipelines.megaplan.observability.events import emit, EventKind
-        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "force-proceed", "reason": args.reason})
-    except Exception:
-        _warn_best_effort_emit_failure(
-            "M3A_WARN_EMIT_OVERRIDE_FORCE_PROCEED",
-            action="override-force-proceed",
-            plan_dir=plan_dir,
-            event_kind="override_applied",
-        )
-    response: StepResponse = {
-        "success": True,
-        "step": "override",
-        "summary": "Force-proceeded past gate judgment into gated state.",
-        "state": STATE_GATED,
-        "orchestrator_guidance": gate["orchestrator_guidance"],
-        "debt_entries_added": len(unresolved_flags),
     }
     return response
 
@@ -2144,7 +1984,6 @@ _OVERRIDE_ACTIONS: dict[
     "add-note": _override_add_note,
     "abort": _override_abort,
     "adopt-execution": _override_adopt_execution,
-    "force-proceed": _override_force_proceed,
     "replan": _override_replan,
     "recover-blocked": _override_recover_blocked,
     "resume-clarify": _override_resume_clarify,
@@ -2164,6 +2003,11 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
         preflight_mutating_phase(root=root, state=state, phase=f"override:{action}")
     else:
         preflight_phase(root=root, state=state, phase=f"override:{action}")
+    if action == "force-proceed":
+        # Force-proceed has one mutation owner: the CAS-backed control binding.
+        # Preflight isolation metadata is carried in ``state`` and committed by
+        # that same CAS; do not persist an out-of-band pre-transition write.
+        return _handle_routed_override(root, plan_dir, state, args)
     save_state_merge_meta(plan_dir, state)
     if control_interface_routing_on() and action in _control_routed_override_actions():
         return _handle_routed_override(root, plan_dir, state, args)
