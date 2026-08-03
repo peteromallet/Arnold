@@ -407,6 +407,12 @@ for line in secret_text.splitlines():
     secret_values[key] = value
 if not secret_values.get("DISCORD_BOT_TOKEN"):
     raise RuntimeError("resident_discord_token_missing")
+# This launch-owned value is emitted once through the explicit docker --env
+# argument below.  Keeping the inherited copy in --env-file produces duplicate
+# Config.Env keys, making immutable post-create identity ambiguous.
+inherited_bot_role = secret_values.pop("MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE", None)
+if inherited_bot_role not in (None, "production"):
+    raise RuntimeError("resident_discord_bot_role_invalid")
 sanitized_env_bytes = "".join(f"{key}={secret_values[key]}\n" for key in sorted(secret_values)).encode()
 sanitized_env_sha256 = hashlib.sha256(sanitized_env_bytes).hexdigest()
 if os.path.exists(sanitized_env_path):
