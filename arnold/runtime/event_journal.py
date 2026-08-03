@@ -24,7 +24,6 @@ import fcntl
 import hashlib
 import json
 import os
-import time
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -165,9 +164,13 @@ class NdjsonEventJournal:
             # (1) Read → increment → write seq counter.
             try:
                 raw = os.read(seq_fd, 128)
-                current = int(raw.strip()) if raw.strip() else -1
+                current = (
+                    int(raw.strip())
+                    if raw.strip()
+                    else self._recover_durable_sequence()
+                )
             except (ValueError, FileNotFoundError):
-                current = -1
+                current = self._recover_durable_sequence()
             new_seq = current + 1
             os.lseek(seq_fd, 0, os.SEEK_SET)
             os.write(seq_fd, str(new_seq).encode("ascii"))
@@ -209,6 +212,30 @@ class NdjsonEventJournal:
         return event
 
     # ── internal helpers ───────────────────────────────────────────────
+
+    def _recover_durable_sequence(self) -> int:
+        """Recover the counter when its advisory sidecar is absent/corrupt.
+
+        ``events.ndjson`` is durable source evidence while ``.events.seq`` is
+        only an optimization.  A plan journal can therefore survive a clone,
+        import, or artifact restore without its ignored sidecar.  Starting at
+        ``-1`` in that case would reuse sequence zero and permanently poison
+        every strict projection.  Recovery is only paid on the exceptional
+        missing/corrupt-sidecar path and runs while the writer lock is held.
+        """
+        highest = -1
+        try:
+            with open(self._ndjson_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        seq = json.loads(line).get("seq")
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+                    if isinstance(seq, int) and not isinstance(seq, bool):
+                        highest = max(highest, seq)
+        except FileNotFoundError:
+            pass
+        return highest
 
     def _load_init_ts(self) -> Optional[datetime]:
         if not self._init_ts_path.exists():

@@ -15,6 +15,7 @@ import threading
 from arnold.runtime.event_journal import (
     BackendEventJournal,
     BackendEventSink,
+    NdjsonEventJournal,
     read_event_journal,
     read_event_journal_paged,
     stream_event_journal,
@@ -40,6 +41,32 @@ def _make_event(seq: int, kind: str = "test", **extra) -> dict:
     }
     event.update(extra)
     return event
+
+
+def test_writer_recovers_sequence_when_sidecar_is_missing(tmp_path: Path) -> None:
+    _write_ndjson(
+        tmp_path,
+        [json.dumps(_make_event(seq), sort_keys=True) for seq in range(10)],
+    )
+
+    event = NdjsonEventJournal(tmp_path).emit("resumed")
+
+    assert event["seq"] == 10
+    assert (tmp_path / ".events.seq").read_text(encoding="ascii") == "10"
+    assert [item["seq"] for item in read_event_journal(tmp_path)] == list(range(11))
+
+
+def test_writer_recovers_sequence_when_sidecar_is_corrupt(tmp_path: Path) -> None:
+    _write_ndjson(
+        tmp_path,
+        [json.dumps(_make_event(seq), sort_keys=True) for seq in (3, 8, 5)],
+    )
+    (tmp_path / ".events.seq").write_text("not-a-number", encoding="ascii")
+
+    event = NdjsonEventJournal(tmp_path).emit("recovered")
+
+    assert event["seq"] == 9
+    assert (tmp_path / ".events.seq").read_text(encoding="ascii") == "9"
 
 
 # ── Missing-file behaviour ─────────────────────────────────────────────
