@@ -1949,6 +1949,8 @@ def test_zero_recovery_runtime_seeds_private_files_before_directory_handoff() ->
     assert prepare.index("os.fchmod(output_fd, 0o600)") < prepare.index(
         "os.fchown(output_fd,"
     )
+    assert '".megaplan/worker_tmp"' in source
+    assert "any surviving" in source
 
 
 def _git_canary_fixture(root: Path) -> tuple[str, str, Path]:
