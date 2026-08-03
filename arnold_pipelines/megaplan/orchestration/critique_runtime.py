@@ -176,25 +176,72 @@ def _critique_check_validator() -> Any:
     return validate_critique_checks
 
 
-def _rebuild_recovered_critique_worker(
+def _critique_producer_binding(
+    state: PlanState,
     worker: WorkerResult,
-    recovered_payload: dict[str, Any],
-    invalid_checks: list[str],
-) -> WorkerResult:
-    return WorkerResult(
-        payload=recovered_payload,
-        raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed validation for checks: " + ", ".join(invalid_checks),
-        duration_ms=worker.duration_ms,
-        cost_usd=worker.cost_usd,
-        session_id=worker.session_id,
-        trace_output=worker.trace_output,
-        rendered_prompt=worker.rendered_prompt,
-        model_actual=worker.model_actual,
-        prompt_tokens=worker.prompt_tokens,
-        completion_tokens=worker.completion_tokens,
-        total_tokens=worker.total_tokens,
-        rate_limit=worker.rate_limit,
+    *,
+    agent: str,
+    scratch_filename: str,
+    scratch_status: str,
+    plan_dir: Path,
+    parallel_reduced: bool,
+) -> dict[str, Any]:
+    """Bind canonical critique custody to the exact producing phase attempt."""
+
+    meta = state.get("meta")
+    invocation_id = (
+        meta.get("current_invocation_id") if isinstance(meta, dict) else None
     )
+    if not isinstance(invocation_id, str) or not invocation_id:
+        raise CritiqueCustodyError(
+            "critique_producer_identity_missing",
+            ["current critique invocation id is unavailable"],
+        )
+    attempt_index = int(worker.attempt_index)
+    selected_spec: str | None = None
+    if 0 <= attempt_index < len(worker.attempted_specs):
+        candidate = worker.attempted_specs[attempt_index]
+        if isinstance(candidate, str) and candidate:
+            selected_spec = candidate
+    provider: str | None = None
+    if agent in {"codex", "shannon"}:
+        provider = agent
+    elif selected_spec:
+        parts = selected_spec.split(":")
+        if len(parts) >= 2 and parts[1]:
+            provider = parts[1]
+    transport = (
+        "parallel_reduce"
+        if parallel_reduced
+        else "registered_file_fill"
+        if agent == "hermes"
+        else "inline_response"
+    )
+    binding: dict[str, Any] = {
+        "schema_version": "megaplan-critique-producer-binding-v1",
+        "invocation_id": invocation_id,
+        "attempt_index": attempt_index,
+        "attempt_id": f"{invocation_id}:{attempt_index}",
+        "producer": agent,
+        "provider": provider,
+        "selected_spec": selected_spec,
+        "model_actual": worker.model_actual,
+        "session_id": worker.session_id,
+        "transport": transport,
+        "scratch_status": scratch_status,
+        "registered_scratch_artifact": scratch_filename,
+        # WorkerResult does not yet expose a durable output-path attestation.
+        # Exact-path authority still comes from promote_scratch reading only
+        # the registered basename; this explicit false value prevents callers
+        # from mistaking the binding for stronger provider provenance.
+        "output_path_attested": False,
+    }
+    if transport == "registered_file_fill" and scratch_status == "filled":
+        scratch_path = plan_dir / scratch_filename
+        if scratch_path.exists() and scratch_path.is_file():
+            binding["scratch_sha256"] = sha256_file(scratch_path)
+            binding["scratch_bytes"] = scratch_path.stat().st_size
+    return binding
 
 
 def _apply_adaptive_critique_routing(
@@ -803,6 +850,33 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 ]
                 _parts.append("Per-flag resolution claims:\n" + "\n".join(_res_lines))
             _revise_ctx = "\n\n".join(_parts)
+        # Establish the registered scratch boundary before dispatch.  Prompt
+        # rendering writes the same template again, but taking this snapshot
+        # now is what lets promotion distinguish a current-invocation Hermes
+        # write from an untouched seed.  Reading the "seed" after dispatch
+        # would make every completed file look unmodified and, worse, would
+        # leave a pre-existing file outside the current invocation boundary.
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            promote_scratch,
+            require_scratch_filename_for_phase,
+        )
+        from arnold_pipelines.megaplan.prompts.critique import (
+            _write_critique_template,
+        )
+
+        _scratch_filename = require_scratch_filename_for_phase("critique")
+
+        def _seed_registered_critique_scratch() -> str | None:
+            try:
+                return _write_critique_template(
+                    plan_dir,
+                    state,
+                    tuple(active_checks),
+                ).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return None
+
+        _seed_json: str | None = None
         _parallel_critique_reduced = False
         if len(active_checks) > 1:
             try:
@@ -814,6 +888,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
+                _seed_json = _seed_registered_critique_scratch()
                 worker, agent, mode, refreshed = _pkg._run_worker(
                     "critique",
                     state,
@@ -827,6 +902,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 agent = agent_type
                 _parallel_critique_reduced = True
         else:
+            _seed_json = _seed_registered_critique_scratch()
             worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",
                 state,
@@ -843,26 +919,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         # fail hard on modified invalid scratch when file-fill was
         # instructed (hermes agent).  Canonical promotion to
         # critique_v{iteration}.json is preserved unchanged below.
-        from arnold_pipelines.megaplan.handlers.structured_output import (
-            promote_scratch,
-            require_scratch_filename_for_phase,
-        )
-
-        _scratch_filename = require_scratch_filename_for_phase("critique")
-        _seed_path = plan_dir / _scratch_filename
-        _seed_json: str | None = None
-        if _seed_path.exists():
-            try:
-                _seed_json = _seed_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                _seed_json = None
-
         _file_fill_instructed = agent == "hermes"
 
         if _parallel_critique_reduced:
+            _scratch_status = "not_applicable"
             _promoted = worker.payload
         else:
-            _, _promoted = promote_scratch(
+            _scratch_status, _promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
                 _critique_scratch_known_keys(),
@@ -876,42 +939,26 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         try:
             audit_step_payload("critique", worker.payload)
         except ModelStructuralAuditError as error:
-            recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
-            if recovered_payload is None:
-                _raise_step_validation_error(
-                    plan_dir=plan_dir,
-                    state=state,
-                    step="critique",
-                    iteration=iteration,
-                    worker=worker,
-                    code="invalid_critique",
-                    message=f"Critique output failed schema audit: {error.details}",
-                )
-            _append_to_meta(
-                state,
-                "critique_validation_warnings",
-                {"iteration": iteration, "schema_audit_warning": error.details},
-            )
-            worker = WorkerResult(
-                payload=recovered_payload,
-                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed schema audit: " + error.details,
-                duration_ms=worker.duration_ms,
-                cost_usd=worker.cost_usd,
-                session_id=worker.session_id,
-                trace_output=worker.trace_output,
-                rendered_prompt=worker.rendered_prompt,
-                model_actual=worker.model_actual,
-                prompt_tokens=worker.prompt_tokens,
-                completion_tokens=worker.completion_tokens,
-                total_tokens=worker.total_tokens,
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code="invalid_critique",
+                message=f"Critique output failed schema audit: {error.details}",
             )
         invalid_checks = _critique_check_validator()(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
-            recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
-            if recovered_payload is None:
-                _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
-            _append_to_meta(state, "critique_validation_warnings", {"iteration": iteration, "invalid_checks": invalid_checks})
-            worker = _rebuild_recovered_critique_worker(worker, recovered_payload, invalid_checks)
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code="invalid_critique",
+                message="Critique output failed check validation: " + ", ".join(invalid_checks),
+            )
         worker.payload = _filter_critique_payload_to_expected_checks(worker.payload, expected_ids=expected_ids)
 
         unverifiable_checks = annotate_unverifiable_checks(
@@ -957,6 +1004,15 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 state,
                 worker.payload,
                 expected_check_ids=expected_ids,
+                producer_binding=_critique_producer_binding(
+                    state,
+                    worker,
+                    agent=agent,
+                    scratch_filename=_scratch_filename,
+                    scratch_status=_scratch_status,
+                    plan_dir=plan_dir,
+                    parallel_reduced=_parallel_critique_reduced,
+                ),
             )
         except CritiqueCustodyError as error:
             _raise_step_validation_error(
@@ -1062,22 +1118,6 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         )
 
 
-def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -> dict[str, Any] | None:
-    output_path = plan_dir / "critique_output.json"
-    if not output_path.exists():
-        return None
-    payload = read_json(output_path)
-    payload = _normalize_critique_payload_for_recovery(payload)
-    try:
-        audit_step_payload("critique", payload)
-    except ModelStructuralAuditError:
-        return None
-    invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
-    if invalid_checks:
-        return None
-    return _filter_critique_payload_to_expected_checks(payload, expected_ids=expected_ids)
-
-
 def _filter_critique_payload_to_expected_checks(
     payload: dict[str, Any],
     *,
@@ -1097,77 +1137,6 @@ def _filter_critique_payload_to_expected_checks(
     filtered_payload = dict(payload)
     filtered_payload["checks"] = filtered_checks
     return filtered_payload
-
-
-def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[str, Any]:
-    changed = False
-    clean_payload = dict(payload)
-
-    flags = payload.get("flags")
-    if isinstance(flags, list):
-        clean_flags: list[Any] = []
-        for flag in flags:
-            if not isinstance(flag, dict):
-                clean_flags.append(flag)
-                continue
-            clean_flag = _normalize_critique_recovery_flag(flag)
-            if clean_flag != flag:
-                changed = True
-            clean_flags.append(clean_flag)
-        clean_payload["flags"] = clean_flags
-
-    checks = payload.get("checks")
-    if not isinstance(checks, list):
-        return clean_payload if changed else payload
-    clean_checks: list[Any] = []
-    for check in checks:
-        if not isinstance(check, dict):
-            clean_checks.append(check)
-            continue
-        findings = check.get("findings")
-        if not isinstance(findings, list):
-            clean_checks.append(check)
-            continue
-        clean_findings: list[Any] = []
-        check_changed = False
-        for finding in findings:
-            if not isinstance(finding, dict):
-                clean_findings.append(finding)
-                continue
-            clean_findings.append(finding)
-        if check_changed:
-            check = dict(check)
-            check["findings"] = clean_findings
-            changed = True
-        clean_checks.append(check)
-    if not changed:
-        return payload
-    clean_payload["checks"] = clean_checks
-    return clean_payload
-
-
-def _normalize_critique_recovery_flag(flag: dict[str, Any]) -> dict[str, Any]:
-    severity_hint = flag.get("severity_hint")
-    if not isinstance(severity_hint, str):
-        if severity_hint is None:
-            canonical = "uncertain"
-        else:
-            return flag
-    else:
-        normalized = severity_hint.strip().lower()
-        if normalized in {"likely-significant", "high", "significant", "major", "critical"}:
-            canonical = "likely-significant"
-        elif normalized in {"likely-minor", "low", "minor", "trivial", "cosmetic"}:
-            canonical = "likely-minor"
-        elif normalized in {"uncertain", "medium", "moderate", "unknown", ""}:
-            canonical = "uncertain"
-        else:
-            return flag
-    if canonical == severity_hint:
-        return flag
-    clean_flag = dict(flag)
-    clean_flag["severity_hint"] = canonical
-    return clean_flag
 
 
 # --------------------------------------------------------------------------- #
