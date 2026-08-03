@@ -217,6 +217,99 @@ def test_two_running_plus_one_repairing(fx):
     assert snap["summary"]["attention"] == 1
 
 
+def test_gated_dead_session_preserves_canonical_should_run_false(fx):
+    workspace = fx.add_session("paused-gated", plan_name="planPaused")
+    marker_path = fx.marker_dir / "paused-gated.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["should_run"] = False
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    fx.add_chain_health(
+        "paused-gated",
+        current_plan_name="planPaused",
+        last_state="gated",
+        updated_at=NOW - timedelta(seconds=30),
+    )
+    fx.add_plan_state("paused-gated", "planPaused", current_state="gated")
+
+    snap = fx.build(liveness_probe=_dead_probe)
+    entry = _by_session(snap, "paused-gated")
+
+    assert workspace.exists()
+    assert entry["status"] == "paused"
+    assert entry["should_run"] is False
+    assert entry["operator_pause"] is None
+    assert entry["tmux"] is False
+    assert entry["process"] is False
+    assert entry["operator_next"] == "intentional operator stop; explicit resume required"
+    assert snap["summary"]["paused"] == 1
+    assert snap["summary"]["running"] == 0
+    assert snap["summary"]["attention"] == 0
+    activity = ss.plan_activity_summary(snap)
+    assert activity["active_working"] == []
+    assert activity["should_be_working_but_needs_attention"] == []
+
+    rendered = sf.format_cloud_status_detailed(snap)
+    compact = "\n".join(sf.format_cloud_status_short(snap))
+    assert "[paused] paused-gated" in rendered
+    assert "intentional operator stop" in rendered
+    assert "paused-gated` — paused" in compact
+    assert "intentional operator stop" in compact
+    assert "paused-gated` — running" not in compact
+    assert "paused-gated` — attention" not in compact
+
+
+def test_active_operator_pause_is_preserved_without_should_run_flag(fx):
+    fx.add_session("operator-paused", plan_name="planPaused")
+    marker_path = fx.marker_dir / "operator-paused.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["operator_pause"] = {
+        "active": True,
+        "reason": "controlled cutover hold",
+        "actor": "operator",
+    }
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    fx.add_chain_health(
+        "operator-paused",
+        current_plan_name="planPaused",
+        last_state="gated",
+        updated_at=NOW - timedelta(seconds=30),
+    )
+    fx.add_plan_state("operator-paused", "planPaused", current_state="gated")
+
+    entry = _by_session(fx.build(liveness_probe=_dead_probe), "operator-paused")
+
+    assert entry["status"] == "paused"
+    assert entry["should_run"] is False
+    assert entry["operator_pause"] == marker["operator_pause"]
+    assert "controlled cutover hold" in entry["operator_next"]
+
+
+def test_live_session_with_explicit_run_intent_stays_running(fx):
+    fx.add_session("explicit-live", plan_name="planLive")
+    marker_path = fx.marker_dir / "explicit-live.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["should_run"] = True
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    fx.add_chain_health(
+        "explicit-live",
+        current_plan_name="planLive",
+        last_state="gated",
+    )
+    fx.add_plan_state("explicit-live", "planLive", current_state="gated")
+
+    snap = fx.build(
+        liveness_probe=lambda _marker: {"tmux": False, "process": True}
+    )
+    entry = _by_session(snap, "explicit-live")
+
+    assert entry["status"] == "running"
+    assert entry["should_run"] is True
+    assert snap["summary"]["running"] == 1
+    assert snap["summary"]["paused"] == 0
+    assert [
+        item["session"] for item in ss.plan_activity_summary(snap)["active_working"]
+    ] == ["explicit-live"]
+
 
 def test_active_repair_overrides_stale_needs_human_marker(fx):
     fx.add_session("repairing", plan_name="planR")
