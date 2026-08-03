@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.auto import _is_retryable_external_error
 from arnold_pipelines.megaplan.model_seam import (
     LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
     capture_step_output,
+    local_strict_repair_input,
 )
 from arnold.pipeline.model_seam import ModelStructuralAuditError
 from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
@@ -62,7 +63,7 @@ def test_codex_repair_never_falls_back_to_jsonl_transport() -> None:
     assert parse_error is None
 
 
-def test_codex_terminal_selection_requires_nonempty_equal_unambiguous_output() -> None:
+def test_codex_terminal_selection_requires_nonempty_output_equal_to_last_message() -> None:
     selected = '{"tasks":[],"user_actions":[]}'
     transport = json.dumps(
         {
@@ -76,22 +77,26 @@ def test_codex_terminal_selection_requires_nonempty_equal_unambiguous_output() -
         _select_codex_terminal_output(transport, "")
     with pytest.raises(ModelStructuralAuditError, match="does not equal"):
         _select_codex_terminal_output(transport, '{"different":true}')
-    ambiguous = transport + "\n" + json.dumps(
+    intermediate = transport
+    final_transport = intermediate + "\n" + json.dumps(
         {
             "type": "item.completed",
             "item": {"type": "agent_message", "text": '{"other":true}'},
         }
     )
-    with pytest.raises(ModelStructuralAuditError, match="ambiguous"):
-        _select_codex_terminal_output(ambiguous, selected)
+    assert _select_codex_terminal_output(final_transport, '{"other":true}\n') == (
+        '{"other":true}\n'
+    )
+    with pytest.raises(ModelStructuralAuditError, match="last JSONL"):
+        _select_codex_terminal_output(final_transport, selected)
 
 
 def test_response_occurrence_and_evidence_bind_exact_wbc_invocation(tmp_path) -> None:
     state = {
         "name": "attempt9",
         "iteration": 2,
-        "active_step": {"run_id": "finalize-invocation-9"},
-        "meta": {},
+        "active_step": {"run_id": "finalize-process-run-9"},
+        "meta": {"current_invocation_id": "finalize-invocation-9"},
     }
     token = _WORKER_DISPATCH_BINDING.set(
         {
@@ -292,6 +297,82 @@ def test_finalize_semantic_repair_preserves_primary_and_uses_exact_missing_field
         )
     )
     assert {path.name for path in receipts} == {"repair-0.json", "repair-1.json"}
+
+
+def test_terminal_selection_mismatch_is_not_semantically_repaired(
+    tmp_path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    ensure_runtime_layout(runtime_root)
+    plan_dir = runtime_root / ".megaplan" / "plans" / "selection-mismatch"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "name": "selection-mismatch",
+        "idea": "fail closed on response custody mismatch",
+        "current_state": "gated",
+        "iteration": 1,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {"current_invocation_id": "finalize-selection-mismatch"},
+    }
+    selected = json.dumps(
+        {
+            "tasks": [],
+            "sense_checks": [],
+            "watch_items": [],
+            "user_actions": [],
+            "meta_commentary": "selected output",
+        }
+    )
+    calls = 0
+
+    def fake_run_command(command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        output_path = __import__("pathlib").Path(command[command.index("-o") + 1])
+        output_path.write_text(selected, encoding="utf-8")
+        event = json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": '{"different":true}'},
+            }
+        )
+        return _impl.CommandResult(
+            command=list(command),
+            cwd=tmp_path,
+            returncode=0,
+            stdout=event + "\n",
+            stderr="",
+            duration_ms=5,
+        )
+
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+
+    with pytest.raises(Exception) as raised:
+        _impl.run_codex_step(
+            "finalize",
+            state,
+            plan_dir,
+            root=runtime_root,
+            persistent=False,
+            fresh=True,
+            model="gpt-5.6-sol",
+            prompt_override="Return the finalized task graph.",
+        )
+
+    assert calls == 1
+    budget = raised.value.extra["local_response_contract"]
+    assert budget["attempts"] == 1
+    assert budget["repairs"] == 0
+    assert budget["exhausted"] is True
 
 
 @pytest.mark.parametrize(
@@ -738,6 +819,29 @@ def test_local_strict_artifact_handoff_round_trip_is_exact_and_schema_audited(tm
 
     assert captured.legacy_payload == payload
     assert "codex_capture:artifact_handoff" in captured.contract_result.provenance.sources
+
+
+def test_local_strict_artifact_semantic_repair_receives_complete_candidate(tmp_path) -> None:
+    root = tmp_path / "handoff"
+    root.mkdir()
+    candidate = root / "unique.candidate.json"
+    payload = {
+        "spec_updates": {"large": "x" * 50_000},
+        "next_action": "continue",
+        # Deliberately missing required ``reasoning`` so ordinary capture
+        # reaches semantic repair after the receipt has been authenticated.
+    }
+    data = json.dumps(payload, separators=(",", ":")).encode()
+    candidate.write_bytes(data)
+    invocation = _artifact_handoff_invocation(tmp_path, candidate)
+    receipt = _artifact_receipt(candidate, data)
+
+    with pytest.raises(ModelStructuralAuditError):
+        capture_step_output(invocation, receipt)
+
+    repair_input = local_strict_repair_input(invocation, receipt)
+    assert json.loads(repair_input) == payload
+    assert len(repair_input) > 50_000
 
 
 def test_local_strict_artifact_handoff_rejects_zero_byte_receipt(tmp_path) -> None:

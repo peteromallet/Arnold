@@ -538,6 +538,36 @@ def _capture_local_strict_artifact(
     return _parse_exact_json_object(text)
 
 
+def local_strict_repair_input(
+    invocation: StepInvocation,
+    selected_output: str,
+) -> str:
+    """Return the complete selected object that a semantic repair must see.
+
+    In artifact-handoff mode the selected terminal response is only a receipt.
+    Once that receipt and its candidate have passed the same custody checks as
+    ordinary capture, repair must operate on the candidate object rather than
+    the receipt.  Invalid or untrusted receipts remain unchanged so repair
+    cannot use this helper to read an arbitrary path.
+    """
+
+    try:
+        selected_payload = _parse_exact_json_object(selected_output)
+    except ModelStructuralAuditError:
+        return selected_output
+    if selected_payload.get("schema") != LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA:
+        return selected_output
+    try:
+        artifact_payload = _capture_local_strict_artifact(invocation, selected_payload)
+    except ModelStructuralAuditError:
+        return selected_output
+    return json.dumps(
+        artifact_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Audit + capture schema resolution
 # --------------------------------------------------------------------------- #
