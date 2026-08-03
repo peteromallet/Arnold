@@ -12,11 +12,14 @@ The recovery boundary is:
 3. durably cancel attempt 8 in its WBC ledger;
 4. bind the legacy r5 marker to its proven old runtime, then cut both chain and
    marker runtime custody to the exact deployed engine;
-5. while the chain remains paused and the plan lifecycle remains `gated`, invoke
+5. while still paused, reapply `partnered-5-glm` through the supported control
+   route and prove the persisted Execute coordinator and tiers 1–10 are all
+   GLM-family routes;
+6. while the chain remains paused and the plan lifecycle remains `gated`, invoke
    exactly one direct Finalize command under that exact new runtime;
-6. verify the new Finalize WBC is ordinal 9 and completes with lifecycle state
+7. verify the new Finalize WBC is ordinal 9 and completes with lifecycle state
    `finalized` and `next_step=execute`;
-7. only then explicitly resume the same chain with `--no-push` into GLM-family
+8. only then explicitly resume the same chain with `--no-push` into GLM-family
    Execute.
 
 This ordering is the integrated launch contract in
@@ -48,10 +51,14 @@ file-receipt protocol.
 - Plan state: `gated`; current milestone index `0`; no completed milestones.
 - Product checkout: HEAD `07dc708074f2b887f86af3484759080713ace636`,
   milestone branch `megaplan/critique-ledger-accountability-v3-r5/cl2-ledger-replay`.
-- Intended routing is already persisted:
+- The profile name and Execute coordinator are persisted as
   `profile=partnered-5-glm`,
-  `finalize=codex:gpt-5.6-sol:high`,
-  `execute=hermes:zhipu:glm-5.2`.
+  `finalize=codex:gpt-5.6-sol:high`, and
+  `execute=hermes:zhipu:glm-5.2`, but the existing plan's persisted tier table
+  is from the old registry: tiers 1–2 are DeepSeek flash, tiers 3–6 are
+  DeepSeek pro, and only tiers 7–10 are GLM. Deploying a new profile registry
+  does not rewrite existing plan state; the supported same-profile refresh is
+  therefore a mandatory cutover step.
 - Attempt 8 exact custody:
   - phase WBC attempt `8fe6ab70-45c0-573e-9a26-32721b06047e`
   - invocation `21d5c8322f2148a5`
@@ -110,8 +117,9 @@ Before mutation, re-read and compare:
 - the exact attempt/WBC/run/ordinal tuple above;
 - all five PID start ticks and command lines (or prove all are already absent);
 - old runtime provenance still equals `CUTOVER_OLD_RUNTIME_SHA`;
-- persisted profile routes still pin Finalize to Sol high and Execute's
-  coordinator plus every complexity tier 1–10 to GLM-family routes;
+- the deployed registry pins Finalize to Sol high and Execute's coordinator
+  plus every complexity tier 1–10 to GLM-family routes; separately record the
+  old persisted tier table before its supported refresh;
 - recovered candidate, manifest, rollout, and output-receipt hashes still match;
 - no `finalize.json` exists;
 - no second r5 tmux/session/runner exists;
@@ -236,12 +244,35 @@ If either side fails, remain paused. If chain rebind succeeds but marker update
 fails, use the ordinary guarded chain runtime rollback with the old identity
 and receipt; do not resume in a split-brain state.
 
-### 6. Launch exactly one direct Finalize attempt while paused
+### 6. Refresh persisted routing, then launch exactly one Finalize while paused
 
 Keep the chain runner stopped, both operator-pause authorities present, and the
 r5 marker at `should_run=false`. The plan lifecycle state itself remains
 `gated`; the direct `finalize` phase command accepts `gated` and would reject a
 durable plan lifecycle state of `paused`.
+
+From the runtime-attested exact new engine, first reapply the same profile
+through the ordinary control-routed override:
+
+```bash
+python -P -m arnold_pipelines.megaplan override set-profile \
+  --plan cl2-wbc-backed-ledger-20260803-1357 \
+  --profile partnered-5-glm \
+  --reason "refresh persisted routing after attested GLM-only registry cutover"
+```
+
+Require a durable `profile_refresh_receipt` with `same_profile_refresh=true`
+and exact before/after routing hashes. Reread state and require:
+
+- lifecycle remains `gated` and both operator pauses remain active;
+- attempt-8 cancellation history and all phase-WBC bytes are unchanged;
+- `phase_model` keeps Finalize on GPT-5.6 Sol high and Execute on GLM;
+- every persisted `tier_models.execute` entry 1–10 contains only direct Zhipu
+  GLM 5.2 and Fireworks GLM 5p2 routes;
+- the chain-state bytes are unchanged.
+
+Any missing receipt, stale-state CAS failure, custody change, or non-GLM
+Execute tier is a fail-closed stop. Never hand-edit `state.json`.
 
 From the runtime-attested exact new engine checkout, with the r5 workspace as
 the current directory, invoke exactly once:

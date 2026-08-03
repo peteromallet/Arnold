@@ -62,7 +62,7 @@ waits for all checked items and one exact integration commit.
 
 - [x] `[parallel]` Correct wrapper UNKNOWN handling: status/manual-review remain
   observable while repair, notification, retirement, and relaunch fail closed.
-- [ ] `[parallel]` Require normalized repair occurrence identity and
+- [x] `[parallel]` Require normalized repair occurrence identity and
   process-start/PID-namespace/boot-bound leases end to end.
 - [x] `[parallel]` Replace every live whole-document `finalize.json` rewrite with
   one locked, expected-hash/version, field-allowlisted CAS writer.
@@ -73,6 +73,9 @@ waits for all checked items and one exact integration commit.
   interactive replies are the only intentional direct Discord path.
 - [x] Bind every `partnered-5-glm` Execute complexity tier to GLM-family models;
   retain DeepSeek only for critique/gate and GPT-5.6 Sol high only for Finalize.
+- [x] Add a receipted same-profile refresh so an existing plan's persisted tier
+  table is rewritten from the deployed registry without changing lifecycle,
+  cancellation, chain, or phase-WBC custody.
 - [x] Prove and use a one-shot direct WBC-backed Finalize invocation for
   immutable attempt 9 while paused; resume the chain only from `finalized` so
   the general three-attempt deterministic auto loop cannot create attempt 10.
