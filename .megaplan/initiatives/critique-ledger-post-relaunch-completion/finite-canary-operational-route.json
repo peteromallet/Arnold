@@ -12,7 +12,9 @@
       "required_sections": [
         "capacity_cut.prelaunch",
         "isolation_receipt_contract",
-        "model_evidence_contract"
+        "model_evidence_contract",
+        "operational_substrates",
+        "deferred_obligations"
       ]
     },
     "model_boundary": {

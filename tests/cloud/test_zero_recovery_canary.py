@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -54,6 +55,8 @@ from arnold_pipelines.megaplan.cloud.spec import (
 from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.chain.spec import (
+    _finite_canary_completion_contract_is_valid,
+    _finite_canary_custody_contract,
     _finite_canary_conformance_has_trust_evidence,
     _finite_canary_fence_is_valid,
     _finite_canary_review_inputs_match,
@@ -986,3 +989,420 @@ def test_offline_structural_smoke_codex_emits_schema_valid_rollout_bound_output(
     assert len(rollout) == 1
     assert rollout[0].name.endswith(f"-{thread['thread_id']}.jsonl")
     assert _read_codex_observed_model(rollout[0]) == "gpt-5.6-sol"
+
+
+def test_custody_contract_separates_two_consumed_substrates_and_15_deferred() -> None:
+    custody = json.loads(
+        Path(
+            ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+            "custody-manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    contract = _finite_canary_custody_contract(custody)
+    assert contract is not None
+    substrates, obligations = contract
+    assert substrates == [
+        {
+            "id": "cloud-observation-preflight-repair-v2",
+            "disposition": "CONSUMED_BOUNDED_SUBSTRATE",
+        },
+        {
+            "id": "t1.9-zero-recovery-launcher",
+            "disposition": "CONSUMED_ON_SUCCESS",
+        },
+    ]
+    assert len(obligations) == 15
+    assert {entry["phase"] for entry in obligations} == {"F1", "F2"}
+    assert all(entry["status"] == "DEFERRED_POST_CANARY" for entry in obligations)
+    assert all(
+        entry["operational_disposition"] == "NOT_CONSUMED_OPERATIONAL_CANARY"
+        for entry in obligations
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "obligation_omitted", "obligation_extra", "obligation_duplicate",
+        "obligation_status_drift", "obligation_reordered", "substrate_blanket",
+        "substrate_disposition_drift", "custody_item_status_drift",
+    ],
+)
+def test_custody_contract_rejects_omission_extra_duplicate_or_status_drift(
+    mutation: str,
+) -> None:
+    custody = json.loads(
+        Path(
+            ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+            "custody-manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    hostile = copy.deepcopy(custody)
+    if mutation == "obligation_omitted":
+        hostile["deferred_obligations"].pop()
+    elif mutation == "obligation_extra":
+        hostile["deferred_obligations"].append(
+            {
+                "id": "F2.unknown_extra",
+                "phase": "F2",
+                "status": "DEFERRED_POST_CANARY",
+                "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+            }
+        )
+    elif mutation == "obligation_duplicate":
+        hostile["deferred_obligations"].append(
+            copy.deepcopy(hostile["deferred_obligations"][0])
+        )
+    elif mutation == "obligation_status_drift":
+        hostile["deferred_obligations"][0]["status"] = "COMPLETED"
+    elif mutation == "obligation_reordered":
+        hostile["deferred_obligations"][0], hostile["deferred_obligations"][1] = (
+            hostile["deferred_obligations"][1], hostile["deferred_obligations"][0]
+        )
+    elif mutation == "substrate_blanket":
+        hostile["operational_substrates"] = [
+            {
+                "id": item["id"],
+                "disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+            }
+            for item in hostile["items"]
+        ]
+    elif mutation == "substrate_disposition_drift":
+        hostile["operational_substrates"][0]["disposition"] = (
+            "NOT_CONSUMED_OPERATIONAL_CANARY"
+        )
+    else:
+        hostile["items"][0]["status"] = "COMPLETED"
+    assert _finite_canary_custody_contract(hostile) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "obligation_omitted", "obligation_extra", "obligation_duplicate",
+        "obligation_status_drift", "obligation_reordered",
+        "substrate_omitted", "substrate_extra", "substrate_duplicate",
+        "substrate_reordered", "substrate_disposition_drift",
+    ],
+)
+def test_completion_contract_rejects_noncanonical_operational_arrays(
+    mutation: str,
+) -> None:
+    custody = json.loads(
+        Path(
+            ".megaplan/initiatives/critique-ledger-post-relaunch-completion/"
+            "custody-manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    contract = _finite_canary_custody_contract(custody)
+    assert contract is not None
+    expected_substrates, expected_obligations = contract
+    substrates = copy.deepcopy(expected_substrates)
+    obligations = copy.deepcopy(expected_obligations)
+    if mutation == "obligation_omitted":
+        obligations.pop()
+    elif mutation == "obligation_extra":
+        obligations.append(
+            {
+                "id": "F2.unknown_extra",
+                "phase": "F2",
+                "status": "DEFERRED_POST_CANARY",
+                "operational_disposition": "NOT_CONSUMED_OPERATIONAL_CANARY",
+            }
+        )
+    elif mutation == "obligation_duplicate":
+        obligations.append(copy.deepcopy(obligations[0]))
+    elif mutation == "obligation_status_drift":
+        obligations[0]["status"] = "COMPLETED"
+    elif mutation == "obligation_reordered":
+        obligations[0], obligations[1] = obligations[1], obligations[0]
+    elif mutation == "substrate_omitted":
+        substrates.pop()
+    elif mutation == "substrate_extra":
+        substrates.append(
+            {"id": "unknown", "disposition": "CONSUMED_BOUNDED_SUBSTRATE"}
+        )
+    elif mutation == "substrate_duplicate":
+        substrates.append(copy.deepcopy(substrates[0]))
+    elif mutation == "substrate_reordered":
+        substrates.reverse()
+    else:
+        substrates[0]["disposition"] = "NOT_CONSUMED_OPERATIONAL_CANARY"
+    assert not _finite_canary_completion_contract_is_valid(
+        substrates,
+        obligations,
+        expected_substrates=expected_substrates,
+        expected_obligations=expected_obligations,
+    )
+
+
+def test_offline_structural_smoke_harness_seeds_dummy_root_auth_and_has_no_network() -> None:
+    fixture = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/structural-smoke"
+    )
+    harness = fixture / "run-offline-structural-smoke.sh"
+    completed = subprocess.run(
+        ["bash", "-n", str(harness)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    source = harness.read_text(encoding="utf-8")
+    assert "--network none" in source
+    assert 'cp -a "$repo_root/." "$workspace_child/Arnold/"' in source
+    assert "docker cp" not in source
+    assert "/root/.codex/auth.json" in source
+    assert "/root/.codex/config.toml" in source
+    assert "offline_structural_smoke" in source
+    assert "chmod 0600 /root/.codex/auth.json /root/.codex/config.toml" in source
+    dockerfile = (fixture / "Dockerfile").read_text(encoding="utf-8")
+    assert "verify-zero-recovery-offline-smoke" in dockerfile
+
+
+def test_offline_structural_smoke_failure_preserves_typed_evidence(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "dirty-repo"
+    repo.mkdir()
+    initialized = subprocess.run(
+        ["git", "init", "-q", str(repo)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert initialized.returncode == 0, initialized.stderr
+    (repo / "untracked").write_text("force preflight failure\n", encoding="utf-8")
+    receipt = tmp_path / "failed-smoke-receipt.json"
+    harness = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/structural-smoke/"
+        "run-offline-structural-smoke.sh"
+    ).resolve()
+    completed = subprocess.run(
+        [str(harness), "unused-image", str(repo), str(receipt)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 65
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert payload["schema"] == (
+        "arnold.megaplan.zero_recovery_offline_structural_smoke_attempt.v1"
+    )
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 65
+    assert payload["source_commit"] is None
+    assert payload["production_image_id"] is None
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    assert payload["container_runtime_summary"] == {"validated": False}
+    evidence = Path(f"{receipt}.evidence")
+    assert (evidence / "stdout.log").is_file()
+    assert (evidence / "stderr.log").is_file()
+    assert json.loads((evidence / "container-inspect.json").read_text()) == {
+        "available": False
+    }
+    before = receipt.read_bytes()
+    refused = subprocess.run(
+        [str(harness), "unused-image", str(repo), str(receipt)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode == 66
+    assert receipt.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "identity",
+        "network",
+        "restart",
+        "capabilities",
+        "security",
+        "resources",
+        "extra_mount",
+        "tmpfs",
+        "ports",
+    ],
+)
+def test_offline_structural_smoke_inspect_rejects_runtime_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    container_id = "a" * 64
+    container_name = "offline-smoke"
+    image_id = "sha256:" + "b" * 64
+    bind_source = tmp_path / "workspace-child"
+    bind_source.mkdir()
+    inspect_payload = [
+        {
+            "Id": container_id,
+            "Name": f"/{container_name}",
+            "Image": image_id,
+            "HostConfig": {
+                "NetworkMode": "none",
+                "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+                "CapDrop": ["ALL"],
+                "CapAdd": [
+                    "CHOWN",
+                    "DAC_READ_SEARCH",
+                    "KILL",
+                    "SETGID",
+                    "SETPCAP",
+                    "SETUID",
+                ],
+                "SecurityOpt": ["no-new-privileges:true"],
+                "IpcMode": "none",
+                "PidsLimit": 256,
+                "Memory": 4_294_967_296,
+                "MemorySwap": 4_294_967_296,
+                "PortBindings": {},
+                "Mounts": [],
+                "Tmpfs": {
+                    "/run/megaplan-zero-recovery": (
+                        "rw,noexec,nosuid,nodev,size=268435456,mode=0711"
+                    )
+                },
+            },
+            "Config": {"ExposedPorts": None, "Volumes": None},
+            "NetworkSettings": {"Ports": {}},
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": str(bind_source.resolve()),
+                    "Destination": "/workspace",
+                    "Mode": "",
+                    "RW": True,
+                    "Propagation": "rprivate",
+                }
+            ],
+        }
+    ]
+    if mutation == "identity":
+        inspect_payload[0]["Image"] = "sha256:" + "c" * 64
+    elif mutation == "network":
+        inspect_payload[0]["HostConfig"]["NetworkMode"] = "bridge"
+    elif mutation == "restart":
+        inspect_payload[0]["HostConfig"]["RestartPolicy"]["Name"] = "always"
+    elif mutation == "capabilities":
+        inspect_payload[0]["HostConfig"]["CapAdd"].append("SYS_ADMIN")
+    elif mutation == "security":
+        inspect_payload[0]["HostConfig"]["SecurityOpt"] = []
+    elif mutation == "resources":
+        inspect_payload[0]["HostConfig"]["Memory"] = 0
+    elif mutation == "extra_mount":
+        inspect_payload[0]["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": "/var/run/docker.sock",
+                "Destination": "/var/run/docker.sock",
+                "Mode": "",
+                "RW": True,
+                "Propagation": "rprivate",
+            }
+        )
+    elif mutation == "tmpfs":
+        inspect_payload[0]["HostConfig"]["Tmpfs"] = {
+            "/run/megaplan-zero-recovery": (
+                "rw,nosuid,nodev,size=268435456,mode=0711"
+            )
+        }
+    else:
+        inspect_payload[0]["Config"]["ExposedPorts"] = {"80/tcp": {}}
+    inspect_path = tmp_path / "inspect.json"
+    inspect_path.write_text(json.dumps(inspect_payload), encoding="utf-8")
+    validator = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/structural-smoke/"
+        "validate_container_inspect.py"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(validator),
+            str(inspect_path),
+            container_id,
+            container_name,
+            image_id,
+            str(bind_source),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "container runtime drift" in completed.stderr
+
+
+def test_offline_structural_smoke_inspect_emits_normalized_runtime_summary(
+    tmp_path: Path,
+) -> None:
+    bind_source = tmp_path / "workspace-child"
+    bind_source.mkdir()
+    container_id = "a" * 64
+    container_name = "offline-smoke"
+    image_id = "sha256:" + "b" * 64
+    inspect_payload = [
+        {
+            "Id": container_id,
+            "Name": f"/{container_name}",
+            "Image": image_id,
+            "HostConfig": {
+                "NetworkMode": "none",
+                "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+                "CapDrop": ["ALL"],
+                "CapAdd": [
+                    "CHOWN", "DAC_READ_SEARCH", "KILL", "SETGID", "SETPCAP",
+                    "SETUID",
+                ],
+                "SecurityOpt": ["no-new-privileges:true"],
+                "IpcMode": "none",
+                "PidsLimit": 256,
+                "Memory": 4_294_967_296,
+                "MemorySwap": 4_294_967_296,
+                "PortBindings": {},
+                "Mounts": [],
+                "Tmpfs": {
+                    "/run/megaplan-zero-recovery": (
+                        "mode=0711,size=268435456,nodev,nosuid,noexec,rw"
+                    )
+                },
+            },
+            "Config": {"ExposedPorts": {}, "Volumes": {}},
+            "NetworkSettings": {"Ports": None},
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": str(bind_source.resolve()),
+                    "Destination": "/workspace",
+                    "Mode": "",
+                    "RW": True,
+                    "Propagation": "rprivate",
+                }
+            ],
+        }
+    ]
+    inspect_path = tmp_path / "inspect.json"
+    inspect_path.write_text(json.dumps(inspect_payload), encoding="utf-8")
+    validator = Path(
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/structural-smoke/"
+        "validate_container_inspect.py"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(validator),
+            str(inspect_path),
+            container_id,
+            container_name,
+            image_id,
+            str(bind_source),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads(completed.stdout)
+    assert summary["validated"] is True
+    assert summary["container_id"] == container_id
+    assert summary["image_id"] == image_id
+    assert summary["bind"]["source"] == str(bind_source.resolve())
+    assert len(summary["summary_digest"]) == 64
