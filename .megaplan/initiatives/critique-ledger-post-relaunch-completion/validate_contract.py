@@ -91,6 +91,26 @@ B26_PASS = {
     "verifier_receipt_digest": "99c4420ac9440d539753e0a261781f6fc8588f974fa7e2ed07ee86cb2106e373",
 }
 
+B27_PASS = {
+    "id": "B27-smoke",
+    "commit": "0a3fbb56e48c5de98a455224c444a522ff31bf07",
+    "tree": "beb5d68bfcbdd7b0867a139ec19885dbb260e57d",
+    "path": "/var/lib/arnold-zero-recovery/critique-ledger-b27-offline-smoke.json",
+    "sha256": "77c39d4763641724aa3355210c3ccdcbb6deb8a8253b560d416a9f47d3f1e454",
+    "receipt_digest": "173288c2fcd0aa793f894a3a995de1512447b4e9bbf6744fc241d2227d505b9b",
+    "production_image": "sha256:c5687c73d88307ab9d7847585aaa371d27fab1e1286283b6456dbbf0d269470d",
+    "derived_image": "sha256:71ef320bd30fe70211e9885c6972994a5f61c9625cc24bba9aecc2874082fb6e",
+    "verifier_receipt_digest": "bae9f5e69d7d2eaf3106ac5652c77be2608fc7c643d708d5c24af74bf2b08184",
+}
+
+A27_REPAIR = {
+    "id": "A27",
+    "commit": "185e8d97732ff25e5e5d6a00b6877b7a46f08129",
+    "tree": "a7c204b757fe0673516d1e9e22a1308b73b0d778",
+}
+
+FAILED_LIVE_TRANSACTION_ID = "404dd858567d48ffbe8cb7c27d85185a"
+
 OPERATION_IDS = [
     "critique-ledger-zero-byte-bootstrap-20260803-034217z",
     "critique-ledger-capacity-reserve-remediation-20260803-0349z",
@@ -217,7 +237,7 @@ def _validate_prelaunch_gates(custody: dict[str, Any], *, require_live: bool) ->
 
 def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = False) -> None:
     attempts = custody.get("prelaunch_attempts")
-    if not isinstance(attempts, list) or len(attempts) != len(KNOWN_ATTEMPTS) + 1:
+    if not isinstance(attempts, list) or len(attempts) != len(KNOWN_ATTEMPTS) + 2:
         raise ContractError("prelaunch attempt history is incomplete")
     expected_fields = {"id", "kind", "candidate", "status", "failure", "remote_receipt"}
     ids: list[str] = []
@@ -226,23 +246,6 @@ def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = F
             if not isinstance(attempt, dict):
                 raise ContractError("B26 passing smoke has an invalid schema")
             ids.append(attempt.get("id"))
-            review = attempt.get("independent_review")
-            pending_review = review == {"path": None, "sha256": None, "status": "PENDING"}
-            accepted_review = (
-                isinstance(review, dict)
-                and set(review) == {"path", "sha256", "status"}
-                and review.get("status") == "ACCEPTED"
-                and isinstance(review.get("path"), str)
-                and SHA256.fullmatch(str(review.get("sha256"))) is not None
-            )
-            if accepted_review:
-                review_path = _repo_path(review["path"])
-                accepted_review = review_path.is_file() and _sha256(review_path) == review["sha256"]
-            expected_status = (
-                "PASSED_EXIT_0_PENDING_INDEPENDENT_ACCEPTANCE_NOT_LIVE_GATE"
-                if pending_review
-                else "PASSED_EXIT_0_INDEPENDENTLY_ACCEPTED_NOT_LIVE_CANARY"
-            )
             if (
                 set(attempt) != {
                     "id", "kind", "candidate", "status", "result", "remote_receipt",
@@ -252,12 +255,12 @@ def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = F
                 or attempt.get("id") != B26_PASS["id"]
                 or attempt.get("kind") != "OFFLINE_STRUCTURAL_SMOKE"
                 or attempt.get("candidate") != {"commit": B26_PASS["commit"], "tree": B26_PASS["tree"]}
-                or attempt.get("status") != expected_status
+                or attempt.get("status") != "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
                 or attempt.get("result") != {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"}
                 or attempt.get("remote_receipt") != {
                     "path": B26_PASS["path"],
                     "sha256": B26_PASS["sha256"],
-                    "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED",
+                    "status": "REMOTE_SHA_DECLARED_COPY_REQUIRED",
                 }
                 or attempt.get("receipt_digest") != B26_PASS["receipt_digest"]
                 or attempt.get("image") != {
@@ -267,11 +270,72 @@ def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = F
                 or attempt.get("verifier_receipt_digest") != B26_PASS["verifier_receipt_digest"]
                 or attempt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
                 or attempt.get("privilege_receipt_count") != 4
-                or not (pending_review or accepted_review)
+                or attempt.get("independent_review") != {
+                    "reviewer": "Sol",
+                    "decision": "GO",
+                    "artifact": {"path": None, "sha256": None, "status": "NO_LOCAL_ARTIFACT_PRESENT"},
+                }
             ):
                 raise ContractError("B26 passing smoke binding drift")
+            continue
+        if index == len(KNOWN_ATTEMPTS) + 1:
+            if not isinstance(attempt, dict):
+                raise ContractError("B27 passing smoke has an invalid schema")
+            ids.append(attempt.get("id"))
+            review = attempt.get("independent_review")
+            pending_review = review == {"path": None, "sha256": None, "status": "PENDING_SOL_ACCEPTANCE"}
+            accepted_review = (
+                isinstance(review, dict)
+                and set(review) == {"path", "sha256", "status", "reviewer", "decision"}
+                and review.get("reviewer") == "Sol"
+                and review.get("decision") == "GO"
+                and review.get("status") == "ACCEPTED"
+                and isinstance(review.get("path"), str)
+                and SHA256.fullmatch(str(review.get("sha256"))) is not None
+            )
+            if accepted_review:
+                review_path = _repo_path(review["path"])
+                accepted_review = review_path.is_file() and _sha256(review_path) == review["sha256"]
+            expected_status = (
+                "PASSED_EXIT_0_PENDING_INDEPENDENT_SOL_ACCEPTANCE_NOT_LIVE_GATE"
+                if pending_review
+                else "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE"
+            )
+            if (
+                set(attempt) != {
+                    "id", "kind", "candidate", "status", "result", "remote_receipt",
+                    "receipt_digest", "image", "verifier_receipt_digest", "phases",
+                    "privilege_receipt_count", "independent_review", "repair_lineage",
+                }
+                or attempt.get("id") != B27_PASS["id"]
+                or attempt.get("kind") != "OFFLINE_STRUCTURAL_SMOKE"
+                or attempt.get("candidate") != {"commit": B27_PASS["commit"], "tree": B27_PASS["tree"]}
+                or attempt.get("status") != expected_status
+                or attempt.get("result") != {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"}
+                or attempt.get("remote_receipt") != {
+                    "path": B27_PASS["path"],
+                    "sha256": B27_PASS["sha256"],
+                    "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED",
+                }
+                or attempt.get("receipt_digest") != B27_PASS["receipt_digest"]
+                or attempt.get("image") != {
+                    "production": B27_PASS["production_image"],
+                    "derived": B27_PASS["derived_image"],
+                }
+                or attempt.get("verifier_receipt_digest") != B27_PASS["verifier_receipt_digest"]
+                or attempt.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
+                or attempt.get("privilege_receipt_count") != 4
+                or attempt.get("repair_lineage") != {
+                    "repair": A27_REPAIR,
+                    "launch": {"id": "B27", "commit": B27_PASS["commit"], "tree": B27_PASS["tree"]},
+                    "tests": {"passed": 169, "skipped": 1},
+                    "change": "NARROW_ABSENT_TMUX_SOCKET_CLASSIFIER_PLUS_FAIL_CLOSED_UNKNOWN_REGRESSION",
+                }
+                or not (pending_review or accepted_review)
+            ):
+                raise ContractError("B27 passing smoke binding drift")
             if require_live and not accepted_review:
-                raise ContractError("B26 passing smoke lacks independent acceptance")
+                raise ContractError("B27 passing smoke lacks independent Sol acceptance")
             continue
         if not isinstance(attempt, dict) or set(attempt) != expected_fields:
             raise ContractError("prelaunch attempt has an inexact schema")
@@ -312,6 +376,36 @@ def _validate_attempt_history(custody: dict[str, Any], *, require_live: bool = F
             raise ContractError(f"attempt receipt has invalid hash: {attempt_id}")
     if len(ids) != len(set(ids)):
         raise ContractError("prelaunch attempt IDs are not unique")
+
+
+def _validate_live_deploy_attempts(custody: dict[str, Any]) -> None:
+    attempts = custody.get("live_deploy_attempts")
+    if not isinstance(attempts, list) or len(attempts) != 1:
+        raise ContractError("live deploy attempt history is incomplete")
+    attempt = attempts[0]
+    expected = {
+        "transaction_id": FAILED_LIVE_TRANSACTION_ID,
+        "status": "FAILED_FAIL_CLOSED_NO_CANARY_CREATED",
+        "durable_failure_receipt": {
+            "path": f"/var/lib/arnold-zero-recovery/{FAILED_LIVE_TRANSACTION_ID}.host-zero-recovery-fence-apply-failure.json",
+            "sha256": None,
+            "status": "REMOTE_COPY_AND_RECONCILIATION_REQUIRED",
+        },
+        "marker_published": False,
+        "stage": "verify_no_recovery_sessions",
+        "error": "tmux_observation_unknown",
+        "recovery_units": {"count": 8, "state": "ALL_INACTIVE_MASKED_PERSISTENT"},
+        "canary_created": False,
+        "observed_tmux": {
+            "returncode": 1,
+            "stderr": "error connecting to /tmp/tmux-0/default (No such file or directory)",
+        },
+        "root_cause": "NARROW_CLASSIFIER_TREATED_ABSENT_TMUX_SOCKET_AS_UNKNOWN",
+        "repair": A27_REPAIR,
+        "retry_status": "B27_LIVE_RETRY_PENDING",
+    }
+    if attempt != expected:
+        raise ContractError("failed live deploy transaction binding drift")
 
 
 def _validate_operation_reconciliation(*, require_live: bool) -> None:
@@ -564,20 +658,20 @@ def _validate_supersession(*, require_live: bool) -> None:
     if (
         not isinstance(attempts, dict)
         or attempts.get("ordered_rejected_attempts") != known_ids
-        or attempts.get("passing_successor") != B26_PASS["id"]
+        or attempts.get("passing_successor") != B27_PASS["id"]
         or attempts.get("rule") != "SUPERSESSION_PRESERVES_FAILURE_EVIDENCE_AND_NEVER_IMPLIES_SUCCESS"
     ):
         raise ContractError("attempt supersession index drift")
     accepted = attempts.get("accepted_successor")
     if require_live:
-        if accepted != B26_PASS["id"]:
-            raise ContractError("no strictly later accepted smoke is registered")
+        if accepted != B27_PASS["id"]:
+            raise ContractError("latest passing smoke is not independently accepted")
         if attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
             raise ContractError("strictly later smoke is not accepted")
-    elif accepted is None:
-        if attempts.get("status") != "PASS_RECEIPT_PENDING_INDEPENDENT_ACCEPTANCE_AND_LIVE_EVIDENCE":
-            raise ContractError("passing smoke pending disposition drift")
-    elif accepted != B26_PASS["id"] or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
+    elif accepted == B26_PASS["id"]:
+        if attempts.get("status") != "B26_SOL_GO_B27_PASS_PENDING_SOL_ACCEPTANCE_AND_LIVE_RETRY":
+            raise ContractError("latest passing smoke pending disposition drift")
+    elif accepted != B27_PASS["id"] or attempts.get("status") != "ACCEPTED_STRICTLY_LATER_SMOKE":
         raise ContractError("invalid accepted smoke successor")
 
 
@@ -697,6 +791,7 @@ def validate(*, require_live: bool = False) -> None:
         raise ContractError("custody manifest schema must be v4")
     _validate_obligations(custody)
     _validate_attempt_history(custody, require_live=require_live)
+    _validate_live_deploy_attempts(custody)
     _validate_prelaunch_gates(custody, require_live=require_live)
     _validate_host_control_state_contract(custody)
     reconciliation = custody.get("live_operation_reconciliation")

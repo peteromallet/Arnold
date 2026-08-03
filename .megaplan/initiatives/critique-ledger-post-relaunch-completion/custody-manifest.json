@@ -1,7 +1,7 @@
 {
   "schema": "arnold.critique_ledger.unfinished_work_custody.v4",
   "captured_at": "2026-08-02T23:15:00+02:00",
-  "contract_updated_at": "2026-08-03T05:13:03Z",
+  "contract_updated_at": "2026-08-03T05:27:12Z",
   "empty_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "canonical_checklist": {
     "path": "docs/arnold/critique-ledger-incident-prevention-and-durable-recovery-plan-2026-08-02.md",
@@ -191,9 +191,9 @@
       "id": "B26-smoke",
       "kind": "OFFLINE_STRUCTURAL_SMOKE",
       "candidate": {"commit": "9a8edcf11a488b5dfb47e5c4ef7defb17e3ba6d2", "tree": "1de51fd479e0bcffc8fb9f951cb27982ad9ee036"},
-      "status": "PASSED_EXIT_0_PENDING_INDEPENDENT_ACCEPTANCE_NOT_LIVE_GATE",
+      "status": "PASSED_EXIT_0_INDEPENDENT_SOL_GO_NOT_LIVE_GATE",
       "result": {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"},
-      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b26-offline-smoke.json", "sha256": "cf0967638b2c84097ced4dfc113735bbd66db1a8925d00d7080bdf7242669487", "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED"},
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b26-offline-smoke.json", "sha256": "cf0967638b2c84097ced4dfc113735bbd66db1a8925d00d7080bdf7242669487", "status": "REMOTE_SHA_DECLARED_COPY_REQUIRED"},
       "receipt_digest": "7a656459d4aace827e8b180eb025117b609262311641c15ce495ba87042cf64f",
       "image": {
         "production": "sha256:261642f73da83b4704b33b02b9b1c14f17c56d4cafb633c98cac4f938d6421ed",
@@ -202,7 +202,57 @@
       "verifier_receipt_digest": "99c4420ac9440d539753e0a261781f6fc8588f974fa7e2ed07ee86cb2106e373",
       "phases": ["init", "plan", "critique", "gate", "finalize"],
       "privilege_receipt_count": 4,
-      "independent_review": {"path": null, "sha256": null, "status": "PENDING"}
+      "independent_review": {
+        "reviewer": "Sol",
+        "decision": "GO",
+        "artifact": {"path": null, "sha256": null, "status": "NO_LOCAL_ARTIFACT_PRESENT"}
+      }
+    },
+    {
+      "id": "B27-smoke",
+      "kind": "OFFLINE_STRUCTURAL_SMOKE",
+      "candidate": {"commit": "0a3fbb56e48c5de98a455224c444a522ff31bf07", "tree": "beb5d68bfcbdd7b0867a139ec19885dbb260e57d"},
+      "status": "PASSED_EXIT_0_PENDING_INDEPENDENT_SOL_ACCEPTANCE_NOT_LIVE_GATE",
+      "result": {"exit_code": 0, "phase_status": "ALL_EXACT_PHASES_PASSED", "terminal_state": "finalized"},
+      "remote_receipt": {"path": "/var/lib/arnold-zero-recovery/critique-ledger-b27-offline-smoke.json", "sha256": "77c39d4763641724aa3355210c3ccdcbb6deb8a8253b560d416a9f47d3f1e454", "status": "REMOTE_SHA_DECLARED_COPY_AND_INDEPENDENT_REVIEW_REQUIRED"},
+      "receipt_digest": "173288c2fcd0aa793f894a3a995de1512447b4e9bbf6744fc241d2227d505b9b",
+      "image": {
+        "production": "sha256:c5687c73d88307ab9d7847585aaa371d27fab1e1286283b6456dbbf0d269470d",
+        "derived": "sha256:71ef320bd30fe70211e9885c6972994a5f61c9625cc24bba9aecc2874082fb6e"
+      },
+      "verifier_receipt_digest": "bae9f5e69d7d2eaf3106ac5652c77be2608fc7c643d708d5c24af74bf2b08184",
+      "phases": ["init", "plan", "critique", "gate", "finalize"],
+      "privilege_receipt_count": 4,
+      "independent_review": {"path": null, "sha256": null, "status": "PENDING_SOL_ACCEPTANCE"},
+      "repair_lineage": {
+        "repair": {"id": "A27", "commit": "185e8d97732ff25e5e5d6a00b6877b7a46f08129", "tree": "a7c204b757fe0673516d1e9e22a1308b73b0d778"},
+        "launch": {"id": "B27", "commit": "0a3fbb56e48c5de98a455224c444a522ff31bf07", "tree": "beb5d68bfcbdd7b0867a139ec19885dbb260e57d"},
+        "tests": {"passed": 169, "skipped": 1},
+        "change": "NARROW_ABSENT_TMUX_SOCKET_CLASSIFIER_PLUS_FAIL_CLOSED_UNKNOWN_REGRESSION"
+      }
+    }
+  ],
+  "live_deploy_attempts": [
+    {
+      "transaction_id": "404dd858567d48ffbe8cb7c27d85185a",
+      "status": "FAILED_FAIL_CLOSED_NO_CANARY_CREATED",
+      "durable_failure_receipt": {
+        "path": "/var/lib/arnold-zero-recovery/404dd858567d48ffbe8cb7c27d85185a.host-zero-recovery-fence-apply-failure.json",
+        "sha256": null,
+        "status": "REMOTE_COPY_AND_RECONCILIATION_REQUIRED"
+      },
+      "marker_published": false,
+      "stage": "verify_no_recovery_sessions",
+      "error": "tmux_observation_unknown",
+      "recovery_units": {"count": 8, "state": "ALL_INACTIVE_MASKED_PERSISTENT"},
+      "canary_created": false,
+      "observed_tmux": {
+        "returncode": 1,
+        "stderr": "error connecting to /tmp/tmux-0/default (No such file or directory)"
+      },
+      "root_cause": "NARROW_CLASSIFIER_TREATED_ABSENT_TMUX_SOCKET_AS_UNKNOWN",
+      "repair": {"id": "A27", "commit": "185e8d97732ff25e5e5d6a00b6877b7a46f08129", "tree": "a7c204b757fe0673516d1e9e22a1308b73b0d778"},
+      "retry_status": "B27_LIVE_RETRY_PENDING"
     }
   ],
   "prelaunch_release_gates": [

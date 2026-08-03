@@ -160,7 +160,7 @@ deliberately pending import; it is not permission to recreate a receipt.
   final verifier rejected the plan privilege receipt because it still required
   `/dev/shm` `root_nonwritable` while IPC-none correctly recorded
   `absent_ipc_none`. It is failed history, not acceptance authority.
-- [ ] Copy and independently review B26 at
+- [ ] Copy B26 at
   `/var/lib/arnold-zero-recovery/critique-ledger-b26-offline-smoke.json`.
   Candidate `9a8edcf11a488b5dfb47e5c4ef7defb17e3ba6d2` / tree
   `1de51fd479e0bcffc8fb9f951cb27982ad9ee036` passed all five exact phases,
@@ -173,12 +173,53 @@ deliberately pending import; it is not permission to recreate a receipt.
   `sha256:261642f73da83b4704b33b02b9b1c14f17c56d4cafb633c98cac4f938d6421ed`
   and derived image is
   `sha256:74d24afc0af67ff6ae5de7d40ece647067873168793936f6d5d58e1a4a8742a7`.
-  This is the strictly later passing smoke candidate, but it is not an accepted
-  live gate, canary, stable-exit proof, or F0 result until independent review
-  and the remaining live evidence pass.
-- [ ] Copy and reconcile every available B10-B26 receipt/evidence directory.
-  No B8-B25 failed attempt is current acceptance authority; B26 remains pending
-  independent acceptance, and no missing receipt may be synthesized.
+  Sol's independent review decision is **GO**. No review artifact is present in
+  this checkout, so custody records the reviewer/decision without inventing
+  path or hash bytes. B26 remains an accepted offline smoke only: it is not a
+  live gate, canary, stable-exit proof, or F0 result.
+- [ ] Import and reconcile the durable failure receipt for live transaction
+  `404dd858567d48ffbe8cb7c27d85185a` from
+  `/var/lib/arnold-zero-recovery/404dd858567d48ffbe8cb7c27d85185a.host-zero-recovery-fence-apply-failure.json`.
+  The transaction failed closed at `verify_no_recovery_sessions` with
+  `tmux_observation_unknown`; `marker_published` was false, all eight recovery
+  units were inactive, masked and persistently masked, and no canary was
+  created. Exact tmux observation: rc `1`, stderr
+  `error connecting to /tmp/tmux-0/default (No such file or directory)`.
+  Root cause was the narrow classifier treating an absent tmux socket as
+  unknown, not evidence of an active recovery session.
+- [ ] Preserve the A27 classifier repair at
+  `185e8d97732ff25e5e5d6a00b6877b7a46f08129` / tree
+  `a7c204b757fe0673516d1e9e22a1308b73b0d778` and B27 launch binding at
+  `0a3fbb56e48c5de98a455224c444a522ff31bf07` / tree
+  `beb5d68bfcbdd7b0867a139ec19885dbb260e57d`. The repair adds the narrow
+  absent-socket classifier plus a fail-closed unknown regression; its recorded
+  suite result is 169 passed and 1 skipped.
+- [ ] Copy and obtain Sol's independent acceptance for B27 at
+  `/var/lib/arnold-zero-recovery/critique-ledger-b27-offline-smoke.json`.
+  B27 passed all five exact phases, exited zero and produced four privilege
+  receipts. Its declared file SHA-256 is
+  `77c39d4763641724aa3355210c3ccdcbb6deb8a8253b560d416a9f47d3f1e454`,
+  receipt digest is
+  `173288c2fcd0aa793f894a3a995de1512447b4e9bbf6744fc241d2227d505b9b`,
+  verifier digest is
+  `bae9f5e69d7d2eaf3106ac5652c77be2608fc7c643d708d5c24af74bf2b08184`,
+  production image is
+  `sha256:c5687c73d88307ab9d7847585aaa371d27fab1e1286283b6456dbbf0d269470d`,
+  and derived image is
+  `sha256:71ef320bd30fe70211e9885c6972994a5f61c9625cc24bba9aecc2874082fb6e`.
+  Sol acceptance is pending, so B27 is not a live gate or F0 authority.
+- [ ] Run a fresh supported B27 live retry only after independent acceptance;
+  do not reuse the failed transaction or infer authority from its safe unit
+  state.
+- [ ] Import and independently reconcile the failed-live and fresh-live receipt
+  bytes; no missing receipt may be synthesized.
+- [ ] Produce and independently accept the canary completion, stop and
+  stable-exit proofs. These remain pending even after a successful offline
+  smoke.
+- [ ] Copy and reconcile every available B10-B27 receipt/evidence directory.
+  No B8-B25 failed attempt is current acceptance authority; B26 is accepted
+  offline history, B27 is the latest passing candidate pending Sol acceptance,
+  and no missing receipt may be synthesized.
 
 ## Exact deferred-obligation contract
 
