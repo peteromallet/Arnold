@@ -1624,21 +1624,11 @@ adopt_unmarked_tmux_sessions() {
   local discover_bin="${DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
   [[ -f "$discover_bin" ]] || return 0
 
-  local started_at
-  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Discovery is retained for operator diagnostics only.  A tmux session has
+  # no marker-bound namespace/start identity, so it may not synthesize a
+  # marker (which would in turn admit repair/relaunch/retirement control).
   while IFS=$'\t' read -r session workspace remote_spec run_kind plan_name relaunch_command; do
     [[ -n "${session:-}" ]] || continue
-    mkdir -p "$MARKER_DIR"
-    python3 -c 'import json, sys
-marker_path, session, workspace, remote_spec, started_at, run_kind, plan_name, relaunch_command = sys.argv[1:]
-payload = {"session": session, "workspace": workspace, "remote_spec": remote_spec, "started_at": started_at}
-if run_kind == "plan":
-    payload["run_kind"] = "plan"
-    payload["plan_name"] = plan_name
-    payload["relaunch_command"] = relaunch_command
-with open(marker_path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, sort_keys=True)
-' "$MARKER_DIR/$session.json" "$session" "$workspace" "$remote_spec" "$started_at" "${run_kind:-chain}" "${plan_name:-}" "${relaunch_command:-}"
     printf '%s\t%s\t%s\t%s\t%s\n' "$session" "$workspace" "$remote_spec" "${run_kind:-chain}" "${plan_name:-}"
   done < <(bash "$discover_bin" tmux-unmarked --marker-dir "$MARKER_DIR" --src-dir "$SRC_DIR")
 }
@@ -8116,24 +8106,18 @@ for path in goals:
     reason = str(evaluation.get("reason") or "")
     control_action = str(evaluation.get("control_action") or "")
     observation = result.get("observation") or {}
-    runner_transition = (
-        observation.get("runner_transition")
-        if isinstance(observation, dict)
-        and isinstance(observation.get("runner_transition"), dict)
-        else {}
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        control_liveness_from_current_target,
     )
-    active_worker = (
-        observation.get("active_worker")
+    target_liveness = control_liveness_from_current_target(
+        {"current_target_liveness": observation.get("current_target_liveness")}
         if isinstance(observation, dict)
-        and isinstance(observation.get("active_worker"), dict)
-        else {}
+        else None,
+        action="control",
     )
     target_worker_live = bool(
-        runner_transition.get("runner_pid_live") is True
-        and runner_transition.get("runner_pid")
-    ) or bool(
-        active_worker.get("worker_pid_live") is True
-        and active_worker.get("worker_pid")
+        target_liveness.get("state") == "live"
+        and target_liveness.get("action_permitted") is True
     )
     if status != "active":
         print(
@@ -8168,24 +8152,20 @@ PY
 current_target_has_live_worker() {
   local observation="${1:-}"
   [[ -n "$observation" ]] || return 1
-  python3 - "$observation" <<'PY'
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$observation" <<'PY'
 import json
 import sys
+
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    control_liveness_from_current_target,
+)
 
 try:
     record = json.loads(sys.argv[1])
 except (IndexError, json.JSONDecodeError, TypeError):
     raise SystemExit(1)
-heartbeat = record.get("active_step_heartbeat") if isinstance(record, dict) else {}
-if not isinstance(heartbeat, dict):
-    raise SystemExit(1)
-raise SystemExit(
-    0
-    if heartbeat.get("active") is True
-    and heartbeat.get("pid_live") is True
-    and str(heartbeat.get("worker_pid") or "").strip()
-    else 1
-)
+liveness = control_liveness_from_current_target(record, action="control")
+raise SystemExit(0 if liveness.get("state") == "live" and liveness.get("action_permitted") is True else 1)
 PY
 }
 
@@ -8203,6 +8183,50 @@ launch_chain_tick() {
   if [[ -n "$plan_name" ]]; then
     run_kind="plan"
   fi
+
+  # Resolve the one namespace-bound liveness record before any repair,
+  # retrigger, retirement, or relaunch path.  An unreadable/missing/corrupt
+  # record is UNKNOWN and fails closed; raw PID, runner-transition, heartbeat,
+  # tmux, and watchdog-health observations remain report diagnostics only.
+  current_target_observation="$(
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+session, workspace, remote_spec, run_kind, plan_name, marker_dir, repair_data_dir = sys.argv[1:]
+record = resolve_current_target(
+    session,
+    marker_dir=pathlib.Path(marker_dir),
+    repair_data_dir=pathlib.Path(repair_data_dir),
+)
+print(json.dumps(record, sort_keys=True))
+PY
+  )"
+  local canonical_control_state
+  canonical_control_state="$(
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$current_target_observation" <<'PY' 2>>"${LOG:-/dev/null}" || printf unknown
+import json
+import sys
+from arnold_pipelines.megaplan.cloud.current_target_liveness import control_liveness_from_current_target
+try:
+    target = json.loads(sys.argv[1])
+except (IndexError, TypeError, ValueError):
+    target = None
+record = control_liveness_from_current_target(target, action="mutation")
+print(record["state"] if record.get("action_permitted") is True else "unknown")
+PY
+  )"
+  if [[ "$canonical_control_state" == "unknown" ]]; then
+    log "canonical target liveness is UNKNOWN; all wrapper mutation/retrigger/escalation/retirement paths are fenced session=$session"
+    report_item "$report_items" "$session" "observe" "liveness_unknown" \
+      "canonical identity-bound liveness unavailable; legacy PID/tmux evidence is diagnostic-only" \
+      "$workspace" "$remote_spec"
+    return 0
+  fi
+  log "current-target canonical-control session=$session state=$canonical_control_state evidence=$current_target_observation"
 
   # A deterministic phase-contract failure is not a stopped process waiting
   # for a mechanical restart: the same input will deterministically fail
@@ -8279,28 +8303,6 @@ launch_chain_tick() {
   PLAN_STATUS_BLOCKER_ID=
   PLAN_STATUS_REQUEST_ID=
   PLAN_STATUS_TARGET_SOURCE=
-
-  current_target_observation="$(
-    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY' 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-183" "authority-risk bypass converted to typed evidence gap"
-import json
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
-
-session, workspace, remote_spec, run_kind, plan_name, marker_dir, repair_data_dir = sys.argv[1:]
-
-record = resolve_current_target(
-    session,
-    marker_dir=pathlib.Path(marker_dir),
-    repair_data_dir=pathlib.Path(repair_data_dir),
-)
-print(json.dumps(record, sort_keys=True))
-PY
-  )"
-  if [[ -n "$current_target_observation" ]]; then
-    log "current-target observe session=$session evidence=$current_target_observation"
-  fi
 
   local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live
   IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t\t\tfalse')"
@@ -9132,8 +9134,8 @@ scan_once_unlocked() {
   maybe_reexec_updated_watchdog
   while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
     [[ -n "$adopted_session" ]] || continue
-    log "adopted marker-less tmux session=$adopted_session kind=${adopted_kind:-chain}"
-    report_item "$report_items" "$adopted_session" "adopt" "adopted" "adopted marker-less tmux session" "$adopted_workspace" "$adopted_remote_spec"
+    log "unbound tmux candidate is diagnostic-only and was not adopted session=$adopted_session kind=${adopted_kind:-chain}"
+    report_item "$report_items" "$adopted_session" "observe" "unbound_candidate" "marker-less tmux session was not adopted; canonical identity binding required" "$adopted_workspace" "$adopted_remote_spec"
   done < <(adopt_unmarked_tmux_sessions)
   if [[ ! -d "$MARKER_DIR" ]]; then
     log "scan complete: marker directory missing"

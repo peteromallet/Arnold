@@ -5940,7 +5940,7 @@ def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
     assert 'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"' in text
 
 
-def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
+def test_watchdog_reports_markerless_bootstrap_tmux_without_adopting_it(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace_root = tmp_path / "workspace-root"
     workspace = workspace_root / "test-watchdog-vibecomfy-per-workflow-window-chat-20260628"
@@ -5991,13 +5991,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
     assert "vibecomfy-per-workflow-window-chat" in result.stdout
 
     marker_path = marker_dir / "vibecomfy-per-workflow-window-chat.json"
-    payload = json.loads(marker_path.read_text(encoding="utf-8"))
-    assert payload["session"] == "vibecomfy-per-workflow-window-chat"
-    assert payload["workspace"] == str(workspace)
-    assert payload["run_kind"] == "plan"
-    assert payload["plan_name"] == "per-workflow-window-chat-cloud-20260628"
-    assert payload["remote_spec"] == ".megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md"
-    assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in payload["relaunch_command"]
+    assert not marker_path.exists()
 
 
 def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> None:
@@ -15809,32 +15803,88 @@ repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
     assert "suppressing replacement-owner dispatch" in log_path.read_text(encoding="utf-8")
 
 
-def test_current_target_live_worker_requires_active_pid_bound_heartbeat() -> None:
+def test_current_target_live_worker_requires_canonical_bound_record() -> None:
     function = _extract_wrapper_function("current_target_has_live_worker")
+    known = {
+        "schema": "arnold.megaplan.current_target_liveness.v1",
+        "state": "live",
+        "live": True,
+        "dead": False,
+        "known": True,
+        "source": "fresh_owner_lease",
+        "identity": {},
+        "lease": {},
+        "diagnostics": [],
+        "control_permitted": True,
+        "mutation_permitted": True,
+        "escalation_permitted": True,
+        "retrigger_permitted": True,
+    }
     live = json.dumps(
+        {
+            "current_target_liveness": known,
+        }
+    )
+    legacy_bypass = json.dumps(
         {
             "active_step_heartbeat": {
                 "active": True,
                 "pid_live": True,
                 "worker_pid": "1179344",
-            }
-        }
-    )
-    stale = json.dumps(
-        {
-            "active_step_heartbeat": {
-                "active": True,
-                "pid_live": False,
-                "worker_pid": "1179344",
-            }
+            },
+            "tmux_process": {"session_live": True, "live_status": "alive"},
         }
     )
 
-    accepted = _run_watchdog_shell(f"{function}\ncurrent_target_has_live_worker {shlex.quote(live)}")
-    rejected = _run_watchdog_shell(f"{function}\ncurrent_target_has_live_worker {shlex.quote(stale)}")
+    accepted = _run_watchdog_shell(
+        f"SRC_DIR={shlex.quote(str(REPO_ROOT))}\n{function}\ncurrent_target_has_live_worker {shlex.quote(live)}"
+    )
+    rejected = _run_watchdog_shell(
+        f"SRC_DIR={shlex.quote(str(REPO_ROOT))}\n{function}\ncurrent_target_has_live_worker {shlex.quote(legacy_bypass)}"
+    )
 
     assert accepted.returncode == 0, accepted.stderr
     assert rejected.returncode == 1, rejected.stderr
+
+
+def test_watchdog_unknown_canonical_liveness_fences_all_dispatch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { :; }
+report_item() { printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" >> "$1"; }
+dispatch_kimi_repair() { : > "$DISPATCH_PATH"; }
+dispatch_meta_repair() { : > "$DISPATCH_PATH"; }
+repair_unintended_stop() { : > "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick unbound {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert not dispatch_path.exists()
+    assert "\tobserve\tliveness_unknown\t" in report_path.read_text(encoding="utf-8")
+
+
+def test_repair_loop_outer_canonical_gate_precedes_every_mutating_path() -> None:
+    text = _repair_wrapper()
+
+    gate = text.index('if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]')
+    assert gate < text.index("acquire_repair_lock || exit 75")
+    assert gate < text.index('run_dev_fix_turn "$iteration"')
+    assert gate < text.index('mechanical_status="$(mechanical_launch_step')
+    assert "legacy PID/tmux evidence remains diagnostic-only" in text
 
 
 def test_watchdog_unowned_genuinely_stuck_goal_still_dispatches_one_l1_owner(

@@ -289,8 +289,84 @@ def liveness_from_current_target(target: Mapping[str, Any] | None) -> dict[str, 
     )
 
 
+_ACTION_FLAG = {
+    "control": "control_permitted",
+    "mutation": "mutation_permitted",
+    "escalation": "escalation_permitted",
+    "retrigger": "retrigger_permitted",
+}
+
+
+def control_liveness_from_current_target(
+    target: Mapping[str, Any] | None, *, action: str = "control"
+) -> dict[str, Any]:
+    """Return a strict canonical observation suitable for wrapper control.
+
+    ``liveness_from_current_target`` is also a compatibility reader for older
+    callers that only display the record.  Control-plane wrappers need a
+    stronger contract: the schema, tri-state booleans, and action-specific
+    permission bit must all agree.  Missing, truncated, hand-written, or
+    otherwise corrupt records therefore collapse to ``unknown``.  Legacy PID,
+    tmux, heartbeat, and runner-transition fields are deliberately ignored.
+    """
+
+    required_flag = _ACTION_FLAG.get(action)
+    if required_flag is None:
+        raise ValueError(f"unsupported liveness control action: {action}")
+    raw = None
+    if isinstance(target, Mapping):
+        candidate = target.get("current_target_liveness") or target.get("liveness")
+        if isinstance(candidate, Mapping):
+            raw = candidate
+    state = _text(raw.get("state") if raw else "").lower()
+    known = state in {"live", "dead"}
+    structurally_valid = bool(
+        raw
+        and raw.get("schema") == SCHEMA
+        and state in {"live", "dead", "unknown"}
+        and raw.get("known") is known
+        and raw.get("live") is (state == "live")
+        and raw.get("dead") is (state == "dead")
+        and raw.get("control_permitted") is known
+        and raw.get("mutation_permitted") is known
+        and raw.get("escalation_permitted") is known
+        and raw.get("retrigger_permitted") is known
+    )
+    if not structurally_valid:
+        result = _result(
+            "unknown",
+            source="canonical_observation_invalid",
+            reason="canonical liveness record is missing or structurally invalid",
+            identity={},
+            lease={},
+            diagnostics=["legacy process evidence is diagnostic-only"],
+        )
+        result.update(
+            {
+                "authoritative": False,
+                "requested_action": action,
+                "action_permitted": False,
+            }
+        )
+        return result
+    result = dict(raw)
+    permitted = bool(known and raw.get(required_flag) is True)
+    result.update(
+        {
+            "authoritative": True,
+            "requested_action": action,
+            "action_permitted": permitted,
+            "control_permitted": bool(
+                known and raw.get("control_permitted") is True
+            ),
+        }
+    )
+    return result
+
+
 __all__ = [
     "SCHEMA",
+    "control_liveness_from_current_target",
     "liveness_from_current_target",
     "observe_current_target_liveness",
 ]

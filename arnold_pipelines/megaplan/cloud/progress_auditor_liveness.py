@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    control_liveness_from_current_target,
+)
 
 
 _DEAD_TMUX = frozenset({"dead", "missing", "stopped", "unavailable"})
@@ -31,36 +33,34 @@ def classify_runner_liveness(
     """Return one consistent ``alive|dead|unknown`` runner classification."""
 
     if isinstance(bound_observation, Mapping):
-        state = str(bound_observation.get("state") or "unknown").strip().lower()
-        if bound_observation.get("schema") != SCHEMA or state not in {
-            "live",
-            "dead",
-            "unknown",
-        }:
-            state = "unknown"
-        known = state != "unknown"
+        canonical = control_liveness_from_current_target(
+            {"current_target_liveness": bound_observation}, action="escalation"
+        )
+        state = str(canonical.get("state") or "unknown")
+        known = state != "unknown" and canonical.get("action_permitted") is True
         return {
             "state": state,
             "live": state == "live",
             "dead": state == "dead",
             "known": known,
             "source": str(
-                bound_observation.get("source")
+                canonical.get("source")
                 or "insufficient_bound_liveness_evidence"
             ),
             "session_identity_present": bool(
-                (bound_observation.get("identity") or {}).get("source")
-                if isinstance(bound_observation.get("identity"), Mapping)
+                (canonical.get("identity") or {}).get("source")
+                if isinstance(canonical.get("identity"), Mapping)
                 else False
             ),
             "process_identity_present": bool(
-                (bound_observation.get("identity") or {}).get("pid")
-                if isinstance(bound_observation.get("identity"), Mapping)
+                (canonical.get("identity") or {}).get("pid")
+                if isinstance(canonical.get("identity"), Mapping)
                 else False
             ),
             "tmux_live_status": "unknown",
             "watchdog_statuses": [],
             "control_permitted": known,
+            "authoritative": canonical.get("authoritative") is True,
         }
 
     tmux = tmux if isinstance(tmux, Mapping) else {}
@@ -97,6 +97,9 @@ def classify_runner_liveness(
     else:
         state = "unknown"
         source = "insufficient_liveness_evidence"
+    # Compatibility projection for reports only.  These namespace-unbound
+    # signals may describe what an observer saw, but can never authorize an
+    # escalation or any other control-plane action.
     return {
         "state": state,
         "live": state == "alive",
@@ -107,4 +110,7 @@ def classify_runner_liveness(
         "process_identity_present": bool(process_identity_valid or active_process_identity),
         "tmux_live_status": live_status or "unknown",
         "watchdog_statuses": sorted(statuses),
+        "control_permitted": False,
+        "authoritative": False,
+        "diagnostic_only": True,
     }

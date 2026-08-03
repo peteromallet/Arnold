@@ -5195,7 +5195,7 @@ repair_goal_record_terminal_failure() {
 }
 
 wait_for_repair_goal_progress_if_live() {
-  local phase="$1" result status action reason runner_live owner_launch_live sleep_secs
+  local phase="$1" result status action reason runner_live liveness_state liveness_permitted sleep_secs
   local settle_started="$SECONDS"
   local settle_secs="${CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS:-120}"
   if ! [[ "$settle_secs" =~ ^[0-9]+$ ]]; then
@@ -5207,9 +5207,15 @@ wait_for_repair_goal_progress_if_live() {
       log "repair goal control snapshot failed closed session=$SESSION phase=$phase"
       return 1
     }
-    IFS=$'\t' read -r status action runner_live reason <<< "$(
-      python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; o=d.get("observation") or {}; r=o.get("runner_transition") or {}; w=o.get("active_worker") or {}; live=bool(r.get("runner_pid_live") or w.get("worker_pid_live")); print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), "true" if live else "false", str(e.get("reason") or ""))))' <<< "$result"
+    IFS=$'\t' read -r status action runner_live liveness_state liveness_permitted reason <<< "$(
+      PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -c 'import json,sys; from arnold_pipelines.megaplan.cloud.current_target_liveness import control_liveness_from_current_target; d=json.load(sys.stdin); e=d.get("evaluation") or {}; o=d.get("observation") or {}; l=control_liveness_from_current_target({"current_target_liveness": o.get("current_target_liveness")}, action="mutation"); permitted=l.get("action_permitted") is True; live=permitted and l.get("state")=="live"; print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), "true" if live else "false", str(l.get("state") or "unknown"), "true" if permitted else "false", str(e.get("reason") or ""))))' <<< "$result"
     )"
+    if [[ "$status" == "active" ]] && \
+      { [[ "$liveness_state" == "unknown" ]] || [[ "$liveness_permitted" != "true" ]]; }; then
+      repair_data_set_outcome "repairing"
+      log "canonical target liveness UNKNOWN; all further repair/retrigger/relaunch mutation is fenced and legacy PID/tmux evidence is diagnostic-only session=$SESSION phase=$phase"
+      return 0
+    fi
     case "$status:$action" in
       progressed:*)
         repair_data_set_outcome "progressed" "$status"
@@ -5248,15 +5254,11 @@ wait_for_repair_goal_progress_if_live() {
         # successful launch/hold receipt. Give that exact canonical runner a
         # bounded settle window to emit authoritative phase activity; bare
         # process liveness still cannot satisfy the recovery goal.
-        owner_launch_live=false
-        if tmux has-session -t "$SESSION" 2>/dev/null; then
-          owner_launch_live=true
-        fi
         if [[ "$((SECONDS - settle_started))" -lt "$settle_secs" ]] && \
-          { [[ "$runner_live" == "true" ]] || [[ "$owner_launch_live" == "true" ]]; }; then
+          [[ "$runner_live" == "true" ]]; then
           ensure_repair_budget_available "goal-launch-settle-$phase"
           sleep_secs="$(cap_timeout_to_repair_budget "$REPAIR_GOAL_POLL_SECS" "goal-launch-settle-$phase")"
-          log "observing receipted owner launch during bounded settle window session=$SESSION phase=$phase runner_live=$runner_live owner_launch_live=$owner_launch_live poll_secs=$sleep_secs reason=$reason"
+          log "observing canonical receipted owner launch during bounded settle window session=$SESSION phase=$phase runner_live=$runner_live poll_secs=$sleep_secs reason=$reason"
           sleep "$sleep_secs"
           continue
         fi
@@ -6755,16 +6757,21 @@ mechanical_launch_step() {
   local plan_name="$6"
   local relaunch_command="$7"
   local quoted_command launch_script launch_log launch_receipt command_sha safe detail health
-  local control_result control_status control_action control_blocker_cleared receipt_detail
+  local control_result control_status control_action control_blocker_cleared control_liveness_state control_liveness_permitted receipt_detail
   local post_result post_status receipt_wait
 
   control_result="$(repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration")" || {
     echo "failed:repair_goal_control_unavailable"
     return 1
   }
-  IFS=$'\t' read -r control_status control_action control_blocker_cleared <<< "$(
-    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), "true" if e.get("blocker_cleared") else "false")))' <<< "$control_result"
+  IFS=$'\t' read -r control_status control_action control_blocker_cleared control_liveness_state control_liveness_permitted <<< "$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -c 'import json,sys; from arnold_pipelines.megaplan.cloud.current_target_liveness import control_liveness_from_current_target; d=json.load(sys.stdin); e=d.get("evaluation") or {}; o=d.get("observation") or {}; l=control_liveness_from_current_target({"current_target_liveness": o.get("current_target_liveness")}, action="mutation"); print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), "true" if e.get("blocker_cleared") else "false", str(l.get("state") or "unknown"), "true" if l.get("action_permitted") is True else "false")))' <<< "$control_result"
   )"
+  if [[ "$control_liveness_state" == "unknown" || "$control_liveness_permitted" != "true" ]]; then
+    log "mechanical relaunch fenced: canonical identity-bound liveness is UNKNOWN; legacy PID/tmux evidence is diagnostic-only session=$session iteration=$iteration" >&2
+    echo "preserved:canonical_liveness_unknown"
+    return 0
+  fi
   if [[ "$control_status" == "active" && "$control_action" == "preserve_live" ]]; then
     # mechanical_launch_step is consumed through command substitution. Keep
     # diagnostics off stdout so the caller receives one exact status token.
@@ -8636,6 +8643,34 @@ if [[ -z "$RUN_KIND" ]]; then
     RUN_KIND="chain"
   fi
 fi
+
+# This is the outer repair/retrigger fence.  The repair loop must not infer
+# authority from its local PID namespace, a tmux server, runner-transition
+# sidecars, or watchdog health.  Only a complete canonical record may admit
+# subsequent mutation; UNKNOWN exits before lock acquisition, model launch,
+# marker retirement, or mechanical relaunch.
+ENTRY_CANONICAL_LIVENESS="$(
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" <<'PY' 2>>"$LOG" || printf unknown
+import pathlib
+import sys
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+from arnold_pipelines.megaplan.cloud.current_target_liveness import control_liveness_from_current_target
+
+session, marker_dir, repair_data_dir = sys.argv[1:]
+target = resolve_current_target(
+    session,
+    marker_dir=pathlib.Path(marker_dir),
+    repair_data_dir=pathlib.Path(repair_data_dir),
+)
+liveness = control_liveness_from_current_target(target, action="mutation")
+print(liveness["state"] if liveness.get("action_permitted") is True else "unknown")
+PY
+)"
+if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]; then
+  log "canonical target liveness UNKNOWN; repair loop exits before mutation and legacy PID/tmux evidence remains diagnostic-only session=$SESSION"
+  exit 0
+fi
+log "canonical repair-entry liveness admitted session=$SESSION state=$ENTRY_CANONICAL_LIVENESS"
 
 # Environment-gone backstop: if the workspace dir is gone the repair loop has
 # nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
