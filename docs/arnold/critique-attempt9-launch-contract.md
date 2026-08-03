@@ -15,7 +15,14 @@ planning artifacts.
    invocation, run ID, and ordinal. Reread `state.json` and the WBC ledger:
    attempt 8 must be `STARTED -> CANCELLED`, its active owner must be absent,
    and cancellation history must retain ordinal 8.
-4. From the runtime-attested engine checkout invoke exactly once:
+4. While the plan and chain remain paused, use the supported
+   `override set-profile` control route to reapply `partnered-5-glm` from the
+   deployed registry. Require its same-profile refresh receipt, require the
+   plan lifecycle and cancellation history to be unchanged, and reread the
+   persisted config to prove Execute's coordinator and tiers 1–10 are all
+   GLM-family routes. A source-code profile change alone does not update an
+   existing plan's persisted tier table.
+5. From the runtime-attested engine checkout invoke exactly once:
 
    ```sh
    python -P -m arnold_pipelines.megaplan finalize \
@@ -24,11 +31,11 @@ planning artifacts.
 
    Do not wrap this command in `auto`, a shell retry, or a deterministic
    three-attempt loop. The direct phase command has no outer retry driver.
-5. On success require exactly one new phase-WBC stream, ordinal 9, with
+6. On success require exactly one new phase-WBC stream, ordinal 9, with
    `STARTED -> COMPLETED`; require lifecycle state `finalized`, no active
    Finalize owner, and `next_step=execute`. Resuming the existing chain then
    routes to Execute and cannot rerun Finalize from `finalized`.
-6. On failure require exactly one attempt-9 terminal, lifecycle state still
+7. On failure require exactly one attempt-9 terminal, lifecycle state still
    `gated` (or an explicit terminal/manual-review projection), no active owner,
    and no attempt 10. Keep the runner stopped and diagnose before any explicit
    new operator action.
@@ -39,4 +46,3 @@ planning artifacts.
 1–10 to GLM-family routes. Each tier prefers direct Zhipu GLM 5.2, falls back
 to Fireworks GLM 5p2, then retries direct Zhipu. DeepSeek remains available for
 prep/critique/gate; GPT-5.6 Sol high remains exclusive to Finalize.
-
