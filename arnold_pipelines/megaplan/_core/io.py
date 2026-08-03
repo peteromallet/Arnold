@@ -1505,7 +1505,11 @@ def ensure_runtime_layout(root: Path) -> None:
     schemas_dir = megaplan_rt / "schemas"
     schemas_dir.mkdir(parents=True, exist_ok=True)
     for filename, schema in SCHEMAS.items():
-        atomic_write_json(schemas_dir / filename, _enforce_openai_strict_mode(strict_schema(schema)))
+        # This directory is the provider-neutral semantic contract.  Provider
+        # dialect compilation belongs at dispatch time; writing an OpenAI-
+        # mutated schema here made every worker inherit transport-specific
+        # semantics and let unsupported dynamic maps reach Codex unchecked.
+        atomic_write_json(schemas_dir / filename, strict_schema(schema))
 
 
 def megaplan_root(root: Path) -> Path:
