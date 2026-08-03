@@ -77,6 +77,7 @@ driver:
   execution_binding: required
   intended_initiative_revision: 0bb0c0b74e6b1913d39b51f33559b2f5127f1886
   initiative_path: .megaplan/initiatives/critique-ledger
+  require_editable_runtime_match: true
   robustness: full
   phase_timeout: 10800
   auto_approve: true
