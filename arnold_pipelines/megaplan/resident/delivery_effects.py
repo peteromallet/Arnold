@@ -17,6 +17,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from arnold.workflow.effect_protocol import (
@@ -130,6 +131,25 @@ class DeliveryEffects:
         self._protocol = protocol
         self._action_gate_check = action_gate_check
         self._production_enabled = production_enabled
+
+    @property
+    def protocol(self) -> EffectProtocol:
+        """Expose the single owned protocol for health checks and shutdown."""
+
+        return self._protocol
+
+    def close(self) -> None:
+        """Close the durable ledger owned by this adapter.
+
+        The production resident creates exactly one adapter for the lifetime of
+        the process.  Tests and bounded service constructors may close it
+        explicitly without reaching through private protocol fields.
+        """
+
+        store = getattr(self._protocol, "_store", None)
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
 
     # ── gate ────────────────────────────────────────────────────────────
 
@@ -532,9 +552,36 @@ class DeliveryEffects:
         )
 
 
+def open_resident_delivery_effects(
+    state_root: str | Path,
+    *,
+    production_enabled: bool = True,
+) -> DeliveryEffects:
+    """Open the canonical resident notification effect owner.
+
+    The SQLite ledger and its transactional outbox deliberately share one
+    database and one connection.  Reopening this factory after a resident
+    restart therefore adopts the accepted GLEK outcome instead of dispatching
+    the provider again.
+    """
+
+    from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+    from arnold.workflow.ledger_outbox import SqliteLedgerOutbox
+
+    root = Path(state_root).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    store = SqliteAttemptLedgerStore(root / "delivery-effects.sqlite3")
+    outbox = SqliteLedgerOutbox(store)
+    return DeliveryEffects(
+        EffectProtocol(store, outbox),
+        production_enabled=production_enabled,
+    )
+
+
 __all__ = [
     "DeliveryChannel",
     "DeliveryTarget",
     "DeliveryOutcome",
     "DeliveryEffects",
+    "open_resident_delivery_effects",
 ]

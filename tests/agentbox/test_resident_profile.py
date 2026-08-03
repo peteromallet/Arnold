@@ -329,15 +329,16 @@ def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outboun
             conversation_key="discord:guild:g1:channel:c1",
             content="ticket filed",
             idempotency_key=outbound_message.idempotency_key,
-                metadata={
-                    "conversation_id": conversation.id,
-                    "message_id": outbound_message.id,
-                    "turn_id": turn.id,
-                    "discord_reply_to_message_id": "m1",
-                    "discord_processing_message_ids": ["m1"],
-                    "discord_processing_turn_id": turn.id,
-                    "discord_processing_continues": False,
-                },
+            metadata={
+                "delivery_kind": "interactive_reply",
+                "conversation_id": conversation.id,
+                "message_id": outbound_message.id,
+                "turn_id": turn.id,
+                "discord_reply_to_message_id": "m1",
+                "discord_processing_message_ids": ["m1"],
+                "discord_processing_turn_id": turn.id,
+                "discord_processing_continues": False,
+            },
         )
     ]
 

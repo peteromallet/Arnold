@@ -309,6 +309,7 @@ class ResidentRuntime:
                 content=safe_text,
                 idempotency_key=outbound.idempotency_key,
                 metadata={
+                    "delivery_kind": "interactive_reply",
                     "conversation_id": conversation.id,
                     "message_id": outbound.id,
                     "turn_id": turn.id,
@@ -608,6 +609,7 @@ class ResidentRuntime:
                             content=existing_outbound.content,
                             idempotency_key=existing_outbound.idempotency_key,
                             metadata={
+                                "delivery_kind": "interactive_reply",
                                 "conversation_id": conversation.id,
                                 "message_id": existing_outbound.id,
                                 "turn_id": turn.id,
@@ -976,6 +978,11 @@ class ResidentRuntime:
         if not items:
             return
         conversation = self.store.load_resident_conversation(batch.key) or items[-1].conversation
+        delivery_kind = (
+            "autonomous_scheduled"
+            if any(item.event.raw.get("source_kind") == "scheduled_turn" for item in items)
+            else "interactive_reply"
+        )
         active_epic_id = conversation.active_epic_id
         request_text = "\n".join(item.message.content for item in items if item.message.content)
         hot_context = await self.profile.load_hot_context(conversation.id)
@@ -1112,6 +1119,12 @@ class ResidentRuntime:
                     content=safe_text,
                     idempotency_key=outbound.idempotency_key,
                     metadata={
+                        "delivery_kind": delivery_kind,
+                        **(
+                            {"operational_delivery": True}
+                            if delivery_kind == "autonomous_scheduled"
+                            else {}
+                        ),
                         "conversation_id": conversation.id,
                         "message_id": outbound.id,
                         "turn_id": turn.id,
@@ -1184,6 +1197,12 @@ class ResidentRuntime:
                     content=safe_text,
                     idempotency_key=outbound.idempotency_key,
                     metadata={
+                        "delivery_kind": delivery_kind,
+                        **(
+                            {"operational_delivery": True}
+                            if delivery_kind == "autonomous_scheduled"
+                            else {}
+                        ),
                         "conversation_id": conversation.id,
                         "message_id": outbound.id,
                         "turn_id": turn.id,
@@ -1405,6 +1424,7 @@ class ResidentRuntime:
                             confirmation.request_id or event.escalation_id,
                         ),
                         metadata={
+                            "delivery_kind": "interactive_reply",
                             "escalation_id": event.escalation_id,
                             "confirmation_required": True,
                             "request_id": confirmation.request_id,
