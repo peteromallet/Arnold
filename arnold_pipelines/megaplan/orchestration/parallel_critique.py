@@ -11,6 +11,8 @@ while preserving the verified/disputed flag-merge semantics.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -20,6 +22,7 @@ from arnold_pipelines.megaplan._core import (
     _merge_unique,
     atomic_write_json,
     atomic_write_text,
+    sha256_file,
     WorkerUnit,
     WorkerUnitResult,
     scatter_worker_units,
@@ -31,6 +34,10 @@ from arnold_pipelines.megaplan.orchestration.critique_status import (
 )
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     canonical_critique_flag_id,
+)
+from arnold_pipelines.megaplan.custody.phase_wbc import phase_wbc_state
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
+    query_worker_dispatch_manifest,
 )
 from arnold_pipelines.megaplan.model_seam import ModelTier
 from arnold_pipelines.megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
@@ -481,6 +488,17 @@ def run_parallel_critique(
     No session state is mutated — every unit is dispatched read-only.
     """
     started = time.monotonic()
+    phase = phase_wbc_state(state, step="critique")
+    invocation_id = str((state.get("meta") or {}).get("current_invocation_id") or "")
+    if (
+        phase is None
+        or not invocation_id
+        or phase.get("invocation_id") != invocation_id
+    ):
+        raise CliError(
+            "critique_phase_custody_missing",
+            "Parallel critique requires a fresh matching critique phase WBC before scatter",
+        )
     if not checks:
         return WorkerResult(
             payload={"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
@@ -557,6 +575,7 @@ def run_parallel_critique(
                     "ledger_tier": _check.get("_routing_tier"),
                     "ledger_complexity": _check.get("complexity"),
                     "ledger_tier_routing_active": bool(_check.get("_routing_tier_active", False)),
+                    "wbc_dispatch_key": f"critique:{_check['id']}:initial",
                     "worker_options": {
                         "session_db_path": str(_worker_db_path(plan_dir, f"critique_{_check['id']}")),
                         "check_id": str(_check["id"]),
@@ -682,7 +701,12 @@ def run_parallel_critique(
             else [],
         )
 
-    def _repair_unit(unit: WorkerUnit) -> WorkerUnit:
+    def _repair_unit(unit: WorkerUnit, retry_number: int) -> WorkerUnit:
+        extra = dict(unit.extra)
+        extra["wbc_dispatch_key"] = (
+            f"critique:{unit.extra.get('check_id', unit.output_path.stem)}:"
+            f"shape-repair:{retry_number}"
+        )
         return WorkerUnit(
             step=unit.step,
             resolved=unit.resolved,
@@ -693,7 +717,7 @@ def run_parallel_critique(
             schema=unit.schema,
             model=unit.model,
             tier=unit.tier,
-            extra=dict(unit.extra),
+            extra=extra,
         )
 
     def _scatter_raw(current_units: list[WorkerUnit]) -> Any:
@@ -805,7 +829,10 @@ def run_parallel_critique(
                 file=sys.stderr,
             )
 
-        _subset_units = [_repair_unit(_retry_units[_idx]) for _idx in _retry_indices]
+        _subset_units = [
+            _repair_unit(_retry_units[_idx], _retry_number)
+            for _idx in _retry_indices
+        ]
         _retry_units_by_index = dict(zip(_retry_indices, _subset_units, strict=True))
         _retry_sr = _scatter_raw(_subset_units)
         _accumulate_scatter_totals(_retry_sr)
@@ -883,6 +910,67 @@ def run_parallel_critique(
         flag_id for flag_id in _merge_unique(verified_groups) if flag_id not in _disputed_set
     ]
 
+    child_dispatches = query_worker_dispatch_manifest(
+        plan_dir,
+        phase_attempt_id=str(phase["attempt_id"]),
+    )
+    expected_initial_keys = {
+        f"critique:{unit.extra['check_id']}:initial" for unit in units
+    }
+    observed_initial_keys = {
+        str(row.get("dispatch_key"))
+        for row in child_dispatches
+        if row.get("dispatch_key") in expected_initial_keys
+    }
+    if observed_initial_keys != expected_initial_keys:
+        raise CliError(
+            "critique_child_custody_incomplete",
+            "Parallel critique child dispatch manifest is incomplete: "
+            f"expected {sorted(expected_initial_keys)!r}, observed {sorted(observed_initial_keys)!r}",
+        )
+    producer_artifacts = []
+    for unit in units:
+        check_id = str(unit.extra["check_id"])
+        producer_path = (
+            plan_dir
+            / f"critique_check_{check_id}_producer_v{state['iteration']}.json"
+        )
+        raw_path = plan_dir / f"critique_check_{check_id}_raw_v{state['iteration']}.txt"
+        if not producer_path.is_file():
+            raise CliError(
+                "critique_child_custody_incomplete",
+                f"Missing persisted producer artifact for critique child {check_id!r}",
+            )
+        row = {
+            "check_id": check_id,
+            "producer_artifact": producer_path.name,
+            "producer_sha256": sha256_file(producer_path),
+        }
+        if raw_path.is_file():
+            row["raw_artifact"] = raw_path.name
+            row["raw_sha256"] = sha256_file(raw_path)
+        producer_artifacts.append(row)
+    manifest = {
+        "schema_version": "megaplan-parallel-critique-child-manifest-v1",
+        "iteration": int(state["iteration"]),
+        "invocation_id": invocation_id,
+        "phase_attempt_id": str(phase["attempt_id"]),
+        "expected_check_ids": [str(unit.extra["check_id"]) for unit in units],
+        "dispatches": child_dispatches,
+        "producer_artifacts": producer_artifacts,
+    }
+    manifest_digest = "sha256:" + hashlib.sha256(
+        json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    manifest["manifest_digest"] = manifest_digest
+    manifest_path = plan_dir / f"critique_parallel_manifest_v{state['iteration']}.json"
+    atomic_write_json(manifest_path, manifest)
+
     return WorkerResult(
         payload={
             "checks": ordered_checks,
@@ -898,4 +986,14 @@ def run_parallel_critique(
         completion_tokens=_total_completion_tokens,
         total_tokens=_total_tokens,
         rate_limit=aggregate_rate_limits(_rate_limits),
+        auth_metadata={
+            "parallel_critique": {
+                "manifest_artifact": manifest_path.name,
+                "manifest_sha256": sha256_file(manifest_path),
+                "manifest_digest": manifest_digest,
+                "phase_attempt_id": str(phase["attempt_id"]),
+                "invocation_id": invocation_id,
+                "child_dispatch_count": len(child_dispatches),
+            }
+        },
     )

@@ -345,6 +345,7 @@ def _run_worker(
     prompt_kwargs: dict[str, Any] | None = None,
     read_only: bool = False,
     wbc_dispatch: Any = None,
+    reuse_active_phase: bool = False,
 ) -> tuple[WorkerResult, str, str, bool]:
     failure_iteration = state["iteration"] if iteration is None else iteration
     from arnold_pipelines.megaplan import handlers as _handlers_pkg
@@ -356,17 +357,33 @@ def _run_worker(
     refreshed = res.refreshed if isinstance(res, AgentMode) else res[2]
     model = res.resolved_model if isinstance(res, AgentMode) else res[3]
     effort = res.effort if isinstance(res, AgentMode) else None
-    run_id = set_active_step(
-        state,
-        step=step,
-        agent=agent,
-        mode=mode,
-        model=model,
-        **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
-    )
+    if reuse_active_phase:
+        active_step = state.get("active_step")
+        phase = phase_wbc_state(state, step=step)
+        invocation_id = str((state.get("meta") or {}).get("current_invocation_id") or "")
+        if (
+            not isinstance(active_step, dict)
+            or active_step.get("phase") != step
+            or phase is None
+            or phase.get("invocation_id") != invocation_id
+            or not isinstance(active_step.get("run_id"), str)
+        ):
+            raise RuntimeError(
+                f"cannot reuse {step!r}: matching active phase WBC custody is unavailable"
+            )
+        run_id = str(active_step["run_id"])
+    else:
+        run_id = set_active_step(
+            state,
+            step=step,
+            agent=agent,
+            mode=mode,
+            model=model,
+            **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
+        )
     _emit_phase_notice(step)
     try:
-        if phase_wbc_required(step):
+        if phase_wbc_required(step) and not reuse_active_phase:
             activate_phase_wbc(state=state, plan_dir=plan_dir, step=step, agent=agent)
         if wbc_dispatch is None:
             selected_spec = format_selected_spec(agent, model, effort) or agent

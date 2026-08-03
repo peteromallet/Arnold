@@ -36,6 +36,11 @@ from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
 )
 from arnold_pipelines.megaplan.workers import WorkerResult
+from arnold_pipelines.megaplan.custody.phase_wbc import activate_phase_wbc
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
+    build_worker_dispatch_spec,
+    query_worker_dispatch_manifest,
+)
 
 
 def _state(project_dir: Path, *, iteration: int = 1, robustness: str = "full") -> dict[str, Any]:
@@ -704,6 +709,129 @@ def test_runtime_producer_binding_captures_available_hermes_attempt_identity(
     assert binding["scratch_sha256"] == critique_custody.sha256_file(
         tmp_path / "critique_output.json"
     )
+
+
+def test_parallel_reducer_receipt_binds_phase_children_and_rejects_manifest_tamper(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    state["active_step"] = {
+        "phase": "critique",
+        "run_id": "run-parallel",
+    }
+    phase = activate_phase_wbc(
+        state=state,
+        plan_dir=plan_dir,
+        step="critique",
+        agent="hermes",
+    )
+    assert phase is not None
+    child = build_worker_dispatch_spec(
+        plan_dir=plan_dir,
+        state=state,
+        step="critique",
+        agent="hermes",
+        selected_spec="hermes:zhipu:glm-5.2",
+        route_kind="subprocess",
+        dispatch_key="critique:scope:initial",
+    )
+    assert child is not None
+    child.run(
+        lambda _start: WorkerResult(
+            payload={}, raw_output="", duration_ms=1, cost_usd=0, session_id=None
+        )
+    )
+    payload = _oversized_payload()
+    prepare_critique_payload(payload, expected_check_ids=["scope"])
+    atomic_write_text(plan_dir / "plan_v1.md", "# Plan v1\n")
+    atomic_write_text(plan_dir / "critique_raw_v1.txt", "parallel reducer")
+    atomic_write_json(plan_dir / "critique_v1.json", payload)
+    producer_path = plan_dir / "critique_check_scope_producer_v1.json"
+    atomic_write_json(producer_path, payload)
+    manifest = {
+        "schema_version": "megaplan-parallel-critique-child-manifest-v1",
+        "iteration": 1,
+        "invocation_id": state["meta"]["current_invocation_id"],
+        "phase_attempt_id": phase["attempt_id"],
+        "expected_check_ids": ["scope"],
+        "dispatches": query_worker_dispatch_manifest(
+            plan_dir, phase_attempt_id=phase["attempt_id"]
+        ),
+        "producer_artifacts": [
+            {
+                "check_id": "scope",
+                "producer_artifact": producer_path.name,
+                "producer_sha256": critique_custody.sha256_file(producer_path),
+            }
+        ],
+    }
+    manifest["manifest_digest"] = critique_custody._digest(manifest)
+    manifest_path = plan_dir / "critique_parallel_manifest_v1.json"
+    atomic_write_json(manifest_path, manifest)
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="parallel",
+        duration_ms=1,
+        cost_usd=0,
+        session_id=None,
+        auth_metadata={
+            "parallel_critique": {
+                "manifest_artifact": manifest_path.name,
+                "manifest_sha256": critique_custody.sha256_file(manifest_path),
+                "manifest_digest": manifest["manifest_digest"],
+                "phase_attempt_id": phase["attempt_id"],
+                "invocation_id": state["meta"]["current_invocation_id"],
+                "child_dispatch_count": 1,
+            }
+        },
+    )
+    binding = critique_runtime._critique_producer_binding(
+        state,
+        worker,
+        agent="hermes",
+        scratch_filename="critique_output.json",
+        scratch_status="not_applicable",
+        plan_dir=plan_dir,
+        parallel_reduced=True,
+    )
+    state["meta"]["current_invocation_id"] = "stale-evaluator-invocation"
+    with pytest.raises(CritiqueCustodyError, match="active critique phase"):
+        critique_runtime._critique_producer_binding(
+            state,
+            worker,
+            agent="hermes",
+            scratch_filename="critique_output.json",
+            scratch_status="not_applicable",
+            plan_dir=plan_dir,
+            parallel_reduced=True,
+        )
+    state["meta"]["current_invocation_id"] = phase["invocation_id"]
+    write_critique_production_receipt(
+        plan_dir,
+        state,
+        payload,
+        expected_check_ids=["scope"],
+        producer_binding=binding,
+    )
+    update_flags_after_critique(plan_dir, payload, iteration=1)
+
+    manifest["expected_check_ids"] = ["scope", "injected"]
+    manifest["manifest_digest"] = critique_custody._digest(
+        {key: value for key, value in manifest.items() if key != "manifest_digest"}
+    )
+    atomic_write_json(manifest_path, manifest)
+    with pytest.raises(CritiqueCustodyError, match="child manifest artifact hash mismatch"):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_parallel_critique_establishes_phase_before_scatter() -> None:
+    source = inspect.getsource(critique_runtime.handle_critique)
+    parallel_dispatch = source.index("worker = run_parallel_critique(")
+    assert source.rindex("set_active_step(", 0, parallel_dispatch) < parallel_dispatch
+    assert source.rindex("activate_phase_wbc(", 0, parallel_dispatch) < parallel_dispatch
+    assert source.rindex("save_state_merge_meta(", 0, parallel_dispatch) < parallel_dispatch
 
 
 def test_unbound_critique_output_recovery_is_statically_retired() -> None:

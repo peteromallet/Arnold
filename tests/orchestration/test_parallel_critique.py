@@ -3,9 +3,52 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arnold_pipelines.megaplan._core.hermes_fanout import GenericScatterResult
 from arnold_pipelines.megaplan.orchestration import parallel_critique
 from arnold_pipelines.megaplan.types import AgentMode, CliError
+
+
+@pytest.fixture(autouse=True)
+def _parallel_custody_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep payload-focused tests behind a deterministic admitted WBC seam."""
+
+    def phase(state, *, step):
+        assert step == "critique"
+        invocation_id = state.setdefault("meta", {}).setdefault(
+            "current_invocation_id", "test-critique-invocation"
+        )
+        return {
+            "step": "critique",
+            "attempt_id": "test-critique-phase-attempt",
+            "invocation_id": invocation_id,
+        }
+
+    def manifest(plan_dir, *, phase_attempt_id):
+        assert phase_attempt_id == "test-critique-phase-attempt"
+        rows = []
+        for path in sorted(plan_dir.glob("critique_check_*_producer_v*.json")):
+            check_id = path.name.split("critique_check_", 1)[1].split(
+                "_producer_v", 1
+            )[0]
+            rows.append(
+                {
+                    "attempt_id": f"attempt-{check_id}",
+                    "dispatch_key": f"critique:{check_id}:initial",
+                    "worker_step": "critique",
+                    "selected_spec": "test:model",
+                    "attempt_index": 0,
+                    "terminal_event": "completed",
+                    "terminal_status": "completed",
+                    "start_sequence": 1,
+                    "terminal_sequence": 2,
+                }
+            )
+        return rows
+
+    monkeypatch.setattr(parallel_critique, "phase_wbc_state", phase)
+    monkeypatch.setattr(parallel_critique, "query_worker_dispatch_manifest", manifest)
 
 
 def test_parallel_critique_preserves_full_check_when_supporting_flag_evidence_is_terse(
