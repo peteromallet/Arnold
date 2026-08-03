@@ -799,7 +799,7 @@ EOF
     stale_lock_json='{}'
   fi
   if [[ "$lock_status" == "busy" || "$lock_status" == "unknown" ]]; then
-    log "another repair loop owns or may own the repair; exiting session=$SESSION lock_status=$lock_status owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
+    log "another repair loop owns or may own the repair; another repair loop is already active; exiting session=$SESSION lock_status=$lock_status owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
     return 1
   fi
   if [[ "$lock_status" == "acquired" ]]; then
@@ -8645,6 +8645,16 @@ if [[ -z "$RUN_KIND" ]]; then
   fi
 fi
 
+# Completion is a read-only classification, so it must remain visible even
+# when canonical liveness is unavailable.  UNKNOWN fences the mutations that
+# normally follow (marker cleanup, lock acquisition, repair dispatch, and
+# relaunch); it must not turn an already-complete run into an opaque no-op.
+IFS=$'\t' read -r ENTRY_COMPLETE _entry_scope _entry_reason _entry_chain _entry_plan _entry_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
+if [[ "${ENTRY_COMPLETE:-0}" == "1" && "${_entry_scope:-}" != "stale_marker" ]]; then
+  log "chain already complete; no repair needed; request was stale at entry session=$SESSION scope=${_entry_scope:-unknown} reason=${_entry_reason:-complete}"
+  exit 0
+fi
+
 # This is the outer repair/retrigger fence.  The repair loop must not infer
 # authority from its local PID namespace, a tmux server, runner-transition
 # sidecars, or watchdog health.  Only a complete canonical record may admit
@@ -8667,6 +8677,15 @@ liveness = control_liveness_from_current_target(target, action="mutation")
 print(liveness["state"] if liveness.get("action_permitted") is True else "unknown")
 PY
 )"
+
+# Namespace-bound lock admission is a safety operation, not authority to
+# repair.  Preserve duplicate/recursive suppression even when target liveness
+# is UNKNOWN, then release the claim on the fenced exit below.
+guard_against_recursive_repair_loop || exit 0
+acquire_repair_lock || exit 75
+export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
+export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
+export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
 if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]; then
   log "canonical target liveness UNKNOWN; repair loop exits before mutation and legacy PID/tmux evidence remains diagnostic-only session=$SESSION"
   exit 0
@@ -8739,12 +8758,6 @@ PY
   exit 0
 fi
 
-guard_against_recursive_repair_loop || exit 0
-
-acquire_repair_lock || exit 75
-export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
-export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
-export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
 IFS=$'\t' read -r ENTRY_COMPLETE _entry_scope _entry_reason _entry_chain _entry_plan _entry_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
 if [[ "${ENTRY_COMPLETE:-0}" == "1" ]]; then
   repair_data_set_outcome "complete"

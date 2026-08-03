@@ -8220,14 +8220,24 @@ record = control_liveness_from_current_target(target, action="mutation")
 print(record["state"] if record.get("action_permitted") is True else "unknown")
 PY
   )"
+  local canonical_mutation_permitted=1
   if [[ "$canonical_control_state" == "unknown" ]]; then
-    log "canonical target liveness is UNKNOWN; all wrapper mutation/retrigger/escalation/retirement paths are fenced session=$session"
-    report_item "$report_items" "$session" "observe" "liveness_unknown" \
-      "canonical identity-bound liveness unavailable; legacy PID/tmux evidence is diagnostic-only" \
-      "$workspace" "$remote_spec"
-    return 0
+    canonical_mutation_permitted=0
+    log "canonical target liveness is UNKNOWN; continuing read-only classification while mutation/retrigger/escalation/retirement remain fenced session=$session"
   fi
   log "current-target canonical-control session=$session state=$canonical_control_state evidence=$current_target_observation"
+
+  canonical_mutation_fenced() {
+    local action="${1:-mutation}"
+    if [[ "$canonical_mutation_permitted" == "1" ]]; then
+      return 1
+    fi
+    log "canonical target liveness is UNKNOWN; fenced action=$action session=$session"
+    report_item "$report_items" "$session" "observe" "liveness_unknown" \
+      "canonical identity-bound liveness unavailable; fenced $action while legacy PID/tmux evidence remains diagnostic-only" \
+      "$workspace" "$remote_spec"
+    return 0
+  }
 
   # A deterministic phase-contract failure is not a stopped process waiting
   # for a mechanical restart: the same input will deterministically fail
@@ -8246,6 +8256,9 @@ PY
   fi
   if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_phase_failure" \
     && "${PLAN_STATUS_RETRY_STRATEGY:-}" == "repair_phase_contract" ]]; then
+    if canonical_mutation_fenced "phase-contract repair dispatch"; then
+      return 0
+    fi
     local phase_contract_dispatch_env phase_contract_dispatch_result
     phase_contract_dispatch_env="$(
       manual_review_dispatch_status_env \
@@ -8320,6 +8333,14 @@ PY
         report_item "$report_items" "$session" "observe" "recovery_observation" "preserve authoritative live target worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
         return 0
       fi
+      if [[ "$repair_goal_control_action" == "preserve_live" ]]; then
+        log "durable repair goal is unowned while its fresh matching worker progresses; observing without repair launch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+        report_item "$report_items" "$session" "observe" "recovery_observation" "preserve fresh matching worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if canonical_mutation_fenced "unowned durable-goal repair dispatch"; then
+        return 0
+      fi
       if [[ "$repair_goal_control_action" == "meta_repair" ]]; then
         log "post-fixer recovery gate failed after owner terminalization; dispatching transcript-aware L2 meta-repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
         if dispatch_meta_repair \
@@ -8329,11 +8350,6 @@ PY
         else
           report_item "$report_items" "$session" "meta_repair" "repair_failed" "post-fixer recovery gate failed and L2 dispatch did not start" "$workspace" "$remote_spec"
         fi
-        return 0
-      fi
-      if [[ "$repair_goal_control_action" == "preserve_live" ]]; then
-        log "durable repair goal is unowned while its fresh matching worker progresses; observing without repair launch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
-        report_item "$report_items" "$session" "observe" "recovery_observation" "preserve fresh matching worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
         return 0
       fi
       local owner_gap_health owner_gap_meta_trigger owner_gap_meta_result
@@ -8413,6 +8429,9 @@ PY
       early_human_summary="$early_human_summary; failure=${PLAN_STATUS_FAILURE_KIND}"
     fi
     if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      if canonical_mutation_fenced "resolver machine-repair dispatch"; then
+        return 0
+      fi
       route_resolver_machine_repair \
         "$report_items" "$session" "$workspace" "$remote_spec" \
         "${resolver_human_verdict#suppress:}" "$early_human_summary"
@@ -8436,6 +8455,10 @@ PY
       fi
     fi
     log "session reached stable human gate; notifying without repair or relaunch session=$session plan=${PLAN_STATUS_PLAN_NAME:-$plan_name} summary=$early_human_summary"
+    if canonical_mutation_fenced "human escalation notification"; then
+      report_item "$report_items" "$session" "observe" "awaiting_human" "$early_human_summary" "$workspace" "$remote_spec"
+      return 0
+    fi
     notify_needs_human \
       "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" \
       "$early_human_summary" "stable_human_gate"
@@ -8444,7 +8467,7 @@ PY
 
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || authority_gap_continue "T29-BYPASS-186" "authority-risk bypass converted to typed evidence gap")"
-  if [[ "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
+  if [[ "$canonical_mutation_permitted" == "1" && "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
 
@@ -8465,21 +8488,23 @@ PY
   # tolerates transient deploy gaps; at threshold the session is retired cleanly
   # instead of looping repair against a missing env. Below threshold we log the
   # strike and skip dispatch this tick; if the env recovers, the sidecar clears.
-  local env_gone_out env_gone_rc
-  env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
-  env_gone_rc=$?
-  if (( env_gone_rc == 0 )); then
-    log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
-    persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
-    clear_session_tracking_artifacts "$session" "$plan_name"
-    rm -f "$(env_gone_sidecar_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-188" "authority-risk bypass converted to typed evidence gap"
-    report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; retired after env-gone strikes" "$workspace" "$remote_spec"
-    return 0
-  fi
-  if [[ "$env_gone_out" != "present" && -n "$env_gone_out" ]]; then
-    log "env-gone strike session=$session count=$env_gone_out/$ENV_GONE_STRIKES workspace=$workspace spec=$remote_spec_path"
-    report_item "$report_items" "$session" "observe" "env_gone_pending" "env-gone strike $env_gone_out/$ENV_GONE_STRIKES; workspace=$workspace spec=$remote_spec_path" "$workspace" "$remote_spec"
-    return 0
+  if [[ "$canonical_mutation_permitted" == "1" ]]; then
+    local env_gone_out env_gone_rc
+    env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
+    env_gone_rc=$?
+    if (( env_gone_rc == 0 )); then
+      log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
+      persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
+      clear_session_tracking_artifacts "$session" "$plan_name"
+      rm -f "$(env_gone_sidecar_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-188" "authority-risk bypass converted to typed evidence gap"
+      report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; retired after env-gone strikes" "$workspace" "$remote_spec"
+      return 0
+    fi
+    if [[ "$env_gone_out" != "present" && -n "$env_gone_out" ]]; then
+      log "env-gone strike session=$session count=$env_gone_out/$ENV_GONE_STRIKES workspace=$workspace spec=$remote_spec_path"
+      report_item "$report_items" "$session" "observe" "env_gone_pending" "env-gone strike $env_gone_out/$ENV_GONE_STRIKES; workspace=$workspace spec=$remote_spec_path" "$workspace" "$remote_spec"
+      return 0
+    fi
   fi
 
   local health
@@ -8503,6 +8528,8 @@ PY
       elif [[ "$repair_busy" == "other_session" ]]; then
         log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      elif canonical_mutation_fenced "chain-health repair dispatch"; then
+        :
       elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
           log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
@@ -8525,6 +8552,9 @@ PY
       fi
       emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$chain_health_message" "chain_health_failure" "immediate_repair"
       log "chain-level health issue detected session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
+      if canonical_mutation_fenced "chain-health repair dispatch"; then
+        return 0
+      fi
       repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}: $chain_health_message" || authority_gap_continue "T29-BYPASS-189" "authority-risk bypass converted to typed evidence gap"
       return 0
     fi
@@ -8542,6 +8572,8 @@ PY
       elif [[ "$repair_busy" == "other_session" ]]; then
         log "session alive but plan unhealthy; another repair loop already running so waiting turn session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      elif canonical_mutation_fenced "unhealthy-plan repair dispatch"; then
+        :
       elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
           log "session alive but plan unhealthy; another repair loop already running so waiting turn session=$session reason=$phase_health"
@@ -8561,12 +8593,18 @@ PY
     if [[ "$stall_health" != "ok" ]]; then
       emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$stall_health" "progress_stall" "immediate_repair"
       log "progress stall flagged session=$session detail=$stall_health"
+      if canonical_mutation_fenced "progress-stall repair dispatch"; then
+        return 0
+      fi
       repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stall_health" || authority_gap_continue "T29-BYPASS-190" "authority-risk bypass converted to typed evidence gap"
       return 0
     fi
     local meta_repair_trigger meta_dispatch_result
     meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+      if canonical_mutation_fenced "meta-repair dispatch"; then
+        return 0
+      fi
       if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
         if [[ "$meta_dispatch_result" == "dispatched" ]]; then
@@ -8581,9 +8619,11 @@ PY
     # Alive and phase-healthy: any prior repair dispatch succeeded, so clear the
     # marker so a future stop dispatches the primary repair fresh instead of
     # falling back.
-    kimi_dispatch_marker_clear "$session"
-    rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-191" "authority-risk bypass converted to typed evidence gap"
-    write_partial_liveness_tick "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$health"
+    if [[ "$canonical_mutation_permitted" == "1" ]]; then
+      kimi_dispatch_marker_clear "$session"
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-191" "authority-risk bypass converted to typed evidence gap"
+      write_partial_liveness_tick "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$health"
+    fi
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
     return 0
@@ -8594,7 +8634,9 @@ PY
     pr_reconcile="$(reconcile_awaiting_pr_merge "$session" "$workspace" "$remote_spec" 2>/dev/null || authority_gap_continue "T29-BYPASS-192" "authority-risk bypass converted to typed evidence gap")"
     IFS=$'\t' read -r pr_reconcile_status pr_reconcile_message <<< "$pr_reconcile"
     if [[ "$pr_reconcile_status" == "merged" ]]; then
-      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-193" "authority-risk bypass converted to typed evidence gap"
+      if [[ "$canonical_mutation_permitted" == "1" ]]; then
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-193" "authority-risk bypass converted to typed evidence gap"
+      fi
       log "session awaiting PR merge reconciled merged; falling through to relaunch session=$session detail=$pr_reconcile_message"
     else
       log "session awaiting PR merge: $session detail=${pr_reconcile_message:-$pr_reconcile_status}"
@@ -8605,6 +8647,9 @@ PY
       # gate identity. Excluding it keeps notification fingerprinting stable.
       pr_gate_reason="${pr_reconcile_message%% evidence=*}"
       PLAN_STATUS_AWAITING_HUMAN_REASON="PR merge boundary is still open: ${pr_gate_reason:-$pr_reconcile_status}"
+      if canonical_mutation_fenced "PR-gate human escalation notification"; then
+        return 0
+      fi
       notify_needs_human \
         "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" \
         "awaiting_human halt; state=awaiting_pr_merge; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON}" \
@@ -8692,14 +8737,18 @@ PY
     log "audit recovery selected one provider retry session=$session gate=${resolver_human_verdict#provider_retry:}"
     report_item "$report_items" "$session" "recovery" "provider_retry_selected" "audit-only retry selected for typed provider gate ${resolver_human_verdict#provider_retry:}" "$workspace" "$remote_spec"
   fi
-  if [[ "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
+  if [[ "$canonical_mutation_permitted" == "1" && "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
   if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then
     local stale_active_summary
     stale_active_summary="stale_active_step: plan=${PLAN_STATUS_PLAN_NAME:-unknown}; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; phase=${PLAN_STATUS_ACTIVE_STEP_PHASE:-unknown}; worker_pid=${PLAN_STATUS_ACTIVE_STEP_WORKER_PID:-none} not live"
     emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$stale_active_summary" "stale_active_step" "immediate_repair"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stale_active_summary" || authority_gap_continue "T29-BYPASS-196" "authority-risk bypass converted to typed evidence gap"
+    if [[ "$canonical_mutation_permitted" == "1" ]]; then
+      repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stale_active_summary" || authority_gap_continue "T29-BYPASS-196" "authority-risk bypass converted to typed evidence gap"
+    else
+      canonical_mutation_fenced "stale-active-step repair dispatch" || true
+    fi
 
     # --- stale active-step custody fact ---
     # When worker PID is present but not alive, emit a structured custody fact
@@ -8723,6 +8772,9 @@ PY
     if [[ "$repair_busy" == "other_session" ]]; then
       log "session has plan/chain state mismatch; another repair loop already running session=$session summary=$mismatch_summary"
       report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      return 0
+    fi
+    if canonical_mutation_fenced "state-mismatch repair dispatch"; then
       return 0
     fi
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
@@ -8752,6 +8804,9 @@ PY
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
     if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      if canonical_mutation_fenced "resolver machine-repair dispatch"; then
+        return 0
+      fi
       route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
       return 0
     fi
@@ -8776,6 +8831,10 @@ PY
       fi
     fi
     log "session reached stable human gate; notifying without repair or relaunch session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    if canonical_mutation_fenced "human escalation notification"; then
+      report_item "$report_items" "$session" "observe" "awaiting_human" "$human_summary" "$workspace" "$remote_spec"
+      return 0
+    fi
     notify_needs_human \
       "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" \
       "$human_summary" "stable_human_gate"
@@ -8798,6 +8857,9 @@ PY
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
     if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      if canonical_mutation_fenced "resolver machine-repair dispatch"; then
+        return 0
+      fi
       route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
       return 0
     fi
@@ -8811,6 +8873,9 @@ PY
       if [[ "$repair_busy" == "other_session" ]]; then
         log "session manual_review has unresolved quality blockers; another repair loop already running so waiting turn session=$session summary=$human_summary"
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if canonical_mutation_fenced "blocked-recovery repair dispatch"; then
         return 0
       fi
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
@@ -8874,6 +8939,9 @@ PY
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
         return 0
       fi
+      if canonical_mutation_fenced "manual-review repair dispatch"; then
+        return 0
+      fi
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
           log "session manual_review classified for repair dispatch; another repair loop already running so waiting turn session=$session summary=$human_summary"
@@ -8890,6 +8958,10 @@ PY
       log "session manual_review classified for repair dispatch but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     fi
     log "session requires human review session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    if canonical_mutation_fenced "manual-review escalation notification"; then
+      report_item "$report_items" "$session" "observe" "needs_human" "$human_summary" "$workspace" "$remote_spec"
+      return 0
+    fi
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
     return 0
   fi
@@ -8901,6 +8973,13 @@ PY
   # on relaunch, so the marker is stale -- clear it and fall through to the
   # relaunch path instead of suppressing it with a stale needs_human.
   if [[ "$resolver_human_verdict" != provider_retry:* && -f "$(repair_needs_human_path "$session")" ]]; then
+    if [[ "$canonical_mutation_permitted" != "1" ]]; then
+      local repair_summary
+      repair_summary="$(repair_needs_human_summary "$session")"
+      log "session marked needs human by repair loop; canonical UNKNOWN preserves marker read-only session=$session summary=$repair_summary"
+      report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+      return 0
+    fi
     if [[ "$run_kind" == "chain" ]] && [[ "$(chain_current_pr_merged "$workspace" "$remote_spec")" == "merged" ]]; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-202" "authority-risk bypass converted to typed evidence gap"
       log "stale repair marker cleared; current milestone PR merged, falling through to relaunch session=$session"
@@ -8953,6 +9032,9 @@ PY
   if [[ "$repair_busy" == "other_session" ]]; then
     log "session needs repair attention; another repair loop already running so waiting turn session=$session health=$health"
     report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if canonical_mutation_fenced "repair/retrigger/relaunch"; then
     return 0
   fi
 
