@@ -294,6 +294,25 @@ class PostTerminalAppendError(AttemptLedgerError):
     """
 
 
+class IdempotencyConflictError(AttemptLedgerError):
+    """Compatibility name for a same-key divergent retry.
+
+    The stricter WBC comparator reports field-level
+    :class:`DivergentDuplicateError` evidence; that error subclasses this
+    public name so older CL2 callers still fail closed without losing the
+    richer quarantine record.
+    """
+
+
+def canonical_event_json(event: "LedgerEvent") -> str:
+    """Return the historical exact JSON serialization for callers that need it.
+
+    Store append paths use the WBC semantic comparator, which deliberately
+    ignores only observation clocks and binds immutable identity.
+    """
+    return json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
+
+
 class DuplicateTerminalError(PostTerminalAppendError):
     """Raised when a second terminal outcome is proposed for one attempt."""
 
@@ -307,7 +326,7 @@ class MissingStartEventError(AttemptLedgerError):
     """
 
 
-class DivergentDuplicateError(AttemptLedgerError):
+class DivergentDuplicateError(IdempotencyConflictError):
     """Raised when a duplicate idempotency key has divergent canonical content.
 
     An idempotency key already exists in the store, but the new event's

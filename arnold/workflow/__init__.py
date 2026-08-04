@@ -252,7 +252,11 @@ from arnold.workflow.boundary_conformance import (
     verify_semantic_findings_against_boundaries,
     verify_single_boundary,
 )
-from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+from arnold.workflow.attempt_ledger_store import (
+    IdempotencyConflictError,
+    SqliteAttemptLedgerStore,
+    canonical_event_json,
+)
 from arnold.workflow.wbc_queries import (
     WbcGapEnvelope,
     WbcLedgerEnvelope,
@@ -513,6 +517,8 @@ __all__ = [
     "WorkflowBoundarySpec",
     # WBC canonical query facade and results
     "SqliteAttemptLedgerStore",
+    "IdempotencyConflictError",
+    "canonical_event_json",
     "WbcGapEnvelope",
     "WbcLedgerEnvelope",
     "WbcQueries",
