@@ -157,9 +157,22 @@ def _fold_lines(
     prefix_hash: str,
     record_count: int,
     last_seq: int | None,
-) -> tuple[str, int, int | None, int, int]:
+    tolerate_sequence_anomalies: bool = False,
+    sequence_anomalies: list[dict[str, Any]] | None = None,
+) -> tuple[str, int, int | None, int, int, int]:
+    """Fold valid JSON records from *handle* into the bounded projection.
+
+    A checkpointed (warm) fold remains fail-closed: seeing a sequence that is
+    not strictly after the checkpoint is evidence that the append boundary is
+    not trustworthy.  A cold rebuild is different.  It is explicitly a
+    recovery read over retained evidence, and old workspaces can contain a
+    duplicated/reset prefix from a store restore.  In that mode we retain all
+    records, surface the anomaly in the receipt, and advance the cursor using
+    the greatest observed sequence rather than regressing it.
+    """
     bytes_read = 0
     fold_count = 0
+    sequence_anomaly_count = 0
     for raw_line in handle:
         bytes_read += len(raw_line)
         if not raw_line.strip():
@@ -172,14 +185,28 @@ def _fold_lines(
             continue
         seq = _event_seq(event)
         if seq is not None and last_seq is not None and seq <= last_seq:
-            raise EventCheckpointError(
-                f"non-monotonic event seq beyond checkpoint: {seq} <= {last_seq}"
-            )
+            sequence_anomaly_count += 1
+            if sequence_anomalies is not None and len(sequence_anomalies) < 20:
+                sequence_anomalies.append(
+                    {
+                        "seq": seq,
+                        "previous_seq": last_seq,
+                        "record_number": record_count + 1,
+                        "byte_offset": bytes_read - len(raw_line),
+                        "kind": event.get("kind"),
+                    }
+                )
+            if not tolerate_sequence_anomalies:
+                raise EventCheckpointError(
+                    f"non-monotonic event seq beyond checkpoint: {seq} <= {last_seq}"
+                )
         prefix_hash = _chain_hash(prefix_hash, raw_line)
         record_count += 1
         fold_count += 1
         if seq is not None:
-            last_seq = seq
+            # Recovery folds may encounter a reset prefix.  Never let the
+            # durable cursor move backwards after observing a later sequence.
+            last_seq = seq if last_seq is None else max(last_seq, seq)
         tail.append(event)
         kind = event.get("kind")
         if isinstance(kind, str) and kind:
@@ -189,7 +216,14 @@ def _fold_lines(
                 state = payload.get("state")
                 if isinstance(state, str) and state:
                     latest_by_kind[f"{kind}:state={state.casefold()}"] = event
-    return prefix_hash, record_count, last_seq, bytes_read, fold_count
+    return (
+        prefix_hash,
+        record_count,
+        last_seq,
+        bytes_read,
+        fold_count,
+        sequence_anomaly_count,
+    )
 
 
 def _anchor(path: Path, offset: int) -> tuple[int, str, int]:
@@ -344,6 +378,9 @@ def read_bounded_event_projection(
                 "mode": "empty",
                 "bytes_read": 0,
                 "fold_count": 0,
+                "sequence_anomaly_count": 0,
+                "sequence_anomalies": [],
+                "degraded": False,
                 "wall_time_seconds": time.monotonic() - started,
                 "peak_rss_bytes": _rss_bytes(),
             },
@@ -372,6 +409,8 @@ def read_bounded_event_projection(
         seq_lock_fd = os.open(str(seq_lock_path), os.O_RDONLY)
         checkpoint_lock_mode = fcntl.LOCK_SH
     rebuild_reason = ""
+    sequence_anomalies: list[dict[str, Any]] = []
+    prior_sequence_anomaly_count = 0
     try:
         fcntl.flock(checkpoint_lock_fd, checkpoint_lock_mode)
         fcntl.flock(seq_lock_fd, fcntl.LOCK_SH)
@@ -410,6 +449,16 @@ def read_bounded_event_projection(
             record_count = int(checkpoint["source_record_count"])
             raw_last_seq = checkpoint.get("source_last_seq")
             last_seq = int(raw_last_seq) if isinstance(raw_last_seq, int) else None
+            prior_receipt = checkpoint.get("last_fold_receipt")
+            if isinstance(prior_receipt, Mapping):
+                raw_prior_count = prior_receipt.get("sequence_anomaly_count")
+                if isinstance(raw_prior_count, int) and raw_prior_count > 0:
+                    prior_sequence_anomaly_count = raw_prior_count
+                prior_samples = prior_receipt.get("sequence_anomalies")
+                if isinstance(prior_samples, list):
+                    sequence_anomalies.extend(
+                        item for item in prior_samples[:20] if isinstance(item, dict)
+                    )
         except EventCheckpointError as exc:
             if not allow_rebuild:
                 raise
@@ -423,23 +472,61 @@ def read_bounded_event_projection(
             record_count = 0
             last_seq = None
 
-        with journal_path.open("rb") as handle:
-            handle.seek(offset)
-            (
-                prefix_hash,
-                record_count,
-                last_seq,
-                bytes_read,
-                fold_count,
-            ) = _fold_lines(
-                handle,
-                tail=tail,
-                latest_by_kind=latest_by_kind,
-                prefix_hash=prefix_hash,
-                record_count=record_count,
-                last_seq=last_seq,
+        bytes_read = 0
+        fold_count = 0
+
+        def fold_current_view() -> tuple[int, int]:
+            """Fold the selected view and return ``(offset, anomaly_count)``."""
+
+            nonlocal prefix_hash, record_count, last_seq
+            nonlocal bytes_read, fold_count
+            with journal_path.open("rb") as handle:
+                handle.seek(offset)
+                (
+                    prefix_hash,
+                    record_count,
+                    last_seq,
+                    bytes_read,
+                    fold_count,
+                    anomaly_count,
+                ) = _fold_lines(
+                    handle,
+                    tail=tail,
+                    latest_by_kind=latest_by_kind,
+                    prefix_hash=prefix_hash,
+                    record_count=record_count,
+                    last_seq=last_seq,
+                    tolerate_sequence_anomalies=(mode == "cold_rebuild"),
+                    sequence_anomalies=sequence_anomalies,
+                )
+                return handle.tell(), anomaly_count
+
+        try:
+            source_offset, fold_anomaly_count = fold_current_view()
+            sequence_anomaly_count = (
+                prior_sequence_anomaly_count + fold_anomaly_count
+                if mode == "warm"
+                else fold_anomaly_count
             )
-            source_offset = handle.tell()
+        except EventCheckpointError as exc:
+            # A warm checkpoint is an acceleration hint, never authority.  If
+            # the appended segment is inconsistent, discard that hint and do
+            # one bounded cold rebuild.  The cold path keeps the source rows,
+            # records the anomaly, and publishes a degraded-but-useful receipt.
+            if not allow_rebuild or mode != "warm":
+                raise
+            rebuild_reason = f"warm_fold:{exc}"
+            mode = "cold_rebuild"
+            stat = journal_path.stat()
+            tail = deque(maxlen=max_tail_events)
+            latest_by_kind = {}
+            offset = 0
+            prefix_hash = "sha256:genesis"
+            record_count = 0
+            last_seq = None
+            sequence_anomalies.clear()
+            prior_sequence_anomaly_count = 0
+            source_offset, sequence_anomaly_count = fold_current_view()
         final_stat = journal_path.stat()
         if (
             final_stat.st_dev != stat.st_dev
@@ -455,6 +542,8 @@ def read_bounded_event_projection(
                     "rebuild_reason": rebuild_reason,
                     "bytes_read": bytes_read,
                     "fold_count": fold_count,
+                    "sequence_anomaly_count": sequence_anomaly_count,
+                    "sequence_anomalies": list(sequence_anomalies),
                     "wall_time_seconds": time.monotonic() - started,
                     "peak_rss_bytes": max(rss_before, _rss_bytes()),
                     "rss_delta_bytes": max(0, _rss_bytes() - rss_before),
@@ -501,6 +590,9 @@ def read_bounded_event_projection(
         "rebuild_reason": rebuild_reason,
         "bytes_read": bytes_read,
         "fold_count": fold_count,
+        "sequence_anomaly_count": sequence_anomaly_count,
+        "sequence_anomalies": list(sequence_anomalies),
+        "degraded": bool(sequence_anomaly_count),
         "wall_time_seconds": time.monotonic() - started,
         "peak_rss_bytes": max(rss_before, _rss_bytes()),
         "rss_delta_bytes": max(0, _rss_bytes() - rss_before),

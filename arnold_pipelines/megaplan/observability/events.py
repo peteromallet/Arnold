@@ -432,20 +432,23 @@ class EventWriter:
                 if isinstance(seq, int) and not isinstance(seq, bool):
                     highest = max(highest, seq)
         except (OSError, ValueError, TypeError):
-            # The compatibility projection is not authority, but is a safe
-            # monotonic floor when the Store adapter is temporarily unreadable:
-            # reusing an observed sequence can only make recovery less safe.
-            try:
-                with (self._plan_dir / _NDJSON_FILE).open("r", encoding="utf-8") as fh:
-                    for line in fh:
-                        try:
-                            seq = json.loads(line).get("seq")
-                        except (json.JSONDecodeError, AttributeError):
-                            continue
-                        if isinstance(seq, int) and not isinstance(seq, bool):
-                            highest = max(highest, seq)
-            except FileNotFoundError:
-                pass
+            # The compatibility projection is not authority, but remains a
+            # safe monotonic floor when the Store adapter is temporarily
+            # unreadable.  We still scan the projection below in the normal
+            # case: a restored workspace can have a readable-but-empty Store
+            # while retaining its append-only journal.
+            pass
+        try:
+            with (self._plan_dir / _NDJSON_FILE).open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        seq = json.loads(line).get("seq")
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+                    if isinstance(seq, int) and not isinstance(seq, bool):
+                        highest = max(highest, seq)
+        except FileNotFoundError:
+            pass
         return highest
 
     def _load_init_ts(self) -> Optional[datetime]:

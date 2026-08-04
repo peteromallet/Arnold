@@ -175,6 +175,10 @@ class StoredEvent:
     seq: int | None = None
     run_id: str | None = None
     source: str | None = None
+    # The envelope transaction identity survives backend migration and lets
+    # compatibility projections collapse an exact cross-store copy without
+    # confusing it with a genuinely new event.
+    transaction_id: str | None = None
 
 
 def validate_plan_artifact_name(name: str) -> str:

@@ -54,6 +54,46 @@ def test_cold_and_incremental_projection_match_full_event_order(tmp_path: Path) 
     assert warm.receipt["bytes_read"] < 1_024
 
 
+def test_cold_rebuild_keeps_reset_prefix_visible_and_marks_degraded_receipt(
+    tmp_path: Path,
+) -> None:
+    """A restored journal must not make introspect fail closed forever."""
+
+    plan_dir = tmp_path / "plan"
+    _write_events(plan_dir, 5)
+    _write_events(plan_dir, 2, start=0)
+
+    projection = read_bounded_event_projection(plan_dir, max_tail_events=32)
+
+    assert projection.record_count == 7
+    assert projection.last_seq == 4
+    assert [event["seq"] for event in projection.events] == [0, 1, 2, 3, 4, 0, 1]
+    assert projection.receipt["mode"] == "cold_rebuild"
+    assert projection.receipt["degraded"] is True
+    assert projection.receipt["sequence_anomaly_count"] == 2
+    assert projection.receipt["sequence_anomalies"][0]["seq"] == 0
+
+
+def test_warm_non_monotonic_append_rebuilds_once_and_strict_probe_still_fails(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_events(plan_dir, 5)
+    read_bounded_event_projection(plan_dir, max_tail_events=32)
+    _write_events(plan_dir, 1, start=0)
+
+    with pytest.raises(EventCheckpointError, match="non-monotonic event seq"):
+        read_bounded_event_projection(
+            plan_dir, max_tail_events=32, allow_rebuild=False
+        )
+
+    rebuilt = read_bounded_event_projection(plan_dir, max_tail_events=32)
+    assert rebuilt.receipt["mode"] == "cold_rebuild"
+    assert rebuilt.receipt["rebuild_reason"].startswith("warm_fold:")
+    assert rebuilt.receipt["sequence_anomaly_count"] == 1
+    assert rebuilt.last_seq == 4
+
+
 def test_corrupt_checkpoint_fails_closed_or_rebuilds_explicitly(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     _write_events(plan_dir, 5)
