@@ -28,6 +28,7 @@ from arnold.workflow.attempt_ledger_store import (
     AttemptLedgerStore,
     AttemptReservation,
     GateStatus,
+    IdempotencyConflictError,
     MonotonicSequenceError,
     PostTerminalAppendError,
     SqliteAttemptLedgerStore,
@@ -482,27 +483,27 @@ class TestSqliteAttemptLedgerStoreWrite:
                 os.unlink(path)
 
     def test_append_dedups_on_duplicate_idempotency_key(self):
-        """Duplicate idempotency keys return the existing event, not raise.
+        """Byte-equivalent retries return the existing event, not raise.
 
-        Step 4 contract: ``append_event`` returns an ``AppendResult`` with
-        ``is_duplicate=True`` whose ``event`` is the existing persisted
-        event. Two different events with the same key can never coexist,
-        and the original sequence is preserved.
+        Step 4 contract (post-T6): ``append_event`` returns an
+        ``AppendResult`` with ``is_duplicate=True`` whose ``event`` is the
+        existing persisted event — *only* when the retry is byte-equivalent
+        (``canonical_event_json`` equality). A true retry supplies the same
+        content; the dedup short-circuits the monotonic-sequence check
+        because the existing event is returned as-is.
         """
         path = _store_path()
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
             e1 = _make_event(attempt_id=aid, sequence=1, idempotency_key="dup")
-            # Second event deliberately claims a different sequence to
-            # prove the dedup short-circuits the monotonic-sequence check.
-            e2 = _make_event(attempt_id=aid, sequence=2, idempotency_key="dup")
+            # True retry: the SAME event object — byte-equivalent content.
             r1 = store.append_event(aid, e1)
             assert isinstance(r1, AppendResult)
             assert r1.is_duplicate is False
             assert r1.sequence == 1
 
-            r2 = store.append_event(aid, e2)
+            r2 = store.append_event(aid, e1)
             assert isinstance(r2, AppendResult)
             assert r2.is_duplicate is True
             # Existing event reference is returned — its sequence is the
@@ -513,6 +514,68 @@ class TestSqliteAttemptLedgerStoreWrite:
             # Store count remains 1 — the duplicate was not persisted.
             assert store.event_count(aid) == 1
             # No transaction was left open.
+            assert store.conn.in_transaction is False
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_divergent_retry_same_key_raises_idempotency_conflict(self):
+        """A same-key retry with divergent canonical content raises.
+
+        T6 contract: an idempotency key identifies an *exact* event payload.
+        A retry whose canonical content differs from the stored event is
+        divergent evidence and must raise ``IdempotencyConflictError``
+        *before* the monotonic or post-terminal classifiers, even when the
+        divergent retry would also trip the monotonic check.
+        """
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            aid = _aid()
+            e1 = _make_event(attempt_id=aid, sequence=1, idempotency_key="dup")
+            store.append_event(aid, e1)
+            # Divergent retry: same key, different sequence number →
+            # canonical content differs from the stored event.
+            e2 = _make_event(attempt_id=aid, sequence=2, idempotency_key="dup")
+            with pytest.raises(IdempotencyConflictError):
+                store.append_event(aid, e2)
+            # Conflict does not persist a second event.
+            assert store.event_count(aid) == 1
+            # No transaction left open after the rollback.
+            assert store.conn.in_transaction is False
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_divergent_retry_same_key_conflicts_before_post_terminal(self):
+        """A divergent retry raises even when the attempt is terminal.
+
+        The conflict check fires before the post-terminal classifier so a
+        divergent retry cannot be masked as a post-terminal rejection.
+        """
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            aid = _aid()
+            started = _make_event(
+                attempt_id=aid, sequence=1, idempotency_key="started-key"
+            )
+            terminal = _make_failed_event(
+                attempt_id=aid, sequence=2, idempotency_key="fail-key"
+            )
+            store.append_event(aid, started)
+            store.append_event(aid, terminal)
+            # Divergent retry of the STARTED event — same key, different
+            # sequence (sequence=3 would pass the monotonic gate were it a
+            # fresh key, but the content differs from stored STARTED).
+            divergent = _make_event(
+                attempt_id=aid, sequence=3, idempotency_key="started-key"
+            )
+            with pytest.raises(IdempotencyConflictError):
+                store.append_event(aid, divergent)
+            assert store.event_count(aid) == 2
             assert store.conn.in_transaction is False
             store.close()
         finally:

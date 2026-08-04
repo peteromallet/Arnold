@@ -185,6 +185,32 @@ class PostTerminalAppendError(AttemptLedgerError):
     """
 
 
+class IdempotencyConflictError(AttemptLedgerError):
+    """Raised when a retry carries the same idempotency key but divergent
+    canonical content.
+
+    Idempotency keys identify an *exact* event payload: a true retry must be
+    byte-equivalent to the event already persisted. A same-key retry whose
+    canonical content differs is not a safe no-op — it is divergent evidence
+    that would silently rewrite history if deduplicated. This check fires
+    *before* the post-terminal and monotonic-sequence classifiers so that a
+    divergent retry is never masked by a later rejection and never recorded
+    as a harmless duplicate.
+    """
+
+
+def canonical_event_json(event: "LedgerEvent") -> str:
+    """Return the canonical JSON serialization used for idempotency comparison.
+
+    This is the single source of truth for what constitutes "byte-equivalent"
+    across all append paths. Every dedup/conflict check compares the stored
+    ``event_json`` against the result of this function applied to the incoming
+    event, so that the definition of content equality cannot drift between
+    callers.
+    """
+    return json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
+
+
 # ── Gate types (Step 5: durable start and terminal verification) ───────────
 
 
@@ -1049,25 +1075,38 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                 f"does not match store attempt_id {attempt_id!r}"
             )
 
-        event_json = json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
+        event_json = canonical_event_json(event)
         conn = self.conn
 
         self._begin_immediate_retry(conn)
         try:
             cur = conn.cursor()
 
-            # (3) Idempotency-key dedup. Checked BEFORE any rejection so
-            #     retries of an event that has since become post-terminal
-            #     still return the existing event rather than raising.
+            # (3) Idempotency-key dedup / conflict. Checked BEFORE any
+            #     rejection so retries of an event that has since become
+            #     post-terminal still return the existing event rather than
+            #     raising. A same-key retry that is byte-equivalent
+            #     (canonical_event_json equality) is a true no-op; a
+            #     same-key retry whose canonical content differs is
+            #     divergent evidence and raises IdempotencyConflictError
+            #     before the post-terminal or monotonic classifiers can
+            #     mask it.
             cur.execute(
                 "SELECT event_json FROM attempt_events WHERE attempt_id = ? AND idempotency_key = ?",
                 (attempt_id, event.idempotency_key),
             )
             dup_row = cur.fetchone()
             if dup_row is not None:
+                stored_json = dup_row[0]
                 # Roll back the empty write transaction before returning.
                 conn.execute("ROLLBACK")
-                existing = _deserialize_ledger_event(json.loads(dup_row[0]))
+                if event_json != stored_json:
+                    raise IdempotencyConflictError(
+                        f"Idempotency key {event.idempotency_key!r} already "
+                        f"exists for attempt {attempt_id!r} with divergent "
+                        f"canonical content."
+                    )
+                existing = _deserialize_ledger_event(json.loads(stored_json))
                 return AppendResult(
                     attempt_id=attempt_id,
                     event=existing,
@@ -1118,7 +1157,12 @@ VALUES (?, ?, ?, ?, ?, ?)
                 ),
             )
             conn.execute("COMMIT")
-        except (PostTerminalAppendError, MonotonicSequenceError, ValueError):
+        except (
+            PostTerminalAppendError,
+            MonotonicSequenceError,
+            IdempotencyConflictError,
+            ValueError,
+        ):
             # Transaction already rolled back inside the handler for
             # typed store errors and pre-condition ValueErrors.
             raise

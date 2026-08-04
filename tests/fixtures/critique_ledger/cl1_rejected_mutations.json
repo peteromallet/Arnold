@@ -1,0 +1,250 @@
+{
+  "schema": "cl2.rejected_mutations.v1",
+  "description": "Mutation matrix for the CL2 entry-gate negative tests. Each case describes one mutation applied to either the landed rejected oracle (cl1-contract-oracle.json) or a minimal crafted artifact, and the typed error the verifier must raise. Cases tagged 'requires_u1' activate only when U1 supplies a genuine accepted bundle. Tests must never synthesize acceptance or reviewer approval — crafted cases exercise individual check functions with minimal inputs, not a full accepted handoff.",
+  "cases": [
+    {
+      "id": "rejected_oracle_derived_false",
+      "category": "full_flow",
+      "target": "rejected_oracle_as_amended_handoff",
+      "mutation": "Feed the landed cl1-contract-oracle.json as the amended handoff. Its accepted_for_cl2.value is false with blocking_reasons present.",
+      "expected_error": "DerivedAcceptanceFalseError",
+      "requires_u1": false
+    },
+    {
+      "id": "missing_amended_handoff",
+      "category": "prerequisite",
+      "target": "nonexistent_path",
+      "mutation": "Point the amended_handoff_path at a path that does not exist.",
+      "expected_error": "PrerequisiteUnresolvedError",
+      "requires_u1": false
+    },
+    {
+      "id": "missing_policy_bundle",
+      "category": "prerequisite",
+      "target": "nonexistent_path",
+      "mutation": "Point the policy_bundle_path at a path that does not exist.",
+      "expected_error": "PrerequisiteUnresolvedError",
+      "requires_u1": false
+    },
+    {
+      "id": "missing_review_receipt",
+      "category": "prerequisite",
+      "target": "nonexistent_path",
+      "mutation": "Point the review_receipt_path at a path that does not exist.",
+      "expected_error": "PrerequisiteUnresolvedError",
+      "requires_u1": false
+    },
+    {
+      "id": "missing_reviewer_trust",
+      "category": "prerequisite",
+      "target": "nonexistent_path",
+      "mutation": "Point the reviewer_trust_path at a path that does not exist.",
+      "expected_error": "PrerequisiteUnresolvedError",
+      "requires_u1": false
+    },
+    {
+      "id": "hash_drift_handoff",
+      "category": "full_flow",
+      "target": "declared_hash_mismatch",
+      "mutation": "Declare a SHA-256 for the amended handoff that differs from the recomputed disk hash.",
+      "expected_error": "HashDriftError",
+      "requires_u1": false
+    },
+    {
+      "id": "future_handoff_schema",
+      "category": "unit_check",
+      "target": "_check_target_version",
+      "mutation": "Craft a handoff with schema 'cl.handoff.v2' (unsupported future version).",
+      "expected_error": "UnsupportedTargetVersionError",
+      "requires_u1": false
+    },
+    {
+      "id": "wrong_target_milestone",
+      "category": "unit_check",
+      "target": "_check_target_version",
+      "mutation": "Craft a handoff with target_milestone 'CL3' instead of 'CL2'.",
+      "expected_error": "UnsupportedTargetVersionError",
+      "requires_u1": false
+    },
+    {
+      "id": "derived_acceptance_false_value",
+      "category": "unit_check",
+      "target": "_check_derived_acceptance",
+      "mutation": "Craft a handoff with accepted_for_cl2.value = false.",
+      "expected_error": "DerivedAcceptanceFalseError",
+      "requires_u1": false
+    },
+    {
+      "id": "derived_acceptance_subcheck_failed",
+      "category": "unit_check",
+      "target": "_check_derived_acceptance",
+      "mutation": "Craft a handoff with value=true but one sub-check passed=false.",
+      "expected_error": "DerivedAcceptanceFalseError",
+      "requires_u1": false
+    },
+    {
+      "id": "derived_acceptance_blocking_reasons",
+      "category": "unit_check",
+      "target": "_check_derived_acceptance",
+      "mutation": "Craft a handoff with value=true, all checks passed, but blocking_reasons non-empty.",
+      "expected_error": "DerivedAcceptanceFalseError",
+      "requires_u1": false
+    },
+    {
+      "id": "blocker_gate_blocked",
+      "category": "unit_check",
+      "target": "_check_blocker_free_gates",
+      "mutation": "Craft a handoff with one open_gates entry status BLOCKED.",
+      "expected_error": "BlockerBearingError",
+      "requires_u1": false
+    },
+    {
+      "id": "blocker_gate_incoherent",
+      "category": "unit_check",
+      "target": "_check_blocker_free_gates",
+      "mutation": "Craft a handoff with one open_gates entry status INCOHERENT.",
+      "expected_error": "BlockerBearingError",
+      "requires_u1": false
+    },
+    {
+      "id": "blocker_gate_pending",
+      "category": "unit_check",
+      "target": "_check_blocker_free_gates",
+      "mutation": "Craft a handoff with one open_gates entry status pending.",
+      "expected_error": "BlockerBearingError",
+      "requires_u1": false
+    },
+    {
+      "id": "blocker_gate_failed",
+      "category": "unit_check",
+      "target": "_check_blocker_free_gates",
+      "mutation": "Craft a handoff with one open_gates entry status FAILED.",
+      "expected_error": "BlockerBearingError",
+      "requires_u1": false
+    },
+    {
+      "id": "blocker_gate_validation_false",
+      "category": "unit_check",
+      "target": "_check_blocker_free_gates",
+      "mutation": "Craft a handoff with a gate whose validation_passed is explicitly false.",
+      "expected_error": "BlockerBearingError",
+      "requires_u1": false
+    },
+    {
+      "id": "reviewer_not_trusted",
+      "category": "unit_check",
+      "target": "_find_trusted_entry",
+      "mutation": "Declare a fingerprint absent from the trust binding's trusted_reviewers list.",
+      "expected_error": "ReviewerNotTrustedError",
+      "requires_u1": false
+    },
+    {
+      "id": "review_scope_missing_on_trust",
+      "category": "unit_check",
+      "target": "_check_review_scope",
+      "mutation": "Craft a trust entry whose scope omits cl2_admission while the receipt includes it.",
+      "expected_error": "ReviewScopeMismatchError",
+      "requires_u1": false
+    },
+    {
+      "id": "review_scope_missing_on_receipt",
+      "category": "unit_check",
+      "target": "_check_review_scope",
+      "mutation": "Craft a receipt whose scope omits cl2_admission while the trust entry includes it.",
+      "expected_error": "ReviewScopeMismatchError",
+      "requires_u1": false
+    },
+    {
+      "id": "review_expired_receipt",
+      "category": "unit_check",
+      "target": "_check_non_expiry",
+      "mutation": "Craft a receipt with expires_at in the past.",
+      "expected_error": "ReviewExpiredError",
+      "requires_u1": false
+    },
+    {
+      "id": "review_expired_trust_entry",
+      "category": "unit_check",
+      "target": "_check_non_expiry",
+      "mutation": "Craft a trust entry with expires_at in the past.",
+      "expected_error": "ReviewExpiredError",
+      "requires_u1": false
+    },
+    {
+      "id": "signature_absent",
+      "category": "unit_check",
+      "target": "verify_detached_signature",
+      "mutation": "Call the signature verifier with an empty signature string.",
+      "expected_error": null,
+      "expected_return": false,
+      "requires_u1": false
+    },
+    {
+      "id": "signature_invalid_bytes",
+      "category": "unit_check",
+      "target": "verify_detached_signature",
+      "mutation": "Call the signature verifier with a well-formed but cryptographically invalid 64-byte signature.",
+      "expected_error": null,
+      "expected_return": false,
+      "requires_u1": false
+    },
+    {
+      "id": "signature_wrong_length",
+      "category": "unit_check",
+      "target": "verify_detached_signature",
+      "mutation": "Call the signature verifier with a signature that decodes to fewer than 64 bytes.",
+      "expected_error": null,
+      "expected_return": false,
+      "requires_u1": false
+    },
+    {
+      "id": "policy_revision_drift",
+      "category": "unit_check",
+      "target": "_check_policy_revisions",
+      "mutation": "Craft a policy bundle whose near_match_policy_revision differs from the declared set.",
+      "expected_error": "PolicyRevisionDriftError",
+      "requires_u1": false
+    },
+    {
+      "id": "binding_cross_reference_handoff_hash",
+      "category": "unit_check",
+      "target": "_check_binding_cross_references",
+      "mutation": "Craft a receipt whose reviewed_artifact_sha256 does not match the recomputed handoff hash.",
+      "expected_error": "BindingCrossReferenceError",
+      "requires_u1": false
+    },
+    {
+      "id": "binding_cross_reference_fingerprint",
+      "category": "unit_check",
+      "target": "_check_binding_cross_references",
+      "mutation": "Craft a receipt whose reviewer_fingerprint differs from the declared fingerprint.",
+      "expected_error": "BindingCrossReferenceError",
+      "requires_u1": false
+    },
+    {
+      "id": "binding_cross_reference_amendment",
+      "category": "unit_check",
+      "target": "_check_binding_cross_references",
+      "mutation": "Craft a receipt whose amendment_checksum differs from the declared checksum.",
+      "expected_error": "BindingCrossReferenceError",
+      "requires_u1": false
+    },
+    {
+      "id": "positive_full_flow",
+      "category": "full_flow",
+      "target": "accepted_bundle",
+      "mutation": "Exercise the complete admission flow against the genuine U1-supplied accepted bundle.",
+      "expected_error": null,
+      "expected_return": "AcceptedCL1Binding",
+      "requires_u1": true
+    },
+    {
+      "id": "wrong_key_full_flow",
+      "category": "full_flow",
+      "target": "accepted_bundle",
+      "mutation": "Mutate the U1 receipt's signature so it fails verification; every earlier check still passes.",
+      "expected_error": "DetachedSignatureInvalidError",
+      "requires_u1": true
+    }
+  ]
+}

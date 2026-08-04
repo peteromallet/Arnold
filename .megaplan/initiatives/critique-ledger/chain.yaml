@@ -31,9 +31,9 @@ milestones:
     prompt projection, token budgets, and critic model routing; preserve the amended
     CL1/CL2 contracts and prove the mandatory blind floor, prompt isolation, and bounded
     complete domain briefings.
-  notes: Overall plan difficulty 5/5; partnered-5-glm/full/medium. The architecture is locked,
-    but subtle routing and context-budget errors can suppress findings while all individual
-    workers appear healthy.
+  notes: Overall plan difficulty 5/5; partnered-5-glm/full/medium. The architecture
+    is locked, but subtle routing and context-budget errors can suppress findings
+    while all individual workers appear healthy.
 - label: cl4-reconcile-role-flow
   depends_on:
   - cl3-routing-briefings
