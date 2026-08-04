@@ -18,6 +18,8 @@ import os
 import sys
 from typing import Any
 
+from arnold.agent.providers.pool import provider_credential_env_vars
+
 # ── Agent → provider → required env var mappings ──────────────────────
 # Reuses and extends the mappings from arnold_pipelines.megaplan.cloud.preflight.
 
@@ -28,14 +30,27 @@ _AGENT_ENV_HINTS: dict[str, tuple[str, ...]] = {
 }
 
 _PROVIDER_ENV_HINTS: dict[str, tuple[str, ...]] = {
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "fireworks": ("FIREWORKS_API_KEY",),
-    "kimi": ("KIMI_API_KEY",),
-    "mimo": ("MIMO_API_KEY",),
-    "openai": ("OPENAI_API_KEY",),
-    "anthropic": ("ANTHROPIC_API_KEY",),
-    "xai": ("XAI_API_KEY",),
+    provider: provider_credential_env_vars(provider)
+    for provider in (
+        "zhipu",
+        "kimi",
+        "minimax",
+        "mimo",
+        "openrouter",
+        "google",
+        "deepseek",
+        "fireworks",
+        "xai",
+    )
 }
+# The non-Hermes names are kept here because premium/vendor profiles use them
+# directly rather than through ``provider_credential_env_vars``.
+_PROVIDER_ENV_HINTS.update(
+    {
+        "openai": ("OPENAI_API_KEY",),
+        "anthropic": ("ANTHROPIC_API_KEY",),
+    }
+)
 
 # ── Credential checking ───────────────────────────────────────────────
 
@@ -50,6 +65,12 @@ def _parse_agent_spec(spec: str) -> tuple[str, str | None]:
 def _check_credential(env_var: str) -> bool:
     """Check if an environment variable is set (non-empty)."""
     return bool(os.environ.get(env_var, "").strip())
+
+
+def _provider_credential_configured(provider: str) -> bool:
+    """Return whether any accepted key alias for *provider* is configured."""
+
+    return any(_check_credential(name) for name in _PROVIDER_ENV_HINTS.get(provider, ()))
 
 
 def _resolve_concrete_slot_spec(spec: str, *, vendor: str | None = None) -> str:
@@ -186,8 +207,12 @@ def _required_env_vars_for_slot(agent_spec: str, slot_name: str) -> list[tuple[s
         parts = model.split(":", 1)
         provider = parts[0] if parts else None
         if provider and provider in _PROVIDER_ENV_HINTS:
-            for env_var in _PROVIDER_ENV_HINTS[provider]:
-                required.append((env_var, f"{agent}/{provider}"))
+            # Aliases are alternatives, not independent requirements.  Keep
+            # the canonical name in the legacy return shape while the caller
+            # checks all accepted aliases before declaring it missing.
+            env_vars = _PROVIDER_ENV_HINTS[provider]
+            if env_vars:
+                required.append((env_vars[0], f"{agent}/{provider}"))
         else:
             # Unknown provider — assume it needs whatever the agent normally needs
             pass
@@ -232,6 +257,16 @@ def preflight_check_profile(
             continue
         concrete_spec = _resolve_concrete_slot_spec(spec, vendor=vendor)
         required = _required_env_vars_for_slot(concrete_spec, slot)
+        parsed_agent, parsed_model = _parse_agent_spec(concrete_spec)
+        hermes_provider: str | None = None
+        if parsed_agent == "hermes" and parsed_model and ":" in parsed_model:
+            hermes_provider = parsed_model.split(":", 1)[0]
+        if hermes_provider in _PROVIDER_ENV_HINTS:
+            # A provider prefix is a direct routing contract.  Validate its
+            # own aliases here so one configured GLM/ZAI key is sufficient and
+            # no empty-key AIAgent construction can be reached later.
+            if _provider_credential_configured(hermes_provider):
+                continue
         for env_var, display_name in required:
             if not _check_credential(env_var):
                 missing.append(

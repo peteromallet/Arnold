@@ -150,6 +150,92 @@ def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[
     return normalized
 
 
+class HermesProviderCredentialError(CliError):
+    """Typed, deterministic failure for a direct Hermes route without a key.
+
+    ``AIAgent`` historically accepted an empty ``api_key`` and then selected
+    its default OpenAI-compatible client, producing a misleading OpenAI
+    credential error for requests explicitly pinned to another provider.  A
+    structured ``_external_error`` keeps the phase boundary provider-aware so
+    the orchestrator can stop/recover without retrying the same bad launch.
+    """
+
+    def __init__(self, *, provider: str, model: str, env_hints: tuple[str, ...]) -> None:
+        aliases = ", ".join(env_hints) or "the provider credential"
+        message = (
+            f"Hermes provider '{provider}' cannot run model '{model}': no API "
+            f"credential found. Set one of: {aliases}."
+        )
+        super().__init__(
+            "provider_credentials_missing",
+            message,
+            valid_next=[f"set one of {aliases}", f"rerun with a provider that has credentials"],
+            extra={
+                "provider": provider,
+                "model": model,
+                "credential_env": list(env_hints),
+                "_external_error": {
+                    "provider": provider,
+                    "error_kind": "auth",
+                    "message": message,
+                    "provider_error_code": "missing_credentials",
+                    "error_layer": "credential_preflight",
+                    "source": "hermes_worker",
+                    "deterministic": True,
+                    "nonretryable": True,
+                },
+            },
+            exit_code=7,
+        )
+
+
+def _hermes_route_provider(model: str | None, agent_kwargs: dict[str, str]) -> str | None:
+    """Resolve the actual provider selected by ``runtime.key_pool``.
+
+    Fireworks-hosted DeepSeek and MiniMax's intentional OpenRouter fallback
+    both rewrite the base URL, so classify those routes by their effective
+    URL rather than reporting the original prefix as if it owned the key.
+    """
+
+    raw = str(model or "").strip()
+    if raw.lower().startswith("hermes:"):
+        raw = raw.split(":", 1)[1]
+    if ":" not in raw:
+        return None
+    requested = raw.split(":", 1)[0].lower()
+    base_url = str(agent_kwargs.get("base_url") or "").lower()
+    if requested == "fireworks" and "api.deepseek.com" in base_url:
+        return "deepseek"
+    if requested == "minimax" and "openrouter.ai" in base_url:
+        return "openrouter"
+    return requested
+
+
+def _validate_hermes_provider_credentials(
+    model: str | None,
+    agent_kwargs: dict[str, str],
+    *,
+    resolved_model: str | None = None,
+) -> None:
+    """Fail closed before constructing ``AIAgent`` when a direct route is empty."""
+
+    provider = _hermes_route_provider(model, agent_kwargs)
+    if provider is None or str(agent_kwargs.get("api_key") or "").strip():
+        return
+    from arnold_pipelines.megaplan.runtime.key_pool import provider_credential_env_vars
+
+    env_hints = provider_credential_env_vars(provider)
+    if not env_hints:
+        # Unknown provider prefixes are rejected by resolve_model; do not turn
+        # an unrelated error into a guessed credential failure here.
+        return
+    raise HermesProviderCredentialError(
+        provider=provider,
+        model=str(resolved_model or model or ""),
+        env_hints=env_hints,
+    )
+
+
 def _import_hermes_runtime():
     """Resolve the vendored hermes runtime packages.
 
@@ -2448,6 +2534,14 @@ def run_hermes_step(
             f"{_MAX_EMPTY_RETRIES} attempts",
         )
 
+    # Validate the explicit provider route before AIAgent construction.  An
+    # empty key must never reach Hermes' provider auto-detection, which can
+    # silently fall through to OpenAI and obscure the real launch failure.
+    _validate_hermes_provider_credentials(
+        model,
+        agent_kwargs,
+        resolved_model=resolved_model,
+    )
     agent = _make_agent(resolved_model, agent_kwargs)
     # Don't set response_format when tools are enabled — many models
     # (Qwen, GLM-5) hang or produce garbage when both are active.
