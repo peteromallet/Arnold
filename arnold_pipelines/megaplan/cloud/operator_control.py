@@ -14,7 +14,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
+from arnold_pipelines.megaplan.chain.operator_pause import (
+    pause_chain,
+    reconcile_quiesced_plan_pause,
+    resume_chain,
+)
 from arnold_pipelines.megaplan.cloud.relaunch_resolution import marker_relaunch_command
 
 
@@ -98,6 +102,17 @@ def pause_session(
             marker_dir / f"{session}.meta-repair.pid",
         )
     )
+    # tmux can return from kill-session while the terminated runner is
+    # flushing its final in-memory state.  Give that bounded flush a chance to
+    # land, then converge only the dead-owned writer race.  Arbitrary plan
+    # changes remain fail-closed in reconcile_quiesced_plan_pause().
+    time.sleep(_POST_LAUNCH_GRACE_SECONDS)
+    plan_reconciled = reconcile_quiesced_plan_pause(
+        spec,
+        workspace,
+        session=session,
+        authority=result["authority"],
+    )
     marker["operator_pause"] = result["authority"]
     marker["should_run"] = False
     _write_marker(marker_path, marker, expected_sha256=marker_sha256)
@@ -106,6 +121,7 @@ def pause_session(
         "session": session,
         "runner_stopped": stopped,
         "repair_stopped": repair_stopped,
+        "plan_reconciled": plan_reconciled,
     }
 
 
