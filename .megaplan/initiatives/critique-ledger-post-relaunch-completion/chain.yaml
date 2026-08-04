@@ -54,6 +54,14 @@ launch_preconditions:
   - name: incident-specific control amendment is committed input
     kind: git_tracked
     path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/incident-specific-control-amendment-20260804.md
+  - name: architecture-fit minimality gate is present
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/architecture-fit-and-minimality-gate-20260804.md
+    check:
+      kind: contains_text
+      text: architecture-fit-minimality-gate.v1
+  - name: architecture-fit minimality gate is committed input
+    kind: git_tracked
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/architecture-fit-and-minimality-gate-20260804.md
 milestones:
   - label: f1-owner-storage-recovery-hardening
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f1-owner-storage-recovery-hardening.md
@@ -64,7 +72,7 @@ milestones:
     depth: high
     with_prep: true
     prep_clarify: false
-    notes: Difficulty 5/5; VERY HARD. Closes deferred owner/storage/recovery debt before ordinary v3 execution authority expands.
+    notes: Difficulty 5/5; VERY HARD. Closes deferred owner/storage/recovery debt before ordinary v3 execution authority expands. Must pass the architecture-fit/minimality gate before broadening inventory.
   - label: f2-admission-model-effect-release-closure
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f2-admission-model-effect-release-closure.md
     branch: epic/critique-ledger-v3/f2-admission-model-effect-release-closure
@@ -76,7 +84,7 @@ milestones:
     prep_clarify: false
     depends_on:
       - f1-owner-storage-recovery-hardening
-    notes: Difficulty 5/5; VERY HARD. Generalizes the Stage-A scoped controls platform-wide and closes zero-debt release qualification before authority expansion.
+    notes: Difficulty 5/5; VERY HARD. Generalizes the Stage-A scoped controls platform-wide and closes zero-debt release qualification before authority expansion. Must retire or fence bypasses rather than add a parallel authority path.
   - label: f3-cl2-real-work-and-publication
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/m1-cl2-ordinary-completion.md
     branch: epic/critique-ledger-v3/f3-cl2-real-work-and-publication
@@ -88,7 +96,7 @@ milestones:
     prep_clarify: false
     depends_on:
       - f2-admission-model-effect-release-closure
-    notes: Difficulty 5/5; VERY HARD. Completes remaining T6.3 evidence plus T6.4-T6.5 after deferred hardening manifests join.
+    notes: Difficulty 5/5; VERY HARD. Completes remaining T6.3 evidence plus T6.4-T6.5 after deferred hardening manifests join. Requires one thin ordinary CL2 path through the canonical owners.
   - label: f4-cl3-cl5-epic-completion
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/m2-cl3-cl5-epic-completion.md
     branch: epic/critique-ledger-v3/f4-cl3-cl5-epic-completion
@@ -136,7 +144,7 @@ milestones:
     prep_clarify: false
     depends_on:
       - f6-production-acceptance
-    notes: Difficulty 4/5. Completes deferred T3.6 ticket close, T4.6 and T8.1-T8.4.
+    notes: Difficulty 4/5. Completes deferred T3.6 ticket close, T4.6 and T8.1-T8.4, including the final deletion/retirement and complexity audit.
   - label: f8-seven-day-durability
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/m6-seven-day-durability.md
     branch: epic/critique-ledger-v3/f8-seven-day-durability

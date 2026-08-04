@@ -35,6 +35,16 @@ generalization; and preparation of T4.6 without rewriting evidence.
   occurrence target/ref, accepted state version, quiet transition and due
   selection. Immediate/reconcile wrappers receive the exact occurrence ID.
 
+### Architecture-fit gate
+
+F1 must begin with an owner matrix covering each state field and mutation. It
+must adopt the existing WBC, Run Authority and Custody owners rather than add a
+second ledger, recovery queue, snapshot authority or persistence service. Before
+expanding the 28-module/741-case inventory, F1 must prove one complete
+crash/response-loss/restart recovery slice through those canonical boundaries.
+Any compatibility writer is retired, fenced read-only, or assigned an explicit
+owner and expiry.
+
 ## P2 control-plane acceptance (required, not advisory)
 
 The initiative-local mapping in
@@ -90,6 +100,9 @@ or replacement of accepted owner evidence with projections.
 - Restart and 200 unchanged polls emit at most one occurrence/version-keyed
   notification effect; missing provenance emits zero.
 - Independent completion manifest binds exact commits, migrations and receipts.
+- Architecture-fit receipt proves no competing authority or persistence path was
+  introduced and records the thin end-to-end failure slice plus all retired or
+  expiring compatibility paths.
 
 ## Touchpoints
 

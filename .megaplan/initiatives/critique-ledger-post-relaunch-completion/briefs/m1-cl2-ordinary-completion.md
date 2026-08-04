@@ -23,6 +23,9 @@ and contract bundle; do not re-run the accepted finalize canary.
   `INDETERMINATE` and reconciled; never create a second PR.
 - Authoritative chain cursor movement and feature commits, not logs or process
   liveness, prove progress.
+- The first ordinary CL2 slice is a thin end-to-end proof through the canonical
+  WBC + Run Authority + Custody owners; feature breadth cannot substitute for
+  this architecture-fit proof.
 
 ## Open questions
 
@@ -42,6 +45,8 @@ caller-minted authority, duplicate repair or duplicate publication.
 - One authoritative CL2 completion manifest advances the chain cursor.
 - Publication has one durable WBC intent and one reconciled provider outcome.
 - Independent review finds no bypass, false success or duplicate effect.
+- The architecture-fit receipt records the one owner/writer for each new
+  mutation and any compatibility path retired or fenced during the slice.
 
 ## Touchpoints
 

@@ -25,6 +25,15 @@ exact incident replay as a permanent candidate gate.
 - Offline evidence is not deploy authority. Release acceptance binds the exact
   integrated and installed generation.
 
+### Architecture-fit gate
+
+F2 must consume the canonical Custody Control Plane adoption contracts rather
+than add wrappers around them. Its entry-point inventory must identify one
+authoritative admission writer, one WBC evidence path, and one Custody lease /
+occurrence path; every other path is denied, read-only, or explicitly expiring.
+The first accepted slice is one end-to-end response-loss/restart recovery
+through those owners, not a new reconciliation subsystem.
+
 ## P2 control-plane acceptance (required, not advisory)
 
 The initiative-local mapping in
@@ -72,6 +81,9 @@ No broad production authority until F1 and F2 completion manifests both exist.
 - T2.6 zero-debt decision and exact T3 release/ticket evidence are accepted.
 - Permanent incident replay fails any candidate that recreates false success,
   duplicate fixer/notification, blind resend or broken fence.
+- Architecture-fit receipt proves every launch/resume/replay route uses the
+  existing owner contracts and that no parallel authority, watcher, queue, or
+  snapshot system was introduced.
 
 ## Touchpoints
 

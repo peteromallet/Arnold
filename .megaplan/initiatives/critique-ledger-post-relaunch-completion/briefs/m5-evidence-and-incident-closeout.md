@@ -19,6 +19,9 @@ Completes the ticket-closing subeffect of T3.6, T4.6, and T8.1–T8.4.
 - The incident replay remains a permanent release gate.
 - Operator UX is one card and one genuine-decision notification with visible
   indeterminacy, named owner and precise next action.
+- Closeout includes a deletion/retirement and complexity audit: unresolved
+  duplicate writers, parallel fixers, unbounded watchers, or new authority
+  substrates are release blockers.
 
 ## Open questions
 
@@ -36,6 +39,9 @@ evidence. Documentation cannot substitute for executable gates.
 - Final v3/product completion manifest and proof map reproduce.
 - Incident is resolved only after production acceptance, with v2 immutable.
 - Permanent replay test and operator incident card/notification policy ship.
+- Architecture-fit/minimality receipt proves the final system is simpler in
+  authority topology than the incident-era system, with every retained bridge
+  named and time-bounded.
 
 ## Touchpoints
 
