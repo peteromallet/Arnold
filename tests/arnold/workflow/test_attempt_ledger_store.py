@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from arnold.workflow.attempt_ledger_store import (
     AttemptLedgerError,
     AttemptLedgerStore,
     AttemptReservation,
+    DivergentDuplicateError,
     GateStatus,
     MissingStartEventError,
     MonotonicSequenceError,
@@ -108,6 +110,17 @@ def _make_event(
         occurred_at="2025-01-01T00:00:00Z",
         observed_at="2025-01-01T00:00:01Z",
     )
+
+
+def replace_runtime_observed_at(payload: dict[str, Any] | None, observed_at: str) -> dict[str, Any] | None:
+    """Copy a WBC payload while changing only its volatile source timestamp."""
+    if not isinstance(payload, dict):
+        return payload
+    copied = json.loads(json.dumps(payload))
+    runtime = copied.get("__wbc_runtime__")
+    if isinstance(runtime, dict) and isinstance(runtime.get("source_record"), dict):
+        runtime["source_record"]["observed_at"] = observed_at
+    return copied
 
 
 def _make_completed_event(
@@ -538,6 +551,51 @@ class TestSqliteAttemptLedgerStoreWrite:
             assert store.event_count(aid) == 1
             # No transaction was left open.
             assert store.conn.in_transaction is False
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_duplicate_ignores_observation_timestamps_but_binds_identity(self):
+        """WBC replay is idempotent only for the same immutable occurrence."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            aid = _aid()
+            original = replace(
+                _make_event(attempt_id=aid, idempotency_key="wbc-start"),
+                occurred_at="2025-01-01T00:00:00Z",
+                observed_at="2025-01-01T00:00:01Z",
+                payload={
+                    "status": "started",
+                    "__wbc_runtime__": {
+                        "source_record": {
+                            "version": "source:1",
+                            "observed_at": "2025-01-01T00:00:01Z",
+                        }
+                    },
+                },
+            )
+            store.append_event(aid, original)
+
+            replay = replace(
+                original,
+                occurred_at="2025-01-01T00:10:00Z",
+                observed_at="2025-01-01T00:10:01Z",
+                payload=replace_runtime_observed_at(original.payload, "2025-01-01T00:10:01Z"),
+            )
+            result = store.append_event(aid, replay)
+            assert result.is_duplicate is True
+            assert result.event.occurred_at == original.occurred_at
+            assert store.event_count(aid) == 1
+
+            changed_identity = replace(
+                replay,
+                identity=replace(replay.identity, attempt_ordinal=2),
+            )
+            with pytest.raises(DivergentDuplicateError, match="divergent_identity.attempt_ordinal"):
+                store.append_event(aid, changed_identity)
+            assert store.event_count(aid) == 1
             store.close()
         finally:
             if os.path.exists(path):

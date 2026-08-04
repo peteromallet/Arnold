@@ -145,17 +145,45 @@ def build_worker_dispatch_spec(
         if normalized_dispatch_key is None
         else f"{identity_parts}:{normalized_dispatch_key}"
     )
-    attempt_identity = (
+    dispatch_invocation_id = str(
+        (state.get("meta") or {}).get("current_invocation_id") or "worker-dispatch"
+    )
+    legacy_attempt_identity = (
         f"{phase_attempt_id}::{route_kind}::{phase_name}::{selected_spec}::{int(attempt_index)}"
     )
     if normalized_dispatch_key is not None:
-        attempt_identity = f"{attempt_identity}::{normalized_dispatch_key}"
+        legacy_attempt_identity = f"{legacy_attempt_identity}::{normalized_dispatch_key}"
+    legacy_attempt_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            legacy_attempt_identity,
+        )
+    )
     attempt_id = str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
-            attempt_identity,
+            f"{legacy_attempt_identity}::{dispatch_invocation_id}::worker-dispatch-v2",
         )
     )
+    legacy_idempotency_key = False
+    legacy_store = SqliteAttemptLedgerStore(plan_dir / WORKER_DISPATCH_WBC_LEDGER_FILENAME)
+    try:
+        legacy_events = legacy_store.read_events(legacy_attempt_id)
+        if legacy_events:
+            expected_legacy_identity = _identity(
+                state=state,
+                attempt_id=legacy_attempt_id,
+                phase_step=phase_name,
+                worker_step=step,
+                attempt_index=int(attempt_index),
+                dispatch_key=normalized_dispatch_key,
+                invocation_id=dispatch_invocation_id,
+            )
+            legacy_idempotency_key = legacy_events[0].identity == expected_legacy_identity
+    finally:
+        legacy_store.close()
+    if legacy_idempotency_key:
+        attempt_id = legacy_attempt_id
     configured_specs_tuple = tuple(str(item) for item in configured_specs)
     attempted_specs_tuple = tuple(str(item) for item in attempted_specs)
     failed_attempt_reasons_tuple = tuple(str(item) for item in failed_attempt_reasons)
@@ -205,6 +233,7 @@ def build_worker_dispatch_spec(
             selected_spec=selected_spec,
             dispatch_attempt_index=int(attempt_index),
             dispatch_key=normalized_dispatch_key,
+            invocation_id=dispatch_invocation_id,
             sequence=1,
             event_type=AttemptEventType.STARTED,
             idempotency_suffix="started",
@@ -222,6 +251,7 @@ def build_worker_dispatch_spec(
             selected_spec=selected_spec,
             dispatch_attempt_index=int(attempt_index),
             dispatch_key=normalized_dispatch_key,
+            invocation_id=dispatch_invocation_id,
             sequence=2,
             event_type=AttemptEventType.COMPLETED,
             idempotency_suffix="completed",
@@ -241,6 +271,7 @@ def build_worker_dispatch_spec(
             selected_spec=selected_spec,
             dispatch_attempt_index=int(attempt_index),
             dispatch_key=normalized_dispatch_key,
+            invocation_id=dispatch_invocation_id,
             sequence=2,
             event_type=AttemptEventType.FAILED,
             idempotency_suffix="failed",
@@ -374,8 +405,13 @@ def _identity(
     worker_step: str,
     attempt_index: int,
     dispatch_key: str | None,
+    invocation_id: str | None = None,
 ) -> AttemptIdentity:
-    invocation_id = str((state.get("meta") or {}).get("current_invocation_id") or "worker-dispatch")
+    invocation_id = str(
+        invocation_id
+        or (state.get("meta") or {}).get("current_invocation_id")
+        or "worker-dispatch"
+    )
     return AttemptIdentity(
         workflow_id="megaplan.worker_dispatch",
         run_id=str(state.get("name") or "megaplan-plan"),
@@ -400,6 +436,7 @@ def _event(
     sequence: int,
     event_type: AttemptEventType,
     idempotency_suffix: str,
+    invocation_id: str | None = None,
     outcome: AttemptOutcome | None = None,
     payload: Mapping[str, Any] | None = None,
 ) -> LedgerEvent:
@@ -413,6 +450,7 @@ def _event(
             worker_step=worker_step,
             attempt_index=dispatch_attempt_index,
             dispatch_key=dispatch_key,
+            invocation_id=invocation_id,
         ),
         provenance=AttemptProvenance(
             actor_id="megaplan.worker_dispatch",

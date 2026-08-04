@@ -122,6 +122,16 @@ claim cannot discharge an obligation.
 
 ## F1 — owner, storage and recovery root fixes
 
+- [ ] **WBC identity/replay unification:** promote the landed execute/worker
+  fencing repair from this bounded incident into one shared constructor used by
+  every research, execute, phase, effect, and worker-dispatch producer. The
+  constructor must snapshot invocation/fence/source identity before dispatch;
+  canonical ledger and outbox serialization must ignore only observation clocks,
+  preserve semantic runtime metadata, and quarantine same-key identity changes.
+  Add cross-pipeline replay, stale-writer, outbox-parity, and provider-before-
+  durable-start tests; deploy a pinned runtime and record the acceptance receipt.
+  Evidence: `docs/megaplan/wbc-attempt-identity-replay-2026-08-04.md`.
+
 - [ ] Finish platform T0.3 beyond the bounded bootstrap: introduce an owner for
   reserved receipt/WAL capacity, quotas and high/low watermarks; prove ENOSPC,
   corruption and crash behavior; define safe lifecycle retention and broad
