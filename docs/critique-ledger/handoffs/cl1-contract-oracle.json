@@ -1,0 +1,441 @@
+{
+  "schema": "cl.handoff.v1",
+  "handoff_id": "cl1-contract-oracle",
+  "generated_at": "2026-07-24T01:10:00Z",
+  "generated_by": "hermes-executor: T12",
+  "target_milestone": "CL2",
+  "description": "CL1 contract, ownership, and M6 oracle freeze handoff. Provides schema/version hashes, owner/cutover mappings, WBC merge references, custody receipt versions, manifest/oracle/gate hashes, retention/atomicity decisions, domain budgets, authority decisions, limitations, touchpoints, open gates, and a machine-checkable accepted_for_cl2 derivation.",
+
+  "schema_and_version_hashes": {
+    "occurrence_envelope_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "CritiqueOccurrenceEnvelope",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+    },
+    "reconciliation_event_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "FindingReconciliationEvent",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+    },
+    "disposition_event_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "FindingDispositionEvent",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+    },
+    "domain_briefing_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "DomainBriefingEnvelope",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+    },
+    "ledger_manifest_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "LedgerRevisionManifest",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+    },
+    "semantic_loop": {
+      "source_file": "arnold/critique_ledger/semantic_loop.py",
+      "sha256": "4b3bd7337fccbe6501add9b7eebced2c11d8d4367f762b224647952342abd3fd"
+    },
+    "module_init": {
+      "source_file": "arnold/critique_ledger/__init__.py",
+      "sha256": "99f40335e32b9ed106760c6da0daf8ece362f196d235199b8a72aca3cc7b4877"
+    },
+    "owner_matrix_schema": {
+      "schema_version": "wbc.matrix.v2",
+      "source_file": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+      "sha256": "76669b2ee62d785993828e6f297aa6a21f58d820446cfd88d6c90289a30d1a9a"
+    },
+    "producer_matrix_schema": {
+      "schema_version": "wbc.contract_to_producer.v2",
+      "source_file": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
+      "sha256": "699d710fb279f00a5dd557811f9ac1fc729a6d6bd5227f3a8801361bba2c94ab"
+    }
+  },
+
+  "owner_and_cutover_mappings": {
+    "owner_domains": {
+      "run_authority": {
+        "description": "Run Authority owns authority facts, views, routing decisions, and execution verdicts.",
+        "mutating_scope": "authority_facts_views",
+        "source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"
+      },
+      "maintenance": {
+        "description": "Maintenance owns lifecycle/status/repair mutation: repair queues, incident ledger, watchdog, cloud status.",
+        "mutating_scope": "lifecycle_status_repair",
+        "source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"
+      },
+      "wbc": {
+        "description": "WBC owns declarations, evidence profiles, findings, schema contracts, and boundary matrices.",
+        "mutating_scope": "declarations_evidence_profiles_findings",
+        "source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"
+      },
+      "critique_ledger": {
+        "description": "Critique Ledger owns critique occurrence, reconciliation, disposition, briefing, and manifest schemas; semantic-loop replay and projection; and M6 oracle evidence. Read-only observe domain with zero lifecycle mutation.",
+        "mutating_scope": "critique_occurrence_reconciliation_disposition_briefing_manifest",
+        "writer_count": 1,
+        "compatibility_readers": ["contract_reality_validator", "c1_static_analysis", "c2_migration_gate"],
+        "source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"
+      }
+    },
+    "boundary_contracts": {
+      "count": 35,
+      "note": "All 35 original boundary contracts preserved intact from v1 schema."
+    },
+    "custody_contracts": {
+      "count": 3,
+      "namespace_prefix": "critique_custody",
+      "contracts": [
+        {
+          "boundary_id": "critique_custody.write_critique_production_receipt",
+          "row_id": "cl1.critique_custody.1",
+          "phase": "critique",
+          "producer_category": "critique_custody",
+          "handler_function": "arnold/critique_ledger/custody.py:write_critique_production_receipt"
+        },
+        {
+          "boundary_id": "critique_custody.write_critique_clearance",
+          "row_id": "cl1.critique_custody.2",
+          "phase": "critique",
+          "producer_category": "critique_custody",
+          "handler_function": "arnold/critique_ledger/custody.py:write_critique_clearance"
+        },
+        {
+          "boundary_id": "critique_custody.bind_finalize_custody",
+          "row_id": "cl1.critique_custody.3",
+          "phase": "critique",
+          "producer_category": "critique_custody",
+          "handler_function": "arnold/critique_ledger/custody.py:bind_finalize_custody"
+        }
+      ],
+      "note": "Namespaced under critique_custody.* to avoid collision with the 35 boundary contracts. No namespace collision detected."
+    },
+    "reclassified_rows": {
+      "count": 9,
+      "new_producer_category": "not_emitted_by_contract",
+      "description": "9 previously 'unknown' rows (8 override contracts + replan_authority) reclassified as not_emitted_by_contract with declaration/handler evidence per plan language.",
+      "source": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json"
+    }
+  },
+
+  "wbc_merge_and_parent_references": {
+    "wbc_merge_commit": {
+      "full": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+      "short": "24afce006",
+      "description": "M6 WBC merge commit that landed the ExecutionAttemptLedger schema, boundary contracts, and payload policy into the consolidated codebase."
+    },
+    "merge_parents": [
+      {
+        "role": "first_parent",
+        "sha": "7644f55dd9be75632670f990268e045d3ee1c2f7",
+        "is_ancestor_of_head": true
+      },
+      {
+        "role": "second_parent",
+        "sha": "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70",
+        "is_ancestor_of_head": true
+      }
+    ],
+    "ancestry_verified": true,
+    "verification_source": "evidence/m6-proof-index.json",
+    "note": "Both WBC merge parents are ancestors of current HEAD (d365ef685). WBC ancestry re-verified via git merge-base."
+  },
+
+  "implementation_revision": {
+    "head_sha": "d365ef68592b930c7f55c7f40f9b90af8cd03c06",
+    "head_short": "d365ef685",
+    "branch": "critique-ledger-m9-glm-20260723",
+    "repository": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+    "note": "Current implementation revision at CL1 handoff. All hashes recomputed from this HEAD."
+  },
+
+  "m6_source_revision": {
+    "full": "ea2be1fe36c42c4f19afedd2c096b5dcec7c56df",
+    "short": "ea2be1fe",
+    "repository": "/workspace/custody-control-plane-20260714/Arnold",
+    "plan": "m6-exact-contract-and-20260716-1303",
+    "verification_method": "git cat-file -t (commit object check)",
+    "revision_verified": true,
+    "note": "Preserved M6 source revision. Read-only oracle source — never mutated during CL1 execution."
+  },
+
+  "custody_receipt_versions": {
+    "m6_custody_versions": ["v1", "v2", "v3", "v4", "v5"],
+    "step_receipt_types": ["critique", "gate", "plan", "prep", "finalize"],
+    "wbc_receipt_references": ["wbc-001"],
+    "critique_custody_schema_anchors": {
+      "occurrence_schema": "cl.schema.v1",
+      "corpus_schema": "cl.m6-corpus.v1",
+      "oracle_schema": "cl.m6-oracle.v1"
+    },
+    "support_manifest": {
+      "schema": "wbc.support_manifest.v1",
+      "source": "arnold/workflow/support_manifest.json",
+      "store_version": "arnold.workflow.attempt_ledger_store.v1",
+      "outbox_version": "arnold.workflow.ledger_outbox.v1",
+      "payload_store_version": "arnold.workflow.ledger_payload_store.v1",
+      "trace_version": "arnold.workflow.ledger_trace.v1",
+      "adapter_version": "arnold.adapters.ledger_store_adapter.v1",
+      "migration_version": "arnold.workflow.ledger_migrations.v1"
+    }
+  },
+
+  "manifest_oracle_gate_hashes": {
+    "m6_corpus_fixture": {
+      "path": "tests/fixtures/critique_ledger/m6-corpus.json",
+      "sha256": "bd8a244ccb1a39b8d50a6003522586afb4cdb049a8f5f5f2172919ab90765233"
+    },
+    "m6_corpus_manifest": {
+      "path": "docs/critique-ledger/evidence/m6-corpus-manifest.json",
+      "sha256": "66a0e154423d748aa5231719efd857fcfc72f3ab7f8195fcdd69dad1185e7c52"
+    },
+    "m6_oracle": {
+      "path": "docs/critique-ledger/evidence/m6-oracle.json",
+      "sha256": "5ff15bc92d1a5f32d4ba8d60b001cb6a62502f154d0df2c24f8aed0ad8fbcf64"
+    },
+    "cl1_semantic_loop_gate": {
+      "path": "docs/critique-ledger/evidence/cl1-semantic-loop-gate.json",
+      "sha256": "d39b1501657b1c80cc8ca9c052efca58366ce6719eb4db1dd9f6af0b30507296"
+    },
+    "retention_class_mapping": {
+      "path": "docs/critique-ledger/evidence/retention-class-mapping.json",
+      "sha256": "98e17d0ea3a805e66e0e984f382eef3c3e95bbfe19d8423a342b18c3f7eb8494"
+    },
+    "failure_atomicity_table": {
+      "path": "docs/critique-ledger/evidence/failure-atomicity-table.json",
+      "sha256": "a79336b9c0fb242a9da170b7be001ff8ccfe16a07d36948a0b93376136f3c643"
+    },
+    "semantic_loop_projections": {
+      "manifest_hash": "dd1db89dde68e2d464ea05ad53c9c27d07d338bb20125608e9bb11ae1bc3457e",
+      "briefing_hash": "f93e6a871ef5d4c1ff05348bd9531d146d9d96c3372729cb5db20ba169bea792",
+      "reviser_projection_hash": "db3b663d5f399309c546c6cf35af858aae2380a487aec333a1aecb14d9b3531e",
+      "gate_projection_hash": "8f077f2d6bb9e255d8081c9c2301a6aa46ec006d909577df56b44b5d4dfe7a18"
+    },
+    "five_to_one_reconciliation_hash": "87222d2711d56efdfb9c1db5d22456d18c9750111f68a501457ef7993c8b3199",
+    "all_hashes_fresh": true,
+    "freshness_check_method": "sha256 recomputed from disk at generation time"
+  },
+
+  "retention_and_atomicity_decisions": {
+    "retention_classes": {
+      "total_evidence_classes": 7,
+      "classes": [
+        "critique_prompts_and_completions",
+        "critique_occurrence_envelopes",
+        "finding_reconciliation_events",
+        "finding_disposition_events",
+        "domain_briefing_envelopes",
+        "ledger_revision_manifests",
+        "private_repository_evidence",
+        "m6_corpus_fixture"
+      ],
+      "retention_modes_used": ["run", "audit"],
+      "redaction_modes_used": ["default_on", "none"],
+      "privacy_classes_used": ["confidential", "restricted"],
+      "encryption_modes_used": ["encrypted_governed_references", "field_level_encryption"],
+      "wbc_enums_only": true,
+      "source": "docs/critique-ledger/evidence/retention-class-mapping.json"
+    },
+    "atomicity_table": {
+      "total_failure_modes": 13,
+      "fail_closed_principle": "Every failure mode has a detection boundary, a fail-closed action, and forbidden writes. No failure mode is silently accepted — INDETERMINATE persistence always fails the test rather than being treated as clean success.",
+      "wbc_persistence_statuses": ["durable", "persistence_failed", "indeterminate"],
+      "parse_statuses": ["FAILED", "DROPPED", "MALFORMED", "TOMBSTONED", "NO_ADDITIONAL_FINDINGS"],
+      "evidence_availability": ["RETAINED", "GOVERNED_REFERENCE", "UNAVAILABLE"],
+      "source": "docs/critique-ledger/evidence/failure-atomicity-table.json"
+    }
+  },
+
+  "domain_budgets": {
+    "provisioning": "CL1 provisional constants (versioned change in CL2+ if needed)",
+    "standard": {
+      "max_domains": 2,
+      "max_findings": 10,
+      "description": "Standard domain briefing budget"
+    },
+    "high": {
+      "max_domains": 4,
+      "max_findings": 25,
+      "description": "High-detail domain briefing budget"
+    },
+    "exhaustive": {
+      "max_domains": "all_catalog_domains",
+      "max_findings": "unbounded",
+      "description": "Exhaustive domain briefing budget — all catalog domains, unbounded findings"
+    },
+    "spillover": "Linked DomainBriefingEnvelope for overflow; silent truncation forbidden",
+    "settled_decision": "SD2"
+  },
+
+  "authority_decisions": {
+    "evaluator": {
+      "role": "final_disposition_authority",
+      "description": "Evaluator retains final disposition authority. Curator proposals are advisory references only.",
+      "reconciliation_authority": "EVALUATOR",
+      "source": "Settled decision SD4 and North Star invariant 5"
+    },
+    "curator": {
+      "role": "advisory",
+      "description": "Curator proposals are advisory references for the evaluator. They do not independently authorize dispositions."
+    },
+    "semantic_identity": {
+      "rule": "Semantic finding equivalence is supplied by append-only evaluator reconciliation events and is never inferred through prefix, exact-text, embeddings, or thresholds.",
+      "enforcement": "North Star invariant 5 — only FindingReconciliationEvent records are authoritative"
+    },
+    "reopen_conditions": {
+      "requirement": "All accepted-risk and deferred dispositions must carry explicit reopen predicates.",
+      "example": "Restore preserved repository at revision ea2be1fe and re-run generate_cl1_m6_corpus.py"
+    }
+  },
+
+  "limitations": {
+    "explicit": [
+      {
+        "limitation": "unavailable_replay",
+        "description": "M6 corpus captures prompts and completions with deterministic path redaction. Raw prompt/completion text is available via the preserved repository at exact source revision. If the preserved repository is unavailable, the redacted corpus provides content-addressed hashes sufficient for integrity verification but not for full semantic replay.",
+        "acceptance": "accepted with explicit reopen condition",
+        "reopen_condition": "Restore preserved repository at revision ea2be1fe36c42c4f19afedd2c096b5dcec7c56df and re-run generate_cl1_m6_corpus.py.",
+        "oracle_fact": 5
+      },
+      {
+        "limitation": "persistence_out_of_scope",
+        "description": "Persistence implementation (durable store writes, attempt ledger, payload store, outbox) is out of CL1 scope. CL1 provides schemas, pure semantic loop, and evidence fixtures only. Durable-store import requires CL2+."
+      },
+      {
+        "limitation": "no_runtime_consumer",
+        "description": "No runtime consumer, live model call, persistence implementation, M6 resume, deployment, or lifecycle mutation is part of CL1."
+      },
+      {
+        "limitation": "redacted_prompts",
+        "description": "Prompts and completions are redacted (paths deterministically replaced) but retain content-addressed hashes for integrity verification. Free-form critique raw text is redacted; exact prompts stored as redacted content with SHA-256 hashes."
+      },
+      {
+        "limitation": "private_repository_evidence",
+        "description": "Private repository evidence (evaluator credentials, model API keys, runtime secrets) was never captured in the public corpus."
+      },
+      {
+        "limitation": "provisional_budgets",
+        "description": "Domain briefing budgets (standard 2/10, high 4/25, exhaustive all/unbounded) are provisional CL1 constants. CL2+ may adjust budgets under versioned schema changes."
+      }
+    ]
+  },
+
+  "touchpoints": {
+    "wbc_integration": {
+      "matrices": [
+        "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json (v2)",
+        "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json (v2)"
+      ],
+      "support_manifest": "arnold/workflow/support_manifest.json",
+      "prerequisite_verification": "tools/verify_m6_prerequisites.py",
+      "evidence_validation": "tools/validate_m6_evidence.py"
+    },
+    "m6_oracle": {
+      "corpus_generator": "tools/generate_cl1_m6_corpus.py",
+      "source_repo": "/workspace/custody-control-plane-20260714/Arnold",
+      "corpus_fixture": "tests/fixtures/critique_ledger/m6-corpus.json"
+    },
+    "semantic_loop": {
+      "implementation": "arnold/critique_ledger/semantic_loop.py",
+      "schemas": "arnold/critique_ledger/schemas.py",
+      "gate_generator": "tools/generate_cl1_semantic_loop_gate.py",
+      "zero_write_gate": "tests/arnold_pipelines/megaplan/test_zero_write_mutation_gate.py"
+    },
+    "test_suites": {
+      "schemas": "tests/arnold/critique_ledger/test_schemas.py",
+      "policy_tables": "tests/arnold/critique_ledger/test_policy_tables.py",
+      "m6_corpus": "tests/arnold/critique_ledger/test_m6_corpus.py",
+      "semantic_loop": "tests/arnold/critique_ledger/test_semantic_loop.py",
+      "semantic_loop_failures": "tests/arnold/critique_ledger/test_semantic_loop_failures.py",
+      "handoff": "tests/arnold/critique_ledger/test_cl1_handoff.py",
+      "matrices": "tests/arnold_pipelines/megaplan/test_contract_reality_matrices.py",
+      "zero_write": "tests/arnold_pipelines/megaplan/test_zero_write_mutation_gate.py",
+      "compatibility": [
+        "tests/orchestration/test_critique_custody.py",
+        "tests/arnold_pipelines/megaplan/test_m6_replay_fixtures.py",
+        "tests/arnold/runtime/test_semantic_replay.py"
+      ]
+    },
+    "evidence_artifacts": {
+      "prerequisite_verification": "evidence/m6-prerequisite-verification.json",
+      "proof_index": "evidence/m6-proof-index.json",
+      "prerequisite_resolution": "evidence/m6a-prerequisite-resolution.json"
+    }
+  },
+
+  "open_gates": {
+    "reviewer_sign_off": {
+      "status": "pending",
+      "reviewed": false,
+      "reviewer": "",
+      "reviewed_at": "",
+      "note": "Reviewer sign-off is pending. The semantic loop gate verdict is accepted but unreviewed.",
+      "source": "docs/critique-ledger/evidence/cl1-semantic-loop-gate.json"
+    },
+    "m6_prerequisite_verification": {
+      "status": "INCOHERENT",
+      "detail": "M5 final attestation has 3 missing bound artifacts (sprint completion_verdict.json files). The M5 bound-head/current-HEAD relationship is EXPLAINED_BENIGN and accepted, but the INCOHERENT attestation means prerequisites are not fully satisfied.",
+      "source": "evidence/m6-prerequisite-verification.json"
+    },
+    "proof_index_validation": {
+      "status": "FAILED",
+      "validation_passed": false,
+      "errors": [
+        "Prerequisite verification status is INCOHERENT — M6 evidence bundle cannot be considered complete",
+        "M6 prerequisites are INCOHERENT or BLOCKED — handoff must not be marked complete"
+      ],
+      "source": "evidence/m6-proof-index.json"
+    },
+    "ownership_blockers": {
+      "count": 4,
+      "detail": "Ownership decision record shows 4 blockers. Run Authority M1-M3 completion receipts all have accepted: false.",
+      "source": "evidence/m6-proof-index.json"
+    },
+    "portfolio_gate": {
+      "status": "BLOCKED",
+      "blocker": "PC-SCOPE-BLOCKER-001",
+      "detail": "Portfolio gate PC scope decision is machine-generated with blocker PC-SCOPE-BLOCKER-001. Human approval is required but not recorded.",
+      "source": "evidence/pc-scope-decision.json"
+    },
+    "run_authority_m1_m3": {
+      "status": "UNKNOWN",
+      "detail": "Run Authority M1-M3 completion receipts all have accepted: false.",
+      "source": "evidence/m6-proof-index.json"
+    }
+  },
+
+  "accepted_for_cl2": {
+    "value": false,
+    "derivation": "machine-checkable evidence — derived from live file hashes, gate verdict, review state, and blocker inventory at generation time",
+    "checks": {
+      "cl1_must_gates_pass": {
+        "passed": true,
+        "detail": "All CL1 must-gates pass: custody, freshness, replay equality, authority, schema, and prerequisite checks are complete and passing in cl1-semantic-loop-gate.json."
+      },
+      "review_status_present": {
+        "passed": false,
+        "detail": "Reviewer sign-off is missing. reviewer_state.reviewed is false in cl1-semantic-loop-gate.json. Reviewer field is empty."
+      },
+      "hashes_fresh": {
+        "passed": true,
+        "detail": "All hashes were recomputed from disk at generation time. No stale hash artifacts detected."
+      },
+      "blocker_bearing_gaps_empty": {
+        "passed": false,
+        "detail": "Blocker-bearing gaps exist: (1) M6 prerequisite verification is INCOHERENT, (2) proof-index validation_passed is false, (3) 4 ownership blockers present, (4) portfolio gate PC-SCOPE-BLOCKER-001 is not approved, (5) reviewer sign-off is pending."
+      }
+    },
+    "blocking_reasons": [
+      "review_status_not_present: reviewer_state.reviewed=false, no reviewer assigned",
+      "m6_prerequisite_incoherent: M5 final attestation missing 3 bound artifacts",
+      "proof_index_failed: validation_passed=false with 2 errors",
+      "ownership_blockers: 4 blockers in ownership-decision-record",
+      "portfolio_gate_blocked: PC-SCOPE-BLOCKER-001 requires human approval"
+    ],
+    "note": "accepted_for_cl2 is derived as the logical AND of all four machine-checkable conditions. Since review_status_present and blocker_bearing_gaps_empty both fail, accepted_for_cl2 is false. This value MUST be re-derived (not hard-coded) whenever the handoff is regenerated."
+  }
+}
