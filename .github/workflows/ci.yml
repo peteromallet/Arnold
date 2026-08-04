@@ -33,6 +33,62 @@ jobs:
       - name: Test
         run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
 
+  # ──────────────────────────────────────────────────────────────────
+  # CL2 admission gate — fail-closed authorization for all CL2 work.
+  #
+  # Runs the authoritative read-only repository command
+  # (``scripts/check_cl2_admission.py``) against the externally supplied,
+  # independently reviewed acceptance bundle. It succeeds only when the
+  # strict admission gate accepts the bundle and prints the deterministic
+  # ``binding_hash``; every CL2 implementation job MUST list this job in
+  # its ``needs:`` so that no CL2 work can run without a real, accepted
+  # bundle. The binding hash is exported as the ``binding-hash`` job
+  # output for downstream CL2 jobs to consume.
+  #
+  # The accepted bundle is supplied out-of-band as the
+  # ``CL2_ADMISSION_BUNDLE_B64`` repository secret: a base64-encoded
+  # ``tar.gz`` of a directory containing ``manifest.json`` plus the four
+  # declared artifacts. When the secret is absent the job fails closed,
+  # so no CL2 job proceeds. Existing non-CL2 WBC jobs are intentionally
+  # left unaltered and do not depend on this gate.
+  # ──────────────────────────────────────────────────────────────────
+  cl2-admission:
+    runs-on: ubuntu-latest
+    outputs:
+      binding-hash: ${{ steps.admit.outputs.binding_hash }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[agent]'
+      - name: Materialize externally supplied admission bundle
+        env:
+          CL2_ADMISSION_BUNDLE_B64: ${{ secrets.CL2_ADMISSION_BUNDLE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CL2_ADMISSION_BUNDLE_B64:-}" ]; then
+            echo "::error::CL2 admission bundle secret CL2_ADMISSION_BUNDLE_B64 is not configured; CL2 work cannot be admitted." >&2
+            exit 1
+          fi
+          mkdir -p .cl2-admission-bundle
+          printf '%s' "$CL2_ADMISSION_BUNDLE_B64" | base64 -d | tar -xz -C .cl2-admission-bundle
+          # The command opens exactly the manifest and the four declared
+          # artifact paths it references; a missing manifest fails closed.
+          test -f .cl2-admission-bundle/manifest.json
+      - name: Run authoritative CL2 admission command
+        id: admit
+        run: |
+          set -euo pipefail
+          # On success the command prints only the 64-char hex binding hash.
+          binding_hash="$(python scripts/check_cl2_admission.py .cl2-admission-bundle/manifest.json)"
+          test "${#binding_hash}" -eq 64
+          echo "binding_hash=${binding_hash}" >> "$GITHUB_OUTPUT"
+          echo "Accepted CL2 binding hash: ${binding_hash}"
+
   docker-test:
     needs: test
     runs-on: ubuntu-latest
