@@ -1375,6 +1375,19 @@ not execute them.
   and healthy listener-only resident epoch/container
   `critique-attempt10-fdb-live-20260804-0149` /
   `8be0aa325b119a00f8c62e7e4a4b2e0cb5e499999759cca4384201469f361430`.
+- [x] Deploy and attest the post-Attempt-10 hard-quota successor without
+  redriving Finalize: commit
+  `938a06797718dd95ef7d6bf9d9a2b1f3d97261be`, tree
+  `1491779cff3d48cf3ce8c16dfcf3656623da115e`, identity
+  `ac583f5a3832a330968d7113e88e38320f3534879e79cd8235a4056f90d9e169`,
+  launch-seed hash
+  `d8d5a9575cae4e39660e6ca88b4c10ebbcda7e314e1ce837c2f977495a81bc3b`,
+  and listener-only resident epoch/container
+  `critique-attempt10-quota-938-live-20260804-0204` /
+  `085976dfe61c388c96326cbef2d1b4bb9770493bc8d9df618e930d31bfd69bf9`.
+  All 219 cloud tests passed. The deployed guidance preserves
+  `quota_exceeded`, forbids immediate retry, and requires restored capacity
+  followed by one same-step retry; it created no ordinal 11.
 - [x] Preserve Attempt 10 as terminal `FAILED`, outcome `indeterminate`, typed
   `quota_exceeded`: ordinal `10`, phase attempt
   `646ab9ed-2706-5be8-a249-7b52e49ac102`, invocation
@@ -1389,10 +1402,11 @@ not execute them.
 - [ ] Replenish or explicitly authorize capacity for the existing
   `codex:gpt-5.6-sol:high` Finalize route. Do not substitute a model, provider,
   credential, or lower reasoning mode without a new owner decision.
-- [ ] Build/reattest the isolated control venv with `python -m venv --copies`.
-  Bind the launch receipt to the copied venv interpreter's exact path and
-  digest as well as runtime commit/tree/identity and launch-seed hash. Reject a
-  symlinked or base-interpreter-only identity.
+- [x] Build/reattest the current 938 isolated control venv with
+  `python -m venv --copies`. Bind the launch receipt to the copied venv
+  interpreter's exact path and digest as well as runtime
+  commit/tree/identity and launch-seed hash. The rejected symlink deployment
+  is not launch authority.
 - [ ] While the same r5 remains `gated`, `should_run=false`, paused, and has no
   active step, issue exactly one direct same-model Finalize retry. It must be
   the sole ordinal `11` occurrence with fresh phase/worker/invocation IDs. Do

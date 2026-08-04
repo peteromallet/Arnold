@@ -213,6 +213,29 @@ isolated launch must create the venv with `--copies` and attest the copied
 venv interpreter's exact path and digest; a base-interpreter or symlink identity
 is not launch authority.
 
+### Post-Attempt-10 hardening deployment (current authority)
+
+The active cloud runtime was subsequently advanced, without redriving
+Finalize, to integration commit
+`938a06797718dd95ef7d6bf9d9a2b1f3d97261be`, tree
+`1491779cff3d48cf3ce8c16dfcf3656623da115e`, runtime-identity digest
+`ac583f5a3832a330968d7113e88e38320f3534879e79cd8235a4056f90d9e169`,
+and launch-seed `content_sha256`
+`d8d5a9575cae4e39660e6ca88b4c10ebbcda7e314e1ce837c2f977495a81bc3b`.
+The current listener-only resident is epoch
+`critique-attempt10-quota-938-live-20260804-0204`, container
+`085976dfe61c388c96326cbef2d1b4bb9770493bc8d9df618e930d31bfd69bf9`.
+The cloud candidate passed 219 tests.
+
+This successor adds typed hard-quota operator guidance: preserve
+`quota_exceeded`, do not retry immediately, restore provider credits/capacity
+or wait for the provider reset, and then retry the same Codex step exactly
+once. Ordinary transient rate-limit behavior is unchanged. The deployment did
+not create ordinal 11 and did not resume the chain: r5 remains paused/gated and
+ordinal 10 remains the terminal quota failure. This 938 identity, launch seed,
+and resident supersede the fdb identity above for every future preflight; the
+fdb record remains immutable deployment history.
+
 Attempt 10 is an immutable terminal failure, not a WBC completion:
 
 - phase attempt `646ab9ed-2706-5be8-a249-7b52e49ac102`, ordinal `10`,

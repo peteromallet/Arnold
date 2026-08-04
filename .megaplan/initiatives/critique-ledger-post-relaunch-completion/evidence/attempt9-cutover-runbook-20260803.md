@@ -564,6 +564,11 @@ The cloud-validated repair train is:
 3. `fdbdfb72cb32a1d7c42bc9a0d5f19eba023d5a30` — durable marker stop intent
    projects `paused` rather than synthetic `running`/`attention`; tmux/process
    facts remain orthogonal diagnostics.
+4. `938a06797718dd95ef7d6bf9d9a2b1f3d97261be` — typed hard-quota guidance
+   preserves `quota_exceeded`, forbids immediate retry, and directs the
+   operator to restore credits/capacity or wait for the provider reset before
+   retrying the same Codex step exactly once. Transient rate-limit handling is
+   unchanged.
 
 Exact deployed identity:
 
@@ -583,6 +588,25 @@ An isolated runtime venv is launch-authoritative only when created with
 `python -m venv --copies` and the launch seed/receipt attests the copied venv
 interpreter's exact path and digest. Attesting only the base interpreter or a
 symlink-resolved identity is insufficient and must fail closed.
+
+### Current post-Attempt-10 deployment
+
+The active launch authority now supersedes the fdb deployment above:
+
+- commit `938a06797718dd95ef7d6bf9d9a2b1f3d97261be`;
+- tree `1491779cff3d48cf3ce8c16dfcf3656623da115e`;
+- runtime digest
+  `ac583f5a3832a330968d7113e88e38320f3534879e79cd8235a4056f90d9e169`;
+- launch-seed `content_sha256`
+  `d8d5a9575cae4e39660e6ca88b4c10ebbcda7e314e1ce837c2f977495a81bc3b`;
+- resident epoch `critique-attempt10-quota-938-live-20260804-0204`, container
+  `085976dfe61c388c96326cbef2d1b4bb9770493bc8d9df618e930d31bfd69bf9`;
+- 219 cloud tests passed.
+
+This was a code/runtime hardening deployment only. It did not invoke Finalize,
+create ordinal 11, or resume r5. The chain remains paused/gated with Attempt 10
+terminal `quota_exceeded`. Every future capacity preflight and sole retry must
+attest this 938 identity and launch seed, not the historical fdb deployment.
 
 ### Immutable Attempt 10 result
 
@@ -609,7 +633,7 @@ redriven by `auto`, chain, watchdog, shell, or operator retry loops.
 1. Replenish or explicitly authorize Sol capacity for the same
    `codex:gpt-5.6-sol:high` route. Re-probe once; do not switch model,
    provider, credential, or reasoning level implicitly.
-2. Reattest the exact fdb runtime, launch seed, and `--copies` venv interpreter.
+2. Reattest the exact 938 runtime, launch seed, and `--copies` venv interpreter.
    Re-read r5 and require `gated`, no active step, `should_run=false`, paused,
    Attempt 10 terminal `FAILED`, and no ordinal 11.
 3. From that attested interpreter, invoke the direct Finalize phase exactly once
