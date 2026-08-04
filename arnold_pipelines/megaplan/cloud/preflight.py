@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.types import (
     parse_agent_spec,
     resolve_premium_placeholder_spec,
 )
+from arnold_pipelines.megaplan.runtime.key_pool import provider_credential_env_vars
 
 
 AGENTS_DEFAULT_WARNING = (
@@ -45,11 +46,22 @@ _ENV_HINTS_BY_AGENT: dict[str, tuple[str, ...]] = {
     "codex": ("OPENAI_API_KEY",),
 }
 
+# Keep cloud launch diagnostics in lock-step with the runtime key pool.  A
+# missing hint here used to make ``cloud preflight`` report a clean bill of
+# health even though Hermes would later construct an agent with ``api_key=""``.
 _ENV_HINTS_BY_HERMES_PROVIDER: dict[str, tuple[str, ...]] = {
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "fireworks": ("FIREWORKS_API_KEY",),
-    "mimo": ("MIMO_API_KEY",),
-    "xai": ("XAI_API_KEY",),
+    provider: provider_credential_env_vars(provider)
+    for provider in (
+        "zhipu",
+        "kimi",
+        "minimax",
+        "mimo",
+        "openrouter",
+        "google",
+        "deepseek",
+        "fireworks",
+        "xai",
+    )
 }
 
 
