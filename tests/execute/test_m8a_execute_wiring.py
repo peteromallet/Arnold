@@ -8,7 +8,9 @@ and that the full admission→split→batch pipeline is wired correctly.
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -471,7 +473,7 @@ def test_assert_admitted_raises_on_hash_mismatch() -> None:
 
 def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
     """_run_batch_validation_jobs accepts validation_jobs from finalize_data."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from arnold_pipelines.megaplan.execute.batch import (
         _run_batch_validation_jobs,
@@ -543,6 +545,7 @@ def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
         assert "evidence_hash" in evidence[0]
         assert evidence[0]["evidence_hash"].startswith("sha256:")
         assert mock_run.call_args.args[1]["test_command"] == "echo ok"
+        assert mock_run.call_args.kwargs["deadline_seconds"] > time.monotonic() + 50
     finally:
         try:
             for d in (plan_dir, project_dir):
@@ -555,6 +558,128 @@ def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
                 d.rmdir()
         except OSError:
             pass
+
+
+def test_batch_validation_defers_missing_selector_declared_as_task_output() -> None:
+    """A task's future test file cannot gate the worker that must create it."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+
+    plan_dir = Path(tempfile.mkdtemp(prefix="test_batch_val_"))
+    project_dir = Path(tempfile.mkdtemp(prefix="test_batch_proj_"))
+    try:
+        selector = "tests/new_feature/test_entry_gate.py"
+        finalize_data = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "write_set": {"paths": [selector], "complete": True},
+                }
+            ],
+            "validation_jobs": [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": f"pytest {selector}",
+                    "selectors": [selector],
+                    "max_seconds": 60,
+                    "task_id": "T1",
+                    "writes_files": False,
+                    "mutates": False,
+                }
+            ],
+        }
+
+        with patch(
+            "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+        ) as mock_run:
+            evidence = _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+            )
+
+        mock_run.assert_not_called()
+        assert evidence == [
+            {
+                "job_id": "VJ1",
+                "kind": "narrow_recheck",
+                "status": "deferred_task_output",
+                "exit_code": None,
+                "task_id": "T1",
+                "missing_selectors": [selector],
+                "reason": "selector_is_declared_task_output",
+                "evidence_hash": evidence[0]["evidence_hash"],
+            }
+        ]
+        assert evidence[0]["evidence_hash"].startswith("sha256:")
+        assert (plan_dir / "verification" / "validation_VJ1_deferred.json").exists()
+    finally:
+        shutil.rmtree(plan_dir, ignore_errors=True)
+        shutil.rmtree(project_dir, ignore_errors=True)
+
+
+def test_batch_validation_rejects_missing_undeclared_selector() -> None:
+    """Missing selectors are deferred only when the task promises to create them."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+    plan_dir = Path(tempfile.mkdtemp(prefix="test_batch_val_"))
+    project_dir = Path(tempfile.mkdtemp(prefix="test_batch_proj_"))
+    try:
+        finalize_data = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "write_set": {"paths": ["src/feature.py"], "complete": True},
+                }
+            ],
+            "validation_jobs": [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": "pytest tests/typo.py",
+                    "selectors": ["tests/typo.py"],
+                    "max_seconds": 60,
+                    "task_id": "T1",
+                    "writes_files": False,
+                    "mutates": False,
+                }
+            ],
+        }
+
+        with patch(
+            "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+        ) as mock_run:
+            with pytest.raises(CliError, match="not declared task outputs"):
+                _run_batch_validation_jobs(
+                    plan_dir=plan_dir,
+                    project_dir=project_dir,
+                    finalize_data=finalize_data,
+                    batch_task_ids=["T1"],
+                )
+
+        mock_run.assert_not_called()
+    finally:
+        shutil.rmtree(plan_dir, ignore_errors=True)
+        shutil.rmtree(project_dir, ignore_errors=True)
+
+
+def test_execute_validation_deadlines_use_absolute_monotonic_time() -> None:
+    """Suite runner deadlines are absolute, never raw relative timeout values."""
+    import inspect
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _run_batch_validation_jobs,
+        _run_repair_adoption_check,
+    )
+
+    for function in (_run_batch_validation_jobs, _run_repair_adoption_check):
+        source = inspect.getsource(function)
+        assert "deadline_seconds=float(" not in source
+        assert "deadline_seconds=(\n" in source or "time.monotonic() + float(" in source
 
 
 def test_batch_validation_skips_post_execute_on_non_final_batch() -> None:

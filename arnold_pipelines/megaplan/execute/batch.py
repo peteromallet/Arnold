@@ -910,7 +910,10 @@ def _run_repair_adoption_check(
                                     "test_command": command,
                                 },
                                 phase="scope_recovery_verification",
-                                deadline_seconds=float(timeout_seconds or per_command_max or 120),
+                                deadline_seconds=(
+                                    time.monotonic()
+                                    + float(timeout_seconds or per_command_max or 120)
+                                ),
                                 idle_seconds=None,
                             )
                             verification_results.append(
@@ -3441,6 +3444,82 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     "validation_job_kind": kind,
                 },
             )
+        if kind == "narrow_recheck":
+            task_id = str(job.get("task_id") or "")
+            task = next(
+                (
+                    item
+                    for item in finalize_data.get("tasks", [])
+                    if isinstance(item, dict) and item.get("id") == task_id
+                ),
+                None,
+            )
+            write_set = task.get("write_set") if isinstance(task, dict) else None
+            declared_outputs = {
+                str(path).removeprefix("./")
+                for path in (
+                    write_set.get("paths", [])
+                    if isinstance(write_set, dict)
+                    else []
+                )
+                if isinstance(path, str) and path.strip()
+            }
+            selectors = job.get("selectors") if isinstance(task, dict) else []
+            selector_paths = [
+                selector.split("::", 1)[0].removeprefix("./")
+                for selector in (selectors if isinstance(selectors, list) else [])
+                if isinstance(selector, str) and selector.strip()
+            ]
+            missing_selectors = [
+                selector
+                for selector in selector_paths
+                if not (Path(project_dir) / selector).exists()
+            ]
+            if missing_selectors:
+                undeclared = sorted(set(missing_selectors) - declared_outputs)
+                if undeclared:
+                    raise CliError(
+                        "invalid_validation_job",
+                        f"validation job {job_id} references missing selectors "
+                        "that are not declared task outputs",
+                        valid_next=["finalize", "revise"],
+                        extra={
+                            "job_id": job_id,
+                            "invalid_fields": ["selectors"],
+                            "missing_selectors": sorted(set(missing_selectors)),
+                            "undeclared_missing_selectors": undeclared,
+                            "validation_job_kind": kind,
+                        },
+                    )
+                evidence = {
+                    "job_id": job_id,
+                    "kind": kind,
+                    "status": "deferred_task_output",
+                    "exit_code": None,
+                    "task_id": task_id,
+                    "missing_selectors": sorted(set(missing_selectors)),
+                    "reason": "selector_is_declared_task_output",
+                }
+                canonical = _json.dumps(
+                    evidence, sort_keys=True, separators=(",", ":")
+                )
+                evidence["evidence_hash"] = (
+                    "sha256:"
+                    + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                )
+                artifact_path = verification_dir / f"validation_{job_id}_deferred.json"
+                try:
+                    atomic_write_json(artifact_path, evidence)
+                except Exception:
+                    pass
+                evidence_results.append(evidence)
+                log.info(
+                    "validation job %s deferred until task %s creates %s",
+                    job_id,
+                    task_id,
+                    sorted(set(missing_selectors)),
+                )
+                continue
         config = {
             "project_dir": str(project_dir),
             "plan_dir": str(plan_dir),
@@ -3451,7 +3530,7 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 Path(project_dir),
                 config,
                 phase="m8a_validation",
-                deadline_seconds=float(timeout),
+                deadline_seconds=time.monotonic() + float(timeout),
                 idle_seconds=None,
             )
         except Exception as exc:
