@@ -120,6 +120,96 @@ def pause_chain(
     return {"changed": True, "paused": True, "authority": authority}
 
 
+def reconcile_quiesced_plan_pause(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    session: str,
+    authority: Mapping[str, Any],
+) -> bool:
+    """Converge the narrow writer-after-pause race after the runner is stopped.
+
+    A runner can be killed after chain pause authority commits but still flush
+    one final in-memory plan state.  Reapply the plan-side pause only when that
+    flush restored the exact pre-pause semantic state and its recorded runner
+    is demonstrably dead.  Any other mutation remains a hard stop.
+    """
+
+    spec_path = spec_path.resolve(strict=False)
+    project_root = project_root.resolve(strict=False)
+    state = chain_spec.load_chain_state(spec_path)
+    canonical = pause_record(state)
+    if canonical is None or dict(canonical) != dict(authority):
+        raise CliError(
+            "pause_authority_diverged",
+            "chain pause authority changed while the runner was being stopped",
+        )
+    plan_name = canonical.get("plan") or state.current_plan_name
+    plan_dir = find_plan_dir(project_root, plan_name) if isinstance(plan_name, str) else None
+    if plan_dir is None or not (plan_dir / "state.json").exists():
+        return False
+
+    changed = False
+
+    def _reconcile(current: dict[str, Any]) -> bool:
+        nonlocal changed
+        meta = current.get("meta")
+        plan_pause = meta.get(AUTHORITY_KEY) if isinstance(meta, dict) else None
+        if current.get("current_state") == STATE_PAUSED:
+            if not isinstance(plan_pause, Mapping):
+                raise CliError(
+                    "pause_authority_diverged",
+                    "paused plan lost its plan-side operator authority",
+                )
+            return False
+        if current.get("current_state") != canonical.get("previous_plan_state"):
+            raise CliError(
+                "pause_authority_diverged",
+                "plan changed beyond the pre-pause state while the runner stopped",
+            )
+        if isinstance(plan_pause, Mapping):
+            raise CliError(
+                "pause_authority_diverged",
+                "non-paused plan retained conflicting operator pause authority",
+            )
+        active_step = current.get("active_step")
+        lease = active_step.get("runner_lease") if isinstance(active_step, Mapping) else None
+        worker_pid = active_step.get("worker_pid") if isinstance(active_step, Mapping) else None
+        if (
+            not isinstance(active_step, Mapping)
+            or not isinstance(lease, Mapping)
+            or lease.get("session") != session
+            or isinstance(worker_pid, bool)
+            or not isinstance(worker_pid, int)
+            or worker_pid <= 0
+            or Path(f"/proc/{worker_pid}").exists()
+        ):
+            raise CliError(
+                "pause_authority_diverged",
+                "plan-side pause was overwritten without a dead owned runner receipt",
+            )
+        current["current_state"] = STATE_PAUSED
+        current.pop("active_step", None)
+        next_meta = current.setdefault("meta", {})
+        if not isinstance(next_meta, dict):
+            raise CliError(
+                "pause_authority_diverged",
+                "plan metadata is not writable during pause reconciliation",
+            )
+        next_meta[AUTHORITY_KEY] = {
+            "schema_version": AUTHORITY_SCHEMA,
+            "paused_at": canonical.get("paused_at"),
+            "reason": canonical.get("reason"),
+            "previous_current_state": canonical.get("previous_plan_state"),
+            "previous_chain_last_state": canonical.get("previous_chain_last_state"),
+        }
+        changed = True
+        return True
+
+    write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_reconcile)
+    return changed
+
+
 def resume_chain(
     spec_path: Path,
     project_root: Path,

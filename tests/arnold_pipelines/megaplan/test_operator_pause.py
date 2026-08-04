@@ -211,6 +211,84 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
     assert json.loads(marker.read_text())["should_run"] is True
 
 
+def test_cloud_pause_reconciles_dead_writer_flush_after_tmux_stop(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    spec, plan = _chain(tmp_path)
+    marker = tmp_path / "markers" / "demo.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"session": "demo", "relaunch_command": "safe"}))
+
+    class Completed:
+        returncode = 0
+
+    def race_after_pause(argv, **kwargs):
+        if argv[:3] == ["tmux", "kill-session", "-t"]:
+            raced = json.loads((plan / "state.json").read_text())
+            raced["current_state"] = "blocked"
+            raced.get("meta", {}).pop("operator_pause", None)
+            raced["active_step"] = {
+                "phase": "execute",
+                "worker_pid": 999999,
+                "runner_lease": {"session": "demo"},
+            }
+            (plan / "state.json").write_text(json.dumps(raced))
+        return Completed()
+
+    monkeypatch.setattr(operator_control.subprocess, "run", race_after_pause)
+    monkeypatch.setattr(operator_control.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        operator_control, "_stop_owned_pidfile", lambda path, session: False
+    )
+
+    result = operator_control.pause_session(
+        spec=spec,
+        workspace=tmp_path,
+        session="demo",
+        marker_path=marker,
+        reason="contain",
+        actor="test",
+    )
+
+    paused_plan = json.loads((plan / "state.json").read_text())
+    assert result["plan_reconciled"] is True
+    assert paused_plan["current_state"] == "paused"
+    assert "active_step" not in paused_plan
+    assert paused_plan["meta"]["operator_pause"]["previous_current_state"] == "blocked"
+
+    resumed = resume_chain(spec, tmp_path)
+    assert resumed["restored_plan_state"] == "blocked"
+
+
+def test_quiesced_pause_reconciliation_rejects_live_or_foreign_runner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.chain.operator_pause import (
+        reconcile_quiesced_plan_pause,
+    )
+
+    spec, plan = _chain(tmp_path)
+    paused = pause_chain(spec, tmp_path, reason="contain")
+    raced = json.loads((plan / "state.json").read_text())
+    raced["current_state"] = "blocked"
+    raced.get("meta", {}).pop("operator_pause", None)
+    raced["active_step"] = {
+        "worker_pid": 999999,
+        "runner_lease": {"session": "other"},
+    }
+    (plan / "state.json").write_text(json.dumps(raced))
+
+    with pytest.raises(CliError, match="dead owned runner receipt"):
+        reconcile_quiesced_plan_pause(
+            spec,
+            tmp_path,
+            session="demo",
+            authority=paused["authority"],
+        )
+
+
 @pytest.mark.parametrize("advanced_state", ["gated", "finalized", "executed", "reviewed", "done"])
 def test_authority_only_hold_resumes_after_direct_phase_advances_plan(
     tmp_path: Path, monkeypatch, advanced_state: str
