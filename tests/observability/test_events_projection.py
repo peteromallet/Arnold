@@ -168,6 +168,27 @@ def test_event_writer_recovers_missing_sequence_sidecar_from_store(tmp_path: Pat
     assert [event["seq"] for event in read_events(plan_dir)] == [0, 1, 2]
 
 
+def test_event_writer_uses_existing_projection_as_sequence_floor(
+    tmp_path: Path,
+) -> None:
+    """A readable-but-empty Store must not reset a retained journal to zero."""
+
+    from arnold_pipelines.megaplan.observability.events import EventWriter
+
+    plan_id = "projection-floor-plan"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_id
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "events.ndjson").write_text(
+        json.dumps({"seq": 7, "kind": "phase_end"}) + "\n",
+        encoding="utf-8",
+    )
+
+    store = FileStore(tmp_path / "empty-store")
+    writer = EventWriter(plan_dir, store=store)
+
+    assert writer._recover_durable_sequence() == 7
+
+
 def test_atomic_projection_rebuild_never_exposes_truncated_destination(
     tmp_path: Path, monkeypatch
 ) -> None:

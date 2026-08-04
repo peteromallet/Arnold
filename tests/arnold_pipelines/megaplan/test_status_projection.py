@@ -124,6 +124,32 @@ def test_introspect_distinguishes_live_execution_from_finalized_lifecycle(tmp_pa
     assert payload["display_state"] == "executing"
 
 
+def test_introspect_recovers_a_reset_sequence_prefix_with_diagnostic_receipt(
+    tmp_path,
+):
+    plan_dir = tmp_path / ".megaplan" / "plans" / "reset-journal"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "reset-journal", "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+    events = [
+        {"seq": 0, "kind": "init", "payload": {}},
+        {"seq": 1, "kind": "phase_start", "phase": "execute", "payload": {}},
+        {"seq": 0, "kind": "init", "payload": {}},
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    payload = build_introspect_payload(plan_dir)
+
+    receipt = payload["event_projection"]["receipt"]
+    assert receipt["degraded"] is True
+    assert receipt["sequence_anomaly_count"] == 1
+
+
 # ── T4: Observer-purity and projection trap tests ──────────────────────────
 
 

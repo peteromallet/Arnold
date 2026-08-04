@@ -47,7 +47,8 @@ def _event_from_stored(plan_id: str, seq: int, event: StoredEvent) -> dict[str, 
         "kind": event.kind,
         "phase": event.phase,
         "payload": dict(event.payload),
-        "transaction_id": _transaction_id(plan_id, event.phase, seq),
+        "transaction_id": event.transaction_id
+        or _transaction_id(plan_id, event.phase, seq),
         "store_method": event.source,
     }
     if event.run_id is not None:
@@ -56,6 +57,24 @@ def _event_from_stored(plan_id: str, seq: int, event: StoredEvent) -> dict[str, 
     if cursor is not None:
         projected["workflow_cursor"] = cursor.to_dict()
     return projected
+
+
+def _projection_identity(event: StoredEvent) -> tuple[Any, ...] | None:
+    """Return a stable identity for one store event, when available.
+
+    During file/DB migration the same envelope can be visible through both
+    backends.  Its storage row IDs and timestamps may differ, while the
+    envelope transaction/sequence identity is the same.  Emitting both copies
+    creates a compatibility journal with a reset sequence prefix and makes
+    checkpointed introspection fail.  Only exact envelope identities are
+    collapsed here; events without an envelope identity remain visible.
+    """
+
+    if event.transaction_id:
+        return ("transaction", event.transaction_id, event.seq)
+    if event.id:
+        return ("stored-row", event.id)
+    return None
 
 
 def schema_equivalence_triples(events: Iterable[Mapping[str, Any]]) -> tuple[tuple[Any, Any, Any], ...]:
@@ -72,10 +91,22 @@ def schema_equivalence_triples(events: Iterable[Mapping[str, Any]]) -> tuple[tup
 
 
 def project_events(store: Store, plan_id: str) -> tuple[dict[str, Any], ...]:
-    return tuple(
-        _event_from_stored(plan_id, event.seq if event.seq is not None else seq, event)
-        for seq, event in enumerate(store.events_for_plan(plan_id))
-    )
+    projected: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for event in store.events_for_plan(plan_id):
+        identity = _projection_identity(event)
+        if identity is not None:
+            if identity in seen:
+                continue
+            seen.add(identity)
+        projected.append(
+            _event_from_stored(
+                plan_id,
+                event.seq if event.seq is not None else len(projected),
+                event,
+            )
+        )
+    return tuple(projected)
 
 
 def project_events_ndjson(store: Store, plan_id: str) -> str:
