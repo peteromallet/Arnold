@@ -1,0 +1,52 @@
+{
+  "f1-owner-storage-recovery-hardening": [
+    "evidence/critique-ledger-recovery/T0.3/",
+    "evidence/critique-ledger-recovery/T1.5/",
+    "evidence/critique-ledger-recovery/T1.7/",
+    "evidence/critique-ledger-recovery/T1.8/",
+    "evidence/critique-ledger-recovery/T1.9/",
+    "evidence/critique-ledger-recovery/T1.10/"
+  ],
+  "f2-admission-model-effect-release-closure": [
+    "evidence/critique-ledger-recovery/T1.1/",
+    "evidence/critique-ledger-recovery/T1.2/",
+    "evidence/critique-ledger-recovery/T1.3/",
+    "evidence/critique-ledger-recovery/T1.4/",
+    "evidence/critique-ledger-recovery/T1.6/",
+    "evidence/critique-ledger-recovery/T2.2/",
+    "evidence/critique-ledger-recovery/T2.4/",
+    "evidence/critique-ledger-recovery/T2.5/",
+    "evidence/critique-ledger-recovery/T2.6/",
+    "evidence/critique-ledger-recovery/T3.5/",
+    "evidence/critique-ledger-recovery/T3.6/",
+    "evidence/critique-ledger-recovery/T8.3/"
+  ],
+  "f3-cl2-real-work-and-publication": [
+    "evidence/critique-ledger-recovery/T6.3/",
+    "evidence/critique-ledger-recovery/T6.4/",
+    "evidence/critique-ledger-recovery/T6.5/"
+  ],
+  "f4-cl3-cl5-epic-completion": [
+    "evidence/critique-ledger-recovery/T6.6/"
+  ],
+  "f5-product-release-and-deploy": [
+    "evidence/critique-ledger-recovery/T7.1/",
+    "evidence/critique-ledger-recovery/T7.2/",
+    "evidence/critique-ledger-recovery/T7.3/"
+  ],
+  "f6-production-acceptance": [
+    "evidence/critique-ledger-recovery/T7.4/",
+    "evidence/critique-ledger-recovery/T7.5/"
+  ],
+  "f7-evidence-and-incident-closeout": [
+    "evidence/critique-ledger-recovery/T3.6/",
+    "evidence/critique-ledger-recovery/T4.6/",
+    "evidence/critique-ledger-recovery/T8.1/",
+    "evidence/critique-ledger-recovery/T8.2/",
+    "evidence/critique-ledger-recovery/T8.3/",
+    "evidence/critique-ledger-recovery/T8.4/"
+  ],
+  "f8-seven-day-durability": [
+    "evidence/critique-ledger-recovery/T8.5/"
+  ]
+}
