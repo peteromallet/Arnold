@@ -687,6 +687,213 @@ def test_drive_bounds_identical_structural_phase_failures(monkeypatch, tmp_path:
     assert terminal["metadata"]["count"] == 3
 
 
+def test_predispatch_validation_signature_ignores_volatile_evidence() -> None:
+    def payload(evidence_hash: str, artifact_path: str) -> str:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "validation_job_failed",
+                "message": "validation job VJ2 exited 124; expected one of [0]",
+                "details": {
+                    "job_id": "VJ2",
+                    "validation_job_kind": "post_execute_suite",
+                    "exit_code": 124,
+                    "expected_exit_codes": [0],
+                    "evidence_hash": evidence_hash,
+                    "artifact_path": artifact_path,
+                },
+            }
+        )
+
+    first = auto._predispatch_validation_failure(
+        "",
+        payload("sha256:first", "/tmp/validation_VJ2_run-1.json"),
+    )
+    second = auto._predispatch_validation_failure(
+        "",
+        payload("sha256:second", "/tmp/validation_VJ2_run-2.json"),
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first["signature"] == second["signature"]
+    assert first["occurrence_id"] == second["occurrence_id"]
+    assert first["retryable_infrastructure"] is True
+    assert first["worker_dispatched"] is False
+
+
+def test_drive_bounds_predispatch_validation_infrastructure_without_model_escalation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "finalized",
+                "config": {
+                    "tier_models": {
+                        "execute": {
+                            "1": "hermes:zhipu:glm-5.2",
+                            "2": "codex:gpt-5.6-sol:high",
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_count = 0
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        },
+    )
+
+    def fail_validation(args, **kwargs):
+        nonlocal run_count
+        run_count += 1
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="execute",
+                invocation_id=f"validation-{run_count}",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "validation_job_failed",
+                    "message": "validation job VJ2 exited 124; expected one of [0]",
+                    "details": {
+                        "job_id": "VJ2",
+                        "validation_job_kind": "post_execute_suite",
+                        "exit_code": 124,
+                        "expected_exit_codes": [0],
+                        "evidence_hash": f"sha256:attempt-{run_count}",
+                        "artifact_path": f"verification/validation_VJ2_{run_count}.json",
+                    },
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_validation)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=10,
+        poll_sleep=0,
+        escalate_after_fails=1,
+    )
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 2
+    assert run_count == 2
+    assert outcome.tier_escalations_used == 0
+    # The retry is telemetry only; lifecycle/repair/notification admission is
+    # performed once when the stable occurrence exhausts its bounded budget.
+    assert len(failures) == 1
+    terminal = failures[0]
+    assert terminal["kind"] == "pre_dispatch_validation_failed"
+    assert terminal["resume_cursor"]["retry_strategy"] == "repair_validation_infrastructure"
+    assert terminal["metadata"]["count"] == 2
+    assert terminal["metadata"]["worker_dispatched"] is False
+    assert terminal["metadata"]["notification_occurrence_id"].startswith(
+        "validation-"
+    )
+
+
+def test_drive_does_not_retry_predispatch_validation_assertion_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        },
+    )
+
+    def fail_validation(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="execute",
+                invocation_id="validation-1",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "validation_job_failed",
+                    "message": "validation job VJ2 exited 1; expected one of [0]",
+                    "details": {
+                        "job_id": "VJ2",
+                        "validation_job_kind": "post_execute_suite",
+                        "exit_code": 1,
+                        "expected_exit_codes": [0],
+                        "evidence_hash": "sha256:failure",
+                    },
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_validation)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=10,
+        poll_sleep=0,
+        escalate_after_fails=1,
+    )
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 1
+    assert outcome.tier_escalations_used == 0
+    assert len(failures) == 1
+    assert failures[0]["resume_cursor"]["retry_strategy"] == "repair_validation_failure"
+
+
 def test_drive_does_not_latch_distinct_critique_validation_failures(
     monkeypatch,
     tmp_path: Path,

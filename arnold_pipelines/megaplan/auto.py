@@ -220,6 +220,17 @@ DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES = 3
 # global max_iterations budget.
 DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS = 2
 DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS = 3
+# Harness-owned validation runs before execute worker dispatch.  A transient
+# runner failure gets one bounded retry; assertion/contract failures get none.
+# In either case a stronger execute model cannot help because no model worker
+# has been launched yet.
+DEFAULT_MAX_PREDISPATCH_VALIDATION_INFRA_RETRIES = 1
+PREDISPATCH_VALIDATION_ERROR_CODES = frozenset(
+    {"invalid_validation_job", "validation_job_failed"}
+)
+PREDISPATCH_VALIDATION_INFRA_EXIT_CODES = frozenset(
+    {-15, -9, 124, 137, 143}
+)
 # Auto-ESCALATE-up: after this many consecutive execute failures with no
 # forward progress, the driver pins execute to the next *more capable* tier
 # model and retries with a fresh session. It keeps climbing on further
@@ -409,6 +420,75 @@ def _is_cli_error_payload(payload: Any) -> bool:
         and payload.get("success") is False
         and isinstance(payload.get("error"), str)
     )
+
+
+def _predispatch_validation_failure(
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any] | None:
+    """Classify a harness validation failure without volatile evidence fields.
+
+    Validation evidence contains per-run paths, durations, and hashes.  Those
+    values prove that another validation command ran, but they do not make an
+    identical failing admission gate a new semantic failure.  The returned
+    signature/occurrence id therefore uses only the stable validation
+    contract and outcome fields.  Callers may use the occurrence id for
+    retry accounting and notification deduplication.
+    """
+
+    payload = _extract_cli_error_payload(stdout, stderr)
+    if payload is None:
+        return None
+    error_code = str(payload.get("error") or "").strip()
+    if error_code not in PREDISPATCH_VALIDATION_ERROR_CODES:
+        return None
+    raw_details = payload.get("details")
+    details = dict(raw_details) if isinstance(raw_details, Mapping) else {}
+    expected_exit_codes = details.get("expected_exit_codes")
+    if not isinstance(expected_exit_codes, list):
+        expected_exit_codes = []
+    invalid_fields = details.get("invalid_fields")
+    if not isinstance(invalid_fields, list):
+        invalid_fields = []
+    exit_code = details.get("exit_code")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        exit_code = None
+    stable = {
+        "error_code": error_code,
+        "job_id": str(details.get("job_id") or ""),
+        "validation_job_kind": str(details.get("validation_job_kind") or ""),
+        "exit_code": exit_code,
+        "expected_exit_codes": expected_exit_codes,
+        "invalid_fields": sorted(str(item) for item in invalid_fields),
+    }
+    stable_raw = json.dumps(
+        stable,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    signature = "sha256:" + hashlib.sha256(stable_raw.encode("utf-8")).hexdigest()
+    failure_class = str(details.get("failure_class") or "").strip().lower()
+    retryable_infrastructure = (
+        details.get("retryable_infrastructure") is True
+        or failure_class
+        in {
+            "infrastructure",
+            "runner_error",
+            "runner_timeout",
+            "timeout",
+            "validation_infrastructure",
+        }
+        or exit_code in PREDISPATCH_VALIDATION_INFRA_EXIT_CODES
+    )
+    return {
+        **stable,
+        "message": _normalize_failure_message(payload.get("message")),
+        "signature": signature,
+        "occurrence_id": f"validation-{signature.removeprefix('sha256:')[:20]}",
+        "retryable_infrastructure": retryable_infrastructure,
+        "worker_dispatched": False,
+    }
 
 
 def _extract_last_json_object(text: str) -> dict[str, Any] | None:
@@ -4445,6 +4525,8 @@ def drive(
     invalid_transition_signature_count = 0
     deterministic_phase_failure_signature: str | None = None
     deterministic_phase_failure_count = 0
+    predispatch_validation_signature: str | None = None
+    predispatch_validation_count = 0
 
     # ── M8A T14 — per-task circuit-breaker states ──────────────────────
     # Each task/attempt gets a CircuitState keyed by failure_class.
@@ -5819,6 +5901,115 @@ def drive(
                 )
         code, out, err, result = _run_phase(cmd, next_step)
         _clear_completed_phase_active_step(next_step, result)
+        # Execute validation jobs are harness-owned admission work and run
+        # before worker dispatch.  Do not let fresh evidence paths/hashes make
+        # the same failure look like productive progress, and never escalate
+        # the execute model for a failure no model observed.  A typed transient
+        # runner/timeout outcome gets one bounded retry; deterministic suite or
+        # contract failures halt once and enqueue/notify once.
+        validation_failure = (
+            _predispatch_validation_failure(out, err)
+            if next_step == "execute"
+            else None
+        )
+        if validation_failure is not None:
+            signature = str(validation_failure["signature"])
+            if signature == predispatch_validation_signature:
+                predispatch_validation_count += 1
+            else:
+                predispatch_validation_signature = signature
+                predispatch_validation_count = 1
+            retryable_infrastructure = bool(
+                validation_failure["retryable_infrastructure"]
+            )
+            max_attempts = (
+                DEFAULT_MAX_PREDISPATCH_VALIDATION_INFRA_RETRIES + 1
+                if retryable_infrastructure
+                else 1
+            )
+            if predispatch_validation_count < max_attempts:
+                log(
+                    "execute pre-dispatch validation infrastructure failed — "
+                    f"retrying without model escalation "
+                    f"({predispatch_validation_count}/{max_attempts})",
+                    validation_occurrence_id=validation_failure["occurrence_id"],
+                    validation_signature=signature,
+                    worker_dispatched=False,
+                )
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase="execute_validation",
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": predispatch_validation_count,
+                        "max_attempts": max_attempts,
+                        "retry_strategy": "retry_validation_infrastructure",
+                        "validation_occurrence_id": validation_failure[
+                            "occurrence_id"
+                        ],
+                        "worker_dispatched": False,
+                    },
+                )
+                continue
+
+            failure_label = (
+                "validation infrastructure"
+                if retryable_infrastructure
+                else "validation gate"
+            )
+            message = str(validation_failure.get("message") or "").strip()
+            reason = (
+                f"execute pre-dispatch {failure_label} failed "
+                f"{predispatch_validation_count} time(s) without launching a worker"
+                + (f": {message}" if message else "")
+            )
+            log(
+                f"{reason} — halting without model escalation",
+                validation_occurrence_id=validation_failure["occurrence_id"],
+                validation_signature=signature,
+                worker_dispatched=False,
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="pre_dispatch_validation_failed",
+                message=reason,
+                current_state=STATE_BLOCKED,
+                phase="execute",
+                resume_cursor={
+                    "phase": "execute",
+                    "retry_strategy": (
+                        "repair_validation_infrastructure"
+                        if retryable_infrastructure
+                        else "repair_validation_failure"
+                    ),
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Repair the harness validation runner/timeout and resume execute."
+                    if retryable_infrastructure
+                    else "Repair the failing validation gate before resuming execute."
+                ),
+                metadata={
+                    **validation_failure,
+                    "count": predispatch_validation_count,
+                    "max_attempts": max_attempts,
+                    "exit_code": code,
+                    "iteration": iteration,
+                    # The stable occurrence key lets downstream notification
+                    # admission collapse repeated attempts of this incident.
+                    "notification_occurrence_id": validation_failure[
+                        "occurrence_id"
+                    ],
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase="execute",
+                blocking_reasons=["pre_dispatch_validation_failed"],
+            )
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.
         #
