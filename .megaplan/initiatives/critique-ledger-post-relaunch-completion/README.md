@@ -27,6 +27,14 @@ occurrence/generation fencing, provider/credential and pinned-runtime
 attestation, snapshot-first status and notification dedupe, projection
 reconciliation, and legacy-session takeover rules.
 
+The anti-overbuild boundary is explicit in the
+[`architecture-fit-and-minimality-gate-20260804.md`](evidence/architecture-fit-and-minimality-gate-20260804.md)
+(`architecture-fit-minimality-gate.v1`). It makes the existing Custody Control
+Plane the substrate, assigns ownership before implementation, requires one
+thin end-to-end failure proof per sprint, and requires retirement/expiry for
+compatibility paths. It deliberately adds a gate, not another milestone or
+authority system.
+
 Sequencing audit:
 `.megaplan/subagents/critique-ledger-recovery/SEQUENCING/relaunch-cutline-luna-audit.md`.
 
