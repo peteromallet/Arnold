@@ -457,7 +457,10 @@ def _marker_rebind(
         expected_marker_sha256=sha256_path(marker),
         expected_previous_runtime_sha256=str(source["content_sha256"]),
         active_runtime_identity=target,
-        relaunch_command="B-control-interpreter resumes only after final seed",
+        relaunch_command=(
+            f"{target['import_root']} {target['source_revision']} "
+            "control interpreter resumes only after final seed"
+        ),
         reason=f"{direction} integrated marker",
         actor="test",
         direction=direction,

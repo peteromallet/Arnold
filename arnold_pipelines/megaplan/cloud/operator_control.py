@@ -10,11 +10,42 @@ import os
 import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
 from arnold_pipelines.megaplan.cloud.relaunch_resolution import marker_relaunch_command
+
+
+RESUME_HOLD_KEY = "operator_resume_hold"
+RESUME_HOLD_SCHEMA = "arnold.megaplan.operator-resume-hold.v1"
+_POST_LAUNCH_GRACE_SECONDS = 0.25
+
+
+def _resume_hold(
+    *,
+    spec: Path,
+    workspace: Path,
+    session: str,
+    resume_authority: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": RESUME_HOLD_SCHEMA,
+        "active": True,
+        "session": session,
+        "spec": str(spec.resolve(strict=False)),
+        "workspace": str(workspace.resolve(strict=False)),
+        "resume_authority": resume_authority,
+    }
+
+
+def _runner_survives_launch(session: str) -> bool:
+    probe = ["tmux", "has-session", "-t", session]
+    if subprocess.run(probe, check=False).returncode != 0:
+        return False
+    time.sleep(_POST_LAUNCH_GRACE_SECONDS)
+    return subprocess.run(probe, check=False).returncode == 0
 
 
 def _stop_owned_pidfile(path: Path, *, session: str) -> bool:
@@ -89,15 +120,71 @@ def resume_session(
     start_runner: bool = True,
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
-    result = resume_chain(
-        spec,
-        workspace,
-        actor=actor,
-        verify_execution_binding=start_runner,
-    )
+    relaunch: str | None = None
+    if start_runner:
+        relaunch = marker_relaunch_command(marker)
+        if not relaunch:
+            raise RuntimeError("session marker relaunch command is stale or unavailable")
+        if (
+            subprocess.run(["tmux", "has-session", "-t", session], check=False).returncode
+            == 0
+        ):
+            raise RuntimeError("session already has a live runner")
+    hold = marker.get(RESUME_HOLD_KEY)
+    hold = hold if isinstance(hold, dict) else None
+    if hold is not None:
+        if (
+            hold.get("schema_version") != RESUME_HOLD_SCHEMA
+            or hold.get("active") is not True
+            or hold.get("session") != session
+            or hold.get("spec") != str(spec.resolve(strict=False))
+            or hold.get("workspace") != str(workspace.resolve(strict=False))
+            or not isinstance(hold.get("resume_authority"), dict)
+        ):
+            raise RuntimeError("operator resume hold is invalid or targets another session")
+        result = resume_chain(
+            spec,
+            workspace,
+            actor=actor,
+            verify_execution_binding=start_runner,
+            expected_resume_authority=hold["resume_authority"],
+        )
+    elif marker.get("should_run") is False and not isinstance(marker.get("operator_pause"), dict):
+        # Compatibility for authority-cleared holds created before the typed
+        # marker receipt existed.  Require the complete canonical marker
+        # identity; arbitrary marker-only stops remain fail-closed.
+        marker_session = marker.get("chain_session") or marker.get("session")
+        if (
+            marker_session != session
+            or marker.get("remote_spec") != str(spec.resolve(strict=False))
+            or marker.get("workspace") != str(workspace.resolve(strict=False))
+            or marker.get("retired") is True
+            or marker.get("superseded") is True
+        ):
+            raise RuntimeError("legacy authority-cleared hold lacks exact session custody")
+        result = resume_chain(
+            spec,
+            workspace,
+            actor=actor,
+            verify_execution_binding=start_runner,
+            allow_legacy_authority_cleared_hold=True,
+        )
+    else:
+        result = resume_chain(
+            spec,
+            workspace,
+            actor=actor,
+            verify_execution_binding=start_runner,
+        )
     if not start_runner:
         marker.pop("operator_pause", None)
         marker["should_run"] = False
+        marker[RESUME_HOLD_KEY] = _resume_hold(
+            spec=spec,
+            workspace=workspace,
+            session=session,
+            resume_authority=result["resume_authority"],
+        )
         _write_marker(marker_path, marker, expected_sha256=marker_sha256)
         return {
             **result,
@@ -106,14 +193,7 @@ def resume_session(
             "no_push": no_push,
             "authority_only": True,
         }
-    relaunch = marker_relaunch_command(marker)
-    if not relaunch:
-        raise RuntimeError("session marker relaunch command is stale or unavailable")
-    if (
-        subprocess.run(["tmux", "has-session", "-t", session], check=False).returncode
-        == 0
-    ):
-        raise RuntimeError("session already has a live runner")
+    assert relaunch is not None
     queue_root = Path(
         os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
         or marker_path.parent.parent / "repair-queue"
@@ -138,12 +218,36 @@ def resume_session(
     # attestation binds the marker's stable launch identity, while this CAS
     # prevents a concurrent pause/rebind from being overwritten.
     marker.pop("operator_pause", None)
+    marker.pop(RESUME_HOLD_KEY, None)
     marker["should_run"] = True
-    _write_marker(marker_path, marker, expected_sha256=marker_sha256)
-    subprocess.run(
-        tmux_command,
-        check=True,
+    launched_marker_sha256 = _write_marker(
+        marker_path,
+        marker,
+        expected_sha256=marker_sha256,
     )
+    try:
+        subprocess.run(tmux_command, check=True)
+        alive = _runner_survives_launch(session)
+        if not alive:
+            raise RuntimeError("session runner exited before post-launch liveness confirmation")
+    except Exception:
+        # Restore a resumable stopped marker.  CAS prevents this failure path
+        # from overwriting a concurrent pause, rebind, or successful relaunch.
+        stopped, stopped_sha256 = _load_marker(marker_path)
+        if stopped_sha256 != launched_marker_sha256:
+            raise RuntimeError(
+                "session marker changed concurrently after launch dispatch; "
+                "refusing to restore stale stop authority"
+            )
+        stopped["should_run"] = False
+        stopped[RESUME_HOLD_KEY] = _resume_hold(
+            spec=spec,
+            workspace=workspace,
+            session=session,
+            resume_authority=result["resume_authority"],
+        )
+        _write_marker(marker_path, stopped, expected_sha256=stopped_sha256)
+        raise
     return {
         **result,
         "session": session,
@@ -172,7 +276,7 @@ def _write_marker(
     value: dict[str, Any],
     *,
     expected_sha256: str,
-) -> None:
+) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".runtime-cutover.lock")
     with lock_path.open("a+", encoding="utf-8") as lock:
@@ -203,6 +307,7 @@ def _write_marker(
             except OSError:
                 pass
             raise
+        return _sha256(encoded)
 
 
 def main(argv: list[str] | None = None) -> int:

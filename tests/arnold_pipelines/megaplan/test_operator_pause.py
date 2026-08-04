@@ -108,6 +108,29 @@ def test_resume_reconciles_plan_authority_when_exiting_runner_overwrites_chain_p
     assert chain_state.metadata["operator_resume"]["actor"] == "repair-owner"
 
 
+def test_legacy_authority_cleared_hold_accepts_newer_resumable_plan_state(
+    tmp_path: Path,
+) -> None:
+    spec, plan = _chain(tmp_path)
+    pause_chain(spec, tmp_path, reason="legacy direct phase")
+    first = resume_chain(spec, tmp_path, actor="legacy-no-start")
+
+    plan_state = json.loads((plan / "state.json").read_text())
+    plan_state["current_state"] = "finalized"
+    (plan / "state.json").write_text(json.dumps(plan_state))
+
+    resumed = resume_chain(
+        spec,
+        tmp_path,
+        actor="operator",
+        allow_legacy_authority_cleared_hold=True,
+    )
+    assert resumed["changed"] is False
+    assert resumed["already_resumed"] is True
+    assert resumed["current_plan_state"] == "finalized"
+    assert resumed["resume_authority"] == first["resume_authority"]
+
+
 def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, monkeypatch) -> None:
     from arnold_pipelines.megaplan.cloud import operator_control
 
@@ -149,7 +172,8 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
         calls.append(argv)
         result = Completed()
         if argv[:3] == ["tmux", "has-session", "-t"]:
-            result.returncode = 1
+            has_calls = sum(1 for call in calls if call[:3] == ["tmux", "has-session", "-t"])
+            result.returncode = 1 if has_calls == 1 else 0
         return result
 
     monkeypatch.setattr(operator_control.subprocess, "run", resume_run)
@@ -180,6 +204,109 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
             "ARNOLD_REPAIR_RUN_KIND=chain",
             "safe command",
         ],
+        ["tmux", "has-session", "-t", "demo"],
+        ["tmux", "has-session", "-t", "demo"],
     ]
     assert resumed["runner_started"] is True
     assert json.loads(marker.read_text())["should_run"] is True
+
+
+@pytest.mark.parametrize("advanced_state", ["gated", "finalized", "executed", "reviewed", "done"])
+def test_authority_only_hold_resumes_after_direct_phase_advances_plan(
+    tmp_path: Path, monkeypatch, advanced_state: str
+) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    spec, plan = _chain(tmp_path)
+    paused = pause_chain(spec, tmp_path, reason="run one direct phase")
+    marker = tmp_path / "markers" / "demo.json"
+    marker.parent.mkdir()
+    marker.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(tmp_path.resolve()),
+                "remote_spec": str(spec.resolve()),
+                "relaunch_command": "python -m demo",
+                "operator_pause": paused["authority"],
+                "should_run": False,
+            }
+        )
+    )
+
+    operator_control.resume_session(
+        spec=spec,
+        workspace=tmp_path,
+        session="demo",
+        marker_path=marker,
+        actor="test",
+        start_runner=False,
+    )
+    held = json.loads(marker.read_text())
+    assert held["operator_resume_hold"]["active"] is True
+
+    # Model a successful direct phase while the cloud runner remains held.
+    plan_state = json.loads((plan / "state.json").read_text())
+    plan_state["current_state"] = advanced_state
+    (plan / "state.json").write_text(json.dumps(plan_state))
+
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        result = Completed()
+        if argv[:3] == ["tmux", "has-session", "-t"]:
+            result.returncode = 1 if len(calls) == 1 else 0
+        return result
+
+    monkeypatch.setattr(operator_control.subprocess, "run", run)
+    resumed = operator_control.resume_session(
+        spec=spec,
+        workspace=tmp_path,
+        session="demo",
+        marker_path=marker,
+        actor="test",
+    )
+
+    assert resumed["already_resumed"] is True
+    assert resumed["current_plan_state"] == advanced_state
+    assert json.loads((plan / "state.json").read_text())["current_state"] == advanced_state
+    launched = json.loads(marker.read_text())
+    assert launched["should_run"] is True
+    assert "operator_resume_hold" not in launched
+    assert sum(1 for call in calls if call[1] == "new-session") == 1
+
+
+def test_marker_only_stop_without_resume_authority_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    spec, _ = _chain(tmp_path)
+    marker = tmp_path / "markers" / "demo.json"
+    marker.parent.mkdir()
+    before = {
+        "session": "demo",
+        "workspace": str(tmp_path.resolve()),
+        "remote_spec": str(spec.resolve()),
+        "relaunch_command": "python -m demo",
+        "should_run": False,
+    }
+    marker.write_text(json.dumps(before))
+
+    class Completed:
+        returncode = 1
+
+    monkeypatch.setattr(operator_control.subprocess, "run", lambda *a, **k: Completed())
+    with pytest.raises(CliError, match="authority-cleared hold"):
+        operator_control.resume_session(
+            spec=spec,
+            workspace=tmp_path,
+            session="demo",
+            marker_path=marker,
+            actor="test",
+        )
+    assert json.loads(marker.read_text()) == before

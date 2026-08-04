@@ -31,10 +31,17 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
         encoding="utf-8",
     )
     resume_calls: list[dict[str, object]] = []
+    resume_authority = {
+        "schema_version": "arnold.megaplan.operator-pause.v1",
+        "resumed_at": "2026-08-04T00:00:00+00:00",
+        "actor": "test",
+        "plan": "demo-plan",
+        "restored_plan_state": "gated",
+    }
 
     def fake_resume_chain(*args, **kwargs):
         resume_calls.append(dict(kwargs))
-        return {"changed": True, "paused": False}
+        return {"changed": True, "paused": False, "resume_authority": resume_authority}
 
     monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
     calls: list[list[str]] = []
@@ -45,9 +52,14 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
             launching = json.loads(marker_path.read_text(encoding="utf-8"))
             assert "operator_pause" not in launching
             assert launching["should_run"] is True
-        return subprocess.CompletedProcess(argv, 1 if argv[1] == "has-session" else 0)
+        if argv[1] == "has-session":
+            has_calls = sum(1 for call in calls if call[1] == "has-session")
+            return subprocess.CompletedProcess(argv, 1 if has_calls == 1 else 0)
+        return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
+    sleeps: list[float] = []
+    monkeypatch.setattr(operator_control.time, "sleep", sleeps.append)
 
     result = operator_control.resume_session(
         spec=tmp_path / "chain.yaml",
@@ -71,6 +83,7 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
     assert "operator_pause" not in updated
     assert updated["should_run"] is True
+    assert sleeps == [operator_control._POST_LAUNCH_GRACE_SECONDS]
 
 
 def test_resume_no_push_preserves_dirty_milestone_checkout(
@@ -92,17 +105,27 @@ def test_resume_no_push_preserves_dirty_milestone_checkout(
         encoding="utf-8",
     )
     resume_calls: list[dict[str, object]] = []
+    resume_authority = {
+        "schema_version": "arnold.megaplan.operator-pause.v1",
+        "resumed_at": "2026-08-04T00:00:00+00:00",
+        "actor": "test",
+        "plan": "demo-plan",
+        "restored_plan_state": "gated",
+    }
 
     def fake_resume_chain(*args, **kwargs):
         resume_calls.append(dict(kwargs))
-        return {"changed": True, "paused": False}
+        return {"changed": True, "paused": False, "resume_authority": resume_authority}
 
     monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
     calls: list[list[str]] = []
 
     def fake_run(argv, **kwargs):
         calls.append(list(argv))
-        return subprocess.CompletedProcess(argv, 1 if argv[1] == "has-session" else 0)
+        if argv[1] == "has-session":
+            has_calls = sum(1 for call in calls if call[1] == "has-session")
+            return subprocess.CompletedProcess(argv, 1 if has_calls == 1 else 0)
+        return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
 
@@ -139,10 +162,17 @@ def test_resume_authority_only_does_not_start_runner(
         encoding="utf-8",
     )
     resume_calls: list[dict[str, object]] = []
+    resume_authority = {
+        "schema_version": "arnold.megaplan.operator-pause.v1",
+        "resumed_at": "2026-08-04T00:00:00+00:00",
+        "actor": "test",
+        "plan": "demo-plan",
+        "restored_plan_state": "gated",
+    }
 
     def fake_resume_chain(*args, **kwargs):
         resume_calls.append(dict(kwargs))
-        return {"changed": True, "paused": False}
+        return {"changed": True, "paused": False, "resume_authority": resume_authority}
 
     monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
     calls: list[list[str]] = []
@@ -168,6 +198,14 @@ def test_resume_authority_only_does_not_start_runner(
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
     assert "operator_pause" not in updated
     assert updated["should_run"] is False
+    assert updated["operator_resume_hold"] == {
+        "schema_version": "arnold.megaplan.operator-resume-hold.v1",
+        "active": True,
+        "session": "demo",
+        "spec": str((tmp_path / "chain.yaml").resolve()),
+        "workspace": str(workspace.resolve()),
+        "resume_authority": resume_authority,
+    }
 
 
 def test_resume_fails_closed_when_marker_changes_concurrently(
@@ -238,3 +276,117 @@ def test_resume_rejects_stale_marker_command_after_runtime_cutover(
             marker_path=marker_path,
             actor="test",
         )
+
+
+def test_resume_restores_authority_hold_when_runner_dies_before_handshake(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    marker_path = tmp_path / ".megaplan" / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "run_kind": "chain",
+                "relaunch_command": "python -m demo",
+                "operator_pause": {"active": True},
+                "should_run": False,
+            }
+        )
+    )
+    authority = {
+        "schema_version": "arnold.megaplan.operator-pause.v1",
+        "resumed_at": "2026-08-04T00:00:00+00:00",
+        "actor": "test",
+        "plan": "demo-plan",
+        "restored_plan_state": "finalized",
+    }
+    monkeypatch.setattr(
+        operator_control,
+        "resume_chain",
+        lambda *a, **k: {
+            "changed": True,
+            "paused": False,
+            "resume_authority": authority,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[1] == "has-session":
+            return subprocess.CompletedProcess(argv, 1)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(operator_control.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="exited before post-launch"):
+        operator_control.resume_session(
+            spec=tmp_path / "chain.yaml",
+            workspace=workspace,
+            session="demo",
+            marker_path=marker_path,
+            actor="test",
+        )
+
+    stopped = json.loads(marker_path.read_text())
+    assert stopped["should_run"] is False
+    assert stopped["operator_resume_hold"]["resume_authority"] == authority
+    assert sum(1 for call in calls if call[1] == "new-session") == 1
+
+
+def test_post_launch_failure_does_not_overwrite_concurrent_marker_change(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    marker_path = tmp_path / ".megaplan" / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "relaunch_command": "python -m demo",
+                "operator_pause": {"active": True},
+                "should_run": False,
+            }
+        )
+    )
+    authority = {
+        "schema_version": "arnold.megaplan.operator-pause.v1",
+        "resumed_at": "2026-08-04T00:00:00+00:00",
+        "actor": "test",
+        "plan": "demo-plan",
+        "restored_plan_state": "finalized",
+    }
+    monkeypatch.setattr(
+        operator_control,
+        "resume_chain",
+        lambda *a, **k: {"resume_authority": authority},
+    )
+    has_calls = 0
+
+    def run(argv, **kwargs):
+        nonlocal has_calls
+        if argv[1] == "has-session":
+            has_calls += 1
+            if has_calls == 2:
+                concurrent = json.loads(marker_path.read_text())
+                concurrent["concurrent_owner"] = "new-operator"
+                marker_path.write_text(json.dumps(concurrent))
+            return subprocess.CompletedProcess(argv, 1)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(operator_control.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="changed concurrently after launch"):
+        operator_control.resume_session(
+            spec=tmp_path / "chain.yaml",
+            workspace=workspace,
+            session="demo",
+            marker_path=marker_path,
+            actor="test",
+        )
+
+    concurrent = json.loads(marker_path.read_text())
+    assert concurrent["concurrent_owner"] == "new-operator"
+    assert concurrent["should_run"] is True
+    assert "operator_resume_hold" not in concurrent

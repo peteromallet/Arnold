@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.cloud.relaunch_resolution import (
+    is_stale_marker_relaunch_command,
+    relaunch_matches_runtime,
+)
 
 
 MARKER_RUNTIME_SCHEMA = "arnold.megaplan.marker_runtime_binding.v1"
@@ -96,6 +100,14 @@ def update_marker_runtime(
     active = normalize_runtime_identity(active_runtime_identity)
     if not active.get("import_root") or len(str(active.get("source_revision") or "")) != 40:
         raise CliError("runtime_marker_invalid", "active runtime identity is incomplete")
+    if is_stale_marker_relaunch_command(relaunch_command) or not relaunch_matches_runtime(
+        relaunch_command,
+        active,
+    ):
+        raise CliError(
+            "runtime_marker_relaunch_mismatch",
+            "relaunch command does not bind the active content-addressed runtime",
+        )
 
     marker_path = marker_path.resolve(strict=False)
     marker_path.parent.mkdir(parents=True, exist_ok=True)

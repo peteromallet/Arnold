@@ -5,16 +5,43 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold_pipelines.megaplan._core.io import find_plan_dir
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.chain import spec as chain_spec
-from arnold_pipelines.megaplan.planning.state import STATE_DONE, STATE_PAUSED
+from arnold_pipelines.megaplan.planning.state import (
+    STATE_BLOCKED,
+    STATE_CRITIQUED,
+    STATE_DONE,
+    STATE_EXECUTED,
+    STATE_FAILED,
+    STATE_FINALIZED,
+    STATE_GATED,
+    STATE_INITIALIZED,
+    STATE_PAUSED,
+    STATE_PLANNED,
+    STATE_PREPPED,
+    STATE_REVIEWED,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 AUTHORITY_KEY = "operator_pause"
 AUTHORITY_SCHEMA = "arnold.megaplan.operator-pause.v1"
+RESUME_AUTHORITY_KEY = "operator_resume"
+_RUNNER_RESUMABLE_STATES = {
+    STATE_INITIALIZED,
+    STATE_PREPPED,
+    STATE_PLANNED,
+    STATE_CRITIQUED,
+    STATE_GATED,
+    STATE_FINALIZED,
+    STATE_EXECUTED,
+    STATE_REVIEWED,
+    STATE_DONE,
+    STATE_FAILED,
+    STATE_BLOCKED,
+}
 
 
 def _now() -> str:
@@ -99,6 +126,8 @@ def resume_chain(
     *,
     actor: str = "operator",
     verify_execution_binding: bool = True,
+    expected_resume_authority: Mapping[str, Any] | None = None,
+    allow_legacy_authority_cleared_hold: bool = False,
 ) -> dict[str, Any]:
     """Explicitly clear pause authority and restore the exact prior plan state."""
 
@@ -110,6 +139,66 @@ def resume_chain(
     )
     authority = pause_record(state)
     if authority is None:
+        resumed = state.metadata.get(RESUME_AUTHORITY_KEY)
+        resumed = dict(resumed) if isinstance(resumed, Mapping) else None
+        expected = (
+            dict(expected_resume_authority)
+            if isinstance(expected_resume_authority, Mapping)
+            else None
+        )
+        if expected is not None or allow_legacy_authority_cleared_hold:
+            if resumed is None or (expected is not None and resumed != expected):
+                raise CliError(
+                    "resume_authority_mismatch",
+                    "authority-cleared hold does not match canonical chain resume authority",
+                )
+            if resumed.get("schema_version") != AUTHORITY_SCHEMA:
+                raise CliError(
+                    "resume_authority_invalid",
+                    "authority-cleared hold has an invalid resume authority schema",
+                )
+            plan_name = resumed.get("plan") or state.current_plan_name
+            if not isinstance(plan_name, str) or not plan_name or plan_name != state.current_plan_name:
+                raise CliError(
+                    "resume_authority_diverged",
+                    "authority-cleared hold no longer targets the canonical current plan",
+                )
+            plan_dir = find_plan_dir(project_root, plan_name)
+            if plan_dir is None or not (plan_dir / "state.json").exists():
+                raise CliError(
+                    "resume_authority_diverged",
+                    "authority-cleared hold current plan state is unavailable",
+                )
+            try:
+                plan_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise CliError(
+                    "resume_authority_diverged",
+                    "authority-cleared hold current plan state is unreadable",
+                ) from exc
+            plan_meta = plan_state.get("meta")
+            plan_pause = plan_meta.get(AUTHORITY_KEY) if isinstance(plan_meta, dict) else None
+            current_plan_state = plan_state.get("current_state")
+            if (
+                current_plan_state not in _RUNNER_RESUMABLE_STATES
+                or (isinstance(plan_pause, Mapping) and plan_pause.get("schema_version") == AUTHORITY_SCHEMA)
+            ):
+                raise CliError(
+                    "resume_authority_diverged",
+                    "authority-cleared hold targets a plan state that is not runner-resumable",
+                )
+            # The direct phase intentionally may have advanced after --no-start
+            # (for example gated -> finalized).  The receipt authorizes starting
+            # the chain runner, not rewriting the newer plan state.
+            return {
+                "changed": False,
+                "paused": False,
+                "already_resumed": True,
+                "plan": plan_name,
+                "restored_plan_state": resumed.get("restored_plan_state"),
+                "current_plan_state": current_plan_state,
+                "resume_authority": resumed,
+            }
         # A runner that was already exiting when pause_chain() committed can
         # persist its older in-memory ChainState after the pause receipt.  The
         # plan-side authority is written through the plan-state CAS and remains
@@ -180,11 +269,19 @@ def resume_chain(
 
     state.last_state = authority.get("previous_chain_last_state")
     state.metadata.pop(AUTHORITY_KEY, None)
-    state.metadata["operator_resume"] = {
+    resume_authority = {
         "schema_version": AUTHORITY_SCHEMA,
         "resumed_at": _now(),
         "actor": actor,
+        "plan": plan_name,
         "restored_plan_state": restore_state,
     }
+    state.metadata[RESUME_AUTHORITY_KEY] = resume_authority
     chain_spec.save_chain_state(spec_path, state)
-    return {"changed": True, "paused": False, "plan": plan_name, "restored_plan_state": restore_state}
+    return {
+        "changed": True,
+        "paused": False,
+        "plan": plan_name,
+        "restored_plan_state": restore_state,
+        "resume_authority": resume_authority,
+    }
