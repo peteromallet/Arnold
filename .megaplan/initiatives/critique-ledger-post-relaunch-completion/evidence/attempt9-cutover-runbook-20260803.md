@@ -1,0 +1,276 @@
+# Critique r5: exact attempt-9 cutover runbook
+
+## Decision
+
+Continue the existing r5 session, workspace, chain cursor, plan, and accepted
+planning artifacts. Do **not** restart Prep and do **not** resume attempt 8.
+
+The recovery boundary is:
+
+1. durably pause every obsolete Critique marker;
+2. terminate only the frozen attempt-8 process incarnation;
+3. durably cancel attempt 8 in its WBC ledger;
+4. bind the legacy r5 marker to its proven old runtime, then cut both chain and
+   marker runtime custody to the exact deployed engine;
+5. explicitly resume the same chain with `--no-push`;
+6. observe a new Finalize WBC owner with ordinal 9, then GLM Execute.
+
+Do not directly adopt the recovered attempt-7 candidate. It passed model
+schema, semantic, critique-coverage, and feasibility checks, but it is only the
+model-authored payload. No existing public adoption transition also performs
+the harness-owned baseline selection, validation-job compilation, critique
+custody binding, `finalize.json` publication receipt, phase WBC terminal,
+`phase_result.json`, and state transition. Use it as recovery evidence and
+prompt precedent; rerun one new Finalize occurrence through the fixed
+file-receipt protocol.
+
+## Verified live facts (read-only, 2026-08-03)
+
+- Host: `159.69.51.216`
+- Runner container:
+  `782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117`
+- Resident container:
+  `a2c9a0d058af24ec38b05f2c8a1d2865c6120420faa4802d4cd9a740eaed9b1a`
+- Session: `critique-ledger-accountability-v3-r5-20260803`
+- Workspace: `/workspace/critique-ledger-accountability-v3-r5-20260803/Arnold`
+- Spec: `$WORKSPACE/.megaplan/initiatives/critique-ledger/chain.yaml`
+- Plan: `cl2-wbc-backed-ledger-20260803-1357`
+- Chain-state file: `$WORKSPACE/.megaplan/plans/.chains/chain-a5c760402ea2.json`
+- Plan state: `gated`; current milestone index `0`; no completed milestones.
+- Product checkout: HEAD `07dc708074f2b887f86af3484759080713ace636`,
+  milestone branch `megaplan/critique-ledger-accountability-v3-r5/cl2-ledger-replay`.
+- Intended routing is already persisted:
+  `profile=partnered-5-glm`,
+  `finalize=codex:gpt-5.6-sol:high`,
+  `execute=hermes:zhipu:glm-5.2`.
+- Attempt 8 exact custody:
+  - phase WBC attempt `8fe6ab70-45c0-573e-9a26-32721b06047e`
+  - invocation `21d5c8322f2148a5`
+  - active-step run `c9cb6a4d-ec3c-4634-a08f-db273f0d96a7`
+  - ordinal `8`, phase `finalize`
+  - WBC has exactly one event: sequence 1, `STARTED`.
+- Frozen process identities (container PID / start ticks):
+  - tmux pane bash `151725 / 25944914`
+  - chain runner `152041 / 25945230`
+  - Codex node wrapper `160047 / 26116032`
+  - Codex binary `160061 / 26116035`
+  - code-mode host `160240 / 26117045`
+- Old runtime root/revision:
+  `/workspace/runtime-candidates/arnold-18b279f5ef-live` /
+  `18b279f5ef6d2a4db693586a59de8d87d7b45ab5`.
+- A fresh in-memory provenance observation of that runtime is healthy and
+  exactly equals the chain runtime binding:
+  `cb6afb8017532b1dd744e2e24cd3e02cb01f479814d2b4b7548429ebefaed49b`.
+- The r5 marker is legacy: it has no `runtime_binding`, no
+  `editable_source_head`, and no `run_id`; its relaunch command still names
+  the 18b runtime. This is why ordinary runtime-cutover CAS could not be used
+  directly.
+- Recovered attempt-7 candidate:
+  `af6149befd0e0a60700678999adbf10f425afa26f356a545b1e6246269bbe9a5`,
+  72,328 bytes, 28 tasks, 28 sense checks, 29 critique-coverage rows, one user
+  action; manifest status `RECOVERED_CANDIDATE_NOT_ADOPTED`.
+- Local cutover tests at integration base `e32fd243e5` plus migration commit
+  `eb5596a93a`: 14 focused marker tests, 46 adjacent runtime/chain-binding
+  tests, and the earlier 74 cancellation/profile/handoff/control tests passed;
+  Ruff and `git diff --check` passed.
+
+## Preconditions — all must pass
+
+Use task-specific variables; never use `--fresh` or delete plan/chain state.
+
+```bash
+CUTOVER_HOST=159.69.51.216
+CUTOVER_RUNNER=782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117
+CUTOVER_SESSION=critique-ledger-accountability-v3-r5-20260803
+CUTOVER_WORKSPACE=/workspace/critique-ledger-accountability-v3-r5-20260803/Arnold
+CUTOVER_SPEC=$CUTOVER_WORKSPACE/.megaplan/initiatives/critique-ledger/chain.yaml
+CUTOVER_PLAN=$CUTOVER_WORKSPACE/.megaplan/plans/cl2-wbc-backed-ledger-20260803-1357
+CUTOVER_CHAIN_STATE=$CUTOVER_WORKSPACE/.megaplan/plans/.chains/chain-a5c760402ea2.json
+CUTOVER_MARKER=/workspace/.megaplan/cloud-sessions/$CUTOVER_SESSION.json
+CUTOVER_OLD_ENGINE=/workspace/runtime-candidates/arnold-18b279f5ef-live
+CUTOVER_OLD_RUNTIME_SHA=cb6afb8017532b1dd744e2e24cd3e02cb01f479814d2b4b7548429ebefaed49b
+```
+
+Before mutation, re-read and compare:
+
+- container IDs and health;
+- the exact attempt/WBC/run/ordinal tuple above;
+- all five PID start ticks and command lines (or prove all are already absent);
+- old runtime provenance still equals `CUTOVER_OLD_RUNTIME_SHA`;
+- persisted profile routes still pin Finalize to Sol high and Execute to GLM;
+- recovered candidate, manifest, rollout, and output-receipt hashes still match;
+- no `finalize.json` exists;
+- no second r5 tmux/session/runner exists;
+- the new engine checkout is clean, exact-HEAD, tested, and installed only into
+  an isolated control venv at this point. Do not replace the global old-runtime
+  interpreter until its provenance receipt has been generated and verified.
+
+Any mismatch is a fail-closed stop. Do not “repair” a guard by editing state.
+
+## Cutover sequence
+
+### 1. Quarantine obsolete sessions first
+
+The v2, v3, and r4 markers are already durably paused. r2 and r3 were verified
+with `should_run=true` and no pause, so they remain watchdog-relaunchable.
+Using the exact deployed control engine, call
+`arnold_pipelines.megaplan.cloud.operator_control pause` separately for r2 and
+r3 with their own marker/spec/workspace/session and reason
+`superseded by canonical r5 recovery`. Do not hand-edit the markers.
+
+Postcondition: every `critique-ledger-*` marker except r5 has
+`should_run=false` plus active operator-pause authority, and no matching tmux,
+repair loop, or meta-repair process. Repeat this scan immediately before r5
+resume. These durable pauses keep old rows out of active status. After r5
+completes, use the completion-manifest-gated retirement command for formal
+tombstones; do not unpause an old attempt.
+
+### 2. Produce independent old-runtime evidence
+
+While the global interpreter still imports the 18b runtime, run its
+`cloud.runtime_provenance` with `--expected-root`, `--expected-revision`,
+`--identity-out`, and `--receipt-out` into a cutover evidence directory.
+Verify the identity digest is exactly `CUTOVER_OLD_RUNTIME_SHA` and the receipt
+reports no errors. The migration control process must run from a separate
+new-engine venv, so receipt verification is independent.
+
+### 3. Retire the frozen attempt-8 process incarnation
+
+The r5 plan lock is held by the frozen Finalize call, so the normal durable
+pause cannot commit until that exact owner is gone. First verify watchdog,
+auditor, and repair-trigger services are inactive (as observed) or temporarily
+stop only those supervisors and record which were active for later restoration.
+
+In one guarded operator script, re-read `/proc/<pid>/stat` and command lines,
+require every extant PID to match the PID/start-ticks/command identity above,
+then send `SIGKILL` leaf-to-root to `160240`, `160061`, `160047`, `152041`, and
+`151725`. Kill the exact tmux session if it remains. Never signal by a broad
+pattern, unresolved variable, or container-wide kill.
+
+Postconditions:
+
+- none of those PID incarnations exists;
+- no process command contains the r5 workspace plus Finalize/Codex invocation;
+- the r5 tmux session is absent;
+- `.plan.lock` and `.auto-driver.lock` are acquirable;
+- state and WBC are otherwise unchanged (attempt 8 still STARTED until the
+  explicit cancellation below).
+
+Immediately call `operator_control pause` for exact r5. It must persist both
+chain- and plan-side operator-pause authority and set marker
+`should_run=false`. If pause fails, keep all supervisors stopped and do not
+launch anything.
+
+### 4. Durably cancel attempt 8
+
+From the exact new engine, invoke:
+
+```python
+cancel_active_phase_wbc_attempt(
+    plan_dir=Path("/workspace/critique-ledger-accountability-v3-r5-20260803/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260803-1357"),
+    step="finalize",
+    expected_attempt_id="8fe6ab70-45c0-573e-9a26-32721b06047e",
+    expected_invocation_id="21d5c8322f2148a5",
+    expected_run_id="c9cb6a4d-ec3c-4634-a08f-db273f0d96a7",
+    expected_attempt_ordinal=8,
+    agent="operator",
+    reason="superseded by immutable attempt 9 after runtime cutover",
+)
+```
+
+Postconditions:
+
+- attempt-8 WBC events are exactly `STARTED(1), CANCELLED(2)`;
+- state history has one cancellation row carrying attempt/WBC/invocation/run;
+- `active_step` is absent;
+- plan and chain remain durably paused;
+- repeated exact cancellation is idempotent and cannot add another terminal.
+
+This cancellation history is what makes the next Finalize owner ordinal 9.
+
+### 5. Migrate the legacy marker, then cut over runtime custody
+
+Deploy migration commit `eb5596a93a` as part of the final exact engine, but do
+not touch the live marker during deployment. Run the dedicated
+`cloud.legacy_marker_runtime_migration` CLI from the isolated new-engine control
+venv with:
+
+- current marker SHA (re-read after pause);
+- SHA-256 of the marker's exact old relaunch-command string;
+- old runtime root and `CUTOVER_OLD_RUNTIME_SHA`;
+- exact session/workspace/spec/current plan;
+- exact paused chain-state path;
+- independently generated old runtime identity and provenance receipt.
+
+The API rejects unpaused, stale, partially bound, retired, mismatched, or
+ambiguous markers. It deterministically derives `run_id` from the marker,
+relaunch, chain-state, runtime-identity, and provenance-receipt hashes; it does
+not use a default/random launch identity. It atomically installs the old
+runtime binding and writes immutable prepared+committed migration evidence.
+
+Then perform the ordinary two-sided runtime cutover:
+
+1. generate and independently verify identity+receipt for the exact new engine;
+2. `chain runtime-rebind` from `CUTOVER_OLD_RUNTIME_SHA` to the new runtime hash,
+   guarded by milestone `cl2-ledger-replay` and current plan name;
+3. `cloud.runtime_cutover` the marker from the same old hash to the same new
+   identity, using a launcher-generated relaunch command pinned to the exact
+   new root/revision (never hand-replace a path in shell text);
+4. re-read both authorities and require byte-equal normalized runtime identities.
+
+If either side fails, remain paused. If chain rebind succeeds but marker update
+fails, use the ordinary guarded chain runtime rollback with the old identity
+and receipt; do not resume in a split-brain state.
+
+### 6. Resume the same r5 chain
+
+Invoke `cloud.operator_control resume` directly from the exact new engine with
+the exact spec/workspace/session/marker and `--no-push`. Do not use
+`cloud resume` (the legacy path selected the wrong `arnold` CLI family), do not
+use `--fresh`, and do not run `init`.
+
+`--no-push` preserves the existing milestone checkout and its plan artifacts;
+the relaunch command must be the marker's newly attested command. Resume must
+clear both pause authorities, set only r5 `should_run=true`, and launch one r5
+tmux runner.
+
+## Launch canaries and success criteria
+
+Check immediately, then after 10–15 minutes:
+
+1. Exactly one active Critique session: r5. All older markers remain paused.
+2. Same chain state, milestone 0, same plan; no Prep/Plan/Critique replay.
+3. New active Finalize owner has ordinal **9**, a new run/WBC/invocation ID,
+   `codex:gpt-5.6-sol:high`, and no relationship to attempt-8 PIDs.
+4. Attempt 8 stays `CANCELLED`; attempt 7 stays failed/indeterminate. Neither is
+   rewritten as success.
+5. Local-strict Sol output uses the fresh authorized candidate path plus exact
+   SHA/byte-count receipt. One WBC Finalize occurrence may use its single
+   internal structural repair, but deterministic local-contract failure must
+   not create an outer attempt 10.
+6. Successful Finalize publishes `finalize.json` through sole Finalize
+   authority with immutable mutation receipt, then writes phase/WBC success and
+   advances state to `finalized`.
+7. Execute starts through `hermes:zhipu:glm-5.2` (not DeepSeek and not Codex).
+8. `/whats-cooking` responds and shows one current r5 chain. Raw tmux/PID facts
+   are diagnostic only; canonical current-target liveness is authoritative.
+9. Poll unchanged stopped/healthy status repeatedly (including 200 notification
+   effect evaluations): no duplicate Discord delivery, no direct fallback send,
+   and no resurrection of v2/r2/r3/r4.
+
+The relaunch gate is passed only after criteria 1–7. The recovery is proven
+durable after criteria 8–9 also pass.
+
+## Rollback / fail-closed rules
+
+- Before resume, every failure leaves the chain paused and `should_run=false`.
+- Never restore attempt 8 to STARTED or delete its terminal evidence.
+- Never copy the recovered candidate over `finalize.json` manually.
+- Never run a second driver, `--fresh`, broad workspace cleanup, or global
+  process kill.
+- Runtime rollback must use the same chain+marker CAS APIs and independently
+  verified old identity; no marker/state hand edits.
+- After attempt 9 starts, a new failure is a new immutable occurrence: pause,
+  diagnose its typed receipt, and repair forward. Do not relabel history.
+- Restore any supervisor temporarily stopped for the process cutover only after
+  marker/chain runtime identities agree and r5 has a single attested runner.
