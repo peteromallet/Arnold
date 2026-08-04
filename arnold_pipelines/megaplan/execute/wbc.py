@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import uuid
@@ -91,6 +90,34 @@ def execute_dispatch_lookup_key(*, batch_number: int, stage: str) -> str:
 
 
 def _attempt_id(plan_dir: Path, identity: DispatchIdentity) -> str:
+    """Derive storage identity from the complete immutable dispatch identity.
+
+    The previous derivation used only ``dispatch_id``.  That value names the
+    logical batch, not one coordinator occurrence, so a new fence or
+    invocation reused the same SQLite attempt and collided with the old
+    event's immutable identity.  A fresh occurrence must be a fresh attempt.
+    """
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            "::".join(
+                (
+                    str(plan_dir.resolve()),
+                    identity.run_id,
+                    identity.plan_revision,
+                    identity.dispatch_id,
+                    identity.coordinator_attempt_id,
+                    str(identity.fence_token),
+                    "execute-dispatch-v2",
+                )
+            ),
+        )
+    )
+
+
+def _legacy_attempt_id(plan_dir: Path, identity: DispatchIdentity) -> str:
+    """Return the pre-v2 deterministic attempt id for compatibility lookup."""
+
     return str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
@@ -157,6 +184,7 @@ def _event(
     sequence: int,
     event_type: AttemptEventType,
     idempotency_suffix: str,
+    legacy_idempotency_key: bool = False,
     outcome: AttemptOutcome | None = None,
     payload: Mapping[str, Any] | None = None,
 ) -> LedgerEvent:
@@ -169,7 +197,11 @@ def _event(
     if payload:
         body.update(dict(payload))
     return LedgerEvent(
-        idempotency_key=f"{identity.dispatch_id}:{idempotency_suffix}",
+        idempotency_key=(
+            f"{identity.dispatch_id}:{idempotency_suffix}"
+            if legacy_idempotency_key
+            else f"{attempt_id}:{idempotency_suffix}"
+        ),
         event_type=event_type,
         identity=_identity(identity=identity, attempt_id=attempt_id),
         provenance=AttemptProvenance(
@@ -215,7 +247,23 @@ def build_execute_batch_dispatch_spec(
 ) -> CommonWorkerDispatchSpec:
     del state  # reserved for future exact-source/state-backed adapters
     register_execute_wbc_writer()
-    attempt_id = _attempt_id(plan_dir, dispatch_identity)
+    legacy_attempt_id = _legacy_attempt_id(plan_dir, dispatch_identity)
+    legacy_idempotency_key = False
+    legacy_store = SqliteAttemptLedgerStore(plan_dir / EXECUTE_WBC_LEDGER_FILENAME)
+    try:
+        legacy_events = legacy_store.read_events(legacy_attempt_id)
+        if legacy_events:
+            expected_legacy_identity = _identity(
+                identity=dispatch_identity,
+                attempt_id=legacy_attempt_id,
+            )
+            # Reuse the legacy row only when it is the exact same immutable
+            # occurrence.  A mismatched fence/invocation is evidence of a
+            # new attempt and must never be replayed into the old stream.
+            legacy_idempotency_key = legacy_events[0].identity == expected_legacy_identity
+    finally:
+        legacy_store.close()
+    attempt_id = legacy_attempt_id if legacy_idempotency_key else _attempt_id(plan_dir, dispatch_identity)
     expected_source_version = execute_dispatch_source_version(
         dispatch_identity,
         batch_number=batch_number,
@@ -256,6 +304,7 @@ def build_execute_batch_dispatch_spec(
             sequence=1,
             event_type=AttemptEventType.STARTED,
             idempotency_suffix="started",
+            legacy_idempotency_key=legacy_idempotency_key,
             payload={"status": "started"},
         ),
         success_event_factory=lambda _worker_result: _event(
@@ -267,6 +316,7 @@ def build_execute_batch_dispatch_spec(
             sequence=2,
             event_type=AttemptEventType.COMPLETED,
             idempotency_suffix="completed",
+            legacy_idempotency_key=legacy_idempotency_key,
             outcome=AttemptOutcome.SUCCEEDED,
             payload={"status": "completed"},
         ),
@@ -279,6 +329,7 @@ def build_execute_batch_dispatch_spec(
             sequence=2,
             event_type=AttemptEventType.FAILED,
             idempotency_suffix="failed",
+            legacy_idempotency_key=legacy_idempotency_key,
             outcome=AttemptOutcome.INDETERMINATE,
             payload={
                 "status": "failed",

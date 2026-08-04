@@ -552,7 +552,7 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
     assert legacy.attempt_id == str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{phase['attempt_id']}::subprocess::critique::hermes:zhipu:glm-5.2::0",
+            f"{phase['attempt_id']}::subprocess::critique::hermes:zhipu:glm-5.2::0::inv-fanout::worker-dispatch-v2",
         )
     )
     assert len({legacy.attempt_id, first.attempt_id, second.attempt_id}) == 3
@@ -571,6 +571,43 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
         "critique:scope:initial",
     ]
     assert {row["terminal_event"] for row in manifest} == {"completed"}
+
+
+def test_worker_dispatch_attempt_identity_changes_with_new_invocation(
+    tmp_path: Path,
+) -> None:
+    """A retry occurrence cannot reuse a worker WBC attempt stream."""
+    state = {
+        "name": "plan-invocation-fence",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-one"},
+        "active_step": {"run_id": "run-invocation-fence"},
+    }
+    phase = activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="critique",
+        agent="critic",
+    )
+    assert phase is not None
+    kwargs = {
+        "plan_dir": tmp_path,
+        "state": state,
+        "step": "critique",
+        "agent": "hermes",
+        "selected_spec": "hermes:zhipu:glm-5.2",
+        "route_kind": "subprocess",
+        "attempt_index": 0,
+    }
+    first = build_worker_dispatch_spec(**kwargs)
+    assert first is not None
+    state["meta"]["current_invocation_id"] = "inv-two"
+    second = build_worker_dispatch_spec(**kwargs)
+    assert second is not None
+    assert first.attempt_id != second.attempt_id
+    assert first.start_event.identity.invocation_id == "inv-one"
+    assert second.start_event.identity.invocation_id == "inv-two"
 
 
 def test_sequential_fallback_reuses_parallel_phase_without_minting_invocation(

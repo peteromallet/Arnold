@@ -2781,25 +2781,61 @@ def _try_record_append_failure_diagnostic(
         pass
 
 
-def _canonical_event_signature(event_json: str) -> dict:
-    """Extract canonical comparison fields from a serialized event JSON.
+def _canonical_event_signature(event_json: str) -> dict[str, Any]:
+    """Extract the immutable/semantic portion of a serialized event.
 
-    Returns a dict with keys: payload, outcome, event_type, schema_hash.
-    These fields are used for divergent-duplicate detection.
+    An event's idempotency key is a claim about one immutable attempt and one
+    semantic append.  The old comparator only looked at ``payload`` and
+    accidentally treated the volatile WBC observation timestamp as business
+    data while ignoring the attempt identity entirely.  That made a retry of
+    the same attempt look divergent and allowed a changed attempt identity to
+    hide behind an otherwise equal payload.
+
+    The comparison intentionally excludes only observation timestamps:
+    top-level ``occurred_at``/``observed_at`` and the WBC source record's
+    ``observed_at``.  Fence, invocation, attempt ordinal, source version,
+    provenance, and all other runtime metadata remain part of the signature.
+    Missing runtime metadata is *not* treated as equivalent to present
+    metadata; callers must prepare the same event shape before appending.
     """
-    import json as _json
-    data = _json.loads(event_json)
+    data = json.loads(event_json)
     payload = data.get("payload")
     if isinstance(payload, dict):
-        payload = _json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    outcome = data.get("outcome")
-    event_type = data.get("event_type", "")
-    schema_hash = data.get("schema_hash")
+        payload = json.loads(json.dumps(payload, sort_keys=True, ensure_ascii=False))
+        runtime = payload.get("__wbc_runtime__")
+        if isinstance(runtime, dict):
+            source_record = runtime.get("source_record")
+            if isinstance(source_record, dict):
+                source_record.pop("observed_at", None)
+
+    identity = data.get("identity")
+    if isinstance(identity, dict):
+        identity = {
+            key: identity.get(key)
+            for key in (
+                "workflow_id",
+                "run_id",
+                "graph_revision",
+                "step_id",
+                "boundary_id",
+                "invocation_id",
+                "attempt_ordinal",
+                "attempt_id",
+            )
+        }
+
     return {
+        "identity": identity,
         "payload": payload,
-        "outcome": outcome,
-        "event_type": event_type,
-        "schema_hash": schema_hash,
+        "outcome": data.get("outcome"),
+        "event_type": data.get("event_type", ""),
+        "event_schema_version": data.get("event_schema_version"),
+        "persistence_status": data.get("persistence_status"),
+        "payload_policy_ref": data.get("payload_policy_ref"),
+        "provenance": data.get("provenance"),
+        "adapter": data.get("adapter"),
+        "versions": data.get("versions"),
+        "grant_ref": data.get("grant_ref"),
     }
 
 
@@ -2815,8 +2851,35 @@ def _compare_canonical_signatures(
     stored = _canonical_event_signature(stored_json)
     new = _canonical_event_signature(new_json)
     divergences: list[str] = []
-    for key in ("payload", "outcome", "event_type", "schema_hash"):
-        if stored.get(key) != new.get(key):
+    for key in (
+        "identity",
+        "payload",
+        "outcome",
+        "event_type",
+        "event_schema_version",
+        "persistence_status",
+        "payload_policy_ref",
+        "provenance",
+        "adapter",
+        "versions",
+        "grant_ref",
+    ):
+        if stored.get(key) == new.get(key):
+            continue
+        if key == "identity" and isinstance(stored.get(key), dict) and isinstance(new.get(key), dict):
+            for identity_key in (
+                "workflow_id",
+                "run_id",
+                "graph_revision",
+                "step_id",
+                "boundary_id",
+                "invocation_id",
+                "attempt_ordinal",
+                "attempt_id",
+            ):
+                if stored[key].get(identity_key) != new[key].get(identity_key):
+                    divergences.append(f"divergent_identity.{identity_key}")
+        else:
             divergences.append(f"divergent_{key}")
     return divergences
 
