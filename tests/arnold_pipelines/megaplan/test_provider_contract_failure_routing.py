@@ -346,6 +346,77 @@ def test_recover_provider_contract_requires_commit_bound_receipt(
     assert allowance["repair_commit"] == head
 
 
+def test_deterministic_phase_repair_can_bind_explicit_engine_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    engine = tmp_path / "engine"
+    for root, marker in ((workspace, "workspace"), (engine, "engine")):
+        root.mkdir()
+        (root / "marker.txt").write_text(marker, encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.invalid"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=root, check=True
+        )
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", f"{marker} repair"], cwd=root, check=True
+        )
+    engine_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=engine,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.runtime.process.megaplan_engine_root",
+        lambda: engine,
+    )
+    state = {
+        "latest_failure": {
+            "kind": "deterministic_phase_failure",
+            "phase": "execute",
+            "message": "engine-owned WBC phase contract failed",
+        }
+    }
+    cursor = {"phase": "execute", "retry_strategy": "repair_phase_contract"}
+    fingerprint = compact_failure_identity(state["latest_failure"])["fingerprint"]
+
+    with pytest.raises(CliError, match="target workspace HEAD"):
+        validated_deterministic_phase_repair(
+            workspace, state, cursor, engine_head, fingerprint
+        )
+
+    evidence = validated_deterministic_phase_repair(
+        workspace,
+        state,
+        cursor,
+        engine_head,
+        fingerprint,
+        "engine_runtime",
+    )
+    assert evidence is not None
+    assert evidence["repair_scope"] == "engine_runtime"
+    assert evidence["engine_head"] == engine_head
+    assert "workspace_head" not in evidence
+
+    with pytest.raises(CliError, match="target workspace HEAD"):
+        validated_deterministic_phase_repair(
+            workspace,
+            state,
+            cursor,
+            engine_head,
+            fingerprint,
+            "target_workspace",
+        )
+
+
 def test_provider_contract_repair_cannot_bypass_receipt_via_generic_resume() -> None:
     state = {
         "latest_failure": {

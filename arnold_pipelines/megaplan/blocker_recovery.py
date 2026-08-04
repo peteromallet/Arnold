@@ -71,14 +71,15 @@ def validated_deterministic_phase_repair(
     resume_cursor: dict[str, Any] | Mapping[str, Any],
     repair_commit: object,
     failure_fingerprint: object,
+    repair_scope: object = None,
 ) -> dict[str, str] | None:
     """Validate an explicit code-repair receipt for a deterministic phase failure.
 
     Internal failures can stop before ``phase_result.json`` is emitted; provider
     response-contract failures emit a typed external result.  ``recover-blocked``
     may replay either only when its dedicated repair cursor is current and the
-    caller binds recovery to the exact target workspace HEAD.  Other states keep
-    the existing fail-closed behavior.
+    caller binds recovery to the exact code surface that contains the repair.
+    Other states keep the existing fail-closed behavior.
     """
 
     latest_failure = state.get("latest_failure")
@@ -122,19 +123,40 @@ def validated_deterministic_phase_repair(
             "missing_phase_repair_commit",
             "deterministic phase recovery requires --repair-commit with the validated target HEAD",
         )
-    repair_scope = "target_workspace"
+    requested_scope = str(repair_scope or "").strip().lower()
+    # Keep the historical API default for callers that validate a target
+    # workspace repair, but never infer an engine repair from a mismatched
+    # commit.  Engine-owned deterministic repairs must opt in explicitly.
+    if not requested_scope:
+        requested_scope = (
+            "engine_runtime"
+            if failure_kind == "provider_contract_failure"
+            else "target_workspace"
+        )
+    if requested_scope not in {"target_workspace", "engine_runtime"}:
+        raise CliError(
+            "invalid_phase_repair_scope",
+            "phase repair scope must be target_workspace or engine_runtime",
+            extra={"repair_scope": requested_scope},
+        )
+    if failure_kind == "provider_contract_failure" and requested_scope != "engine_runtime":
+        raise CliError(
+            "phase_repair_scope_mismatch",
+            "provider contract repairs must bind to engine_runtime",
+            extra={"failure_kind": failure_kind, "repair_scope": requested_scope},
+        )
+    selected_scope = requested_scope
     repair_root = project_dir
-    if failure_kind == "provider_contract_failure":
-        # Provider response compilation is engine-owned.  Binding this repair
-        # to the target product HEAD would create a receipt for the wrong code
-        # surface (and made an engine-only deployment impossible to attest).
+    if selected_scope == "engine_runtime":
+        # Provider response compilation and engine phase-contract repairs are
+        # engine-owned. Binding these repairs to the target product HEAD would
+        # create a receipt for the wrong code surface.
         from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
 
-        repair_scope = "engine_runtime"
         repair_root = megaplan_engine_root()
     repair_head_label = (
         "engine runtime HEAD"
-        if repair_scope == "engine_runtime"
+        if selected_scope == "engine_runtime"
         else "target workspace HEAD"
     )
     try:
@@ -160,7 +182,7 @@ def validated_deterministic_phase_repair(
             f"{repair_head_label}",
             extra={
                 "repair_root": str(repair_root),
-                "repair_scope": repair_scope,
+                "repair_scope": selected_scope,
                 "repair_commit": commit,
                 "current_head": current_head,
             },
@@ -170,11 +192,11 @@ def validated_deterministic_phase_repair(
         "phase": cursor_phase,
         "repair_commit": commit,
         "failure_fingerprint": current_fingerprint,
-        "repair_scope": repair_scope,
+        "repair_scope": selected_scope,
         "repair_root": str(repair_root),
-        "authority": f"explicit_repair_commit_bound_to_{repair_scope}",
+        "authority": f"explicit_repair_commit_bound_to_{selected_scope}",
     }
-    if repair_scope == "engine_runtime":
+    if selected_scope == "engine_runtime":
         evidence["engine_head"] = current_head
     else:
         evidence["workspace_head"] = current_head

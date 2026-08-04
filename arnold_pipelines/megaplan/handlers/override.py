@@ -583,6 +583,7 @@ def _handle_routed_override(
             "reason": getattr(args, "reason", None),
             "repair_commit": getattr(args, "repair_commit", None),
             "failure_fingerprint": getattr(args, "failure_fingerprint", None),
+            "repair_scope": getattr(args, "repair_scope", None),
             "source": getattr(args, "source", None),
             "robustness": getattr(args, "robustness", None),
             "profile": getattr(args, "profile", None),
@@ -1300,6 +1301,7 @@ def _override_recover_blocked(
             resume_cursor,
             getattr(args, "repair_commit", None),
             getattr(args, "failure_fingerprint", None),
+            getattr(args, "repair_scope", None),
         )
         if phase_repair_evidence is None:  # defensive: predicate above is exact
             raise CliError("missing_phase_result", "deterministic repair evidence is missing")

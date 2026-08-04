@@ -1267,6 +1267,7 @@ class PlanningControlBinding:
                     resume_cursor,
                     transition.payload.get("repair_commit"),
                     transition.payload.get("failure_fingerprint"),
+                    transition.payload.get("repair_scope"),
                 )
                 if phase_repair_evidence is None:  # defensive: predicate above is exact
                     raise CliError("missing_phase_result", "deterministic repair evidence is missing")
