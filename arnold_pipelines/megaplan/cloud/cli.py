@@ -3731,20 +3731,19 @@ def _chain_start_command(
     # private launch pin.  Capture it as readonly *before* an ordinary launch
     # loads the mutable box-wide hot env: that file legitimately changes
     # resident/watchdog selectors and may still advertise an older runtime.
-    # Isolated launches do not need those box-wide controls and therefore never
-    # source the file.  Letting it replace the accepted launch pin can produce
-    # the particularly dangerous split identity where editable metadata names
-    # the new checkout while Python imports the old checkout.
+    # Isolated launches still need provider credentials from the box-wide hot
+    # env (for example ZHIPU/GLM keys).  Source it too, then reassert the
+    # refresh-verified runtime pin below so stale selectors cannot replace the
+    # accepted engine identity.
     prefix = (
         'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"; '
         'PINNED_LAUNCH_RUNTIME_REVISION="${MEGAPLAN_LAUNCH_RUNTIME_REVISION:-}"; '
         'readonly PINNED_LAUNCH_RUNTIME_SRC PINNED_LAUNCH_RUNTIME_REVISION; '
     )
-    if not require_pinned_runtime_binding:
-        prefix += (
-            f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
-            f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
-        )
+    prefix += (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
     if repair_session:
         prefix += _managed_run_env_prefix(
             repair_session,

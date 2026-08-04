@@ -322,6 +322,7 @@ def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
         "printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$MEGAPLAN_RUNTIME_SRC\" "
         "\"$MEGAPLAN_LAUNCH_RUNTIME_SRC\" \"$MEGAPLAN_LAUNCH_RUNTIME_REVISION\" "
         "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "if [ \"$HOT_ENV_SOURCED\" = 1 ] && [ -z \"$ZHIPU_API_KEY\" ]; then exit 3; fi\n"
         "case \"$*\" in\n"
         "  *arnold_pipelines.megaplan.cloud.runtime_provenance*) "
         f"exit {provenance_exit} ;;\n"
@@ -350,11 +351,10 @@ def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
                 f"export MEGAPLAN_RUNTIME_SRC={stale}",
                 f"export MEGAPLAN_LAUNCH_RUNTIME_SRC={stale}",
                 "export MEGAPLAN_LAUNCH_RUNTIME_REVISION=stale-revision",
-                f"PINNED_LAUNCH_RUNTIME_SRC={stale}",
-                "PINNED_LAUNCH_RUNTIME_REVISION=stale-revision",
                 f"export PYTHONPATH={stale}",
                 f"export PYTHONHOME={stale}",
                 "export HOT_ENV_SOURCED=1",
+                "export ZHIPU_API_KEY=sentinel",
             ]
         )
         + "\n",
@@ -403,7 +403,7 @@ def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
         assert runtime_src == str(accepted)
         assert launch_src == str(accepted)
         assert launch_revision == revision
-        assert hot_env_sourced == "unset"
+        assert hot_env_sourced == "1"
         assert pythonhome == "unset"
     assert "runtime_provenance" in observations[0]
     assert f"--expected-revision {revision}" in observations[0]
@@ -472,7 +472,7 @@ def test_isolated_chain_spec_enables_post_hot_env_runtime_gate() -> None:
     assert "isolated_chain_runtime_binding_drift" in command
     assert "--expected-root" in command
     assert "--expected-revision" in command
-    assert ". /workspace/.cloud-hot-env" not in command
+    assert ". /workspace/.cloud-hot-env" in command
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
