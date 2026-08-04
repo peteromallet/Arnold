@@ -69,6 +69,10 @@ def _runtime_b() -> dict:
     )
 
 
+def _runtime_b_relaunch() -> str:
+    return f"exec /workspace/runtime-b/bin/chain # {'b' * 40}"
+
+
 def _legacy_runtime() -> dict:
     root = "/workspace/runtime-candidates/arnold-18b279f5ef-live"
     return normalize_runtime_identity(
@@ -205,7 +209,7 @@ def test_marker_runtime_update_is_cas_guarded_and_clears_obsolete_fields(
         expected_marker_sha256=_sha(marker_path),
         expected_previous_runtime_sha256=previous["content_sha256"],
         active_runtime_identity=_runtime_b(),
-        relaunch_command="exec /workspace/runtime-b/bin/chain",
+        relaunch_command=_runtime_b_relaunch(),
         source_branch="archive/runtime-b",
         reason="verified runtime cutover",
     )
@@ -226,7 +230,7 @@ def test_marker_runtime_update_is_cas_guarded_and_clears_obsolete_fields(
             expected_marker_sha256=result["marker_before_sha256"],
             expected_previous_runtime_sha256=previous["content_sha256"],
             active_runtime_identity=_runtime_b(),
-            relaunch_command="unused",
+            relaunch_command=_runtime_b_relaunch(),
             reason="stale writer",
         )
 
@@ -252,7 +256,7 @@ def test_marker_runtime_update_failure_before_replace_leaves_original(
             expected_marker_sha256=_sha(marker_path),
             expected_previous_runtime_sha256=previous["content_sha256"],
             active_runtime_identity=_runtime_b(),
-            relaunch_command="exec runtime b",
+            relaunch_command=_runtime_b_relaunch(),
             reason="failure injection",
         )
 
@@ -260,6 +264,28 @@ def test_marker_runtime_update_failure_before_replace_leaves_original(
     assert [
         path.name for path in tmp_path.glob("custody.json.*")
     ] == ["custody.json.runtime-cutover.lock"]
+
+
+def test_marker_runtime_update_rejects_mismatched_relaunch_before_mutation(
+    tmp_path: Path,
+) -> None:
+    marker_path = tmp_path / "custody.json"
+    marker = _write_marker(marker_path)
+    before = marker_path.read_bytes()
+    previous = marker_runtime_identity(marker)
+    assert previous is not None
+
+    with pytest.raises(CliError, match="does not bind"):
+        update_marker_runtime(
+            marker_path,
+            expected_marker_sha256=_sha(marker_path),
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            active_runtime_identity=_runtime_b(),
+            relaunch_command=f"exec /workspace/runtime-a/bin/chain # {'a' * 40}",
+            reason="must reject split custody",
+        )
+
+    assert marker_path.read_bytes() == before
 
 
 def test_legacy_marker_migration_binds_exact_chain_runtime_and_immutable_evidence(
