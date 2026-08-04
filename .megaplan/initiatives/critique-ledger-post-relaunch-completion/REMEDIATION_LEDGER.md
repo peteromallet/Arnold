@@ -268,3 +268,32 @@ builder, so the stale cache must not be used as canonical command evidence.
 Repair and attest the cache writer/freshness contract separately. This record
 does not claim Finalize, Execute, the Critique epic, or this follow-up epic is
 complete.
+
+## Final cutover evidence — ordinal 11 succeeded and Execute is live (2026-08-04)
+
+This section supersedes the quota-stop operating instructions above. Finalize
+ordinal 11 completed successfully on `codex:gpt-5.6-sol:high`; no further
+Finalize retry is authorized. The resume defects encountered after that success
+were repaired at their owning boundaries: convergent held resume in
+`eac97bd5bfade4949fd3091c7953faf80ac9aa45`, bounded pre-dispatch validation
+deadlines in `93ca6b69e72ee363c96f81dd16e5738c90a202ae`, task-owned future selector
+admission/stable retry in `c9239cfe79e0087d4c99d8a8bdb24912da0c62b9`, and
+pause writer-race convergence in
+`4ed98585fda8c76a8ebfba04b856b6aa9b685a47`.
+
+The current runtime digest is
+`5572d914c38da76fa1f6f800a50ae7b1573ea451b9faf6a2b222ffe7612709d5`
+with launch-seed `content_sha256`
+`933fce9e4ad2197513df715971bc2ff04ebac58ac3fd4d0aadac750b248b90a9`.
+Resident epoch `critique-4ed-pause-live-20260804-1246`, container
+`e0740d2fcb36b36a2eb691c9a09829fb68283aa985132bcfd00508b863c64850`,
+is healthy. r5 resumed; VJ2 was explicitly deferred with evidence hash prefix
+`b87f`; Execute run `4cc63054…` is active on
+`hermes:zhipu:glm-5.2`, with WBC attempt `88c958d3…` started. This is direct
+evidence that the same epic is cooking in Execute, not a bookkeeping-only
+transition.
+
+Remaining follow-up, none of which authorizes disturbing the live run: reconcile
+the M7 projection cursor mismatch; review the broad Finalize 414-selector/900s
+baseline policy; and audit why the Hermes session provider label says
+`openrouter` while the selected route spec is `zhipu`.

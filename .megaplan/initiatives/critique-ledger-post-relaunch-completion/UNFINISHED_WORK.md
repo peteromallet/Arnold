@@ -1428,3 +1428,32 @@ not execute them.
 
 No item above marks Finalize, Execute, the Critique epic, or this follow-up epic
 complete. The epic YAML and its task count remain unchanged.
+
+## Live Execute checkpoint — supersedes the quota-stop TODO (2026-08-04)
+
+- [x] Complete Finalize ordinal 11 with `codex:gpt-5.6-sol:high` and preserve
+  its terminal success evidence.
+- [x] Repair and deploy convergent resume (`eac97bd5bf`), bounded validation
+  deadlines (`93ca6b69e7`), future-selector/stable-retry handling
+  (`c9239cfe79`), and pause writer-race convergence (`4ed98585fd`).
+- [x] Attest runtime
+  `5572d914c38da76fa1f6f800a50ae7b1573ea451b9faf6a2b222ffe7612709d5`,
+  launch seed
+  `933fce9e4ad2197513df715971bc2ff04ebac58ac3fd4d0aadac750b248b90a9`,
+  and healthy resident `critique-4ed-pause-live-20260804-1246` /
+  `e0740d2fcb36b36a2eb691c9a09829fb68283aa985132bcfd00508b863c64850`.
+- [x] Resume the same r5 and prove real GLM Execute: VJ2 deferred evidence
+  hash prefix `b87f`; active Execute run `4cc63054…`; selected model route
+  `hermes:zhipu:glm-5.2`; WBC attempt `88c958d3…` started.
+- [ ] **HARD — reconcile the M7 projection cursor mismatch** without resetting
+  or rewriting the live Execute occurrence.
+- [ ] Review and narrow or explicitly justify the broad Finalize
+  414-selector/900s baseline policy.
+- [ ] Audit the Hermes session metadata that labels the provider `openrouter`
+  despite the selected `zhipu` route spec. Treat this as an observability/
+  attribution investigation unless receipt evidence proves routing drift; do
+  not interrupt the live run merely to normalize the label.
+
+The earlier quota-replenishment and ordinal-11 launch instructions are closed
+historical procedure. The Critique epic is now live in Execute; the follow-up
+epic remains open for the three items above and the existing durability work.

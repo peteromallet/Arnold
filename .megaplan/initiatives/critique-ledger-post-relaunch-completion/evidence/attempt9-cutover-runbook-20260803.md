@@ -656,3 +656,21 @@ work; it is not the `/whats-cooking` source, which uses a fresh builder. Repair
 and attest cache generation/freshness separately so no other consumer can treat
 stale cache as canonical. Nothing in this section claims ordinal 11, Execute,
 the Critique epic, or the follow-up epic is complete.
+
+## Final live-run addendum — 2026-08-04
+
+The sole ordinal-11 procedure above completed successfully with Sol high and is
+now closed. Subsequent resume-path fixes were deployed in `eac97bd5bf`,
+`93ca6b69e7`, `c9239cfe79`, and `4ed98585fd`. Current launch authority is
+runtime
+`5572d914c38da76fa1f6f800a50ae7b1573ea451b9faf6a2b222ffe7612709d5`,
+seed `933fce9e4ad2197513df715971bc2ff04ebac58ac3fd4d0aadac750b248b90a9`,
+and healthy resident `critique-4ed-pause-live-20260804-1246` /
+`e0740d2fcb36b36a2eb691c9a09829fb68283aa985132bcfd00508b863c64850`.
+
+r5 has resumed. VJ2 is durably deferred (evidence hash prefix `b87f`), and
+Execute run `4cc63054…` is active through `hermes:zhipu:glm-5.2`; WBC attempt
+`88c958d3…` is `STARTED`. Preserve this live occurrence. Do not replay
+Finalize or restart Execute to investigate the remaining M7 cursor mismatch,
+the broad Finalize 414-selector/900s baseline, or the Hermes `openrouter`
+provider label versus selected `zhipu` route-spec discrepancy.
