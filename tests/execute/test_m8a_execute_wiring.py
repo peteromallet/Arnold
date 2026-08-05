@@ -667,6 +667,206 @@ def test_batch_validation_rejects_missing_undeclared_selector() -> None:
         shutil.rmtree(project_dir, ignore_errors=True)
 
 
+def _deferred_selector_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
+    selector = "tests/new_feature/test_entry_gate.py"
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "pending",
+                "write_set": {"paths": [selector], "complete": True},
+            }
+        ],
+        "validation_jobs": [
+            {
+                "id": "VJ1",
+                "kind": "narrow_recheck",
+                "command": f"pytest {selector}",
+                "selectors": [selector],
+                "max_seconds": 60,
+                "task_id": "T1",
+                "writes_files": False,
+                "mutates": False,
+            }
+        ],
+    }
+    return plan_dir, project_dir, finalize_data
+
+
+def _accepted_task_payload(
+    *,
+    selector: str,
+    files_changed: list[str] | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    from arnold_pipelines.megaplan.authority.batch_scope import RESULT_ENVELOPES_KEY
+    from arnold_pipelines.megaplan.authority.binding import (
+        DispatchIdentity,
+        TASK_RESULT_CAPABILITY,
+    )
+    from arnold_pipelines.megaplan.execute.batch import _task_result_envelope
+
+    entry: dict[str, object] = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "created the test output",
+        "files_changed": list(files_changed if files_changed is not None else [selector]),
+        "commands_run": ["pytest"],
+    }
+    identity = DispatchIdentity.create(
+        dispatch_id="dispatch-vj1",
+        run_id="run-vj1",
+        run_revision="revision-vj1",
+        coordinator_attempt_id="coordinator-vj1",
+        fence_token=1,
+        subject_ids=("T1",),
+        capabilities=(TASK_RESULT_CAPABILITY,),
+        prerequisite_digest="prereq-vj1",
+        worker_id="worker-vj1",
+    )
+    envelope = _task_result_envelope(
+        identity=identity,
+        entry=entry,
+        ordinal=1,
+        source="test",
+    )
+    assert envelope is not None
+    entry["authority_validation"] = {
+        "outcome": "accepted",
+        "envelope_digest": envelope.digest(),
+    }
+    payload: dict[str, object] = {
+        "task_updates": [entry],
+        RESULT_ENVELOPES_KEY: [envelope.to_dict()],
+    }
+    return payload, entry
+
+
+def test_deferred_selector_reruns_after_accepted_result_envelope(tmp_path: Path) -> None:
+    """A declared future selector is revalidated after its accepted output lands."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+    from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    assert deferred[0]["status"] == "deferred_task_output"
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    payload, _entry = _accepted_task_payload(selector=selector)
+    fake_result = SuiteRunResult(
+        run_id="rerun-vj1",
+        phase="narrow_recheck",
+        command=f"pytest {selector}",
+        duration=0.1,
+        collected=1,
+        collected_ids=["test_gate"],
+        failures=[],
+        passes=["test_gate"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=project_dir / "raw.log",
+        code_hash="sha256:rerun",
+        collections_parse_ok=True,
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake_result,
+    ) as mock_run:
+        rerun = _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload=payload,
+            state=state,
+        )
+    mock_run.assert_called_once()
+    assert rerun[0]["status"] == "passed"
+
+
+def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Path) -> None:
+    """A worker row without durable accepted authority cannot release deferral."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    with pytest.raises(CliError, match="accepted_task_result_envelope_missing"):
+        _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload={"task_updates": []},
+            state=state,
+        )
+
+
+def test_deferred_selector_blocks_empty_accepted_result_files(tmp_path: Path) -> None:
+    """An accepted envelope with no claimed files cannot release deferral."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    state = _make_state(project_dir)
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=state,
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    payload, _entry = _accepted_task_payload(selector=selector, files_changed=[])
+    with pytest.raises(
+        CliError,
+        match="accepted_task_result_files_changed_missing_or_empty",
+    ):
+        _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload=payload,
+            state=state,
+        )
+
+
 def test_execute_validation_deadlines_use_absolute_monotonic_time() -> None:
     """Suite runner deadlines are absolute, never raw relative timeout values."""
     import inspect

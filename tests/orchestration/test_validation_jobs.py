@@ -303,6 +303,37 @@ class TestMalformedJobRejection:
         assert "AMB1" not in narrow_ids, "Ambiguous selectors must not produce narrow_recheck jobs"
 
 
+class TestSelectorLifecycleOwnership:
+    """Selector existence never widens a task's declared write set."""
+
+    def test_declared_outputs_read_only_from_write_set(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            declared_task_output_paths,
+        )
+
+        task = {
+            "write_set": {"paths": ["src/owned.py"]},
+            "files_changed": ["tests/future.py"],
+            "commands_run": ["touch tests/future.py"],
+        }
+        assert declared_task_output_paths(task) == ("src/owned.py",)
+
+    def test_path_traversal_and_absolute_selectors_are_invalid(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            SELECTOR_INVALID,
+            classify_selector_lifecycle,
+        )
+
+        task = {"write_set": {"paths": ["../escape.py"]}}
+        for selector in ("../escape.py", "/tmp/escape.py", "C:/escape.py"):
+            lifecycle = classify_selector_lifecycle(
+                project_dir=Path("/tmp/project"),
+                job={"selectors": [selector]},
+                task=task,
+            )
+            assert lifecycle.status == SELECTOR_INVALID
+
+
 # ---------------------------------------------------------------------------
 # Content-addressed evidence — deterministic and durable
 # ---------------------------------------------------------------------------

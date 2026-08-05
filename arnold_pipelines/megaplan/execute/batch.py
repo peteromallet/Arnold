@@ -135,6 +135,13 @@ from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, De
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     effective_execute_completed_task_ids,
 )
+from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+    SELECTOR_DEFERRED,
+    SELECTOR_INVALID,
+    classify_selector_lifecycle,
+    deferred_selector_evidence,
+    normalize_selector_path,
+)
 from arnold_pipelines.megaplan.orchestration.plan_contracts import (
     pre_existing_task_ids_from_contract,
 )
@@ -2864,7 +2871,7 @@ def _run_and_merge_batch(
     # Harness validation is an execution admission gate.  Let its typed
     # failures propagate so productive dispatch cannot continue after a
     # malformed job or an unexpected deterministic-suite result.
-    _run_batch_validation_jobs(
+    _pre_dispatch_validation_results = _run_batch_validation_jobs(
         plan_dir=plan_dir,
         project_dir=project_dir,
         finalize_data=finalize_data,
@@ -3167,6 +3174,24 @@ def _run_and_merge_batch(
             source_path=batch_artifact_path,
         )
     )
+    # A narrow validation whose selector was a declared task output is not a
+    # terminal pass.  Re-check it only after the task's *accepted* result
+    # envelope proves that the task created the exact path.  This keeps the
+    # deferred state from becoming a silent bypass while also preventing a
+    # pre-dispatch worker from being gated by its own future output.
+    _deferred_validation_results = _rerun_deferred_selector_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=batch_task_ids,
+        pre_dispatch_results=_pre_dispatch_validation_results,
+        payload=payload,
+        state=state,
+    )
+    if _deferred_validation_results:
+        payload.setdefault("validation_results", []).extend(
+            _deferred_validation_results
+        )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
     if not is_prose_mode(state):
         attribution_result = _auto_attribute_unclaimed_paths(
@@ -3446,38 +3471,25 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             )
         if kind == "narrow_recheck":
             task_id = str(job.get("task_id") or "")
-            task = next(
-                (
-                    item
-                    for item in finalize_data.get("tasks", [])
-                    if isinstance(item, dict) and item.get("id") == task_id
-                ),
-                None,
-            )
-            write_set = task.get("write_set") if isinstance(task, dict) else None
-            declared_outputs = {
-                str(path).removeprefix("./")
-                for path in (
-                    write_set.get("paths", [])
-                    if isinstance(write_set, dict)
-                    else []
+            # Older fixture payloads omitted ``tasks`` entirely.  Preserve
+            # their compatibility path; canonical Finalize/Execute payloads
+            # always carry the task contract and therefore use the shared
+            # lifecycle classifier below.
+            if "tasks" in finalize_data:
+                task = next(
+                    (
+                        item
+                        for item in finalize_data.get("tasks", [])
+                        if isinstance(item, dict) and item.get("id") == task_id
+                    ),
+                    None,
                 )
-                if isinstance(path, str) and path.strip()
-            }
-            selectors = job.get("selectors") if isinstance(task, dict) else []
-            selector_paths = [
-                selector.split("::", 1)[0].removeprefix("./")
-                for selector in (selectors if isinstance(selectors, list) else [])
-                if isinstance(selector, str) and selector.strip()
-            ]
-            missing_selectors = [
-                selector
-                for selector in selector_paths
-                if not (Path(project_dir) / selector).exists()
-            ]
-            if missing_selectors:
-                undeclared = sorted(set(missing_selectors) - declared_outputs)
-                if undeclared:
+                lifecycle = classify_selector_lifecycle(
+                    project_dir=project_dir,
+                    job=job,
+                    task=task,
+                )
+                if lifecycle.status == SELECTOR_INVALID:
                     raise CliError(
                         "invalid_validation_job",
                         f"validation job {job_id} references missing selectors "
@@ -3486,40 +3498,29 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         extra={
                             "job_id": job_id,
                             "invalid_fields": ["selectors"],
-                            "missing_selectors": sorted(set(missing_selectors)),
-                            "undeclared_missing_selectors": undeclared,
+                            "missing_selectors": list(lifecycle.missing_selectors),
+                            "undeclared_missing_selectors": list(
+                                lifecycle.undeclared_missing_selectors
+                            ),
                             "validation_job_kind": kind,
+                            "reason": lifecycle.reason,
                         },
                     )
-                evidence = {
-                    "job_id": job_id,
-                    "kind": kind,
-                    "status": "deferred_task_output",
-                    "exit_code": None,
-                    "task_id": task_id,
-                    "missing_selectors": sorted(set(missing_selectors)),
-                    "reason": "selector_is_declared_task_output",
-                }
-                canonical = _json.dumps(
-                    evidence, sort_keys=True, separators=(",", ":")
-                )
-                evidence["evidence_hash"] = (
-                    "sha256:"
-                    + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-                )
-                artifact_path = verification_dir / f"validation_{job_id}_deferred.json"
-                try:
-                    atomic_write_json(artifact_path, evidence)
-                except Exception:
-                    pass
-                evidence_results.append(evidence)
-                log.info(
-                    "validation job %s deferred until task %s creates %s",
-                    job_id,
-                    task_id,
-                    sorted(set(missing_selectors)),
-                )
-                continue
+                if lifecycle.status == SELECTOR_DEFERRED:
+                    evidence = deferred_selector_evidence(job, lifecycle)
+                    artifact_path = verification_dir / f"validation_{job_id}_deferred.json"
+                    try:
+                        atomic_write_json(artifact_path, evidence)
+                    except Exception:
+                        pass
+                    evidence_results.append(evidence)
+                    log.info(
+                        "validation job %s deferred until task %s creates %s",
+                        job_id,
+                        task_id,
+                        sorted(set(lifecycle.missing_selectors)),
+                    )
+                    continue
         config = {
             "project_dir": str(project_dir),
             "plan_dir": str(plan_dir),
@@ -3622,6 +3623,237 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 },
             )
     return evidence_results
+
+
+def _accepted_task_result_envelopes(
+    payload: Mapping[str, Any],
+) -> dict[str, tuple[Mapping[str, Any], ResultEnvelope]]:
+    """Return task rows paired with their grant-aware accepted envelopes.
+
+    A syntactically valid envelope is not enough to release a deferred
+    selector.  The merge validator records ``authority_validation.outcome``
+    on each row; only the exact ``accepted`` outcome is eligible here.  This
+    deliberately excludes legacy rows, quarantined envelopes, and blocked or
+    off-scope results.
+    """
+
+    raw_envelopes = payload.get(RESULT_ENVELOPES_KEY)
+    if not isinstance(raw_envelopes, list):
+        return {}
+    by_subject: dict[str, list[ResultEnvelope]] = {}
+    for raw in raw_envelopes:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            envelope = ResultEnvelope.from_dict(raw)
+        except (ContractError, TypeError, ValueError, KeyError):
+            continue
+        if not isinstance(envelope.claim, TaskClaim):
+            continue
+        by_subject.setdefault(envelope.subject_id, []).append(envelope)
+
+    rows = payload.get("task_updates")
+    if not isinstance(rows, list):
+        return {}
+    accepted: dict[str, tuple[Mapping[str, Any], ResultEnvelope]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        task_id = row.get("task_id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            continue
+        validation = row.get("authority_validation")
+        if not isinstance(validation, Mapping) or validation.get("outcome") != "accepted":
+            continue
+        candidates = list(by_subject.get(task_id, ()))
+        expected_digest = validation.get("envelope_digest")
+        if isinstance(expected_digest, str) and expected_digest:
+            candidates = [
+                envelope
+                for envelope in candidates
+                if envelope.digest() == expected_digest
+            ]
+        if len(candidates) != 1:
+            # Ambiguous or missing authority cannot prove the task-owned
+            # output; the caller turns this into a typed deferred block.
+            continue
+        accepted[task_id] = (row, candidates[0])
+    return accepted
+
+
+def _raise_deferred_selector_result_block(
+    *,
+    job_id: str,
+    task_id: str,
+    reason: str,
+    extra: Mapping[str, Any] | None = None,
+) -> None:
+    details = {
+        "job_id": job_id,
+        "task_id": task_id,
+        "validation_job_kind": "narrow_recheck",
+        "reason": reason,
+    }
+    if isinstance(extra, Mapping):
+        details.update(dict(extra))
+    raise CliError(
+        "deferred_validation_result_missing",
+        f"deferred validation job {job_id} cannot be revalidated: {reason}",
+        valid_next=["execute", "revise"],
+        extra=details,
+    )
+
+
+def _rerun_deferred_selector_validation_jobs(
+    *,
+    plan_dir: Path,
+    project_dir: Path,
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+    pre_dispatch_results: Any,
+    payload: Mapping[str, Any],
+    state: PlanState | None = None,
+) -> list[dict[str, Any]]:
+    """Re-run deferred narrow jobs after an accepted task result envelope.
+
+    Deferred validation is a two-phase protocol: Execute may defer a missing
+    selector only when ``write_set.paths`` declares ownership; after worker
+    merge, the result claim must be accepted and explicitly report the exact
+    selector path in ``files_changed``.  That claim is evidence, not a write
+    set mutation, and therefore cannot widen task ownership.
+    """
+
+    if not isinstance(pre_dispatch_results, list):
+        return []
+    deferred = [
+        item
+        for item in pre_dispatch_results
+        if isinstance(item, Mapping) and item.get("status") == SELECTOR_DEFERRED
+    ]
+    if not deferred:
+        return []
+
+    jobs_by_id = {
+        str(job.get("id")): job
+        for job in finalize_data.get("validation_jobs", [])
+        if isinstance(job, Mapping) and isinstance(job.get("id"), str)
+    }
+    tasks_by_id = {
+        str(task.get("id")): task
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, Mapping) and isinstance(task.get("id"), str)
+    }
+    accepted = _accepted_task_result_envelopes(payload)
+    rerun_results: list[dict[str, Any]] = []
+    batch_id_set = set(batch_task_ids or [])
+    for deferred_record in deferred:
+        job_id = str(deferred_record.get("job_id") or "vj")
+        task_id = str(deferred_record.get("task_id") or "")
+        if task_id not in batch_id_set:
+            # The pre-dispatch helper only emits deferred jobs for this batch,
+            # but retain the guard if a caller supplies a mixed evidence list.
+            continue
+        job = jobs_by_id.get(job_id)
+        task = tasks_by_id.get(task_id)
+        accepted_row_and_envelope = accepted.get(task_id)
+        if job is None or task is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_or_validation_job_missing_from_finalize_contract",
+            )
+        if accepted_row_and_envelope is None:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_envelope_missing",
+            )
+        _row, envelope = accepted_row_and_envelope
+        claim_payload = envelope.claim.payload
+        if not isinstance(claim_payload, Mapping):
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_payload_missing",
+            )
+        status = claim_payload.get("status")
+        if status not in {"done", "completed"}:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_not_completed",
+                extra={"status": status},
+            )
+        raw_files_changed = claim_payload.get("files_changed")
+        if not isinstance(raw_files_changed, (list, tuple)) or not raw_files_changed:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_files_changed_missing_or_empty",
+            )
+        result_paths = {
+            path
+            for raw_path in raw_files_changed
+            if (path := normalize_selector_path(raw_path)) is not None
+        }
+        missing_from_result = sorted(
+            set(
+                item
+                for item in deferred_record.get("missing_selectors", [])
+                if isinstance(item, str)
+            )
+            - result_paths
+        )
+        if missing_from_result:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="accepted_task_result_does_not_claim_selector_output",
+                extra={"missing_result_paths": missing_from_result},
+            )
+
+        lifecycle = classify_selector_lifecycle(
+            project_dir=project_dir,
+            job=job,
+            task=task,
+        )
+        if lifecycle.status == SELECTOR_INVALID:
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} references missing selectors "
+                "that are not declared task outputs",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": ["selectors"],
+                    "missing_selectors": list(lifecycle.missing_selectors),
+                    "undeclared_missing_selectors": list(
+                        lifecycle.undeclared_missing_selectors
+                    ),
+                    "validation_job_kind": "narrow_recheck",
+                },
+            )
+        if lifecycle.status == SELECTOR_DEFERRED:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_result_did_not_create_selector_output",
+                extra={"missing_selectors": list(lifecycle.missing_selectors)},
+            )
+
+        rerun_data = dict(finalize_data)
+        rerun_data["validation_jobs"] = [dict(job)]
+        rerun_results.extend(
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=rerun_data,
+                batch_task_ids=[task_id],
+                is_final_batch=False,
+                state=state,
+            )
+        )
+    return rerun_results
 
 
 def handle_execute_one_batch(
