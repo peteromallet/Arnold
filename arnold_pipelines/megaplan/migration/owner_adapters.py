@@ -4,10 +4,13 @@ The coordinator is intentionally storage-neutral, but a cloud launch must
 bind it to the *actual* owners.  This module provides those small bindings:
 
 * :class:`RunAuthorityJournalOwner` delegates to the canonical
-  ``RunAuthorityJournal`` supplied by the runtime.  C116's checkout contains
-  the Run Authority contracts and reducer but no journal writer, so a missing
-  journal is an explicit :class:`OwnerUnavailable` rather than permission to
-  manufacture a child from r5 projections.
+  ``RunAuthorityJournal`` supplied by the runtime.  It accepts either the
+  high-level migration facade or the existing one-record
+  ``read_view/compare_and_append`` journal, but the latter must additionally
+  expose a global migration-key lookup and a separate fresh-child locator
+  before crash-safe migration is enabled.  A missing seam is an explicit
+  :class:`OwnerUnavailable` rather than permission to manufacture a child from
+  r5 projections.
 * :class:`CustodyLeaseStoreOwner` delegates lifecycle writes to
   :class:`CustodyLeaseStore`.
 * :class:`AttemptLedgerWbcOwner` delegates GLEK reservation/read to the
@@ -50,6 +53,7 @@ from arnold_pipelines.megaplan.migration.occurrence_child_migration import (
     WbcReservation,
 )
 from arnold_pipelines.run_authority.contracts import CASExpectation, QuarantineRecord
+from arnold_pipelines.run_authority.reducer import reduce_run_authority
 
 
 @runtime_checkable
@@ -86,6 +90,27 @@ class RunAuthorityJournal(Protocol):
     ) -> ChildAuthority: ...
 
 
+@runtime_checkable
+class FreshChildRunLocator(Protocol):
+    """Canonical locator for a *new* child authority bundle.
+
+    The locator owns child-run creation and may itself use the RA journal's
+    append/CAS API.  It must persist the complete contract bundle and make
+    lookup idempotent by ``migration_idempotency_key``.  It is intentionally
+    separate from the legacy-parent migration path.
+    """
+
+    def allocate_child_authority(
+        self,
+        *,
+        identity: ChildIdentity,
+        parent: ParentEvidence,
+        migration_idempotency_key: str,
+    ) -> ChildAuthority: ...
+
+    def read_child_authority(self, migration_idempotency_key: str) -> ChildAuthority | None: ...
+
+
 def _require_method(owner: Any, name: str) -> Any:
     method = getattr(owner, name, None)
     if not callable(method):
@@ -101,6 +126,7 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
     """Bind coordinator calls to one canonical runtime RA journal."""
 
     journal: RunAuthorityJournal | None
+    fresh_child_locator: FreshChildRunLocator | None = None
 
     def __post_init__(self) -> None:
         if self.journal is None:
@@ -109,24 +135,67 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
                 "old r5 owner records are absent, so a fresh child must not "
                 "pretend to migrate the stalled occurrence"
             )
-        required = (
+        high_level_required = (
             "snapshot",
             "migration_receipt",
             "compare_and_swap_parent",
             "child_authority",
             "append_child_authority",
         )
-        missing = [name for name in required if not callable(getattr(self.journal, name, None))]
-        if missing:
+        low_level_required = ("read_view", "compare_and_append")
+        high_level = all(callable(getattr(self.journal, name, None)) for name in high_level_required)
+        low_level = all(callable(getattr(self.journal, name, None)) for name in low_level_required)
+        if not high_level and not low_level:
+            missing = [name for name in low_level_required if not callable(getattr(self.journal, name, None))]
             raise OwnerUnavailable(
                 "canonical RunAuthorityJournal is incomplete; missing "
                 + ", ".join(missing)
             )
+        if low_level and not high_level and not callable(
+            getattr(self.journal, "find_by_idempotency_key", None)
+        ):
+            raise OwnerUnavailable(
+                "RunAuthorityJournal exposes only one-record read_view/compare_and_append; "
+                "a global migration-key lookup is required before crash-safe migration"
+            )
+
+    @property
+    def _high_level(self) -> bool:
+        assert self.journal is not None
+        return all(
+            callable(getattr(self.journal, name, None))
+            for name in (
+                "snapshot",
+                "migration_receipt",
+                "compare_and_swap_parent",
+                "child_authority",
+                "append_child_authority",
+            )
+        )
 
     def read_parent(self, run_id: str, run_revision: str) -> ParentAuthoritySnapshot:
         assert self.journal is not None
+        if not self._high_level:
+            try:
+                raw = self.journal.read_view(run_id, run_revision)  # type: ignore[attr-defined]
+                view = reduce_run_authority(
+                    tuple(raw.records),
+                    run_id=run_id,
+                    run_revision=run_revision,
+                    journal_cursor=raw.cursor,
+                )
+                if view.journal_cursor != raw.cursor:
+                    raise OwnerUnavailable(
+                        "RunAuthorityJournal projection cursor differs from owner cursor"
+                    )
+                return ParentAuthoritySnapshot(view)
+            except (FileNotFoundError, KeyError) as exc:
+                raise OwnerUnavailable(
+                    "canonical RunAuthorityJournal has no authoritative parent "
+                    "records; refusing to migrate an r5 projection"
+                ) from exc
         try:
-            return self.journal.snapshot(run_id, run_revision)
+            return self.journal.snapshot(run_id, run_revision)  # type: ignore[attr-defined]
         except (FileNotFoundError, KeyError) as exc:
             raise OwnerUnavailable(
                 "canonical RunAuthorityJournal has no authoritative parent "
@@ -135,6 +204,19 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
 
     def read_parent_commit(self, migration_idempotency_key: str) -> ParentCommitReceipt | None:
         assert self.journal is not None
+        if not self._high_level:
+            result = self.journal.find_by_idempotency_key(  # type: ignore[attr-defined]
+                f"occurrence-parent:{migration_idempotency_key}"
+            )
+            if result is None:
+                return None
+            if not isinstance(result.record, QuarantineRecord):
+                raise MigrationError("migration idempotency key is bound to a non-quarantine record")
+            return ParentCommitReceipt(
+                migration_idempotency_key=migration_idempotency_key,
+                parent_cursor=result.cursor,
+                quarantine=result.record,
+            )
         return self.journal.migration_receipt(migration_idempotency_key)
 
     def commit_parent(
@@ -145,6 +227,25 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
         quarantine: QuarantineRecord,
     ) -> ParentCommitReceipt:
         assert self.journal is not None
+        if not self._high_level:
+            try:
+                result = self.journal.compare_and_append(  # type: ignore[attr-defined]
+                    expected.run_id,
+                    expected.expected_revision,
+                    expected.expected_cursor,
+                    quarantine,
+                    idempotency_key=f"occurrence-parent:{migration_idempotency_key}",
+                )
+            except (FileNotFoundError, KeyError) as exc:
+                raise OwnerUnavailable(
+                    "canonical RunAuthorityJournal cannot append a parent "
+                    "quarantine because authoritative parent records are absent"
+                ) from exc
+            return ParentCommitReceipt(
+                migration_idempotency_key=migration_idempotency_key,
+                parent_cursor=result.cursor,
+                quarantine=result.record,
+            )
         return self.journal.compare_and_swap_parent(
             expected=expected,
             migration_idempotency_key=migration_idempotency_key,
@@ -159,6 +260,17 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
         migration_idempotency_key: str,
     ) -> ChildAuthority:
         assert self.journal is not None
+        if not self._high_level:
+            if self.fresh_child_locator is None:
+                raise OwnerUnavailable(
+                    "fresh child Run Authority locator is not configured; "
+                    "the generic one-record journal cannot safely mint a bundle"
+                )
+            return self.fresh_child_locator.allocate_child_authority(
+                identity=identity,
+                parent=parent,
+                migration_idempotency_key=migration_idempotency_key,
+            )
         try:
             return self.journal.append_child_authority(
                 identity=identity,
@@ -173,6 +285,13 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
 
     def read_child(self, migration_idempotency_key: str) -> ChildAuthority | None:
         assert self.journal is not None
+        if not self._high_level:
+            if self.fresh_child_locator is None:
+                raise OwnerUnavailable(
+                    "fresh child Run Authority locator is not configured; "
+                    "the generic one-record journal cannot safely locate a bundle"
+                )
+            return self.fresh_child_locator.read_child_authority(migration_idempotency_key)
         return self.journal.child_authority(migration_idempotency_key)
 
 

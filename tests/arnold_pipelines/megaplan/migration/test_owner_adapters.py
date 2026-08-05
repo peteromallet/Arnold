@@ -49,6 +49,36 @@ def test_incomplete_run_authority_journal_fails_closed() -> None:
         RunAuthorityJournalOwner(Incomplete())
 
 
+def test_generic_one_record_journal_requires_global_lookup_for_replay() -> None:
+    class OneRecordOnly:
+        def read_view(self, *_args):
+            return SimpleNamespace(records=(), cursor=0)
+
+        def compare_and_append(self, *_args, **_kwargs):
+            raise AssertionError("must not append before replay lookup exists")
+
+    with pytest.raises(OwnerUnavailable, match="global migration-key lookup"):
+        RunAuthorityJournalOwner(OneRecordOnly())
+
+
+def test_low_level_journal_binds_read_side_but_needs_fresh_child_locator() -> None:
+    class OneRecordWithLookup:
+        def read_view(self, *_args):
+            return SimpleNamespace(records=(), cursor=0)
+
+        def find_by_idempotency_key(self, *_args):
+            return None
+
+        def compare_and_append(self, *_args, **_kwargs):
+            raise AssertionError("test exercises read binding only")
+
+    owner = RunAuthorityJournalOwner(OneRecordWithLookup())
+    snapshot = owner.read_parent("run", "rev")
+    assert snapshot.journal_cursor == 0
+    with pytest.raises(OwnerUnavailable, match="fresh child Run Authority locator"):
+        owner.read_child("migration-key")
+
+
 def test_wbc_adapter_uses_one_canonical_attempt_ledger(tmp_path) -> None:
     store = SqliteAttemptLedgerStore(tmp_path / "attempt-ledger.sqlite3")
     owner = AttemptLedgerWbcOwner(store)

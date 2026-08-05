@@ -37,6 +37,7 @@ from .occurrence_child_migration import (
 from .owner_adapters import (
     AttemptLedgerWbcOwner,
     CustodyLeaseStoreOwner,
+    FreshChildRunLocator,
     RunAuthorityJournal,
     RunAuthorityJournalOwner,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "WbcReservation",
     "AttemptLedgerWbcOwner",
     "CustodyLeaseStoreOwner",
+    "FreshChildRunLocator",
     "RunAuthorityJournal",
     "RunAuthorityJournalOwner",
 ]
