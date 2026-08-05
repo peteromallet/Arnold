@@ -85,6 +85,35 @@ class OwnerUnavailable(MigrationError):
     """A required canonical owner adapter was not supplied."""
 
 
+@dataclass(frozen=True)
+class IndependentChildDisposition:
+    """Explicit non-migrating route when a legacy parent has no RA owner.
+
+    This is a plan, not a success receipt and not an authority record.  A
+    canonical fresh-run locator may use it after human/policy approval; the
+    parent occurrence remains untouched and no lineage claim is made.
+    """
+
+    child: "ChildIdentity"
+    selector: "ChildSelector"
+    parent_occurrence_digest: str
+    reason: str
+    action: str = "start_fresh_independent_child"
+    requires_human_approval: bool = True
+
+
+class IndependentChildRequired(OwnerUnavailable):
+    """The caller must start a fresh child; the legacy parent is not migratable."""
+
+    def __init__(self, disposition: IndependentChildDisposition) -> None:
+        self.disposition = disposition
+        super().__init__(
+            "parent Run Authority owner records are absent; start a fresh "
+            "independent child through the canonical locator instead of "
+            "pretending to migrate the old r5 occurrence"
+        )
+
+
 class ProviderEffectForbidden(MigrationError):
     """Provider dispatch is outside this coordinator by design."""
 
@@ -512,10 +541,7 @@ class MigrationCoordinator:
         # from the projection.  The operator must first restore/import the
         # real journal and then retry this migration.
         if not (view.fences and view.grants and view.attempts and view.decisions):
-            raise OwnerUnavailable(
-                "parent Run Authority owner records are absent; old r5 "
-                "projections cannot be migrated into a fresh child"
-            )
+            raise IndependentChildRequired(self.independent_child_disposition(parent, selector))
         current = evaluate_current_source(parent.authority.view, parent.source_request)
         if not current.status.is_satisfied:
             raise SameOccurrenceQuarantined(current.reason)
@@ -534,6 +560,23 @@ class MigrationCoordinator:
             effect_identity=effect_identity,
             quarantine=quarantine,
             migration_idempotency_key=child.migration_idempotency_key,
+        )
+
+    def independent_child_disposition(
+        self,
+        parent: ParentEvidence,
+        selector: ChildSelector,
+    ) -> IndependentChildDisposition:
+        """Return the safe fresh-run route without mutating any owner."""
+        child, _effect_identity = _make_child_identity(parent, selector)
+        return IndependentChildDisposition(
+            child=child,
+            selector=selector,
+            parent_occurrence_digest=parent.occurrence.occurrence_digest,
+            reason=(
+                "legacy parent has status/projection evidence but no durable "
+                "Run Authority fence/grant/attempt/decision records"
+            ),
         )
 
     def _step(self, name: str) -> None:
@@ -806,6 +849,8 @@ __all__ = [
     "MigrationIndeterminate",
     "MigrationReceipt",
     "MigrationStatus",
+    "IndependentChildDisposition",
+    "IndependentChildRequired",
     "OwnerUnavailable",
     "ParentAuthoritySnapshot",
     "ParentCommitReceipt",

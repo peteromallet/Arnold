@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.migration import (
     ChildSelector,
     CustodyLeaseStoreOwner,
     MigrationCoordinator,
+    IndependentChildRequired,
     OwnerUnavailable,
     RunAuthorityJournalOwner,
     WbcReservation,
@@ -138,7 +139,16 @@ def test_prepare_rejects_r5_projection_without_authority_records() -> None:
         diagnostics=(),
         view_hash="view",
     )
-    parent = SimpleNamespace(authority=SimpleNamespace(view=empty_view))
+    parent = SimpleNamespace(
+        occurrence=SimpleNamespace(
+            occurrence_digest="sha256:legacy-parent",
+            run_id="legacy-run",
+            target=SimpleNamespace(environment="env"),
+        ),
+        authority=SimpleNamespace(view=empty_view),
+    )
     coordinator = MigrationCoordinator(run_authority=None, wbc=None, custody=None)  # type: ignore[arg-type]
-    with pytest.raises(OwnerUnavailable, match="old r5 projections"):
+    with pytest.raises(IndependentChildRequired) as exc_info:
         coordinator.prepare(parent, ChildSelector("child-rev", {"task": "repair"}))
+    assert exc_info.value.disposition.action == "start_fresh_independent_child"
+    assert exc_info.value.disposition.requires_human_approval is True
