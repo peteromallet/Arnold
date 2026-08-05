@@ -1920,6 +1920,10 @@ def set_active_step(
         "agent": agent,
         "mode": mode,
         "run_id": resolved_run_id,
+        # Keep the invocation at the active-occurrence root as well as in the
+        # legacy orphan fence.  Phase-result cleanup and repair provenance
+        # need one unambiguous occurrence binding after a worker exits.
+        "invocation_id": invocation_id,
         "worker_pid": os.getpid(),
         "started_at": started_at,
         "attempt": attempt,

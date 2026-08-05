@@ -131,6 +131,7 @@ class ActivePhase(TypedDict, total=False):
     mode: str
     model: str
     run_id: str
+    invocation_id: str
     session_id: str
     started_at: str
     attempt: int
