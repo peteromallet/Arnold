@@ -1,0 +1,66 @@
+base_branch: fix/critique-ledger-vj24-relaunch-20260805
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: cl2-ledger-replay
+  idea: .megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md
+  branch: megaplan/critique-ledger-accountability-v3-r6-20260805/cl2-ledger-replay
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  deepseek_provider: direct
+  prep_direction: >-
+    Consume the landed CL1 contract/oracle and implement the append/replay
+    milestone from the clean c116-based runtime. Use the shared selector
+    lifecycle, typed Run Authority journal CAS, and canonical Custody/WBC
+    stores; preserve the quarantined r5 evidence and never infer authority from
+    markers, state JSON, PID, or model prose.
+  notes: >-
+    This is a fresh child, not a same-occurrence resume. Any missing owner
+    evidence fails closed and is handed to the post-relaunch epic.
+- label: cl3-routing-briefings
+  depends_on: [cl2-ledger-replay]
+  idea: .megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md
+  branch: megaplan/critique-ledger-accountability-v3-r6-20260805/cl3-routing-briefings
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: full
+  depth: medium
+  with_prep: true
+  deepseek_provider: direct
+- label: cl4-reconcile-role-flow
+  depends_on: [cl3-routing-briefings]
+  idea: .megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md
+  branch: megaplan/critique-ledger-accountability-v3-r6-20260805/cl4-reconcile-role-flow
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: full
+  depth: medium
+  with_prep: true
+  deepseek_provider: direct
+- label: cl5-cutover-retirement
+  depends_on: [cl4-reconcile-role-flow]
+  idea: .megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md
+  branch: megaplan/critique-ledger-accountability-v3-r6-20260805/cl5-cutover-retirement
+  profile: partnered-5-glm
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  deepseek_provider: direct
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  execution_binding: required
+  require_editable_runtime_match: true
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0
