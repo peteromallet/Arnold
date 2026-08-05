@@ -2330,7 +2330,6 @@ def _build_repair_identity_seed(
         or result_phase != phase
         or not invocation_id
         or not exit_kind
-        or exit_kind == ExitKind.success.value
     ):
         return None
 
@@ -3888,9 +3887,10 @@ def _clear_completed_active_step(
     covers the narrow crash-after-result seam, but must never erase a newer
     resume/replacement that claimed the same phase name.  The invocation id is
     the result-to-occurrence binding; the full snapshot token is the CAS fence.
-    For non-success results, persist a non-authoritative repair-identity seed
-    in the same CAS mutation before removing the occurrence. This preserves
-    the source needed by lifecycle repair without granting queue authority.
+    For every valid result, persist a non-authoritative repair-identity seed in
+    the same CAS mutation before removing the occurrence. This preserves the
+    source needed by lifecycle repair, including callback failures after a
+    successful worker result, without granting queue authority.
     """
 
     if (
@@ -3940,11 +3940,10 @@ def _clear_completed_active_step(
                     meta = {}
                     current["meta"] = meta
                 if seed is not None:
+                    # Keep the exact result-bound source through the callback
+                    # boundary too: a successful worker can still fail while
+                    # publishing its state transition.
                     meta[_REPAIR_IDENTITY_SEED_META_KEY] = seed
-                else:
-                    # A successful replacement must not leave a prior
-                    # occurrence's seed eligible for a later failure.
-                    meta.pop(_REPAIR_IDENTITY_SEED_META_KEY, None)
                 current.pop("active_step", None)
                 changed = True
                 return True
