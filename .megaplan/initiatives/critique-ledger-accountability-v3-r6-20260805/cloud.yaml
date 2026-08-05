@@ -2,13 +2,13 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: fix/critique-ledger-vj24-relaunch-20260805
-  workspace: /workspace/critique-ledger-accountability-v3-r6-20260805/Arnold
+  workspace: /workspace/critique-ledger-accountability-v3-r6-launch-20260805/Arnold
 agents:
   default: codex
 codex:
   model: gpt-5.6-sol
   reasoning: high
-chain_session: critique-ledger-accountability-v3-r6-20260805
+chain_session: critique-ledger-accountability-v3-r6-launch-20260805
 mode: idle
 isolated_chain_runner: true
 isolated_chain_runner_image_id: sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d
@@ -16,7 +16,7 @@ megaplan:
   ref: fix/critique-ledger-vj24-relaunch-20260805
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/runtime-candidates/arnold-vj24-relaunch-20260805
+  src_path: /workspace/critique-ledger-accountability-v3-r6-launch-20260805/Arnold
 resources:
   volume: agent-volume
   port: 8080
