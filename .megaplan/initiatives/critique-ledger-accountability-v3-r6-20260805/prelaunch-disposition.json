@@ -13,6 +13,7 @@
     "kind": "start_fresh_independent_child",
     "session": "critique-ledger-accountability-v3-r6-launch-20260805",
     "workspace": "/workspace/critique-ledger-accountability-v3-r6-launch-20260805/Arnold",
+    "runtime_source": "/workspace/runtime-candidates/arnold-r6-launch-20260805",
     "same_occurrence_resume": false,
     "parent_cas_claimed": false,
     "human_approval": "user_requested_continuation"

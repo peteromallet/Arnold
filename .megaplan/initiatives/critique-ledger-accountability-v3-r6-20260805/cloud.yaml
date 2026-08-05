@@ -3,6 +3,10 @@ repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: fix/critique-ledger-vj24-relaunch-20260805
   workspace: /workspace/critique-ledger-accountability-v3-r6-launch-20260805/Arnold
+extra_repos:
+  - url: https://github.com/peteromallet/Arnold.git
+    branch: fix/critique-ledger-vj24-relaunch-20260805
+    workspace: /workspace/runtime-candidates/arnold-r6-launch-20260805
 agents:
   default: codex
 codex:
@@ -16,7 +20,7 @@ megaplan:
   ref: fix/critique-ledger-vj24-relaunch-20260805
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/critique-ledger-accountability-v3-r6-launch-20260805/Arnold
+  src_path: /workspace/runtime-candidates/arnold-r6-launch-20260805
 resources:
   volume: agent-volume
   port: 8080
