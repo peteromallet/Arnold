@@ -2826,6 +2826,25 @@ _CHAIN_VERIFY_SLEEP_SECONDS = 5
 _EDITABLE_INSTALL_BRANCH = "editible-install"
 
 
+def _cloud_source_sync_branch(spec: CloudSpec) -> str | None:
+    """Choose the branch whose source checkout this run actually executes.
+
+    A chain with an explicitly isolated ``megaplan.src_path`` owns its runtime
+    checkout and must not publish that checkout into the shared resident
+    ``editible-install`` branch.  Publish to the configured source ref instead
+    (or skip the git publication when the ref is an immutable commit SHA).
+    Shared/default source paths retain the historical resident-branch sync.
+    """
+
+    source_path = str(spec.megaplan.src_path or "").rstrip("/")
+    ref = str(spec.megaplan.ref or "").strip()
+    if source_path and source_path != "/workspace/arnold":
+        if re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+            return None
+        return ref or None
+    return _EDITABLE_INSTALL_BRANCH
+
+
 @dataclass(frozen=True)
 class ChainLaunchContext:
     identity: str
@@ -5114,15 +5133,23 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     if bool(getattr(args, "no_editable_install_sync", False)):
         editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
     else:
-        editable_install_sync = _sync_launch_head_to_editable_install_branch(
-            _arnold_engine_repo_root(),
-            branch=_EDITABLE_INSTALL_BRANCH,
-            ignore_dirty_paths=generated_canonical_files,
-        )
+        sync_branch = _cloud_source_sync_branch(spec)
+        if sync_branch is None:
+            editable_install_sync = {
+                "status": "skipped",
+                "reason": "isolated_runtime_immutable_ref",
+                "source_ref": spec.megaplan.ref,
+            }
+        else:
+            editable_install_sync = _sync_launch_head_to_editable_install_branch(
+                _arnold_engine_repo_root(),
+                branch=sync_branch,
+                ignore_dirty_paths=generated_canonical_files,
+            )
         sys.stderr.write(
             "cloud chain editable-install sync: "
             f"status={editable_install_sync.get('status')} "
-            f"branch={editable_install_sync.get('branch')} "
+            f"branch={editable_install_sync.get('branch') or sync_branch} "
             f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
         )
     driver_overrides: dict[str, Any] = {}
@@ -5699,14 +5726,22 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
     if bool(getattr(args, "no_editable_install_sync", False)):
         editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
     else:
-        editable_install_sync = _sync_launch_head_to_editable_install_branch(
-            _arnold_engine_repo_root(),
-            branch=_EDITABLE_INSTALL_BRANCH,
-        )
+        sync_branch = _cloud_source_sync_branch(spec)
+        if sync_branch is None:
+            editable_install_sync = {
+                "status": "skipped",
+                "reason": "isolated_runtime_immutable_ref",
+                "source_ref": spec.megaplan.ref,
+            }
+        else:
+            editable_install_sync = _sync_launch_head_to_editable_install_branch(
+                _arnold_engine_repo_root(),
+                branch=sync_branch,
+            )
         sys.stderr.write(
             "cloud epic-chain editable-install sync: "
             f"status={editable_install_sync.get('status')} "
-            f"branch={editable_install_sync.get('branch')} "
+            f"branch={editable_install_sync.get('branch') or sync_branch} "
             f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
         )
 
