@@ -10,6 +10,7 @@ from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.cloud.cli import (
     _megaplan_refresh_command,
     _refresh_then_chain_start_command,
+    _cloud_source_sync_branch,
     _sync_launch_head_to_editable_install_branch,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -77,6 +78,43 @@ def test_cloud_refresh_honors_explicit_megaplan_ref() -> None:
 
     assert "REF=main" in command
     assert "REF=editible-install" not in command
+
+
+def test_isolated_runtime_syncs_its_own_branch_not_shared_resident() -> None:
+    shared = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="fix/r7", src_path="/workspace/runtime/r7"),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    immutable = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="a" * 40, src_path="/workspace/runtime/r7"),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    default = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="fix/r7"),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+
+    assert _cloud_source_sync_branch(shared) == "fix/r7"
+    assert _cloud_source_sync_branch(immutable) is None
+    assert _cloud_source_sync_branch(default) == "editible-install"
 
 
 def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
