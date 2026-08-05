@@ -467,7 +467,6 @@ def run_chain(
                 plan_name = pack_runner.prepare_plan(root=root, node=node)
                 from arnold_pipelines.megaplan.chain import (
                     _attach_chain_anchors_to_plan,
-                    _admit_fresh_child_for_plan,
                     _plan_current_state_from_payload,
                 )
 
@@ -481,22 +480,6 @@ def run_chain(
                 chain_state.last_state = (
                     _plan_current_state_from_payload(root, plan_name) or "initialized"
                 )
-                fresh_admission = _admit_fresh_child_for_plan(
-                    root=root,
-                    spec_path=spec_path,
-                    spec=spec,
-                    state=chain_state,
-                    milestone=milestone,
-                    milestone_index=index,
-                    plan_name=plan_name,
-                )
-                if fresh_admission is not None:
-                    chain_state.metadata = dict(chain_state.metadata)
-                    admissions = dict(
-                        chain_state.metadata.get("fresh_child_admissions") or {}
-                    )
-                    admissions[milestone.label] = fresh_admission
-                    chain_state.metadata["fresh_child_admissions"] = admissions
                 chain_spec.save_chain_state(spec_path, chain_state)
                 from arnold_pipelines.megaplan.chain import _ensure_fresh_child_for_plan
 
