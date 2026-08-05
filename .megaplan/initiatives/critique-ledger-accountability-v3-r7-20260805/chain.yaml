@@ -87,7 +87,7 @@ on_escalate:
 merge_policy: auto
 driver:
   execution_binding: required
-  intended_initiative_revision: UNSET_REQUIRED_BEFORE_LAUNCH
+  intended_initiative_revision: 2ebf2c4751eab0419abd992ff61f2b47a851463d
   initiative_path: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805
   require_editable_runtime_match: true
   robustness: full
