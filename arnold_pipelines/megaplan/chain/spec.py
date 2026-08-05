@@ -650,6 +650,7 @@ class MilestoneValidationSpec:
                 f"{section}.kind must be `final_conformance_gate`; got {kind!r}",
             )
 
+
         def _required_path(key: str) -> str:
             raw = value.get(key)
             if not isinstance(raw, str) or not raw.strip():
@@ -662,6 +663,99 @@ class MilestoneValidationSpec:
             conformance=_required_path("conformance"),
             validator=_required_path("validator"),
             proof_map=_required_path("proof_map"),
+        )
+
+
+@dataclass(frozen=True)
+class FreshChildAdmissionSpec:
+    """Opt-in owner admission contract for an independent chain child.
+
+    Legacy chain specs do not contain this section and therefore retain their
+    existing launch behaviour. When enabled, all three owner paths and the
+    explicit operator/lineage fields are required; the launcher never falls
+    back to a projection or synthesises approval context.
+    """
+
+    enabled: bool = False
+    authority_journal_path: str | None = None
+    wbc_ledger_path: str | None = None
+    custody_lease_dir: str | None = None
+    approval_receipt: str | None = None
+    approval_actor: str | None = None
+    parent_occurrence_digest: str | None = None
+    blocker_or_phase_result_hash: str | None = None
+    normalized_failure_kind: str | None = None
+    chain_identity: str | None = None
+    source_revision: str | None = None
+    environment: str = "cloud"
+    session: str = "megaplan"
+    chain: str = "chain"
+    phase: str = "plan"
+    task: str = "milestone"
+    run_revision: str | None = None
+    lease_ttl_seconds: int = 1800
+
+    @classmethod
+    def from_yaml(cls, value: Any) -> "FreshChildAdmissionSpec | None":
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise CliError("invalid_spec", "fresh_child_admission must be a mapping")
+        allowed = {
+            "enabled", "authority_journal_path", "wbc_ledger_path", "custody_lease_dir",
+            "approval_receipt", "approval_actor", "parent_occurrence_digest",
+            "blocker_or_phase_result_hash", "normalized_failure_kind", "chain_identity",
+            "source_revision", "environment", "session", "chain", "phase", "task",
+            "run_revision", "lease_ttl_seconds",
+        }
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise CliError("invalid_spec", f"fresh_child_admission unknown key `{unknown[0]}`")
+        enabled = value.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise CliError("invalid_spec", "fresh_child_admission.enabled must be a boolean")
+
+        def _optional_text(key: str) -> str | None:
+            raw = value.get(key)
+            if raw is None:
+                return None
+            if not isinstance(raw, str) or not raw.strip():
+                raise CliError("invalid_spec", f"fresh_child_admission.{key} must be a non-empty string")
+            return raw.strip()
+
+        paths = {key: _optional_text(key) for key in ("authority_journal_path", "wbc_ledger_path", "custody_lease_dir")}
+        approval = {key: _optional_text(key) for key in (
+            "approval_receipt", "approval_actor", "parent_occurrence_digest",
+            "blocker_or_phase_result_hash", "normalized_failure_kind", "chain_identity",
+        )}
+        source_revision = _optional_text("source_revision")
+        run_revision = _optional_text("run_revision")
+        text_fields = {
+            key: value.get(key, default)
+            for key, default in {
+                "environment": "cloud", "session": "megaplan", "chain": "chain",
+                "phase": "plan", "task": "milestone",
+            }.items()
+        }
+        for key, raw in text_fields.items():
+            if not isinstance(raw, str) or not raw.strip():
+                raise CliError("invalid_spec", f"fresh_child_admission.{key} must be a non-empty string")
+        ttl = value.get("lease_ttl_seconds", 1800)
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
+            raise CliError("invalid_spec", "fresh_child_admission.lease_ttl_seconds must be a positive integer")
+        if enabled:
+            required = {**paths, **approval, "source_revision": source_revision}
+            missing = sorted(key for key, raw in required.items() if raw is None)
+            if missing:
+                raise CliError("invalid_spec", "fresh_child_admission.enabled requires: " + ", ".join(missing))
+        return cls(
+            enabled=enabled,
+            **paths,
+            **approval,
+            source_revision=source_revision,
+            **{key: raw.strip() for key, raw in text_fields.items()},
+            run_revision=run_revision,
+            lease_ttl_seconds=ttl,
         )
 
 
@@ -875,6 +969,7 @@ class ChainSpec:
     milestones: list[MilestoneSpec]
     anchors: AnchorSpec = field(default_factory=AnchorSpec)
     launch_preconditions: list[LaunchPreconditionSpec] = field(default_factory=list)
+    fresh_child_admission: FreshChildAdmissionSpec | None = None
     successors: list[SuccessorSpec] = field(default_factory=list)
     seed_plan: str | None = None
     base_branch: str = "main"
@@ -909,6 +1004,7 @@ class ChainSpec:
             "anchors",
             "base_branch",
             "driver",
+            "fresh_child_admission",
             "launch_preconditions",
             "merge_policy",
             "milestones",
@@ -937,6 +1033,9 @@ class ChainSpec:
             LaunchPreconditionSpec.from_yaml(item, i)
             for i, item in enumerate(preconditions_raw)
         ]
+        fresh_child_admission = FreshChildAdmissionSpec.from_yaml(
+            raw.get("fresh_child_admission")
+        )
         milestones_raw = raw.get("milestones") or []
         if not isinstance(milestones_raw, list):
             raise CliError("invalid_spec", "`milestones` must be a list")
@@ -1106,6 +1205,7 @@ class ChainSpec:
             milestones=milestones,
             anchors=anchors,
             launch_preconditions=launch_preconditions,
+            fresh_child_admission=fresh_child_admission,
             successors=successors,
             seed_plan=seed_plan,
             base_branch=base_branch,
