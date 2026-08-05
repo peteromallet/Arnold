@@ -23,6 +23,8 @@ Key invariants
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 # ---------------------------------------------------------------------------
@@ -46,6 +48,170 @@ _AMBIGUOUS_SELECTOR_PATTERNS = frozenset({
 _DEFAULT_POST_EXECUTE_MAX_SECONDS = 3600
 _DEFAULT_NARROW_RECHECK_MAX_SECONDS = 600
 _MAX_POST_EXECUTE_RUNS = 1
+
+# Selector lifecycle outcomes are deliberately small and phase-neutral.  The
+# Finalize handler uses the same contract reader as Execute; only Execute is
+# allowed to run a command or persist a runtime deferral.
+SELECTOR_READY = "ready"
+SELECTOR_DEFERRED = "deferred_task_output"
+SELECTOR_INVALID = "invalid"
+
+
+@dataclass(frozen=True)
+class SelectorLifecycle:
+    """Deterministic classification of one narrow validation job's selectors.
+
+    ``write_set.paths`` is the sole ownership source.  In particular, this
+    reader never falls back to ``files_changed``, command arguments, or an
+    observed dirty tree: doing so would silently widen the admitted write set.
+    """
+
+    status: str
+    selector_paths: tuple[str, ...] = ()
+    missing_selectors: tuple[str, ...] = ()
+    undeclared_missing_selectors: tuple[str, ...] = ()
+    declared_outputs: tuple[str, ...] = ()
+    reason: str = ""
+
+
+def normalize_selector_path(selector: Any) -> str | None:
+    """Return the repository-relative path portion of a test selector.
+
+    Pytest node selectors (``path.py::test_name``) are checked for existence
+    using only ``path.py``.  We retain no inferred path and reject traversal or
+    empty selectors rather than trying to repair them.
+    """
+
+    if not isinstance(selector, str):
+        return None
+    value = selector.strip()
+    if not value:
+        return None
+    path = value.split("::", 1)[0].strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    if (
+        not path
+        or path in {".", ".."}
+        or path.startswith("../")
+        or "/../" in path
+        or path.endswith("/..")
+    ):
+        return None
+    # Absolute selectors cannot be owned by a repository-relative write set.
+    if path.startswith("/") or (len(path) > 1 and path[1] == ":"):
+        return None
+    return path
+
+
+def declared_task_output_paths(task: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Read the exact task-owned output paths from ``write_set.paths``.
+
+    No other result or observation field is consulted.  This is the guard
+    against inferred write-set widening that caused VJ24's ambiguous gate.
+    """
+
+    if not isinstance(task, Mapping):
+        return ()
+    write_set = task.get("write_set")
+    if not isinstance(write_set, Mapping):
+        return ()
+    raw_paths = write_set.get("paths")
+    if not isinstance(raw_paths, list):
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_path in raw_paths:
+        path = normalize_selector_path(raw_path)
+        if path is None or path in seen:
+            continue
+        seen.add(path)
+        normalized.append(path)
+    return tuple(normalized)
+
+
+def classify_selector_lifecycle(
+    *,
+    project_dir: Path | str,
+    job: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+) -> SelectorLifecycle:
+    """Classify selectors as runnable, deferred, or invalid.
+
+    Existing selectors are runnable immediately.  A missing selector is
+    deferred only when the exact same normalized path is present in the
+    task's declared ``write_set.paths``.  A missing selector with no declared
+    owner is invalid and must stop execution before a worker is dispatched.
+    """
+
+    raw_selectors = job.get("selectors")
+    if not isinstance(raw_selectors, list) or not raw_selectors:
+        return SelectorLifecycle(status=SELECTOR_INVALID, reason="missing_selectors")
+
+    selector_paths: list[str] = []
+    for selector in raw_selectors:
+        path = normalize_selector_path(selector)
+        if path is None:
+            return SelectorLifecycle(
+                status=SELECTOR_INVALID,
+                reason="invalid_selector_path",
+            )
+        if path not in selector_paths:
+            selector_paths.append(path)
+
+    declared_outputs = declared_task_output_paths(task)
+    root = Path(project_dir)
+    missing = tuple(
+        path for path in selector_paths if not (root / path).exists()
+    )
+    if not missing:
+        return SelectorLifecycle(
+            status=SELECTOR_READY,
+            selector_paths=tuple(selector_paths),
+            declared_outputs=declared_outputs,
+        )
+
+    undeclared = tuple(path for path in missing if path not in declared_outputs)
+    if undeclared:
+        return SelectorLifecycle(
+            status=SELECTOR_INVALID,
+            selector_paths=tuple(selector_paths),
+            missing_selectors=missing,
+            undeclared_missing_selectors=undeclared,
+            declared_outputs=declared_outputs,
+            reason="undeclared_missing_selector",
+        )
+    return SelectorLifecycle(
+        status=SELECTOR_DEFERRED,
+        selector_paths=tuple(selector_paths),
+        missing_selectors=missing,
+        declared_outputs=declared_outputs,
+        reason="selector_is_declared_task_output",
+    )
+
+
+def deferred_selector_evidence(
+    job: Mapping[str, Any], lifecycle: SelectorLifecycle
+) -> dict[str, Any]:
+    """Build the stable, content-addressed deferred-selector evidence record."""
+
+    evidence = {
+        "job_id": str(job.get("id") or "vj"),
+        "kind": str(job.get("kind") or "narrow_recheck"),
+        "status": SELECTOR_DEFERRED,
+        "exit_code": None,
+        "task_id": str(job.get("task_id") or ""),
+        "missing_selectors": sorted(set(lifecycle.missing_selectors)),
+        "reason": lifecycle.reason or "selector_is_declared_task_output",
+    }
+    import hashlib
+    import json
+
+    canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+    evidence["evidence_hash"] = "sha256:" + hashlib.sha256(
+        canonical.encode("utf-8")
+    ).hexdigest()
+    return evidence
 
 
 def _is_ambiguous_selector(selector: str) -> bool:
@@ -332,6 +498,14 @@ def validate_model_validation_jobs(
 
 __all__ = [
     "VALIDATION_JOB_KINDS",
+    "SELECTOR_DEFERRED",
+    "SELECTOR_INVALID",
+    "SELECTOR_READY",
+    "SelectorLifecycle",
+    "classify_selector_lifecycle",
     "compile_validation_jobs",
+    "declared_task_output_paths",
+    "deferred_selector_evidence",
+    "normalize_selector_path",
     "validate_model_validation_jobs",
 ]
