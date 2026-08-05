@@ -500,6 +500,90 @@ def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
     assert terminal["completion_verification"]["status"] == "failed"
 
 
+def test_zero_exit_worker_accepts_strict_blocked_receipt_through_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    base = _repo(project)
+    _git(project, "checkout", "--detach", base)
+    runtime = tmp_path / "runtime"
+    _git(project, "worktree", "add", "--detach", str(runtime), base)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    evidence_path = run_dir / "git-custody-evidence.json"
+    prompt_path.write_text("implement it", encoding="utf-8")
+    result_path.write_text("Blocked: target requires human reconciliation.\n", encoding="utf-8")
+    custody = resolve_launch_git_custody(
+        project_root=project,
+        runtime_root=runtime,
+        evidence_path=evidence_path,
+    )
+    resolution = custody["target_resolution"]
+    assert resolution["status"] == "ambiguous"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": GIT_CUSTODY_EVIDENCE_SCHEMA,
+                "integration": {
+                    "status": "blocked_ambiguity",
+                    "gate": resolution["gate"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.managed_agent",
+                "status": "running",
+                "pid": 111,
+                "prompt_path": str(prompt_path),
+                "result_path": str(result_path),
+                "project_dir": str(project),
+                "model": "gpt-test",
+                "reasoning_effort": "high",
+                "task_kind": "coding",
+                "work_intent": "execution",
+                "mutation_claim": "git_backed",
+                "git_custody": custody,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        subagent_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _Worker(),
+    )
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 0
+    terminal = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert terminal["status"] == "completed"
+    assert terminal["completion_verification"]["status"] == "success"
+    assert terminal["completion_verification"]["evidence"]["status"] == (
+        "verified_ambiguity_gate"
+    )
+    assert terminal["git_custody_verification"]["status"] == (
+        "verified_ambiguity_gate"
+    )
+
+
 def test_zero_exit_non_mutating_mechanical_result_has_applicable_success_without_git_custody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
