@@ -25,7 +25,59 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
     classify_scratch,
     promote_scratch,
 )
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
+from arnold_pipelines.megaplan._core import sha256_text
+
+
+def test_write_plan_version_rejects_mutated_prior_artifact_before_new_output(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers.shared import _write_plan_version
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    prior_v1 = plan_dir / "plan_v1.md"
+    prior_v2 = plan_dir / "plan_v2.md"
+    prior_v1.write_text("# v1\n", encoding="utf-8")
+    original_v2 = "# v2\n"
+    prior_v2.write_text(original_v2, encoding="utf-8")
+    state: dict[str, Any] = {
+        "current_state": "planned",
+        "plan_versions": [
+            {"version": 1, "file": prior_v1.name, "hash": sha256_text("# v1\n")},
+            {"version": 2, "file": prior_v2.name, "hash": sha256_text(original_v2)},
+        ],
+        "meta": {},
+    }
+    prior_v2.write_text("# v2 tampered\n", encoding="utf-8")
+    next_plan = """
+# Plan
+
+## Overview
+This is a successor.
+
+## Execution Order
+
+## Step 1: Verify
+1. Read `plan_v2.md`.
+""".lstrip()
+    worker = WorkerResult(payload={}, raw_output="", duration_ms=0, cost_usd=0.0)
+
+    with pytest.raises(CliError) as caught:
+        _write_plan_version(
+            plan_dir=plan_dir,
+            state=state,
+            step="revise",
+            version=3,
+            worker=worker,
+            plan_text=next_plan,
+            meta_fields={},
+        )
+
+    assert getattr(caught.value, "code", None) == "immutable_artifact_mutation"
+    assert not (plan_dir / "plan_v3.md").exists()
+    assert not (plan_dir / "plan_v3.meta.json").exists()
 
 
 def test_gate_evidence_versions_preserve_old_decisions_and_legacy_latest(
