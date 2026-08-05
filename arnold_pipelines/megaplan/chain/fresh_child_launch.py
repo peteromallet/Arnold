@@ -178,10 +178,17 @@ def _owner_bundle(root: Path, spec: Any) -> tuple[Any, Any, Any]:
 
 def _wbc_dict(reservation: Any) -> dict[str, Any]:
     raw = getattr(reservation, "reservation", None)
+    stable = _canonical(raw)
+    # ``is_new`` describes this read/reservation call, not durable ledger
+    # identity.  A retry reads the existing row and legitimately flips it
+    # from True to False; retaining it would make an otherwise exact receipt
+    # appear divergent and defeat idempotent admission.
+    if isinstance(stable, dict):
+        stable.pop("is_new", None)
     return {
         "attempt_id": reservation.attempt_id,
         "glek": reservation.glek,
-        "reservation": _canonical(raw),
+        "reservation": stable,
     }
 
 
