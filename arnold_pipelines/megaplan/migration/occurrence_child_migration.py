@@ -505,6 +505,17 @@ class MigrationCoordinator:
 
     def prepare(self, parent: ParentEvidence, selector: ChildSelector) -> PreparedMigration:
         """Read/validate evidence and derive identities without mutation."""
+        view = parent.authority.view
+        # A stopped r5 run may have status/receipt projections but no
+        # authoritative RA fence/grant/attempt/decision records.  Treat that
+        # as an unavailable owner, not as permission to mint a fresh child
+        # from the projection.  The operator must first restore/import the
+        # real journal and then retry this migration.
+        if not (view.fences and view.grants and view.attempts and view.decisions):
+            raise OwnerUnavailable(
+                "parent Run Authority owner records are absent; old r5 "
+                "projections cannot be migrated into a fresh child"
+            )
         current = evaluate_current_source(parent.authority.view, parent.source_request)
         if not current.status.is_satisfied:
             raise SameOccurrenceQuarantined(current.reason)
