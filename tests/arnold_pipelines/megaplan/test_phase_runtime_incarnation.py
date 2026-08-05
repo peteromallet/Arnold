@@ -97,6 +97,7 @@ def test_set_active_step_persists_incarnation_lease_and_occurrence_fence(
     assert active["runner_incarnation"]["worker_process_start_identity"]
     assert active["runner_lease"]["lease_id"] == publisher.lease_id
     assert active["runner_lease"]["runner_fence"] == publisher.runner_fence
+    assert active["invocation_id"] == state["meta"]["current_invocation_id"]
     assert active["orphan_fence"] == {
         "run_id": run_id,
         "invocation_id": state["meta"]["current_invocation_id"],
@@ -328,7 +329,6 @@ def test_failed_phase_cleanup_persists_and_validates_repair_identity_seed(
     active = {
         "phase": "finalize",
         "run_id": "run-1",
-        "invocation_id": "inv-1",
         "worker_pid": os.getpid(),
         "orphan_fence": {"run_id": "run-1", "invocation_id": "inv-1"},
     }

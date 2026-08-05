@@ -2302,6 +2302,24 @@ _REPAIR_IDENTITY_SEED_SCHEMA = "megaplan.repair_identity_seed.v1"
 _REPAIR_IDENTITY_SEED_META_KEY = "repair_identity_seed"
 
 
+def _active_step_invocation_id(active_step: Mapping[str, Any]) -> str:
+    """Return one fail-closed invocation binding for an active occurrence.
+
+    New state stores the field at the active-step root while older state only
+    has it in ``orphan_fence``.  If both are present but disagree, neither is
+    safe to use as a repair source.
+    """
+
+    root_id = str(active_step.get("invocation_id") or "").strip()
+    orphan_fence = active_step.get("orphan_fence")
+    fence_id = ""
+    if isinstance(orphan_fence, Mapping):
+        fence_id = str(orphan_fence.get("invocation_id") or "").strip()
+    if root_id and fence_id and root_id != fence_id:
+        return ""
+    return root_id or fence_id
+
+
 def _build_repair_identity_seed(
     *,
     plan_dir: Path,
@@ -2400,7 +2418,7 @@ def _active_step_from_repair_identity_seed(
     invocation_id = str(raw_seed.get("invocation_id") or "").strip()
     if (
         not invocation_id
-        or str(active.get("invocation_id") or "").strip() != invocation_id
+        or _active_step_invocation_id(active) != invocation_id
     ):
         return None
     if (
@@ -3913,7 +3931,7 @@ def _clear_completed_active_step(
             expected_active = dict(active_step)
             if (
                 active_phase_name(expected_active) != expected_step
-                or expected_active.get("invocation_id") != result_invocation
+                or _active_step_invocation_id(expected_active) != result_invocation
             ):
                 return False
             expected_token = active_step_cas_token(expected_active)
