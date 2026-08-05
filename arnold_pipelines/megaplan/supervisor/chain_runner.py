@@ -498,6 +498,19 @@ def run_chain(
                     admissions[milestone.label] = fresh_admission
                     chain_state.metadata["fresh_child_admissions"] = admissions
                 chain_spec.save_chain_state(spec_path, chain_state)
+                from arnold_pipelines.megaplan.chain import _ensure_fresh_child_for_plan
+
+                fresh_admission = _ensure_fresh_child_for_plan(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=chain_state,
+                    milestone=milestone,
+                    milestone_index=index,
+                    plan_name=plan_name,
+                )
+                if fresh_admission is not None:
+                    chain_spec.save_chain_state(spec_path, chain_state)
                 event("plan_prepared", label=milestone.label, plan=plan_name)
                 _bridge_lifecycle(
                     "plan_prepared",
@@ -530,6 +543,19 @@ def run_chain(
                         reason=f"milestone {milestone.label} remains blocked",
                     )
 
+            from arnold_pipelines.megaplan.chain import _ensure_fresh_child_for_plan
+
+            fresh_admission = _ensure_fresh_child_for_plan(
+                root=root,
+                spec_path=spec_path,
+                spec=spec,
+                state=chain_state,
+                milestone=milestone,
+                milestone_index=index,
+                plan_name=plan_name,
+            )
+            if fresh_admission is not None:
+                chain_spec.save_chain_state(spec_path, chain_state)
             raw_outcome = driver.drive(_run_request(root, spec, plan_name, writer))
             normalized = normalize_driver_outcome(
                 raw_outcome.status,
