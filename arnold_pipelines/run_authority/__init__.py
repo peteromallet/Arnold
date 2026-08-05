@@ -26,6 +26,22 @@ from .contracts import (
     validate_scope_binding,
 )
 from .reducer import AuthorityDiagnostic, AuthorityInput, RunAuthorityView, reduce_run_authority
+from .journal import (
+    AppendResult,
+    AuthorityJournalError,
+    AuthorityRecord,
+    GLEKConflictError,
+    InvalidAuthorityRecordError,
+    InvalidCursorError,
+    JournalCommitIndeterminateError,
+    JournalCorruptionError,
+    JournalStorageError,
+    JournalView,
+    RunAuthorityJournal,
+    StaleCursorError,
+    IdempotencyConflictError,
+    derive_glek,
+)
 
 __all__ = [
     "CASExpectation", "CapabilityGrant", "Claim", "Contract", "ContractError",
@@ -35,4 +51,8 @@ __all__ = [
     "assert_idempotent", "canonical_json", "contract_from_dict", "payload_digest",
     "validate_relationships", "validate_scope_binding", "AuthorityDiagnostic", "AuthorityInput",
     "RunAuthorityView", "reduce_run_authority",
+    "AppendResult", "AuthorityJournalError", "AuthorityRecord", "GLEKConflictError",
+    "InvalidAuthorityRecordError", "InvalidCursorError", "JournalCommitIndeterminateError",
+    "JournalCorruptionError", "JournalStorageError", "JournalView", "RunAuthorityJournal",
+    "StaleCursorError", "IdempotencyConflictError", "derive_glek",
 ]
