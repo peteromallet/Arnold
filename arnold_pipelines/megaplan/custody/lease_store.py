@@ -465,7 +465,16 @@ def _synthetic_occurrence_key_from_event(
     from arnold_pipelines.megaplan.custody.contracts import (
         RepairOccurrenceKey,
         CustodyTargetKey,
+        normalize_repair_occurrence_key,
     )
+
+    # New canonical writers retain the complete occurrence contract in the
+    # acquire payload.  Prefer that lossless identity on replay; only legacy
+    # events without it need the synthetic compatibility fallback below.
+    payload = dict(event.payload) if event.payload else {}
+    occurrence = normalize_repair_occurrence_key(payload.get("occurrence_key"))
+    if occurrence is not None:
+        return occurrence
 
     # Build a synthetic target from the lease_id and event fields.
     # This is lossy (the original F01 is not recoverable from just the digest)
