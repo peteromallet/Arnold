@@ -12,7 +12,7 @@ tags:
 - observability
 codebase_id: null
 created_at: '2026-08-05T18:20:12.287689+00:00'
-last_edited_at: '2026-08-05T18:20:12.287689+00:00'
+last_edited_at: '2026-08-05T18:55:53.547475+00:00'
 epics: []
 ---
 
@@ -32,58 +32,59 @@ The ordinary fixer also correctly stopped. The terminal path persisted neither o
 
 Writer identity is indeterminate. The evidence establishes an iteration-3 drafting content lineage and a bounded mutation window, but it does not bind the write to a unique process, PID, model, invocation, or tool.
 
-## Required contract: `arnold.megaplan.custodied_artifact_history.v1`
+## Checker philosophy and minimum data contract
 
-Make the append-only history manifest the sole positive identity of every admitted plan or critique generation:
+Keep one control loop: **observe canonical state → decide → read the minimum authoritative recovery identity → submit one idempotent request → ordinary fixer → authoritative proof**. The checker is an observer and request client, not a second lifecycle database or a source of authority. Model output may explain or rank causes, but it must never supply an identity, fence, cursor, claim, decision, or success proof.
 
-- Content and lineage: `artifact_id = sha256(bytes)`, media type, logical role, `generation_id`, iteration, `parent_generation_id`, predecessor-manifest digest, and history-head digest.
-- Writer/runtime/provider provenance: source revision/tree digest, runtime content digest, run/revision, authenticated actor, host/container identity, process-birth identity, and provider invocation identity when model-produced.
-- Authority provenance: occurrence/request identity, accepted Run Authority decision and fence, Custody lease/claim and positive epoch, WBC attempt and global logical effect key.
-- Admission: create-only compare-and-create into an immutable content-addressed store; a receipt binds the object locator, artifact/generation/history digests, provenance, contract digest, and admission time. Retries may return the identical generation but never replace it.
-- Projection: a human-readable pathname such as `plan_v2.md` is projection-only and non-authoritative. It binds a projected artifact digest and is rebuilt or verified from the manifest; it never defines identity.
-- Isolation and validation: drafts and admitted objects have disjoint write roots; file tools cannot write admitted objects or projections; every revision creates a child generation; validators replay the complete content-addressed parent chain and fail closed on missing, deferred, mismatched, or indeterminate fields.
+The hard recovery contract is intentionally small:
 
-## Exactly-once recovery lifecycle
+- target and parent: session/chain/plan plus parent run, revision/incarnation, and current Run Authority cursor/fence;
+- occurrence: one deterministic terminal-event identity and its exact failure evidence cursor/digest;
+- authority: one accepted Run Authority recovery decision, including current-source check, retry/migration selector, runtime digest, and contract digest;
+- exclusivity and effects: one Custody claim/lease with positive epoch/fence and one WBC attempt/GLEK, all joined to the same request and occurrence;
+- execution and proof: one idempotency key, accepted task/result envelopes, validator result, and CAS-protected cursor or milestone advancement.
 
-For each deterministic terminal occurrence key, enforce uniqueness/CAS constraints and this order:
+The checker derives those facts from the lifecycle store, Run Authority journal, Custody lease store, WBC attempt ledger, runtime binding, and canonical plan/chain state. It does not demand them from Sol/Flash prose or copy them from a stale projection.
 
-1. The canonical lifecycle-failure owner persists exactly one normalized repair identity and idempotently creates exactly one occurrence-bound request carrying the terminal-event/adjudication digest and content-addressed migration selector.
-2. Run Authority accepts or denies exactly one decision binding the parent cursor/fence, source and target revisions, runtime and contract digests, child selector, retry budget, and notification key.
-3. After an accepted decision, Custody acquires exactly one exclusive claim, new epoch, and fence for that request.
-4. WBC reserves exactly one attempt and one global logical effect key under that claim.
-5. The ordinary fixer consumes the same request, decision, claim/epoch/fence, and attempt; it invokes only the supported occurrence-child migration adapter. Transport retries replay those identities and never mint another request, attempt, child, or effect.
-6. An authoritative verifier admits the child only after real validator success and schema-valid, content-addressed task/result envelopes. Otherwise it quarantines the attempt and preserves append-only evidence.
-7. Only verified canonical advancement may create one notification intent; delivery admits at most one provider effect. An ambiguous outcome remains indeterminate and is never resent.
+Diagnostic fields are useful but optional: exact writer/PID/model/tool attribution, provider invocation, host/container detail, free-form analysis, expanded telemetry, and stale observer projections. Persist absent values as `unknown`. They become a hard stop only if a named runtime/contract or authoritative identity cannot otherwise be established.
 
-Any stale cursor, conflicting claim, runtime/contract mismatch, missing global ownership observation, ambiguous commit/provider effect, or incomplete provenance must stop and quarantine. Partial migration recovery reuses the identical prepared transaction.
+## Horizon A — make deterministic terminal failures repairable
 
-## Owner boundaries
+1. At the terminal lifecycle seam, persist the normalized occurrence/parent repair identity and exact failed-event cursor before clearing `active_step`; idempotently call the existing occurrence-bound request producer. Re-entry returns the same request.
+2. Let the checker reread canonical state and call that same producer. If the identity already exists, missing forensic detail does not block enqueue. If it does not exist, the producer returns a typed authority gate; the checker must not reconstruct it from a stopped lease or history labels.
+3. Run Authority decides whether the accepted request permits a same-boundary retry or an occurrence-preserving migrated child. Custody and WBC then supply the exclusive claim/epoch/fence and single attempt/GLEK.
+4. Add the genuinely missing production adapter: consume an accepted migration request in the ordinary fixer and bind it to the existing `MigrationCoordinator` plus production owner adapters. The checker must not call the coordinator directly.
+5. Verify the fixer result against the bound runtime/contract, complete validator result, accepted envelopes, and canonical cursor/milestone CAS. Only then may notification custody admit one intent/effect.
 
-- Artifact admission and custody owns the content-addressed object store, create-only generation API, history manifest, receipts, projections, and whole-history validator.
-- Planning/critique/revise workers own writable drafts and structured result envelopes only; they cannot publish or mutate admitted paths.
-- The terminal lifecycle owner owns normalized repair identity and the single canonical request producer; dispatchers/backstops may only call that idempotent producer and cannot synthesize authority.
-- Run Authority alone owns recovery/migration decisions, current-source/fence validation, and retry limits.
-- Custody owns exclusive claims, epochs, and fencing. WBC owns attempt reservation, GLEK uniqueness, and effect admission.
-- The ordinary fixer owns execution only after consuming the complete joined identities; it does not directly edit parent state.
-- Observer and notification adapters own projections and post-verification intents/effects only. Local processes, leases, markers, and cached status are corroboration, never authority.
+The r6 occurrence remains quarantined at step 1. Its plan has no `active_step`, persisted repair identity, or failed-history cursor; the canonical owners have no occurrence-bound Run Authority decision, Custody epoch, WBC attempt, or request. The fence-3 stopped runner lease is not Run Authority. No supported action may mint these records retrospectively from the available files.
 
-## Migration, cutover, and closure proof
+Checker plumbing should remain small:
 
-Freeze the v1 schema, owner matrix, threat model, and contract digest first. Shadow-build manifests in read-only replay, create a content-addressed backup, and prove isolated restore. Classify legacy rows without inventing history: seal only byte-matching artifacts via new migration records; quarantine missing or mismatched rows. Retain the r6 matching forensic material as evidence only.
+- enforce a CAS/lease for a stable target key `(session, chain, plan/current occurrence)` in the existing schedule repository so interval and immediate schedules cannot overlap;
+- bind every evidence/Sol/Flash child to the managed occurrence manifest and owned process group, with a terminal custody receipt on success, failure, or interruption;
+- treat a schema-valid blocked/quarantined receipt as a successful checker diagnosis (`blocked`), distinct from worker/import/provider failure; neither classification means the plan advanced;
+- dedupe notifications by `(target, occurrence, decision/state-transition digest)` in the existing notification intent/effect store, and stay silent for healthy/no-change polls;
+- write an after-proof bundle joining request, decision, claim, attempt/effect, runtime/contract, accepted result, validator result, and before/after canonical cursor. PID, heartbeat, launch acknowledgement, and prose are never proof.
 
-At one coordinated cutover boundary, switch writers, validators, repair lifecycle, migration adapter, observers, and notification consumers to the same contract digest. Retire mutable-path authority and legacy effect emitters only after the cutover receipt is accepted. Rollback is whole-cutover: stop admission, preserve append-only failure evidence, restore the verified prior runtime/configuration and backup in isolation, rebuild projections, and revalidate hashes and WBC receipts.
+## Horizon B — immutable admitted artifacts and durable lifecycle
 
-Closure requires a frozen r6 fixture containing events 0..1948, all three receipts, admitted and drifted v2 bytes, the stopped fence-3 lease, and zero r6 repair/notification records. Under the exact cutover runtime and contract digest, prove:
+Make `arnold.megaplan.custodied_artifact_history.v1` the canonical admitted-artifact contract. Admission compare-and-creates immutable content-addressed bytes and appends a generation manifest containing only the required identity: artifact digest, logical role/generation, parent/history-head digest, occurrence/admission receipt, and runtime/contract binding. Human-readable `plan_vN.md` files become replaceable projections. Drafts and admitted objects use separate write roots, and every revision admits a new generation. Validators replay manifest/object identities, not mutable pathnames.
 
-- every direct, file-tool, explicit-filename, rename/link/copy-back, retry, formatter, and concurrent overwrite is rejected before admitted bytes change;
-- repeated/concurrent/crash/stale-observer terminal replay resolves to exactly one repair identity, request, accepted Run Authority decision, Custody claim/epoch, WBC attempt/GLEK, child/effect, and notification intent, with at most one notification provider effect;
-- recovery runs only through the ordinary fixer and supported lifecycle adapter, validates real task/result envelopes and the complete history, advances the canonical child cursor/milestone, and leaves the frozen parent byte-for-byte unchanged;
-- runtime mismatch, malicious writes, stale observation, crash injection, and ambiguous delivery all fail closed; and
-- the single cutover/restore receipt is accepted.
+Writer/provider/process attribution is optional diagnostic metadata and may be `unknown`; its absence does not invalidate an otherwise content-addressed, authority-bound generation. Legacy migration seals only byte-matching generations through explicit migration receipts and quarantines mismatches without inventing provenance.
+
+Roll out minimally: freeze the schema and contract digest; shadow-build/read manifests; migrate byte-matching history; cut writers and validators together; then enable the lifecycle request-to-fixer adapter. Roll back by stopping new admission and restoring the prior bound runtime/configuration while preserving append-only evidence—never by rewriting history.
+
+## Acceptance and closure tests
+
+- Frozen r6 fixture: the v2 admitted digest and drifted pathname reproduce the validator failure; the historical parent stays byte-for-byte unchanged.
+- Admission: direct overwrite, explicit-filename rewrite, rename/copy-back, formatter, retry, and concurrent publication cannot alter an admitted object; identical retry returns the same generation.
+- Minimum-data recovery: recovery succeeds when required owner records exist even if writer/PID/model/provider diagnostics are `unknown`; it blocks when parent/occurrence/current-source/fence, claim, WBC attempt, runtime/contract, or result/cursor proof is absent or divergent.
+- Idempotency/concurrency: repeated polls, interval-plus-immediate firing, concurrent enqueue, crash/recovery, and stale observer replay produce one occurrence, request, accepted decision, claim/epoch, WBC attempt/GLEK, fixer effect, and notification intent, with at most one provider effect.
+- Managed completion: healthy/no-action is silent; a valid blocked receipt is classified `blocked`, not generic worker failure; import/provider/child failure remains a worker failure.
+- After-proof: success requires validator admission plus accepted task/result envelopes and canonical cursor or milestone advancement under the bound runtime/contract.
 
 ## Non-goals
 
 - No in-place rewrite of the parent artifact, custody receipt, manifest, plan/chain state, or historical evidence.
 - No attribution to or blame of any PID, process, model, agent, invocation, or tool without authoritative provenance.
 - No direct state edits, hand-minted repair requests, bypass of Run Authority/Custody/WBC, same-occurrence resume, critique relaunch, or notification before verified advancement.
-
