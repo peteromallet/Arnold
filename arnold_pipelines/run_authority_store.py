@@ -523,7 +523,7 @@ class RunAuthorityJournal:
                 # durable cursor rather than treating a later row as a new
                 # genesis record; the latter would accept cursor one only and
                 # make retries of older records fail spuriously.
-                existing_cursor = int(existing["cursor"])
+                existing_cursor = _cursor(existing["cursor"], "stored cursor")
                 existing_record = decoded_records[existing_cursor - 1]
                 if existing["record_digest"] != record_digest or existing["record_json"] != record_json:
                     raise IdempotencyConflictError(
@@ -539,7 +539,7 @@ class RunAuthorityJournal:
                     run_id,
                     revision,
                     existing_record,
-                    int(existing["cursor"]),
+                    existing_cursor,
                     idempotency_key,
                     str(existing["glek"]),
                     True,
