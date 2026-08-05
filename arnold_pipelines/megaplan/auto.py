@@ -2298,6 +2298,141 @@ def _phase_result_signature(plan_dir: Path | None) -> tuple[int, int] | None:
     return (stat.st_mtime_ns, stat.st_size)
 
 
+_REPAIR_IDENTITY_SEED_SCHEMA = "megaplan.repair_identity_seed.v1"
+_REPAIR_IDENTITY_SEED_META_KEY = "repair_identity_seed"
+
+
+def _build_repair_identity_seed(
+    *,
+    plan_dir: Path,
+    state: Mapping[str, Any],
+    phase: str,
+    active_step: Mapping[str, Any],
+    result: object,
+) -> dict[str, Any] | None:
+    """Capture non-authoritative source evidence before active-step cleanup.
+
+    A phase result is the boundary between the worker occurrence and the
+    lifecycle failure recorder. The recorder may run after the worker
+    occurrence has been removed from state.json; retain only the exact
+    active-step snapshot needed by the existing lifecycle identity producer.
+    This seed is evidence, never a repair grant or queue authority.
+    """
+
+    result_phase = str(getattr(result, "phase", "") or "").strip()
+    invocation_id = str(getattr(result, "invocation_id", "") or "").strip()
+    exit_kind = getattr(result, "exit_kind", "")
+    if isinstance(exit_kind, ExitKind):
+        exit_kind = exit_kind.value
+    exit_kind = str(exit_kind or "").strip()
+    if (
+        not phase
+        or result_phase != phase
+        or not invocation_id
+        or not exit_kind
+        or exit_kind == ExitKind.success.value
+    ):
+        return None
+
+    phase_result_sha256 = ""
+    try:
+        phase_result_sha256 = sha256_file(plan_dir / "phase_result.json")
+    except (OSError, TypeError, ValueError):
+        # The invocation and exact active-step CAS still provide a bounded
+        # source binding when the result file disappears during cleanup.
+        pass
+
+    meta = state.get("meta")
+    meta = meta if isinstance(meta, Mapping) else {}
+    plan_revision = str(state.get("plan_revision") or "").strip()
+    coordinator_attempt_id = str(
+        meta.get("current_invocation_id") or ""
+    ).strip()
+    return {
+        "schema": _REPAIR_IDENTITY_SEED_SCHEMA,
+        "_non_authoritative": True,
+        "phase": phase,
+        "invocation_id": invocation_id,
+        "exit_kind": exit_kind,
+        "active_step_cas": active_step_cas_token(active_step),
+        "active_step": dict(active_step),
+        "phase_result_sha256": phase_result_sha256,
+        "plan_revision": plan_revision,
+        "coordinator_attempt_id": coordinator_attempt_id,
+        "seeded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _active_step_from_repair_identity_seed(
+    plan_dir: Path,
+    state: Mapping[str, Any],
+    *,
+    phase: str | None,
+) -> tuple[dict[str, Any], Mapping[str, Any]] | None:
+    """Recover one exact active-step snapshot for the lifecycle owner.
+
+    Seeds are accepted only when they still bind to the current phase result,
+    invocation, active-step CAS, and plan/coordinator revision. The caller
+    must pass the resulting snapshot through the canonical lifecycle identity
+    producer with a fresh runner-lease reread; the seed itself cannot confer
+    authority.
+    """
+
+    if not phase:
+        return None
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    raw_seed = meta.get(_REPAIR_IDENTITY_SEED_META_KEY)
+    if not isinstance(raw_seed, Mapping):
+        return None
+    if raw_seed.get("schema") != _REPAIR_IDENTITY_SEED_SCHEMA:
+        return None
+    if raw_seed.get("_non_authoritative") is not True:
+        return None
+    if str(raw_seed.get("phase") or "").strip() != phase:
+        return None
+    active = raw_seed.get("active_step")
+    if not isinstance(active, Mapping):
+        return None
+    active = dict(active)
+    if active_phase_name(active) != phase:
+        return None
+    invocation_id = str(raw_seed.get("invocation_id") or "").strip()
+    if (
+        not invocation_id
+        or str(active.get("invocation_id") or "").strip() != invocation_id
+    ):
+        return None
+    if (
+        str(raw_seed.get("active_step_cas") or "")
+        != active_step_cas_token(active)
+    ):
+        return None
+
+    seed_revision = str(raw_seed.get("plan_revision") or "").strip()
+    current_revision = str(state.get("plan_revision") or "").strip()
+    if seed_revision and current_revision and seed_revision != current_revision:
+        return None
+    seed_coordinator = str(raw_seed.get("coordinator_attempt_id") or "").strip()
+    current_meta_attempt = str(meta.get("current_invocation_id") or "").strip()
+    if (
+        seed_coordinator
+        and current_meta_attempt
+        and seed_coordinator != current_meta_attempt
+    ):
+        return None
+
+    expected_result_digest = str(raw_seed.get("phase_result_sha256") or "").strip()
+    if expected_result_digest:
+        try:
+            if sha256_file(plan_dir / "phase_result.json") != expected_result_digest:
+                return None
+        except (OSError, TypeError, ValueError):
+            return None
+    return active, raw_seed
+
+
 def _record_lifecycle_failure(
     *,
     plan_dir: Path | None,
@@ -2360,6 +2495,17 @@ def _record_lifecycle_failure(
             state_before = _read_state_data(plan_dir) or {}
             active_step = state_before.get("active_step")
             active = active_step if isinstance(active_step, Mapping) else {}
+            seeded_active = _active_step_from_repair_identity_seed(
+                plan_dir,
+                state_before,
+                phase=phase,
+            )
+            seed_payload: Mapping[str, Any] | None = None
+            if (
+                (not active or (phase and active_phase_name(active) != phase))
+                and seeded_active is not None
+            ):
+                active, seed_payload = seeded_active
             state_meta = state_before.get("meta")
             state_meta = state_meta if isinstance(state_meta, Mapping) else {}
             coordinator_attempt_id = str(
@@ -2408,6 +2554,15 @@ def _record_lifecycle_failure(
                 live_runner_lease=current_runner_lease_binding(),
                 coordinator_attempt_id=coordinator_attempt_id,
             )
+            if persisted_identity is not None and seed_payload is not None:
+                metadata_payload["repair_identity_seed_provenance"] = {
+                    "schema": _REPAIR_IDENTITY_SEED_SCHEMA,
+                    "source": "active_step_cleanup",
+                    "phase": seed_payload.get("phase"),
+                    "invocation_id": seed_payload.get("invocation_id"),
+                    "active_step_cas": seed_payload.get("active_step_cas"),
+                    "positive_source_reread": True,
+                }
         if persisted_identity is not None:
             metadata_payload["repair_identity"] = persisted_identity
             metadata_payload["repair_identity_provenance"] = {
@@ -3733,6 +3888,9 @@ def _clear_completed_active_step(
     covers the narrow crash-after-result seam, but must never erase a newer
     resume/replacement that claimed the same phase name.  The invocation id is
     the result-to-occurrence binding; the full snapshot token is the CAS fence.
+    For non-success results, persist a non-authoritative repair-identity seed
+    in the same CAS mutation before removing the occurrence. This preserves
+    the source needed by lifecycle repair without granting queue authority.
     """
 
     if (
@@ -3770,6 +3928,23 @@ def _clear_completed_active_step(
                     or active_step_cas_token(live_active) != expected_token
                 ):
                     return False
+                seed = _build_repair_identity_seed(
+                    plan_dir=plan_dir,
+                    state=current,
+                    phase=expected_step,
+                    active_step=expected_active,
+                    result=result,
+                )
+                meta = current.get("meta")
+                if not isinstance(meta, dict):
+                    meta = {}
+                    current["meta"] = meta
+                if seed is not None:
+                    meta[_REPAIR_IDENTITY_SEED_META_KEY] = seed
+                else:
+                    # A successful replacement must not leave a prior
+                    # occurrence's seed eligible for a later failure.
+                    meta.pop(_REPAIR_IDENTITY_SEED_META_KEY, None)
                 current.pop("active_step", None)
                 changed = True
                 return True
