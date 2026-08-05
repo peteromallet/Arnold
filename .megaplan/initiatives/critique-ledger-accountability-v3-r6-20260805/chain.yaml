@@ -2,15 +2,15 @@ base_branch: fix/critique-ledger-vj24-relaunch-20260805
 anchors:
   north_star: NORTHSTAR.md
 launch_preconditions:
-  - name: r5 remains immutable evidence and r6 is explicitly independent
-    kind: artifact
-    path: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/prelaunch-disposition.json
-    check:
-      kind: contains_text
-      text: "arnold.megaplan.critique_r5_independent_child_disposition.v1"
-  - name: r6 initiative inputs are committed
-    kind: git_tracked
-    path: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805
+- name: r5 remains immutable evidence and r6 is explicitly independent
+  kind: artifact
+  path: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/prelaunch-disposition.json
+  check:
+    kind: contains_text
+    text: arnold.megaplan.critique_r5_independent_child_disposition.v1
+- name: r6 initiative inputs are committed
+  kind: git_tracked
+  path: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805
 milestones:
 - label: cl2-ledger-replay
   idea: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/briefs/cl2-ledger-persistence-and-replay.md
