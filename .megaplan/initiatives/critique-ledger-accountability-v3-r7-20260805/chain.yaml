@@ -12,7 +12,7 @@ fresh_child_admission:
   blocker_or_phase_result_hash: sha256:r6-finalize-artifact-mismatch
   normalized_failure_kind: legacy_child_missing_authority
   chain_identity: critique-ledger-accountability-v3-r7-launch-20260805
-  source_revision: bbd820d48719a2a8e2888fe40969e208ba63d554
+  source_revision: 2ac8abf7cd86952114e5fa73a3358b5e3938cfb2
   environment: cloud
   session: critique-ledger-accountability-v3-r7-launch-20260805
   chain: critique-ledger-accountability-v3-r7
