@@ -297,6 +297,7 @@ class MigrationReceipt:
     authority: ChildAuthority
     wbc: WbcReservation
     custody: CustodyLease
+    child_occurrence: RepairOccurrenceKey
     artifacts: tuple[HandoffArtifact, ...] = ()
 
 
@@ -612,6 +613,7 @@ class MigrationCoordinator:
         authority: ChildAuthority,
         wbc: WbcReservation,
         custody: CustodyLease,
+        child_occurrence: RepairOccurrenceKey,
     ) -> tuple[HandoffArtifact, ...]:
         if self.artifacts is None:
             return ()
@@ -632,6 +634,7 @@ class MigrationCoordinator:
                 "source": wbc.source,
             },
             "custody": custody.to_dict(),
+            "child_occurrence": child_occurrence.to_dict(),
         }
         return tuple(
             self.artifacts.write(
@@ -751,7 +754,14 @@ class MigrationCoordinator:
         if custody.run_authority_grant_id != authority.grant.grant_id:
             raise MigrationConflict("child custody lease and RA grant differ")
 
-        artifacts = self._write_artifacts(prepared, parent_commit, authority, wbc, custody)
+        artifacts = self._write_artifacts(
+            prepared,
+            parent_commit,
+            authority,
+            wbc,
+            custody,
+            child_occurrence,
+        )
         self._step("artifacts_written")
         return MigrationReceipt(
             migration_idempotency_key=prepared.migration_idempotency_key,
@@ -761,6 +771,7 @@ class MigrationCoordinator:
             authority=authority,
             wbc=wbc,
             custody=custody,
+            child_occurrence=child_occurrence,
             artifacts=artifacts,
         )
 
