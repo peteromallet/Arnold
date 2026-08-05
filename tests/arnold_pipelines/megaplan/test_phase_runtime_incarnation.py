@@ -320,6 +320,68 @@ def test_completed_phase_cleanup_clears_exact_result_occurrence(tmp_path: Path) 
     assert "active_step" not in persisted
 
 
+def test_failed_phase_cleanup_persists_and_validates_repair_identity_seed(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    active = {
+        "phase": "finalize",
+        "run_id": "run-1",
+        "invocation_id": "inv-1",
+        "worker_pid": os.getpid(),
+        "orphan_fence": {"run_id": "run-1", "invocation_id": "inv-1"},
+    }
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "gated",
+                "active_step": active,
+                "meta": {"current_invocation_id": "inv-1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "schema": "megaplan.phase_result",
+                "phase": "finalize",
+                "invocation_id": "inv-1",
+                "exit_kind": "internal_error",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = SimpleNamespace(
+        phase="finalize", invocation_id="inv-1", exit_kind="internal_error"
+    )
+    assert auto._clear_completed_active_step(plan_dir, "finalize", result)
+
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert "active_step" not in persisted
+    seed = persisted["meta"]["repair_identity_seed"]
+    assert seed["schema"] == "megaplan.repair_identity_seed.v1"
+    assert seed["_non_authoritative"] is True
+    assert seed["active_step"] == active
+    assert seed["active_step_cas"].startswith("sha256:")
+    assert auto._active_step_from_repair_identity_seed(
+        plan_dir, persisted, phase="finalize"
+    )[0] == active
+
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps({"phase": "finalize", "invocation_id": "different"}),
+        encoding="utf-8",
+    )
+    assert auto._active_step_from_repair_identity_seed(
+        plan_dir,
+        json.loads((plan_dir / "state.json").read_text(encoding="utf-8")),
+        phase="finalize",
+    ) is None
+
+
 def test_unknown_liveness_forbids_auto_redispatch(tmp_path: Path, monkeypatch) -> None:
     plan_dir = tmp_path / "demo"
     plan_dir.mkdir()

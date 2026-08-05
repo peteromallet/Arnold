@@ -381,3 +381,108 @@ def test_managed_lifecycle_failure_publishes_identity_then_claims_and_delegates(
         repair_identity=occurrence.target.to_dict(),
     )
     assert legacy["status"] == "zero_authority_rejected"
+
+
+def test_cleanup_seed_allows_managed_failure_identity_after_active_step_clear(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A result cleanup cannot erase the source needed by lifecycle repair."""
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    marker_dir = workspace / ".megaplan" / "cloud-sessions"
+    chain_path = workspace / "chain.yaml"
+    plan_dir.mkdir(parents=True)
+    marker_dir.mkdir(parents=True)
+    chain_path.write_text("milestones: []\n", encoding="utf-8")
+    marker = {
+        "session": "managed-seed",
+        "workspace": str(workspace),
+        "remote_spec": str(chain_path),
+        "run_kind": "chain",
+        "run_id": "managed-seed-run-1",
+        "identity_digest": "sha256:managed-seed",
+        "started_at": "2026-08-03T00:00:00Z",
+    }
+    (marker_dir / "managed-seed.json").write_text(
+        json.dumps(marker), encoding="utf-8"
+    )
+    monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "managed-seed")
+    monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(marker_dir))
+    queue = workspace / ".megaplan" / "repair-queue"
+    monkeypatch.setenv("ARNOLD_REPAIR_QUEUE_ROOT", str(queue))
+    monkeypatch.setenv("ARNOLD_REPAIR_RUN_KIND", "chain")
+    monkeypatch.setenv("ARNOLD_CHAIN_SPEC", str(chain_path))
+
+    publisher = LivenessLeasePublisher(
+        "managed-seed", marker_dir=marker_dir, target_pid=os.getpid()
+    )
+    publisher.publish_once()
+    try:
+        state = {
+            "name": "demo-plan",
+            "current_state": "finalized",
+            "plan_revision": "rev-seed",
+            "history": [],
+            "sessions": {},
+            "meta": {},
+        }
+        set_active_step(
+            state,
+            step="finalize",
+            agent="codex",
+            mode="persistent",
+            run_id="managed-seed-run-1",
+        )
+        # The cleanup fallback binds PhaseResult to the explicit occurrence
+        # field; retain the same invocation already fenced in meta/orphan_fence.
+        state["active_step"]["invocation_id"] = state["meta"]["current_invocation_id"]
+        (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        invocation_id = state["active_step"]["invocation_id"]
+        (plan_dir / "phase_result.json").write_text(
+            json.dumps(
+                {
+                    "schema": "megaplan.phase_result",
+                    "phase": "finalize",
+                    "invocation_id": invocation_id,
+                    "exit_kind": "internal_error",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert auto._clear_completed_active_step(
+            plan_dir,
+            "finalize",
+            SimpleNamespace(
+                phase="finalize",
+                invocation_id=invocation_id,
+                exit_kind="internal_error",
+            ),
+        )
+        cleared = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert "active_step" not in cleared
+        assert cleared["meta"]["repair_identity_seed"]["_non_authoritative"] is True
+
+        auto._record_lifecycle_failure(
+            plan_dir=plan_dir,
+            kind="phase_failed",
+            message="finalize failed after result publication",
+            current_state="blocked",
+            phase="finalize",
+            resume_cursor={"phase": "finalize", "retry_strategy": "rerun_phase"},
+            metadata={"blocked_task_id": "phase:finalize"},
+        )
+
+        persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        identity = repair_requests.normalize_repair_identity(
+            persisted.get("repair_identity")
+        )
+        assert identity is not None
+        records = repair_requests.iter_repair_requests(queue)
+        assert len(records) == 1
+        assert records[0]["repair_identity_key"] == repair_requests.repair_identity_key(identity)
+        assert persisted["latest_failure"]["metadata"]["repair_identity_seed_provenance"][
+            "source"
+        ] == "active_step_cleanup"
+    finally:
+        publisher.close()
