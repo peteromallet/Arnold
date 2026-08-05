@@ -18,7 +18,7 @@ the *current* revision and attempt.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from arnold_pipelines.run_authority import reducer
 from arnold_pipelines.run_authority.contracts import (
@@ -246,7 +246,12 @@ def _quarantined_target_ids(
     ids: set[str] = set()
     for q in quarantines:
         raw = getattr(q, "payload", None)
-        if isinstance(raw, dict):
+        # Contract payloads are immutable MappingProxyType instances after
+        # construction, not plain dicts.  Treat every Mapping as authoritative
+        # quarantine payload evidence; otherwise a quarantine can be present in
+        # the reduced view while the current-source gate silently ignores its
+        # referenced grant/attempt/decision identities.
+        if isinstance(raw, Mapping):
             for value in raw.values():
                 if isinstance(value, str):
                     ids.add(value)
