@@ -4903,16 +4903,19 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 custody_evidence = manifest["completion_verification"].get("evidence")
                 if isinstance(custody_evidence, Mapping):
                     manifest["git_custody_verification"] = dict(custody_evidence)
+                    custody = manifest.get("git_custody")
+                    details = {
+                        "verification": manifest["git_custody_verification"],
+                    }
+                    if isinstance(custody, Mapping):
+                        details["git_custody"] = git_custody_projection(custody)
                     _emit_managed_child_event(
                         manifest_path,
                         manifest,
                         event_kind="effect",
                         surface="resident.git_custody.verify",
                         evidence="git_custody_verified",
-                        details={
-                            "git_custody": git_custody_projection(custody),
-                            "verification": manifest["git_custody_verification"],
-                        },
+                        details=details,
                     )
             except (GitCustodyError, ValueError) as exc:
                 custody_error = str(exc)
