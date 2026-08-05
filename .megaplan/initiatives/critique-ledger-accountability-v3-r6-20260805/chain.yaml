@@ -8,9 +8,10 @@ launch_preconditions:
   check:
     kind: contains_text
     text: arnold.megaplan.critique_r5_independent_child_disposition.v1
-- name: r6 initiative inputs are committed
-  kind: git_tracked
-  path: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805
+- name: r6 chain specification is present in the uploaded launch workspace
+  kind: artifact
+  path: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/chain.yaml
+  check: exists
 milestones:
 - label: cl2-ledger-replay
   idea: .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/briefs/cl2-ledger-persistence-and-replay.md
