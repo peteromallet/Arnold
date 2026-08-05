@@ -3472,9 +3472,9 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         if kind == "narrow_recheck":
             task_id = str(job.get("task_id") or "")
             # Older fixture payloads omitted ``tasks`` entirely.  Preserve
-            # their compatibility path; canonical Finalize/Execute payloads
-            # always carry the task contract and therefore use the shared
-            # lifecycle classifier below.
+            # their compatibility path only for legacy payloads.  A canonical
+            # v2 payload with no task graph is malformed and must not bypass
+            # selector ownership classification.
             if "tasks" in finalize_data:
                 task = next(
                     (
@@ -3484,6 +3484,18 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     ),
                     None,
                 )
+                if not isinstance(task, Mapping):
+                    raise CliError(
+                        "invalid_validation_job",
+                        f"validation job {job_id} has no matching task owner",
+                        valid_next=["finalize", "revise"],
+                        extra={
+                            "job_id": job_id,
+                            "invalid_fields": ["task_id"],
+                            "validation_job_kind": kind,
+                            "reason": "task_owner_missing",
+                        },
+                    )
                 lifecycle = classify_selector_lifecycle(
                     project_dir=project_dir,
                     job=job,
@@ -3521,6 +3533,22 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         sorted(set(lifecycle.missing_selectors)),
                     )
                     continue
+            elif finalize_data.get("task_contract_version") == 2:
+                # The execute admission guard normally rejects this earlier;
+                # keep the validation-job boundary independently fail-closed
+                # so direct/recovery callers cannot run a selector without a
+                # canonical task owner.
+                raise CliError(
+                    "invalid_validation_job",
+                    f"validation job {job_id} cannot run without the finalized task graph",
+                    valid_next=["finalize", "revise"],
+                    extra={
+                        "job_id": job_id,
+                        "invalid_fields": ["tasks"],
+                        "validation_job_kind": kind,
+                        "reason": "task_contract_missing",
+                    },
+                )
         config = {
             "project_dir": str(project_dir),
             "plan_dir": str(plan_dir),
@@ -3769,6 +3797,20 @@ def _rerun_deferred_selector_validation_jobs(
                 reason="accepted_task_result_envelope_missing",
             )
         _row, envelope = accepted_row_and_envelope
+        # The grant-aware authority decision is recorded before the later
+        # task-policy/write/test guardrails run.  A policy-blocked target must
+        # therefore not release a deferred selector merely because that
+        # earlier authority check said ``accepted``.
+        task_status = task.get("status") if isinstance(task, Mapping) else None
+        if task_status not in {"done", "completed"}:
+            _raise_deferred_selector_result_block(
+                job_id=job_id,
+                task_id=task_id,
+                reason="task_result_blocked_by_post_merge_policy"
+                if task_status == "blocked"
+                else "task_result_not_completed_after_merge",
+                extra={"task_status": task_status},
+            )
         claim_payload = envelope.claim.payload
         if not isinstance(claim_payload, Mapping):
             _raise_deferred_selector_result_block(

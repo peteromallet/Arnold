@@ -769,6 +769,9 @@ def test_deferred_selector_reruns_after_accepted_result_envelope(tmp_path: Path)
     (project_dir / selector).parent.mkdir(parents=True)
     (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
     payload, _entry = _accepted_task_payload(selector=selector)
+    # In production the merge path updates the finalized task before the
+    # deferred recheck.  Mirror that post-merge state here.
+    finalize_data["tasks"][0]["status"] = "done"
     fake_result = SuiteRunResult(
         run_id="rerun-vj1",
         phase="narrow_recheck",
@@ -799,6 +802,75 @@ def test_deferred_selector_reruns_after_accepted_result_envelope(tmp_path: Path)
         )
     mock_run.assert_called_once()
     assert rerun[0]["status"] == "passed"
+
+
+def test_canonical_v2_missing_tasks_cannot_bypass_selector_classification(tmp_path: Path) -> None:
+    """A malformed canonical graph must not run a selector without an owner."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    finalize_data = {
+        "task_contract_version": 2,
+        "validation_jobs": [
+            {
+                "id": "VJ1",
+                "kind": "narrow_recheck",
+                "command": "pytest tests/missing.py",
+                "selectors": ["tests/missing.py"],
+                "task_id": "T1",
+                "mutates": False,
+                "writes_files": False,
+            }
+        ],
+    }
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+    ) as mock_run:
+        with pytest.raises(CliError, match="without the finalized task graph"):
+            _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+            )
+    mock_run.assert_not_called()
+
+
+def test_post_policy_blocked_task_cannot_release_deferred_selector(tmp_path: Path) -> None:
+    """An earlier accepted authority outcome cannot override a later policy block."""
+    from arnold_pipelines.megaplan.execute.batch import (
+        _rerun_deferred_selector_validation_jobs,
+        _run_batch_validation_jobs,
+    )
+
+    plan_dir, project_dir, finalize_data = _deferred_selector_fixture(tmp_path)
+    selector = "tests/new_feature/test_entry_gate.py"
+    deferred = _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        state=_make_state(project_dir),
+    )
+    (project_dir / selector).parent.mkdir(parents=True)
+    (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
+    payload, _entry = _accepted_task_payload(selector=selector)
+    finalize_data["tasks"][0]["status"] = "blocked"
+    with pytest.raises(CliError, match="task_result_blocked_by_post_merge_policy"):
+        _rerun_deferred_selector_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=["T1"],
+            pre_dispatch_results=deferred,
+            payload=payload,
+            state=_make_state(project_dir),
+        )
 
 
 def test_deferred_selector_blocks_without_accepted_result_envelope(tmp_path: Path) -> None:
@@ -852,6 +924,9 @@ def test_deferred_selector_blocks_empty_accepted_result_files(tmp_path: Path) ->
     (project_dir / selector).parent.mkdir(parents=True)
     (project_dir / selector).write_text("def test_gate(): pass\n", encoding="utf-8")
     payload, _entry = _accepted_task_payload(selector=selector, files_changed=[])
+    # The production merge path records the post-merge task outcome before
+    # deferred selector validation is eligible to run.
+    finalize_data["tasks"][0]["status"] = "done"
     with pytest.raises(
         CliError,
         match="accepted_task_result_files_changed_missing_or_empty",
