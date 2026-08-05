@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -73,3 +74,16 @@ def test_owned_path_rejects_escape_and_symlink(tmp_path: Path) -> None:
     link.symlink_to(external, target_is_directory=True)
     with pytest.raises(FreshChildLaunchError, match="child workspace|symlink"):
         _resolve_owned_path(tmp_path, "link/journal.sqlite", "owner")
+
+
+def test_supervisor_persists_cursor_before_fresh_child_owner_admission() -> None:
+    """Guard the crash window that would mint a second plan/child on replay."""
+
+    from arnold_pipelines.megaplan.supervisor import chain_runner
+
+    source = inspect.getsource(chain_runner.run_chain)
+    assert "_admit_fresh_child_for_plan" not in source
+    save = source.index("chain_spec.save_chain_state(spec_path, chain_state)")
+    ensure = source.index("_ensure_fresh_child_for_plan", save)
+    drive = source.index("driver.drive", ensure)
+    assert save < ensure < drive
