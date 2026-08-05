@@ -995,6 +995,9 @@ class ChainSpec:
     require_anchor: bool = True
     missing_anchor_ack: str | None = None
     north_star_critical: bool = False
+    # Opt-in only; kept at the end so positional construction of legacy
+    # ChainSpec instances retains its historical field order.
+    fresh_child_admission: FreshChildAdmissionSpec | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
