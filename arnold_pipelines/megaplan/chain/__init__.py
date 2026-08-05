@@ -121,12 +121,50 @@ APEX_EXTREME_RETRY_CAP = chain_spec.APEX_EXTREME_RETRY_CAP
 BLOCKED_EXECUTE_OUTCOME_STATUSES = chain_spec.BLOCKED_EXECUTE_OUTCOME_STATUSES
 ChainSpec = chain_spec.ChainSpec
 ChainState = chain_spec.ChainState
+FreshChildAdmissionSpec = chain_spec.FreshChildAdmissionSpec
 DEFAULT_MILESTONE_RETRY_CAP = chain_spec.DEFAULT_MILESTONE_RETRY_CAP
 DEPTH_BUMP_ORDER = chain_spec.DEPTH_BUMP_ORDER
 FailurePolicy = chain_spec.FailurePolicy
 MilestoneSpec = chain_spec.MilestoneSpec
 PROFILE_BUMP_ORDER = chain_spec.PROFILE_BUMP_ORDER
 ROBUSTNESS_BUMP_ORDER = chain_spec.ROBUSTNESS_BUMP_ORDER
+
+
+def _admit_fresh_child_for_plan(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    milestone_index: int,
+    plan_name: str,
+) -> dict[str, Any] | None:
+    """Admit an opted-in independent child before any phase/model dispatch.
+
+    The import is intentionally lazy: legacy chain specs do not instantiate
+    Run Authority/WBC/Custody owners and therefore retain their historical
+    launch path.  Enabled admission fails closed when the canonical owner
+    implementation or any configured binding is unavailable.
+    """
+
+    config = spec.fresh_child_admission
+    if config is None or not config.enabled:
+        return None
+    from .fresh_child_launch import FreshChildLaunchError, admit_fresh_child
+
+    try:
+        return admit_fresh_child(
+            root=root,
+            spec_path=spec_path,
+            spec=config,
+            state=state,
+            milestone=milestone,
+            milestone_index=milestone_index,
+            plan_name=plan_name,
+        )
+    except FreshChildLaunchError as exc:
+        raise CliError("fresh_child_admission_failed", str(exc)) from exc
 
 
 def _automatic_pr_progression_permitted(
@@ -7478,6 +7516,20 @@ def run_chain(
                 state.last_state = (
                     _plan_current_state_from_payload(root, plan_name) or "initialized"
                 )
+                fresh_admission = _admit_fresh_child_for_plan(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    milestone_index=idx,
+                    plan_name=plan_name,
+                )
+                if fresh_admission is not None:
+                    state.metadata = dict(state.metadata)
+                    admissions = dict(state.metadata.get("fresh_child_admissions") or {})
+                    admissions[milestone.label] = fresh_admission
+                    state.metadata["fresh_child_admissions"] = admissions
                 _emit_milestone_start_evidence(
                     state,
                     milestone_label=milestone.label,
