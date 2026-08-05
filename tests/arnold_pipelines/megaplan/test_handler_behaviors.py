@@ -80,6 +80,53 @@ This is a successor.
     assert not (plan_dir / "plan_v3.meta.json").exists()
 
 
+def test_step_edit_rejects_mutated_prior_artifact_before_new_output(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.execute.step_edit import _commit_step_edit
+    from arnold_pipelines.megaplan.orchestration.evaluation import parse_plan_sections
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    prior_v1 = plan_dir / "plan_v1.md"
+    prior_v2 = plan_dir / "plan_v2.md"
+    prior_v1.write_text("# v1\n", encoding="utf-8")
+    original_v2 = "# v2\n"
+    prior_v2.write_text(original_v2, encoding="utf-8")
+    state: dict[str, Any] = {
+        "name": "step-edit-test",
+        "idea": "exercise the direct plan writer",
+        "current_state": "planned",
+        "iteration": 3,
+        "config": {},
+        "sessions": {},
+        "plan_versions": [
+            {"version": 1, "file": prior_v1.name, "hash": sha256_text("# v1\n")},
+            {"version": 2, "file": prior_v2.name, "hash": sha256_text(original_v2)},
+        ],
+        "history": [],
+        "meta": {},
+        "last_gate": {},
+    }
+    prior_v2.write_text("# v2 tampered\n", encoding="utf-8")
+    sections = parse_plan_sections(
+        "# Plan\n\n## Execution Order\n\n## Step 1: Verify\n1. Read `plan_v2.md`.\n"
+    )
+
+    with pytest.raises(CliError) as caught:
+        _commit_step_edit(
+            plan_dir,
+            state,
+            sections,
+            action="add",
+            action_summary="Add a verification step",
+        )
+
+    assert getattr(caught.value, "code", None) == "immutable_artifact_mutation"
+    assert not (plan_dir / "plan_v3.md").exists()
+    assert not (plan_dir / "plan_v3.meta.json").exists()
+
+
 def test_gate_evidence_versions_preserve_old_decisions_and_legacy_latest(
     tmp_path: Path,
 ) -> None:
