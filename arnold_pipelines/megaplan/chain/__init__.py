@@ -167,6 +167,50 @@ def _admit_fresh_child_for_plan(
         raise CliError("fresh_child_admission_failed", str(exc)) from exc
 
 
+def _ensure_fresh_child_for_plan(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    milestone_index: int,
+    plan_name: str,
+) -> dict[str, Any] | None:
+    """Complete a pending fresh-child admission, including crash replay.
+
+    Chain state is persisted before the first owner call.  If the process dies
+    after owner writes but before the state metadata write, the next launch
+    enters this function with the same ``current_plan_name`` and the canonical
+    owner transaction replays idempotently.  A recorded summary is the only
+    successful skip condition; no PID/status sidecar is treated as admission.
+    """
+
+    config = spec.fresh_child_admission
+    if config is None or not config.enabled:
+        return None
+    metadata = state.metadata if isinstance(state.metadata, dict) else {}
+    records = metadata.get("fresh_child_admissions")
+    if isinstance(records, dict) and isinstance(records.get(milestone.label), dict):
+        return None
+    admission = _admit_fresh_child_for_plan(
+        root=root,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=milestone,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+    )
+    if admission is None:
+        return None
+    state.metadata = dict(metadata)
+    admissions = dict(state.metadata.get("fresh_child_admissions") or {})
+    admissions[milestone.label] = admission
+    state.metadata["fresh_child_admissions"] = admissions
+    return admission
+
+
 def _automatic_pr_progression_permitted(
     spec: ChainSpec, spec_path: Path
 ) -> bool:
@@ -7516,7 +7560,14 @@ def run_chain(
                 state.last_state = (
                     _plan_current_state_from_payload(root, plan_name) or "initialized"
                 )
-                fresh_admission = _admit_fresh_child_for_plan(
+                _emit_milestone_start_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx,
+                    plan_name=plan_name,
+                )
+                chain_spec.save_chain_state(spec_path, state)
+                fresh_admission = _ensure_fresh_child_for_plan(
                     root=root,
                     spec_path=spec_path,
                     spec=spec,
@@ -7526,17 +7577,7 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 if fresh_admission is not None:
-                    state.metadata = dict(state.metadata)
-                    admissions = dict(state.metadata.get("fresh_child_admissions") or {})
-                    admissions[milestone.label] = fresh_admission
-                    state.metadata["fresh_child_admissions"] = admissions
-                _emit_milestone_start_evidence(
-                    state,
-                    milestone_label=milestone.label,
-                    milestone_index=idx,
-                    plan_name=plan_name,
-                )
-                chain_spec.save_chain_state(spec_path, state)
+                    chain_spec.save_chain_state(spec_path, state)
                 _emit_chain_work_boundary(
                     "chain_session_start",
                     plan_name=plan_name,
@@ -7613,6 +7654,18 @@ def run_chain(
             plan_name=plan_name,
             operation=f"resume milestone {milestone.label}",
         )
+
+        fresh_admission = _ensure_fresh_child_for_plan(
+            root=root,
+            spec_path=spec_path,
+            spec=spec,
+            state=state,
+            milestone=milestone,
+            milestone_index=idx,
+            plan_name=plan_name,
+        )
+        if fresh_admission is not None:
+            chain_spec.save_chain_state(spec_path, state)
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
