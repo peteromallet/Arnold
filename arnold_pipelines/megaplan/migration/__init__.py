@@ -41,6 +41,18 @@ from .owner_adapters import (
     RunAuthorityJournal,
     RunAuthorityJournalOwner,
 )
+from .fresh_child_admission import (
+    FRESH_CHILD_SCHEMA,
+    FreshChildAdmission,
+    FreshChildAdmissionError,
+    FreshChildAdmissionReceipt,
+    FreshChildConflict,
+    FreshChildIdentity,
+    FreshChildIndeterminate,
+    FreshChildJournal,
+    FreshChildOwnerUnavailable,
+    FreshChildRequest,
+)
 
 __all__ = [
     "CHILD_MIGRATION_SCHEMA",
@@ -74,4 +86,14 @@ __all__ = [
     "FreshChildRunLocator",
     "RunAuthorityJournal",
     "RunAuthorityJournalOwner",
+    "FRESH_CHILD_SCHEMA",
+    "FreshChildAdmission",
+    "FreshChildAdmissionError",
+    "FreshChildAdmissionReceipt",
+    "FreshChildConflict",
+    "FreshChildIdentity",
+    "FreshChildIndeterminate",
+    "FreshChildJournal",
+    "FreshChildOwnerUnavailable",
+    "FreshChildRequest",
 ]
