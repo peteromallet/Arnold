@@ -125,7 +125,13 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
 
     def read_parent(self, run_id: str, run_revision: str) -> ParentAuthoritySnapshot:
         assert self.journal is not None
-        return self.journal.snapshot(run_id, run_revision)
+        try:
+            return self.journal.snapshot(run_id, run_revision)
+        except (FileNotFoundError, KeyError) as exc:
+            raise OwnerUnavailable(
+                "canonical RunAuthorityJournal has no authoritative parent "
+                "records; refusing to migrate an r5 projection"
+            ) from exc
 
     def read_parent_commit(self, migration_idempotency_key: str) -> ParentCommitReceipt | None:
         assert self.journal is not None
@@ -153,11 +159,17 @@ class RunAuthorityJournalOwner(RunAuthorityOwner):
         migration_idempotency_key: str,
     ) -> ChildAuthority:
         assert self.journal is not None
-        return self.journal.append_child_authority(
-            identity=identity,
-            parent=parent,
-            migration_idempotency_key=migration_idempotency_key,
-        )
+        try:
+            return self.journal.append_child_authority(
+                identity=identity,
+                parent=parent,
+                migration_idempotency_key=migration_idempotency_key,
+            )
+        except (FileNotFoundError, KeyError) as exc:
+            raise OwnerUnavailable(
+                "canonical RunAuthorityJournal cannot allocate a child "
+                "because authoritative parent records are absent"
+            ) from exc
 
     def read_child(self, migration_idempotency_key: str) -> ChildAuthority | None:
         assert self.journal is not None
