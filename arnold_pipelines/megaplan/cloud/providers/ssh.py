@@ -966,7 +966,13 @@ class SshProvider(Provider):
         expected_image_id: str,
         target: str,
         expected_container_id: str | None = None,
+        expected_lifecycle: str = "running",
     ) -> dict[str, Any]:
+        if expected_lifecycle not in {"running", "stopped"}:
+            raise CliError(
+                "isolated_chain_runner_runtime_unknown",
+                "isolated chain-runner lifecycle expectation was invalid",
+            )
         result = self._remote_run_compatible(
             _isolated_chain_runner_runtime_command(target),
             surface="isolated_chain_runner_runtime_observe",
@@ -1052,13 +1058,24 @@ class SshProvider(Provider):
             if isinstance(mounts, list)
             else set()
         )
+        state_status = state.get("Status") if isinstance(state, Mapping) else None
+        state_running = state.get("Running") if isinstance(state, Mapping) else None
+        state_paused = state.get("Paused") if isinstance(state, Mapping) else None
+        state_restarting = (
+            state.get("Restarting") if isinstance(state, Mapping) else None
+        )
+        state_status_valid = (
+            state_status == "running"
+            if expected_lifecycle == "running"
+            else state_status in {"created", "exited", "dead"}
+        )
         valid = (
             result.returncode == 0
             and isinstance(state, Mapping)
-            and state.get("Status") == "running"
-            and state.get("Running") is True
-            and state.get("Paused") is False
-            and state.get("Restarting") is False
+            and state_status_valid
+            and state_running is (expected_lifecycle == "running")
+            and state_paused is False
+            and state_restarting is False
             and observed_env is not None
             and expected_env is not None
             and observed_env == expected_env
@@ -1110,7 +1127,7 @@ class SshProvider(Provider):
         observation = {
             "schema": "arnold.cloud.isolated_chain_runner_runtime.v1",
             "status": "available",
-            "lifecycle": "running",
+            "lifecycle": expected_lifecycle,
             "container": self._ssh.container,
             "container_id": container_id,
             "image_id": image_id,
@@ -1183,6 +1200,51 @@ class SshProvider(Provider):
             raise CliError(
                 "isolated_chain_runner_name_replaced",
                 "isolated chain-runner name changed during runtime attestation",
+            )
+        return observation
+
+    def _attest_isolated_chain_runner_stopped_runtime(
+        self,
+        *,
+        expected_image_id: str,
+    ) -> dict[str, Any]:
+        """Prove an exited target is the exact isolated runtime before starting it.
+
+        A stopped container is recoverable only when its immutable image,
+        command, environment, capabilities, and workspace/cache mounts still
+        match the pinned isolated profile.  The observation is repeated by
+        name after the inspect so a replacement cannot be mistaken for the
+        container that was admitted.  No ``rm``/``run`` path is used here;
+        the existing container and its persistent workspace are preserved.
+        """
+
+        first = self.observe_container()
+        container_id = first.get("container_id")
+        if (
+            first.get("status") != "available"
+            or first.get("lifecycle") != "stopped"
+            or not isinstance(container_id, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", container_id)
+        ):
+            raise CliError(
+                "isolated_chain_runner_stopped_runtime_unknown",
+                "stopped isolated chain-runner identity was unavailable",
+            )
+        observation = self._observe_isolated_chain_runner_runtime(
+            expected_image_id=expected_image_id,
+            target=container_id,
+            expected_container_id=container_id,
+            expected_lifecycle="stopped",
+        )
+        second = self.observe_container()
+        if (
+            second.get("status") != "available"
+            or second.get("lifecycle") != "stopped"
+            or second.get("container_id") != container_id
+        ):
+            raise CliError(
+                "isolated_chain_runner_name_replaced",
+                "isolated chain-runner name changed during stopped-runtime attestation",
             )
         return observation
 
@@ -2897,6 +2959,24 @@ class SshProvider(Provider):
                 existing.get("status") == "available"
                 and existing.get("lifecycle") == "running"
             ):
+                self.attest_isolated_chain_runner_runtime()
+                launch_container = False
+            elif (
+                existing.get("status") == "available"
+                and existing.get("lifecycle") == "stopped"
+            ):
+                # Recover an exact exited container in place.  The stopped
+                # runtime attestation proves the pinned image/config and the
+                # persistent workspace bind before Docker is allowed to start
+                # it; using the immutable ID avoids a name-reuse race.
+                stopped_observation = self._attest_isolated_chain_runner_stopped_runtime(
+                    expected_image_id=isolated_image_id,
+                )
+                stopped_container_id = stopped_observation["container_id"]
+                self._remote_run_compatible(
+                    f"docker start {shlex.quote(stopped_container_id)}",
+                    surface="deploy_recover_stopped",
+                )
                 self.attest_isolated_chain_runner_runtime()
                 launch_container = False
             else:

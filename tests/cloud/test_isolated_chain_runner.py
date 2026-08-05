@@ -110,6 +110,8 @@ def _runtime_fields(
     image_id: str,
     *,
     container_id: str,
+    state_status: str = "running",
+    running: bool = True,
     env: list[str] | None = None,
     mounts: list[dict[str, object]] | None = None,
     entrypoint: list[str] | None = None,
@@ -121,8 +123,8 @@ def _runtime_fields(
 ) -> list[object]:
     return [
         {
-            "Status": "running",
-            "Running": True,
+            "Status": state_status,
+            "Running": running,
             "Paused": False,
             "Restarting": False,
         },
@@ -423,7 +425,7 @@ def test_stale_normal_image_is_forced_through_fixed_isolated_boot_command() -> N
     assert observation["host_config"]["healthcheck"] == {"Test": ["NONE"]}
 
 
-def test_isolated_deploy_existing_name_fails_without_stop_remove_or_run() -> None:
+def test_isolated_deploy_rejects_stopped_mismatched_identity_without_mutation() -> None:
     commands: list[str] = []
     image_id = "sha256:" + "e" * 64
 
@@ -453,20 +455,105 @@ def test_isolated_deploy_existing_name_fails_without_stop_remove_or_run() -> Non
                     stdout=json.dumps(payload) + "\n",
                     stderr="",
                 )
+            if command.startswith("docker inspect --type=container"):
+                fields = _runtime_fields(
+                    "sha256:" + "d" * 64,
+                    container_id="f" * 64,
+                    state_status="exited",
+                    running=False,
+                )
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="\n".join(json.dumps(field) for field in fields) + "\n",
+                    stderr="",
+                )
             raise AssertionError(f"unexpected mutation after collision: {command}")
 
         def _sync_deploy_dir(self, deploy_dir: Path) -> None:
             del deploy_dir
 
-    with pytest.raises(CliError, match="target exists"):
+    with pytest.raises(CliError, match="mismatched"):
         CollisionProvider(
             _spec(isolated_chain_runner_image_id=image_id)
         ).deploy(Path("/tmp/deploy"), secrets={})
 
-    assert len(commands) == 2
+    assert len(commands) == 3
     assert commands[0].startswith("docker image inspect")
     assert not any("docker rm" in command for command in commands)
+    assert not any("docker start" in command for command in commands)
     assert not any(command.startswith("docker run") for command in commands)
+
+
+def test_isolated_deploy_recovers_exact_stopped_identity_in_place() -> None:
+    commands: list[str] = []
+    image_id = "sha256:" + "9" * 64
+    container_id = "8" * 64
+    lifecycle = {"value": "stopped"}
+
+    class RecoverStoppedProvider(SshProvider):
+        def observe_container(self):
+            if lifecycle["value"] == "stopped":
+                return {
+                    "status": "available",
+                    "lifecycle": "stopped",
+                    "container_id": container_id,
+                }
+            return {
+                "status": "available",
+                "lifecycle": "running",
+                "container_id": container_id,
+            }
+
+        def _remote_run_compatible(
+            self,
+            command: str,
+            *,
+            capture_output: bool = True,
+            input: str | None = None,
+            surface: str,
+        ):
+            del capture_output, input, surface
+            commands.append(command)
+            if command.startswith("docker image inspect"):
+                payload: object = _IMAGE_ENV if ".Config.Env" in command else image_id
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout=json.dumps(payload) + "\n",
+                    stderr="",
+                )
+            if command.startswith("docker inspect --type=container"):
+                fields = _runtime_fields(
+                    image_id,
+                    container_id=container_id,
+                    state_status=("exited" if lifecycle["value"] == "stopped" else "running"),
+                    running=lifecycle["value"] == "running",
+                )
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="\n".join(json.dumps(field) for field in fields) + "\n",
+                    stderr="",
+                )
+            if command == f"docker start {container_id}":
+                lifecycle["value"] = "running"
+                return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected provider command: {command}")
+
+        def _sync_deploy_dir(self, deploy_dir: Path) -> None:
+            del deploy_dir
+
+    provider = RecoverStoppedProvider(
+        _spec(isolated_chain_runner_image_id=image_id)
+    )
+    assert provider.deploy(Path("/tmp/deploy"), secrets={}) == 0
+
+    assert sum(command.startswith("docker start ") for command in commands) == 1
+    assert f"docker start {container_id}" in commands
+    assert not any(command.startswith("docker run") for command in commands)
+    assert not any("docker rm" in command for command in commands)
+    assert provider._isolated_chain_runner_deploy_observation["lifecycle"] == "running"
 
 
 def test_isolated_redeploy_accepts_only_exact_running_attestation_without_mutation() -> None:
