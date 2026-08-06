@@ -3554,6 +3554,23 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             "plan_dir": str(plan_dir),
             "test_command": command.strip(),
         }
+        if kind == "post_execute_suite":
+            # The compiled suite timeout can be far smaller than the plan's
+            # blast-radius suite actually needs.  Align the suite gate with
+            # the chain-authoritative phase budget (bounded) so a slow but
+            # healthy suite is not a false gate.  The admitted command remains
+            # byte-for-byte authoritative: missing selectors and collection
+            # errors are failures, never an invitation to weaken the gate.
+            try:
+                plan_state = _json.loads(
+                    (Path(plan_dir) / "state.json").read_text(encoding="utf-8")
+                )
+                cfg = plan_state.get("config") if isinstance(plan_state, dict) else None
+                pb = cfg.get("phase_timeout_seconds") if isinstance(cfg, dict) else None
+                if isinstance(pb, (int, float)) and pb > 0:
+                    timeout = max(int(timeout), min(int(pb), 14400))
+            except Exception:
+                pass
         try:
             result = _suite_runner.run_suite(
                 Path(project_dir),

@@ -331,6 +331,86 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
         assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128"
 
 
+def test_managed_worker_completion_emits_git_custody_event_without_unbound_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The managed-provider path must finish after custody verification.
+
+    The Codex-only supervisor had a local named ``custody`` from its launch
+    path.  The generic managed-provider supervisor did not, so an otherwise
+    successful worker crashed with ``NameError`` after its strict receipt had
+    already verified.  Exercise the generic path and require the durable
+    verification event, not merely a zero provider return code.
+    """
+
+    manifest_path = _worker_manifest(
+        tmp_path, backend="hermes", model="zhipu:glm-5.2"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["git_custody"] = {
+        "schema_version": "arnold-resident-git-custody-v1",
+        "target_resolution": {"status": "resolved"},
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    class _Worker:
+        pid = 225
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        output = kwargs["stdout"]
+        output.write(b"READY\n")
+        output.flush()
+        session_id = argv[argv.index("--session-id") + 1]
+        Path(argv[argv.index("--metadata-file") + 1]).write_text(
+            json.dumps(
+                {
+                    "session_id": session_id,
+                    "resolved_model": "zhipu:glm-5.2",
+                    "toolsets": ["file"],
+                    "usage": {"output_tokens": 1},
+                    "events": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return _Worker()
+
+    monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        subagent,
+        "_verify_managed_completion_contract",
+        lambda *_args: {
+            "status": "success",
+            "evidence": {"status": "verified_integrated"},
+        },
+    )
+
+    assert subagent._run_managed_manifest(manifest_path) == 0
+    terminal = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert terminal["status"] == "completed"
+    assert terminal["git_custody_verification"] == {
+        "status": "verified_integrated"
+    }
+    custody_events = [
+        json.loads(line)
+        for line in (manifest_path.parent / "managed-child-custody.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert any(
+        event["surface"] == "resident.git_custody.verify"
+        and event["evidence"] == "git_custody_verified"
+        and event["details"]["git_custody"]["available"] is True
+        for event in custody_events
+    )
+
+
 def test_managed_non_codex_worker_rejects_empty_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
