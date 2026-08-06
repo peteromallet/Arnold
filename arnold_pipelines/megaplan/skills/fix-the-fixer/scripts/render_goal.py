@@ -27,6 +27,13 @@ repair; and prove the actual epic or session advances beyond its frozen baseline
 Operator contract:
 - Use $superfixer-debug fully and $megaplan-cloud when this is a cloud target.
 - Launch no agents or subagents. You are the one mutation owner.
+- Fast path: if the fix is obvious — unambiguous root cause, minimal/contained
+  change, verifiable with a focused test, no authority/credential gate — apply it
+  immediately and verify, and keep pushing until verified working.
+- Escalate to Sol stage 2 after three distinct, verified fix attempts that do not
+  advance the occurrence (never three blind retries); escalate sooner on unchanged
+  evidence or an infra/credential blocker. Each escalation carries an evidence
+  delta + rollback state; cap Sol cycles to prevent recursion.
 - Resolve canonical target IDs, the blocker occurrence, all custody sources,
   pinned source/runtime/installed identities, and effect authority from raw
   evidence. The target text is orientation, not proof.
