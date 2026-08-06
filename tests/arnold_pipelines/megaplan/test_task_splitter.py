@@ -558,7 +558,7 @@ class TestBatchSplitter:
             _task("T3", complexity=5),   # stays
             _task("T4", complexity=9),   # split
         ]
-        result, diags = split_high_complexity_tasks(_payload(tasks))
+        result, diags, _split_map = split_high_complexity_tasks(_payload(tasks))
 
         assert diags == []
         ids = [t["id"] for t in result]
@@ -577,7 +577,7 @@ class TestBatchSplitter:
             _task("T1", complexity=4),
             _task("T2", complexity=8, objective="X; Y"),  # ambiguous
         ]
-        result, diags = split_high_complexity_tasks(_payload(tasks))
+        result, diags, _split_map = split_high_complexity_tasks(_payload(tasks))
 
         assert len(diags) == 1
         assert diags[0].code == SPLIT_AMBIGUOUS_OBJECTIVE
@@ -589,18 +589,18 @@ class TestBatchSplitter:
         assert len(result) == 2
 
     def test_empty_tasks_list(self) -> None:
-        result, diags = split_high_complexity_tasks({"tasks": []})
+        result, diags, _split_map = split_high_complexity_tasks({"tasks": []})
         assert result == []
         assert diags == []
 
     def test_non_list_tasks(self) -> None:
-        result, diags = split_high_complexity_tasks({"tasks": "not a list"})
+        result, diags, _split_map = split_high_complexity_tasks({"tasks": "not a list"})
         assert result == []
         assert len(diags) == 1
         assert diags[0].code == SPLIT_AMBIGUOUS_OBJECTIVE
 
     def test_non_dict_entry_in_tasks(self) -> None:
-        result, diags = split_high_complexity_tasks({"tasks": ["not a dict"]})
+        result, diags, _split_map = split_high_complexity_tasks({"tasks": ["not a dict"]})
         assert result == []
         assert len(diags) == 1
         assert diags[0].code == SPLIT_AMBIGUOUS_OBJECTIVE
@@ -612,7 +612,7 @@ class TestBatchSplitter:
             _task("T2", complexity=8, objective="X; Y"),
             _task("T3", complexity=8),
         ]
-        result, diags = split_high_complexity_tasks(_payload(tasks))
+        result, diags, _split_map = split_high_complexity_tasks(_payload(tasks))
 
         # Two diagnostics: non-dict entry + ambiguous T2
         assert len(diags) == 2

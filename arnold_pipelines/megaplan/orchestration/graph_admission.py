@@ -124,11 +124,92 @@ def clear_planner_repair(state: dict[str, Any]) -> None:
         meta.pop("planner_repair", None)
 
 
+def rearm_circuit_open_finalize(
+    state: dict[str, Any],
+    *,
+    plan: str,
+    occurrence_digest: str,
+    candidate_id: str,
+    failure_fingerprint: str,
+    runtime_revision: str,
+) -> dict[str, Any]:
+    """Narrow, authority-bound migration for a legacy circuit-open projection.
+
+    Re-arms the two missing fields (``latest_failure`` and ``resume_cursor``)
+    that the supported recover-blocked producer requires for an
+    already-preserved circuit-open finalize occurrence.  It is callable only
+    as the authorized mutation inside a repair delegation; it never clears
+    ``meta.planner_repair`` and never edits the candidate/admission records.
+
+    Preconditions (all verified here, fail closed otherwise):
+    - plan state ``current_state`` is ``blocked``;
+    - ``meta.planner_repair`` exists with the exact candidate id and failure
+      fingerprint and no previously admitted finalize/feasibility hash;
+    - the caller-supplied occurrence digest matches the persisted occurrence
+      (when present) and the repaired runtime revision is supplied.
+    """
+    errors: list[str] = []
+    if state.get("current_state") != "blocked":
+        errors.append("current_state_not_blocked")
+    repair = (state.get("meta") or {}).get("planner_repair")
+    if not isinstance(repair, Mapping):
+        errors.append("planner_repair_missing")
+    else:
+        if repair.get("candidate_id") != candidate_id:
+            errors.append("candidate_id_mismatch")
+        if repair.get("failure_fingerprint") != failure_fingerprint:
+            errors.append("failure_fingerprint_mismatch")
+        if repair.get("prior_admitted_finalize_sha256") is not None:
+            errors.append("prior_admitted_finalize_exists")
+        if repair.get("prior_admitted_feasibility_sha256") is not None:
+            errors.append("prior_admitted_feasibility_exists")
+    persisted_occurrence = state.get("occurrence_digest") or (state.get("meta") or {}).get("occurrence_digest")
+    if persisted_occurrence and persisted_occurrence != occurrence_digest:
+        errors.append("occurrence_digest_mismatch")
+    if not runtime_revision:
+        errors.append("runtime_revision_missing")
+    if errors:
+        raise ValueError("rearm_circuit_open_finalize refused: " + ", ".join(errors))
+
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "finalize",
+        "iteration": state.get("iteration"),
+        "error": "finalized_task_feasibility_failed",
+        "metadata": {
+            "candidate_id": candidate_id,
+            "failure_fingerprint": failure_fingerprint,
+            "planner_repair_failure_fingerprint": failure_fingerprint,
+            "occurrences": repair.get("occurrences"),
+            "repair_runtime_revision": runtime_revision,
+            "plan": plan,
+            "occurrence_digest": occurrence_digest,
+        },
+    }
+    state["resume_cursor"] = {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    return {
+        "schema": "megaplan.planner_repair_rearm",
+        "schema_version": 1,
+        "rearmed": True,
+        "plan": plan,
+        "occurrence_digest": occurrence_digest,
+        "candidate_id": candidate_id,
+        "failure_fingerprint": failure_fingerprint,
+        "runtime_revision": runtime_revision,
+        "circuit_still_open": True,
+        "rearmed_at": now_utc(),
+    }
+
+
 __all__ = [
     "CIRCUIT_THRESHOLD",
     "SCHEMA",
     "SCHEMA_VERSION",
     "candidate_graph_record",
     "clear_planner_repair",
+    "rearm_circuit_open_finalize",
     "record_rejected_candidate",
 ]
