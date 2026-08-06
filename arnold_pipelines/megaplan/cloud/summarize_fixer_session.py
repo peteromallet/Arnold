@@ -45,6 +45,7 @@ Do NOT include the session path. Do NOT speculate beyond the evidence. Keep it t
 Final message excerpt: {final[:800]}"""
     brief_path = Path("/tmp") / f"fixer-summary-brief-{session_id}.md"
     brief_path.write_text(brief)
+    provenance = "flash_generated"
     summary = ""
     try:
         env = dict(os.environ)
@@ -69,9 +70,15 @@ Final message excerpt: {final[:800]}"""
     except Exception as exc:
         summary = ""
     if not summary or len(summary) < 20:
-        # fallback: final message excerpt
+        provenance = "fallback_unverified_extract"
         summary = " ".join(final.split())[:500]
-    summary = (f"Session {session_id} ({model}) [UNTRUSTED HISTORICAL EVIDENCE — verify against current state]: {summary}").strip()
+    prov = "**Fallback: unverified extract** (Flash summary unavailable)" if provenance == "fallback_unverified_extract" else "Flash-generated 2-sentence summary"
+    summary = (
+        f"Session {session_id} ({model}) [UNTRUSTED HISTORICAL EVIDENCE — verify against current state]\n"
+        f"  provenance: {prov}\n"
+        f"  evidence: result.md, recovery-evidence.json, run.log (final agent_message)\n"
+        f"  summary: {summary}"
+    ).strip()
     (store / "summaries").mkdir(parents=True, exist_ok=True)
     (store / "summaries" / f"{session_id}.md").write_text(summary + "\n")
     idx = store / "index.md"
