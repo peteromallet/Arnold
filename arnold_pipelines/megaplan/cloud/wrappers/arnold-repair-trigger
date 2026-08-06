@@ -82,6 +82,9 @@ try:
         attach_repair_goal_owner,
         ensure_repair_goal,
     )
+    from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
+        validate_engine_runtime_repair_admission,
+    )
     from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
     from arnold_pipelines.megaplan.cloud.repair_escalation import evaluate_checkpoint_escalation
     from arnold_pipelines.megaplan.cloud.repair_lock import (
@@ -103,6 +106,7 @@ try:
     )
     from arnold_pipelines.megaplan.custody.contracts import (
         CustodyTargetKey,
+        build_custody_target_key,
         normalize_custody_target_key,
     )
 except Exception:
@@ -510,10 +514,33 @@ def _dispatch(
     dispatch_intent = str(request.get("dispatch_intent") or "")
     deep_dispatch = dispatch_intent == "deep_superfixer_repair"
     l2_dispatch = dispatch_intent == "broken_superfixer"
-    # L2/L3 describe diagnosis depth, not an alternate mutation authority.
-    # Every mutation request, including meta and deep escalation, must cross
-    # the same exact-occurrence simple_fixer custody boundary below.
+    # L2/L3 are still mutation requests, but they have a distinct managed
+    # worker path.  It is opt-in only after the typed source-repair admission
+    # is validated against the exact repair-identity key below; a deep label
+    # or deterministic finding alone can never create a child process.
     meta_dispatch = False
+    request_target_record = (
+        request.get("target") if isinstance(request.get("target"), Mapping) else {}
+    )
+    engine_runtime_admission = (
+        request.get("engine_runtime_repair_admission")
+        if isinstance(request.get("engine_runtime_repair_admission"), Mapping)
+        else target.get("engine_runtime_repair_admission")
+        if isinstance(target.get("engine_runtime_repair_admission"), Mapping)
+        else request_target_record.get("engine_runtime_repair_admission")
+        if isinstance(request_target_record.get("engine_runtime_repair_admission"), Mapping)
+        else {}
+    )
+    admission_reason = ""
+    if deep_dispatch or l2_dispatch:
+        if repair_identity_key:
+            admission_ok, admission_reason = validate_engine_runtime_repair_admission(
+                engine_runtime_admission,
+                occurrence_fingerprint=repair_identity_key,
+            )
+            meta_dispatch = admission_ok
+        else:
+            admission_reason = "exact repair_identity_key is required for source repair admission"
     selected_bin = repair_bin
     mutation_path = (
         feature_flags.MUTATION_PATH_L3
@@ -682,6 +709,52 @@ def _dispatch(
     )
     managed_run_id = stable_managed_run_id(run_kind, identity_key)
     managed_project = Path(workspace).resolve()
+    # Managed editable repairs must operate on the explicitly admitted Arnold
+    # runtime checkout, not the chain's target workspace.  The latter remains
+    # an incident/lineage link only; using it as ``--project-dir`` would make
+    # a successful repair unverifiable (or mutate the wrong checkout).  The
+    # admission may pin the root; the resident runtime env is the safe
+    # fallback for older admission producers.  Fail closed when neither is
+    # available instead of launching a worker with ambiguous custody.
+    if meta_dispatch:
+        runtime_root = str(
+            engine_runtime_admission.get("engine_runtime_root")
+            if isinstance(engine_runtime_admission, Mapping)
+            else ""
+        ).strip()
+        runtime_root = runtime_root or os.environ.get("MEGAPLAN_RUNTIME_SRC", "").strip()
+        if not runtime_root:
+            try:
+                from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
+                runtime_root = str(megaplan_engine_root()).strip()
+            except Exception:
+                runtime_root = ""
+        if not runtime_root or not Path(runtime_root).is_dir():
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                owner=claim.owner,
+                expected_pid=os.getpid(),
+            )
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="approved engine runtime root unavailable",
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "delegation_rejected",
+                    "request_id": request_id,
+                    "delegation_outcome": "delegation_failed",
+                    "authority_status": "zero_authority_rejected",
+                    "reason": "approved engine runtime root unavailable",
+                    "custody_retry": retry,
+                }
+            )
+            return 0
+        managed_project = Path(runtime_root).resolve()
     managed_manifest = (
         managed_project
         / ".megaplan"
@@ -784,6 +857,38 @@ def _dispatch(
     env["ARNOLD_REPAIR_GOAL_ID"] = str(goal_payload["goal_id"])
     env["ARNOLD_REPAIR_GOAL_PATH"] = str(goal_path)
     env["ARNOLD_REPAIR_CHECKPOINT_DIGEST"] = str(goal_payload["checkpoint_digest"])
+    if (deep_dispatch or l2_dispatch) and not meta_dispatch:
+        # A typed source/runtime admission is the only authority that may
+        # cross into the managed editable worker.  Do not fall back to the
+        # fingerprint-only simple_fixer action: that action is intentionally a
+        # no-op and must never be reported as a dispatch.
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="typed engine_runtime/source_repair admission rejected: " + admission_reason,
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "delegation_rejected",
+                "request_id": request_id,
+                "repair_layer": repair_layer,
+                # Compatibility evidence for consumers that previously saw
+                # the fingerprint-only simple_fixer rejection.  It is not a
+                # dispatch claim; the typed status above remains authoritative.
+                "delegation_outcome": "delegation_failed",
+                "authority_status": "zero_authority_rejected",
+                "reason": admission_reason,
+                "custody_retry": retry,
+            }
+        )
+        return 0
     if meta_dispatch:
         try:
             legacy_child_args = (
@@ -835,6 +940,12 @@ def _dispatch(
                 "--link",
                 f"repair_request_id={request_id}",
                 "--link",
+                f"target_workspace={workspace}",
+                "--link",
+                f"engine_runtime_root={managed_project}",
+                "--link",
+                f"engine_runtime_admission_id={engine_runtime_admission.get('admission_id') if isinstance(engine_runtime_admission, Mapping) else ''}",
+                "--link",
                 f"blocker_id={blocker_id}",
                 "--link",
                 f"repair_queue_dir={queue_dir}",
@@ -877,7 +988,7 @@ def _dispatch(
             # a second authoritative launch surface.
             proc = getattr(subprocess, "Popen")(
                 legacy_manager_args,
-                cwd=workspace if Path(workspace).exists() else None,
+                cwd=str(managed_project) if managed_project.is_dir() else None,
                 env=env,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
