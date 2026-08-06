@@ -383,7 +383,7 @@ def _validate_tier_models(
     valid_phase_keys: frozenset[str] | None = None,
 ) -> dict[str, dict[int, str | list[str]]]:
     """Validate tier model entries: phase names must be known, tier keys
-    must be 1..5, and values must use valid ``agent:model`` specs.
+    must be 1..10, and values must use valid ``agent:model`` specs.
     Accepts both scalar strings and TOML arrays for each tier spec."""
     if valid_phase_keys is None:
         valid_phase_keys = VALID_PHASE_KEYS
@@ -398,12 +398,12 @@ def _validate_tier_models(
             )
         v_tiers: dict[int, str | list[str]] = {}
         for tier_int, spec in tiers.items():
-            if not isinstance(tier_int, int) or tier_int < 1 or tier_int > 5:
+            if not isinstance(tier_int, int) or tier_int < 1 or tier_int > 10:
                 _raise_invalid_profile(
                     path,
                     profile_name,
                     f"tier_models.{phase}.{tier_int}",
-                    f"tier key must be an integer 1..5, got {tier_int!r}",
+                    f"tier key must be an integer 1..10, got {tier_int!r}",
                 )
             v_tiers[tier_int] = _validate_tier_spec_value(
                 spec,

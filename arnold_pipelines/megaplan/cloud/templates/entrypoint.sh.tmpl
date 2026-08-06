@@ -10,6 +10,14 @@ mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex /root/.hermes
 chmod 700 /root/.ssh
 chmod 700 /root/.codex /root/.hermes /workspace/.creds
 
+# Railway auth seed from the persistent volume. The config file is copied into
+# ephemeral /root on every boot and is never supplied through cloud.yaml.
+if [[ -s /workspace/.creds/railway-config.json ]]; then
+  install -d -m 700 /root/.railway
+  install -m 600 /workspace/.creds/railway-config.json /root/.railway/config.json
+  echo "Railway auth: seeded CLI credentials from persistent volume"
+fi
+
 REPO_URL="$${REPO_URL:-${REPO_URL}}"
 REPO_BRANCH="$${REPO_BRANCH:-${REPO_BRANCH}}"
 WORKSPACE_PATH="${WORKSPACE_PATH}"
@@ -198,7 +206,7 @@ fi
 if [[ -f /workspace/.secrets/megaplan-resident-discord.env ]]; then
   if ! tmux has-session -t megaplan-resident-discord 2>/dev/null; then
     tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold \
-      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL trusted=\${MEGAPLAN_TRUSTED_CONTAINER:-0} markers=\$([ -d /workspace/.megaplan/cloud-sessions ] && echo yes || echo no) >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-dev} >> /workspace/megaplan-resident-discord.log 2>&1'"
+      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=\${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}; store_root=\${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}; export PYTHONPATH=\$runtime_src:\${PYTHONPATH:-}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL trusted=\${MEGAPLAN_TRUSTED_CONTAINER:-0} markers=\$([ -d /workspace/.megaplan/cloud-sessions ] && echo yes || echo no) store_root=\$store_root >> /workspace/megaplan-resident-discord.log; exec python -P -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-production} --store-root \"\$store_root\" >> /workspace/megaplan-resident-discord.log 2>&1'"
     echo "Discord resident running in tmux session 'megaplan-resident-discord'"
   fi
 else

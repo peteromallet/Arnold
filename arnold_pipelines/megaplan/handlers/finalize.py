@@ -368,7 +368,7 @@ def _finalize_semantic_postcheck(
     """Residual semantic checks not expressible in the C1 schema subset.
 
     Enforces: non-empty tasks list; non-empty-after-strip strings on tasks and
-    user_actions; integer-not-bool complexity in 1..5; status == "pending";
+    user_actions; integer-not-bool complexity in 1..10; status == "pending";
     phase enum membership; re-run-until-pass scrubber (strict mode); and
     U-prefixed plan_steps_covered coverage rules.
     """
@@ -426,10 +426,10 @@ def _finalize_semantic_postcheck(
         if (
             not isinstance(complexity, int)
             or isinstance(complexity, bool)
-            or not 1 <= complexity <= 5
+            or not 1 <= complexity <= 10
         ):
             _reject(
-                f"Finalize task {tid} must include an integer `complexity` score in 1..5 "
+                f"Finalize task {tid} must include an integer `complexity` score in 1..10 "
                 f"(got {complexity!r}). Adjudicate it against the rubric — do not omit or guess."
             )
         justification = task.get("complexity_justification")
@@ -917,11 +917,10 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
     validation — the verification task and the user-action gate tasks — which the
     model never scored.  These are read-and-check tasks (verify a file exists,
     confirm a user-action completed), not deep implementation work — so missing/
-    out-of-range scores are coerced to 4 (Sonnet) rather than the absolute-conservative
-    5 (Opus): still a premium tier capable of any verification logic, but ~5–10×
-    cheaper than defaulting to Opus for what is structurally not Opus work.
-    A synthetic justification is stamped so the written artifact still satisfies
-    the required schema field.
+    out-of-range scores are coerced to a high-but-not-max tier (8) rather than the absolute-conservative
+    10: still a premium tier capable of any verification logic, but cheaper than defaulting to the
+    absolute highest tier for what may not require it. A synthetic justification is stamped so the
+    written artifact still satisfies the required schema field.
     """
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
@@ -930,11 +929,11 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
         if not isinstance(task, dict):
             continue
         complexity = task.get("complexity")
-        if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity < 1 or complexity > 5:
-            task["complexity"] = 4
+        if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity < 1 or complexity > 10:
+            task["complexity"] = 8
             task.setdefault(
                 "complexity_justification",
-                "Auto-injected by finalize after adjudication; defaulted to tier 4 (Sonnet) "
+                "Auto-injected by finalize after adjudication; defaulted to tier 8 "
                 "because the model never scored this task — verification/gate tasks are read-and-check work.",
             )
         justification = task.get("complexity_justification")

@@ -72,7 +72,7 @@ A brief missing #3 or #4 surfaces those gaps as critique flags — better to wri
 
 > **"How model-quality-sensitive is the planning/revision/adjudication loop?"**
 
-Score the whole plan's residual difficulty from **1 to 5** before choosing the profile. This is not the same as per-task execution complexity: it decides how strong the planning/revision/adjudication loop should be for the run as a whole. Task execution still gets routed later by `finalize` through `tier_models.execute`.
+Score the whole plan's residual difficulty from **1 to 5** before choosing the profile. This is not the same as per-task execution complexity (which is now scored 1-10 for model routing in `tier_models.execute`): the plan dial decides how strong the planning/revision/adjudication loop should be for the run as a whole. Task execution complexity is adjudicated in finalize and routes batches via the 1-10 execute tier ladder.
 
 The score is intentionally more granular than the profile map: scores `1`, `2`, and `3` all use `partnered-3`. The extra resolution is for auditability and repeatability, not fake precision. Only move to `partnered-4` or `partnered-5` when the plan itself is model-quality-sensitive.
 

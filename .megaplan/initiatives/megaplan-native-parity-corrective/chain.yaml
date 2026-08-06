@@ -1,12 +1,22 @@
 base_branch: main
 anchors:
   north_star: NORTHSTAR.md
+
 launch_preconditions:
+- name: custody control plane M11 is completed with content-addressed proof
+  kind: chain_completed
+  chain: .megaplan/initiatives/custody-control-plane/chain.yaml
+  require_manifest: true
 - name: end-state report exists
   path: docs/arnold/megaplan-native-representation-report.md
   check:
     kind: contains_text
-    text: Native Python Representation Report
+    text: Megaplan Native Python and Reusable Workflow Platform Representation Report
+- name: golden source-to-runtime trace contract exists
+  path: .megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md
+  check:
+    kind: contains_text
+    text: Native Megaplan golden source-to-runtime trace contract
 - name: current codebase map exists
   path: docs/arnold/megaplan-native-current-codebase-map.md
   check:
@@ -25,31 +35,51 @@ launch_preconditions:
 - name: corrective initiative source is committed and clean
   kind: git_tracked
   path: .megaplan/initiatives/megaplan-native-parity-corrective
-- name: corrective plan docs are committed and clean
+- name: corrective plan is committed and clean
   kind: git_tracked
   path: docs/arnold/megaplan-native-parity-corrective-plan.md
+
 milestones:
-- label: m1-checker-outcomes-builder-slice
+- label: s1-custody-admission-semantic-preservation
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s1-checker-outcomes-builder-slice.md
   profile: partnered-5
   robustness: extreme
   depth: max
-- label: m2-front-half-native-loop
+  notes: Admit the exact M11 substrate and make semantic erasure fail closed.
+- label: s2-control-primitives-custody-binding
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2-front-half-native-loop.md
   profile: partnered-5
   robustness: extreme
   depth: max
   depends_on:
-  - m1-checker-outcomes-builder-slice
-- label: m3-tiebreaker-replan-native
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3-tiebreaker-replan-native.md
+  - s1-custody-admission-semantic-preservation
+  notes: Product-neutral control constructs bound to admitted authority/custody/WBC APIs.
+- label: s3a-prep-plan-critique-native-cutover
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3a-prep-plan-critique-native-cutover.md
   profile: partnered-5
   robustness: extreme
   depth: max
   depends_on:
-  - m2-front-half-native-loop
-- label: m4-execute-dag-approval-resume
+  - s2-control-primitives-custody-binding
+  notes: Prep, plan and critique become load-bearing with exclusive resume-plane binding and GO-1A.
+- label: s3b-gate-revise-front-half-cutover
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3b-gate-revise-front-half-cutover.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s3a-prep-plan-critique-native-cutover
+  notes: Gate/revise closes the front-half cutover and GO-1B; remaining old carriers are fenced.
+- label: s4-tiebreaker-finalize-durable-reentry
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s4-execute-dag-approval-resume.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s3b-gate-revise-front-half-cutover
+  notes: Tiebreaker/finalize/human decisions with exact durable reentry and current fences.
+- label: s5-reusable-delivery-cycle
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5-review-rework-finalize.md
   profile: partnered-5
   robustness: extreme
   depth: max
@@ -57,28 +87,31 @@ milestones:
   - execute=codex:gpt-5.5
   - loop_execute=codex:gpt-5.5
   depends_on:
-  - m3-tiebreaker-replan-native
-- label: m5-review-rework-finalize
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5-review-rework-finalize.md
-  profile: partnered-5
-  robustness: extreme
-  depth: max
-  depends_on:
-  - m4-execute-dag-approval-resume
-- label: m6-override-auto-compat-collapse
+  - s4-tiebreaker-finalize-durable-reentry
+  notes: One authored finalize/approve/execute/review/rework cycle with exact child identity.
+- label: s6-override-auto-control-adoption
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s6-override-auto-compat-collapse.md
   profile: partnered-5
   robustness: extreme
   depth: max
   depends_on:
-  - m5-review-rework-finalize
-- label: m7-final-conformance-rollout
+  - s5-reusable-delivery-cycle
+  notes: Authored overrides and recovery; auto/projections become non-authoritative consumers.
+- label: s7-native-topology-conformance
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s7-final-conformance-rollout.md
   profile: partnered-5
   robustness: extreme
   depth: max
   depends_on:
-  - m6-override-auto-compat-collapse
+  - s6-override-auto-control-adoption
+  validate:
+  - kind: final_conformance_gate
+    validator: scripts/validate_native_representation_conformance.py
+    conformance: docs/arnold/megaplan-native-representation-conformance.yaml
+    traceability: docs/arnold/megaplan-native-representation-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json
+  notes: Extend the admitted M11 proof framework with native topology set equality and zero hidden authority.
+
 on_failure:
   retry: retry_milestone
   escalate: bump_profile
@@ -86,6 +119,8 @@ on_failure:
 on_escalate:
   abort: stop_chain
 merge_policy: auto
+prerequisite_policy: required
+validation_policy: required
 driver:
   auto_approve: true
   max_iterations: 90

@@ -1,41 +1,117 @@
-# S3 - Tiebreaker And Replan Native Flow
+# Superseded Combined S3 Brief — Historical Only
+
+This pre-round-3 combined brief is no longer an active launch contract. Its
+requirements are split between:
+
+- `s3a-prep-plan-critique-native-cutover.md`;
+- `s3b-gate-revise-front-half-cutover.md`.
+
+`chain.yaml` must not reference this file. It remains only as non-authoritative
+editorial history.
+
+---
+
+## Former S3 - Front-Half Native Vertical Slice and Carrier Deletion
 
 ## Objective
 
-Make tiebreaker a real native subworkflow with visible researcher, challenger,
-synthesis, and decision phases, then make replan rejoin the normal
-planning/finalize path instead of living as a one-off handler branch.
+Make prep through revise a load-bearing authored workflow using S2's generic
+constructs, relocate WBC producers to canonical lowered nodes/children, and
+delete or hard-fence the corresponding legacy route authorities.
 
-## Legacy 10-Sprint Source Mapping
+Incrementally fill `../GOLDEN_TRACE_CONTRACT.md`: make the prep -> plan prefix,
+`NP-GT-001`, and `NP-GT-002` green with same-run ordered/multiset traces.
 
-- Absorbs `m5-tiebreaker-source-extraction.md`.
-- Completes the tiebreaker/replan edges implied by S2.
+## Mandatory internal stop/go boundary
 
-## Work Required
+Before broad front-half migration or any carrier deletion/quarantine, migrate
+one real canonical Megaplan edge: ordered prep -> plan, including clarification
+suspend/reentry. Prove source lowering, `build_pipeline()` consumption, runtime
+execution, current M11 action validation, relocated WBC producer identity,
+checkout execution, and clean installed-package execution. Mutating canonical
+source must change the runtime/WBC trace; mutating the old carrier must not.
 
-- Replace `TIEBREAKER_WORKFLOW(...)` as the semantic proof carrier.
-- Move tiebreaker proceed/iterate/escalate/replan routing out of runtime and
-  handler code into native source and typed outcomes.
-- Preserve path-addressed child traces for researcher, challenger, synthesis,
-  and decision.
-- Make human "replan" reset the right loop state and rejoin the ordinary
-  planning/finalize path.
-- Delete or quarantine tiebreaker route/topology metadata in `components.py` and
-  any handler-owned tiebreaker dispatch.
-- Extend checker row-anchor rules so tiebreaker rows require visible
-  subworkflow/fanout/decision shape, not a single call.
+Emit a green builder/adoption receipt into the mandatory per-sprint receipt
+registry. No remaining S3 scope or deletion may begin until this stop/go receipt
+passes. Producer relocation precedes removal of the old producer/carrier.
 
-## Verifiable Completion Criterion
+## Product scope
 
-- Source shows researcher, challenger, synthesis, and decision phases.
-- Tiebreaker proceed, iterate, escalate, and replan scenarios pass.
-- Replan rejoins normal planning/finalize flow and resets/reconciles loop state.
-- Handler/runtime tiebreaker code is pure phase body or quarantined legacy.
-- Dead-delete mutation coverage proves old tiebreaker carriers do not route the
-  corrected flow.
+- prep research and a named clarification suspension/reentry gate;
+- plan artifact boundaries and version metadata;
+- bare critique skip, adaptive evaluator selection, bounded evaluator retry,
+  dynamic lens fanout, per-item policy, sequential fallback, and merge;
+- gate signal construction, worker call, normalization, flag validation,
+  one reprompt/downgrade, preflight/high-complexity/no-progress backstops, debt
+  effect, and closed typed decision;
+- one explicit bounded critique/gate/revise loop with severity-aware cap exits.
 
-## Do Not Close If
+Pure computation may remain in phase bodies, but those bodies may not choose
+routes, caps, retries, model policy, suspension, or workflow state transitions.
 
-- Tiebreaker source is a cosmetic wrapper around old runtime dispatch.
-- Replan remains a terminal or special branch that bypasses normal planning and
-  finalization semantics.
+## Required work
+
+- Make `workflow.pypeline` and named subworkflows own the complete front-half
+  structure and call-site policies.
+- Make `build_pipeline()` consume the lowered structure without component
+  selection/metadata overlays or route reconstruction.
+- Move WBC lifecycle producers from phase-handler names to canonical lowered
+  node/child identities while preserving the admitted exact contract versions.
+- Bind every dispatch/effect/resume to the current Run Authority fence and
+  exact Custody target/epoch via M11's validator.
+- Delete or hard-quarantine front-half component route bindings, handler
+  `next_step`/`route_signal` ownership, manifest default routing, `_core` route
+  tables for corrected paths, CLI decision translation, and auto route
+  derivation. Mutation tests must prove those surfaces have no influence.
+- Execute split-outcome scenarios from checkout and installed package.
+- Run candidate/dual-read execution only in the S1 comparison namespace. It may
+  emit an explicit comparison artifact but cannot acquire RA/Custody, append
+  admitted WBC/checkpoint/effect/terminal history, resume, or be promoted.
+- At GO-1 prove the union of old and candidate paths across `arnold.execution`,
+  native runtime, and legacy runtime envelope is registered behind the same M11
+  validator, with exactly one admitted decision consumer/history writer.
+- Exercise one real front-half declared agentic phase: variable inner model/tool
+  calls have ordered durable WBC/effect history, survive a post-tool-outcome
+  crash without replay, respect cap exhaustion, and cannot return an outer
+  route hint.
+- Emit the S3 golden-trace receipts for `NP-GT-001`/`NP-GT-002`; the trace
+  oracle remains generated from/checked against source and cannot drive routes.
+
+## Semantic gate
+
+- The ordered prep -> plan plus clarification vertical-slice receipt passed
+  before broad migration or deletion began.
+- A reviewer can follow prep, critique, gate, and revise without consulting
+  components, handlers, runtime maps, CLI, or auto-drive.
+- Scenarios cover clarification kill/resume; critique retry and sequential
+  fallback; empty/dynamic lens sets; gate reprompt/downgrade; critical cap
+  block; cosmetic-only force-proceed; and debt effect.
+- Source mutations change runtime topology and traces; mutations to deleted or
+  quarantined legacy route carriers cannot change behavior.
+- `NP-GT-001` and `NP-GT-002` preserve loop generation, child multiplicity,
+  sibling partial order, retry/fallback causality, and exact decision joins.
+- Comparison records are absent from admitted queries/projections, and
+  unregistered legacy/candidate paths fail before body/effect intent.
+
+## Custody-adoption gate
+
+- The internal stop/go receipt proves the selected real edge used current M11
+  enforcement and the relocated lowered-node WBC producer in checkout and the
+  clean installed artifact.
+- Each authored invocation/child maps to distinct subject-attempt, WBC-attempt,
+  and custody-target/epoch records with generated causal joins.
+- WBC producers are rooted at lowered nodes/children, not merely retained
+  handlers.
+- Stale fence/epoch, missing lease, duplicate effect, and forged projection
+  scenarios fail through the admitted M11 enforcement path.
+
+## Do not close if
+
+- The visible loop/fanout is decorative while runtime still uses the coarse
+  component graph.
+- Handler instrumentation is counted as proof that authored child topology ran.
+- A compatibility path can route the front half or satisfy row evidence.
+- Broad migration or carrier deletion started before the vertical-slice
+  builder/adoption receipt was green.
+- Shadow history can be resumed, relabeled/promoted, consumed by canonical
+  queries, or an agentic inner tool call avoids its declared protocol.

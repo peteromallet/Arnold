@@ -45,6 +45,11 @@ distill = "codex:gpt-5.4"
 3 = "codex:low"
 4 = "codex:medium"
 5 = "codex:high"
+6 = "codex:high"
+7 = "codex:high"
+8 = "codex:high"
+9 = "codex:high"
+10 = "codex:high"
 
 [profiles.all-codex.tier_models.critique]
 1 = "codex:minimal"

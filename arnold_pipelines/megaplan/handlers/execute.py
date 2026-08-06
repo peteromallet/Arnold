@@ -113,7 +113,7 @@ def _record_execute_blocked(plan_dir: Path, response: StepResponse) -> None:
 
 
 def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
-    """Return the execute tier map in the legacy int-keyed routing shape."""
+    """Return the execute tier map in the int-keyed routing shape (now 1-10)."""
     if not isinstance(tier_models, dict):
         return None
     execute_tiers = tier_models.get("execute")
