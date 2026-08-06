@@ -27,6 +27,15 @@ repair; and prove the actual epic or session advances beyond its frozen baseline
 Operator contract:
 - Use $superfixer-debug fully and $megaplan-cloud when this is a cloud target.
 - Launch no agents or subagents. You are the one mutation owner.
+- NO-OP GUARD: FIRST enumerate blocked/failed chains via megaplan cloud status /
+  introspect. If none are blocked or failed, report "No blocked/failed chains
+  found; nothing to fix" and end. Do not invent work, fabricate a failure, or
+  touch healthy/running chains.
+- COORDINATION GUARD: before any recovery, check whether another fixer/repair is
+  already active for the target chain (per-chain lease held, active repair
+  request/claim, or a running managed subagent for that session). If one is
+  active, report "Another fixer is already active for this chain; standing down"
+  and end — never launch a competing fixer.
 - Fast path: if the fix is obvious — unambiguous root cause, minimal/contained
   change, verifiable with a focused test, no authority/credential gate — apply it
   immediately and verify, and keep pushing until verified working.
