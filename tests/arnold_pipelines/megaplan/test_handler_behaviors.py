@@ -1497,6 +1497,10 @@ class TestOverrideReplanBehavior:
         (plan_dir / "critique_check_correctness_producer_v2.json").write_text(
             '{"check_id": "correctness"}\n', encoding="utf-8"
         )
+        (plan_dir / "gate_v2.json").write_text(
+            '{"recommendation": "ITERATE", "produced_at": "OLD"}\n',
+            encoding="utf-8",
+        )
         state = {
             "name": "demo",
             "current_state": "critiqued",
@@ -1539,6 +1543,7 @@ class TestOverrideReplanBehavior:
         assert "critique_v2.json" in archived_names
         assert "critique_parallel_manifest_v2.json" in archived_names
         assert "critique_check_correctness_producer_v2.json" in archived_names
+        assert "gate_v2.json" in archived_names
         # The create-once receipt must no longer sit at its active path so the
         # re-entered planning loop can publish a fresh receipt.
         assert not (plan_dir / "critique_custody_v2.json").exists()
@@ -1637,6 +1642,86 @@ class TestOverrideRecoverBlockedCritiqueRepair:
         assert not (plan_dir / "critique_custody_v5.json").exists()
         # The durable override record carries the archive manifest reference.
         assert state["meta"]["overrides"][-1]["artifact_invalidation"] == invalidation
+
+    def test_recover_blocked_gate_repair_archives_immutable_gate_projection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deterministic gate repair archives the immutable gate_v*.json."""
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        gate = plan_dir / "gate_v5.json"
+        gate.write_text('{"recommendation": "OLD"}\n', encoding="utf-8")
+        (plan_dir / "gate_signals_v5.json").write_text(
+            '{"signals": {}}\n', encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "message": "phase 'gate' repeated the same internal_error 3 times: RuntimeError: immutable artifact identity already contains different bytes: gate_v5.json",
+                "phase": "gate",
+                "state": "blocked",
+                "recorded_at": "2026-08-06T22:40:00Z",
+            },
+            "resume_cursor": {
+                "phase": "gate",
+                "retry_strategy": "repair_phase_contract",
+            },
+        }
+        repair_evidence = {
+            "failure_kind": "deterministic_phase_failure",
+            "phase": "gate",
+            "repair_commit": "a" * 40,
+            "failure_fingerprint": "f" * 64,
+            "repair_scope": "target_workspace",
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.validated_deterministic_phase_repair",
+            lambda *args, **kwargs: repair_evidence,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.apply_state_projection",
+            lambda state, recovered_state, route_signal=None: state.update(
+                {"current_state": recovered_state}
+            ),
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._archive_stale_phase_result_for_resume",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-08-06T22:45:00Z",
+        )
+
+        response = _override_recover_blocked(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(
+                reason="deterministic gate immutable projection conflict repaired",
+                repair_commit="a" * 40,
+                failure_fingerprint="f" * 64,
+                repair_scope="target_workspace",
+            ),
+        )
+
+        assert response["success"] is True
+        invalidation = response["artifact_invalidation"]
+        assert invalidation is not None
+        archived_names = {item["artifact"] for item in invalidation["artifacts"]}
+        assert "gate_v5.json" in archived_names
+        assert "gate_signals_v5.json" in archived_names
+        assert not gate.exists()
 
     def test_recover_blocked_non_critique_phase_keeps_receipts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

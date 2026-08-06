@@ -58,12 +58,26 @@ REPLAN_CRITIQUE_EPOCH_ARTIFACT_PATTERNS: tuple[str, ...] = (
     "step_receipt_critique_v*.json",
 )
 
+# The gate phase publishes the immutable ``gate_v*.json`` projection
+# (write_immutable_json).  Re-entering gate at the same iteration after a
+# deterministic repair collides with the stale immutable bytes exactly like the
+# critique custody receipts; the versioned gate family is archived so the fresh
+# gate run publishes new evidence.  The unversioned ``gate.json`` projection
+# stays atomic (overwritten by the fresh run).
+REPLAN_GATE_EPOCH_ARTIFACT_PATTERNS: tuple[str, ...] = (
+    "gate_v*.json",
+    "gate_v*_raw.txt",
+    "gate_signals_v*.json",
+    "step_receipt_gate_v*.json",
+)
+
 
 def invalidate_replan_derived_artifacts(
     plan_dir: Path,
     *,
     timestamp: str,
     include_critique_epoch: bool = False,
+    include_gate_epoch: bool = False,
 ) -> dict[str, Any] | None:
     """Archive active post-gate artifacts invalidated by a replan.
 
@@ -73,6 +87,8 @@ def invalidate_replan_derived_artifacts(
     When ``include_critique_epoch`` is set, the versioned critique-family
     artifacts (including the create-once custody receipts) are archived with
     the same manifest so a re-entered planning loop can publish fresh receipts.
+    ``include_gate_epoch`` does the same for the versioned gate family
+    (including the immutable ``gate_v*.json`` projections).
     """
 
     matched: list[Path] = []
@@ -82,6 +98,11 @@ def invalidate_replan_derived_artifacts(
             matched.append(candidate)
     if include_critique_epoch:
         for pattern in REPLAN_CRITIQUE_EPOCH_ARTIFACT_PATTERNS:
+            for candidate in plan_dir.glob(pattern):
+                if candidate.is_file() and candidate not in matched:
+                    matched.append(candidate)
+    if include_gate_epoch:
+        for pattern in REPLAN_GATE_EPOCH_ARTIFACT_PATTERNS:
             for candidate in plan_dir.glob(pattern):
                 if candidate.is_file() and candidate not in matched:
                     matched.append(candidate)
