@@ -59,9 +59,43 @@ def render_profile_integrity_policy() -> str:
     return PROFILE_INTEGRITY_POLICY
 
 
+
+
+FAST_PATH_POLICY = """
+## Obvious-fix fast path — fix now when the fix is obvious
+
+You are a fixer, not a research project. If the root cause is already obvious
+from the evidence and the fix is minimal, apply it immediately in your first
+actionable turn instead of spending turns on multi-phase investigation. Use the
+full investigation loop ONLY when the fix is NOT obvious.
+
+Fast-path criteria (ALL must hold to fix immediately):
+1. Root cause is unambiguous — one clear deterministic defect is identified
+   from the provided evidence (not a hypothesis to explore).
+2. The fix is minimal and contained — a small, well-understood change with
+   clearly bounded blast radius.
+3. You can verify it with a focused check or test you are authorized to run.
+4. No competing owner, unresolved authority gate, or missing credential blocks
+   applying the fix.
+
+If all four hold: make the change, run the focused verification, and report the
+result. Do not invent additional investigation, do not expand scope, and do not
+restructure unrelated code. If any criterion does not hold, run the normal
+investigation loop instead.
+""".strip()
+
+
+def render_fast_path_policy() -> str:
+    """Return the canonical obvious-fix fast-path prompt fragment."""
+
+    return FAST_PATH_POLICY
+
+
 __all__ = [
     "PROCESS_CUSTODY_FAIL_CLOSED_POLICY",
     "PROFILE_INTEGRITY_POLICY",
+    "FAST_PATH_POLICY",
     "render_process_custody_policy",
     "render_profile_integrity_policy",
+    "render_fast_path_policy",
 ]
