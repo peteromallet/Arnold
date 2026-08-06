@@ -1,0 +1,26 @@
+{
+  "code": "finalized_task_feasibility_failed",
+  "message": "Finalize rejected a candidate task graph before publication (dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_graph_invalid). The last admitted graph and accepted task authority remain unchanged; repair only the candidate graph.",
+  "next_step": "override recover-blocked",
+  "diagnostic_codes": [
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_graph_invalid"
+  ],
+  "candidate_id": "candidate:36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07",
+  "failure_fingerprint": "382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df",
+  "occurrences": 2,
+  "circuit_open": true,
+  "report_artifact": "planner_repair.json",
+  "implementation_dispatch_allowed": false
+}

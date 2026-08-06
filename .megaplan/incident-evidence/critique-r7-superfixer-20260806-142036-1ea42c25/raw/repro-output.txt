@@ -1,0 +1,19 @@
+raw candidate tasks: 19
+NOTE: programmatic coverage skipped: KeyError: -1
+splitter diagnostics: [{'code': 'split_mutating_validation', 'message': 'Test-kind task declares write paths; validation must not mutate.', 'task_id': 'T10'}, {'code': 'split_mutating_validation', 'message': 'Test-kind task declares write paths; validation must not mutate.', 'task_id': 'T13'}, {'code': 'split_mutating_validation', 'message': 'Test-kind task declares write paths; validation must not mutate.', 'task_id': 'T16'}]
+mutated tasks: 25
+admitted: False
+diagnostic count: 13
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T2_impl", "dependency_id": "T1"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T3_impl", "dependency_id": "T2"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T4_impl", "dependency_id": "T1"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T5_impl", "dependency_id": "T4"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T6", "dependency_id": "T1"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T8", "dependency_id": "T7"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T9", "dependency_id": "T1"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T10", "dependency_id": "T3"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T11", "dependency_id": "T1"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T13", "dependency_id": "T5"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T15", "dependency_id": "T3"}
+{"code": "dependency_unknown", "message": "Dependency must reference a different finalized task.", "task_id": "T15", "dependency_id": "T5"}
+{"code": "dependency_graph_invalid", "message": "Unknown dependency ID 'T1' for task 'T2_impl'"}

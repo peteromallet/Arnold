@@ -1,0 +1,203 @@
+Investigation complete. Here is the FQ-05 flash report.
+
+---
+
+```
+FLASH REPORT
+1. question_id: FQ-05
+2. verdict: supported
+3. investigated_claim: The v5 gate PROCEED state (00:53:17Z) is CAS-protected/immutable,
+   and finalize is occurrence-idempotent and re-entrant for the same occurrence after the
+   three failed invocations (no committed side effects).
+4. vantage:
+   - hostname/container: read-only evidence investigator (R7 superfixer swarm subagent; resident
+     managed subagent transport, no mutation)
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: inspected runtime A d5848010695e28ddb9d9cbee8675d7ebe725caae
+     (/workspace/runtime-candidates/arnold-r7-fresh-child-20260805) and runtime B 77b76e3a4
+     (/workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4); chain binding
+     current_identity = A (content_sha256 e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6),
+     rebind_events = []
+   - investigator: hermes:deepseek:deepseek-v4-flash (FQ-05)
+5. utc_window:
+   - started: 2026-08-06T09:52:00Z
+   - ended: 2026-08-06T09:57:32Z
+6. artifacts:
+   - /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/gate.json
+     exists: yes | type: JSON | size_bytes: 184379 | mtime_utc: 2026-08-06T00:53:12.990499Z
+     sha256: 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b
+     role: producer (gate PROCEED decision record; recommendation=PROCEED; hash matches evidence-pack value and WBC gate attempt artifact_hash)
+   - .../gate_v5.json
+     exists: yes | type: JSON | size_bytes: 184379 | mtime_utc: 2026-08-06T00:53:12.987499Z
+     sha256: 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b
+     role: producer (byte-identical copy of gate.json; immutable — never rewritten after 00:53:12.99Z)
+   - .../gate_carry.json
+     exists: yes | type: JSON | size_bytes: 20178 | mtime_utc: 2026-08-06T00:53:12.985499Z
+     sha256: 023a7bb2f8769f054ba1d6237d1b43a2aab30ea0246b472747124d461b4b6310
+     role: producer (PROCEED carry; iteration=5, produced_at=2026-08-06T00:53:12Z; no entry for CF-0B506E1EDCD92E90C192)
+   - .../gate_output.json
+     exists: yes | type: JSON | size_bytes: 13143 | mtime_utc: 2026-08-06T00:52:41.889094Z
+     sha256: 843ef7925e44ddf1b41b4d1bc8f99bf304cd60374803cbae6e05d36be07f7891
+     role: producer (gate model output; recommendation=PROCEED)
+   - .../phase_result.json
+     exists: yes | type: JSON | size_bytes: 3745 | mtime_utc: 2026-08-06T00:53:17.950404Z
+     sha256: ace7cfef733f532ba929c014984a050651d5009c56d535e7ff477090d5b6e6fd
+     role: persistence (phase=gate, exit_kind=success, artifacts_written=[gate_signals_v5.json, gate.json, gate_carry.json], external_error=null)
+   - .../state.json
+     exists: yes | type: JSON | size_bytes: 90023 | mtime_utc: 2026-08-06T00:53:46.548857Z
+     sha256: ab9c1a0eee59058d3c55ae49d890d3802bf0bf840910e13bd7493433e5d6e0b3
+     role: persistence (current_state=blocked, iteration=5, last_gate.recommendation=PROCEED (full record incl. flag_resolutions),
+     latest_failure={kind:deterministic_phase_failure, phase:finalize, count:3, max_attempts:3, exit_code:1},
+     resume_cursor={phase:finalize, retry_strategy:repair_phase_contract}, _state_meta={} EMPTY, meta.current_invocation_id=9d5418d618d54e9b)
+   - .../events.ndjson
+     exists: yes | type: NDJSON | size_bytes: 27046229 | mtime_utc: 2026-08-06T00:53:46.670854Z
+     sha256: 87e923a67af8535f3268cb000f47855df945b2505cc6396f2b1d7d6f07fe691d
+     role: persistence (seq 3087 gate phase_end 00:53:27.150Z; 3088 state_transition critiqued->gated 00:53:27.566Z;
+     3089/3093/3097 phase_start finalize 00:53:27.893Z / 00:53:36.908Z / 00:53:46.130Z;
+     3091/3095 phase_end finalize (fail) 00:53:36.371Z / 00:53:45.577Z; NO phase_end for attempt 3;
+     3090/3092/3094/3096/3098 state_written — current_state stayed "gated" until 3098 (blocked), last_gate.rec=PROCEED throughout)
+   - .../work_ledger.ndjson
+     exists: yes | type: NDJSON | size_bytes: 18291 | mtime_utc: 2026-08-06T00:53:37.574029Z
+     sha256: (not computed — inspected via tail/cut only; telemetry) | role: log
+     (last entries 00:53:19-00:53:37: auto_loop retry_wait attempt 22-24 and auto_loop transition critiqued->gated,
+     all _non_authoritative=true; no finalize commits)
+   - .../.phase_wbc_attempts.sqlite3
+     exists: yes | type: SQLite | size_bytes: 253952 | mtime_utc: 2026-08-06T00:53:17.957404Z
+     sha256: (not computed — binary; inspected read-only) | role: persistence
+     (42 attempt_events, 22 reservations; LAST attempt = 83a52b4a-8862-513e-b393-26cb1c0bd3ea = phase-wbc:gate,
+     started 00:48:41.795Z, completed 00:53:17.953Z, outcome=succeeded, artifact_hash=sha256:9df95825...,
+     next_step=finalize; NO finalize attempt rows exist; persistence_failure_diagnostics=0 rows;
+     global_effect_reservations/outcomes/quarantine=0 rows)
+   - .../critique_clearance.json — exists: no (size/mtime/sha256: not-applicable) | role: persistence (never written)
+   - .../finalize.json — exists: no | role: persistence (never written)
+   - .../contract.json — exists: no | role: persistence (never written)
+   - .../final.md — exists: no | role: persistence (never written)
+   - .../user_actions.md — exists: no | role: persistence (never written)
+   - .../task_feasibility.json — exists: no | role: persistence (never written)
+   - .../finalize_output.json — exists: no | role: persistence (never written)
+   - /workspace/.../.megaplan/plans/.chains/chain-880bd6e04632.json
+     exists: yes | type: JSON | size_bytes: 15254 | mtime_utc: 2026-08-06T00:53:46.678854Z
+     sha256: 143e1a8573e5246477b8e8674248ea4c538139adf532f40444bce91a72e0aa37
+     role: authority (last_state=blocked; execution_binding.runtime_binding.current_identity=A d5848010;
+     rebind_events=[]; fresh_child_admissions.cl2-ledger-replay receipt_digest 810dae52...;
+     retry_counts={}, ladder_stage={})
+   - /workspace/.../.megaplan/authority/run-authority.sqlite3
+     exists: yes | type: SQLite | size_bytes: 36864 | mtime_utc: 2026-08-05T21:40:57.163Z | role: authority (no 00:53-era writes)
+   - /workspace/.../.megaplan/authority/wbc.sqlite3
+     exists: yes | type: SQLite | size_bytes: 102400 | mtime_utc: 2026-08-05T21:40:57.240Z | role: authority (no 00:53-era writes)
+   - /workspace/.../.megaplan/authority/custody/ (fresh_child_admission lease only; lock/history/state all mtime 2026-08-05T21:40:57Z)
+     role: authority (no finalize custody lease)
+   - /workspace/.../.megaplan/cloud-chain-critique-ledger-accountability-v3-r7-launch-20260805.log
+     exists: yes | type: text log | size_bytes: 544584 | mtime_utc: 2026-08-06T00:53:46.680854Z
+     sha256: (not computed) | role: log
+     (iter 22 critiqued->gate; iter 23/24/25 state=gated next=finalize; 3x "phase 'finalize' exited with internal_error:
+     critique_finding_unresolved CF-0B506E1EDCD92E90C192"; M9_WARN_EMIT_AUTO_WORK_LEDGER TypeError
+     emit_transition() got multiple values for keyword argument 'transition' (work_ledger observability, best-effort);
+     line 5320 "[chain] plan ... ended blocked: phase 'finalize' repeated the same internal_error 3 times";
+     line 5323 status stopped, reason "milestone cl2-ledger-replay ended blocked")
+   - runtime A .../megaplan/control_interface.py (CAS: apply_transition/_apply_control_deltas, expected_versions vs
+     _state_meta.versions, StateDeltaConflict, control_transition_conflict)
+   - runtime A .../megaplan/orchestration/finalize_authority.py
+     exists: yes | sha256: 7c581b5de7b4bfd371e215ed8d654b45def05f882c0ef302a310bc623a10be65
+     (identical in B) | role: policy
+     (current_finalize_token = FinalizeReadToken(finalize_sha256(plan_dir), version from committed receipts);
+     _publish_locked CAS: current != expected -> FinalizeCASMismatch "stale finalize mutation refused";
+     result_sha == current.sha256 -> idempotent no-op return current; immutable publish via os.link refusing replacement;
+     mutation receipts chained by parent_sha256/result_sha256/version)
+   - runtime A .../megaplan/orchestration/critique_custody.py
+     exists: yes | sha256: 6644ab192420b72b002d6b6b633975a7ab490292b425e0bf8025e20ccc089e3d | role: policy
+     (_resolution_for_finding line 1215: NO accepted_tradeoff+gate_expected+fixed_claim branch -> raise
+     CritiqueCustodyError critique_finding_unresolved line 1310; write_critique_clearance raises before
+     atomic_write_json(critique_clearance.json) line 1422)
+   - runtime B .../megaplan/orchestration/critique_custody.py
+     exists: yes | sha256: 2739241d6b20b95eef5db29fc02df693bf2aa5a7162920c8a2b6cd571e8d4636 | role: policy
+     (HAS branch at line 1268: status==accepted_tradeoff and gate_expected and fixed_claim -> verified_plan_mutation;
+     finalize_authority.py identical to A)
+   - runtime A .../megaplan/handlers/finalize.py (handle_finalize line 2239: order = write_critique_clearance (2248)
+     -> template (2266) -> worker -> promote_scratch -> _validate_finalize_payload (2329) -> _write_finalize_artifacts
+     (2338); failure at 2248 precedes ALL artifact writes)
+7. commands: (all read-only; no mutation)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: stat --format='%n|%s|%y' gate.json gate_v5.json gate_carry.json gate_output.json phase_result.json state.json events.ndjson ; sha256sum <same>
+     started_utc: 2026-08-06T09:52:10Z | ended_utc: 09:52:12Z | exit_code: 0 | stdout_summary: sizes/mtimes/sha256 as in §6 | stderr_summary: (none)
+   - cwd: same
+     exact_command: sed -n '1,60p' gate.json ; cat phase_result.json
+     started_utc: 09:52:15Z | ended_utc: 09:52:17Z | exit_code: 0 | stdout_summary: gate recommendation PROCEED; phase_result gate success | stderr: (none)
+   - cwd: same
+     exact_command: rg -n --hidden 'PROCEED|00:53:17|occurrence|compare.?and.?swap|CAS|expected[_ -]?version|generation|idempot|finalize|attempt' gate.json gate_carry.json gate_output.json phase_result.json | head -80
+     started_utc: 09:52:20Z | ended_utc: 09:52:24Z | exit_code: 0 | stdout_summary: matches as reported; no CAS/occurrence/expected_version fields inside gate artifacts | stderr: (none)
+   - cwd: same
+     exact_command: python3 -c "<parse state.json top-level keys>"
+     started_utc: 09:52:30Z | ended_utc: 09:52:33Z | exit_code: 0 | stdout_summary: state keys; current_state/phase fields | stderr: (none)
+   - cwd: same
+     exact_command: python3 -c "<extract events.ndjson seq 3087..3098>"
+     started_utc: 09:52:40Z | ended_utc: 09:52:46Z | exit_code: 0 | stdout_summary: full finalize attempt timeline (§6) | stderr: (none)
+   - cwd: same
+     exact_command: find . -newermt '2026-08-06 00:53:17' -type f -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' | sort ; find . -type f | wc -l
+     started_utc: 09:53:00Z | ended_utc: 09:53:04Z | exit_code: 0 | stdout_summary: only gate/phase/WBC/telemetry/state/event files after 00:53:17Z; 840 files total | stderr: (none)
+   - cwd: /workspace/.../.megaplan/plans/.chains
+     exact_command: stat/sha256sum chain-880bd6e04632.json ; python3 -c "<walk chain state>"
+     started_utc: 09:53:08Z | ended_utc: 09:53:16Z | exit_code: 0 | stdout_summary: chain state fields; runtime binding A, rebind_events=[] | stderr: (none)
+   - cwd: same
+     exact_command: python3 -c "<sqlite3 read-only queries on .phase_wbc_attempts.sqlite3>"
+     started_utc: 09:53:22Z | ended_utc: 09:53:40Z | exit_code: 0 | stdout_summary: only gate WBC attempt 83a52b4a; no finalize attempts; 0 effect/quarantine rows | stderr: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan
+     exact_command: rg -n 'compare.?and.?swap|CAS|expected[_ -]?version|generation' -g '*.py' . | head -40
+     started_utc: 09:54:02Z | ended_utc: 09:54:10Z | exit_code: 0 | stdout_summary: control_interface.py expected_versions/CAS; resident_* CAS guards | stderr: (none)
+   - cwd: same
+     exact_command: sed -n '560,690p' control_interface.py ; sed -n '690,839p' control_interface.py ; sed -n '1215,1426p' orchestration/critique_custody.py ; sed -n '1426,1530p' orchestration/critique_custody.py ; sed -n '2239,2400p' handlers/finalize.py ; sed -n '150,478p' orchestration/finalize_authority.py ; sed -n '2031,2090p' handlers/finalize.py
+     started_utc: 09:54:15Z | ended_utc: 09:55:20Z | exit_code: 0 | stdout_summary: CAS/idempotency/immutable-publish semantics and finalize ordering as reported | stderr: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan
+     exact_command: sha256sum orchestration/finalize_authority.py orchestration/critique_custody.py ; rg -n 'accepted_tradeoff' orchestration/critique_custody.py | head
+     started_utc: 09:55:40Z | ended_utc: 09:55:50Z | exit_code: 0 | stdout_summary: B finalize_authority == A (7c581b5d...); B critique_custody differs (2739241d...) with branch at line 1268 | stderr: (none)
+   - cwd: /workspace/.../.megaplan
+     exact_command: sed -n '5280,5325p' cloud-chain-critique-ledger-accountability-v3-r7-launch-20260805.log ; rg -n 'iter 25|ended blocked' <same log> | tail -6
+     started_utc: 09:56:00Z | ended_utc: 09:56:12Z | exit_code: 0 | stdout_summary: 3 identical internal_error payloads; TypeError observability; chain stopped blocked | stderr: (none)
+   - cwd: same plan dir
+     exact_command: date -u +%FT%TZ ; tail -n 3 events.ndjson | python3 -c "<summarize>"
+     started_utc: 09:57:28Z | ended_utc: 09:57:32Z | exit_code: 0 | stdout_summary: ended=2026-08-06T09:57:32Z; seq 3096/3097/3098; no phase_end after 3097 | stderr: (none)
+8. trace:
+   - producer: gate phase (invocation_id 9d5418d618d54e9b; WBC attempt 83a52b4a-8862-513e-b393-26cb1c0bd3ea, phase-wbc:gate)
+     produced_value_or_key: gate.json / gate_v5.json sha256 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b, recommendation PROCEED, produced_at 2026-08-06T00:53:12Z; WBC completed event 00:53:17.953Z with artifact_hash sha256:9df95825..., next_step=finalize
+     consumer: auto-loop driver -> finalize phase (megaplan finalize --plan cl2-wbc-backed-ledger-20260805-2140, iterations 23/24/25)
+     consumed_value_or_key: state=gated (chain log iter 23/24/25), last_gate.recommendation=PROCEED (state.json + events seq 3088/3090/3092/3094/3096/3098), gate.json on disk
+     persistence: state.json (last_gate PROCEED preserved; latest_failure deterministic_phase_failure ×3; resume_cursor phase=finalize); events.ndjson seq 3087-3098; .phase_wbc_attempts.sqlite3 (gate attempt only); chain-880bd6e04632.json last_state=blocked
+     persisted_value_or_key: gate artifact hash unchanged 9df95825... at observation; no finalize artifacts ever persisted (critique_clearance.json/finalize.json/contract.json/final.md/user_actions.md/task_feasibility.json/finalize_output.json all absent); authority stores mtime frozen at 21:40:57Z
+     policy: handlers/finalize.py handle_finalize -> write_critique_clearance -> critique_custody._resolution_for_finding (runtime A: no accepted_tradeoff+gate_expected+fixed_claim branch -> CritiqueCustodyError critique_finding_unresolved for CF-0B506E1EDCD92E90C192, raised BEFORE atomic_write_json of clearance and BEFORE _write_finalize_artifacts); runtime B: branch present (line 1268) -> verified_plan_mutation; finalize_authority._publish_locked CAS (expected vs current token; same-content no-op; os.link immutable publish) — predicate NOT exercised (no finalize.json ever published; token sha=None/version=0)
+     predicate_and_result: gate PROCEED durable+immutable = TRUE (hash-pinned, byte-identical, never rewritten); zero committed finalize side effects = TRUE (all outputs absent, no WBC/custody/authority writes); state-level CAS version guard = NOT POPULATED (state.json _state_meta={})
+9. adherence_classification: MISSING_STRUCTURE
+10. missing_or_contradictory_structure:
+    - state.json `_state_meta` is empty {} — the control_interface CAS (expected_versions vs _state_meta.versions -> StateDeltaConflict) has NO version metadata to guard in this plan's state file; state-level CAS protection is code-present but not affirmatively active for this occurrence.
+    - The finalize idempotency edge is unexercised: no finalize.json/snapshot/mutation-receipt was ever published, so the same-content no-op path (result_sha == current.sha256 -> return current) and CAS mismatch path never fired; occurrence-level idempotency is a code-level guarantee, not a demonstrated dedup.
+    - No explicit persisted occurrence_id/idempotency key for finalize in state.json; occurrence identity is implicit (plan dir + run_id cl2-wbc-backed-ledger-20260805-2140 + invocation_id 9d5418d618d54e9b); finalize WBC attempt idempotency_key is attempt-scoped (attempt_id:started/completed), not occurrence-scoped.
+    - No contradiction: nothing observed contradicts immutability or the zero-side-effect outcome.
+11. evidence_supporting_verdict:
+    - gate.json == gate_v5.json byte-identical, sha256 9df95825... matches evidence pack AND the WBC gate attempt artifact_hash; mtime 00:53:12.99Z never rewritten; last_gate=PROCEED preserved in every state_written event (3090..3098).
+    - state remained "gated" through failed attempts 1 and 2 (events 3090/3092/3094/3096); only the driver's post-3rd-failure write (3098) set blocked — the gate PROCEED result itself never regressed.
+    - ALL seven finalize output artifacts absent; zero finalize rows in .phase_wbc_attempts.sqlite3 (last row = gate attempt completed 00:53:17.953Z); run-authority/wbc/custody stores untouched since 21:40:57Z; work_ledger writes in-window are _non_authoritative auto_loop telemetry only.
+    - Source ordering proves the failure point (write_critique_clearance, handlers/finalize.py:2248 -> critique_custody.py:1310 raise) precedes every finalize artifact write (handlers/finalize.py:2338) and even the clearance atomic write (critique_custody.py:1422).
+    - finalize_authority.py provides CAS publish (FinalizeCASMismatch on stale token), immutable hard-link publication, version-chained mutation receipts, and same-content no-op — identical bytes in A and B (sha 7c581b5d...).
+    - Three re-entries executed cleanly from the same gated state with deterministic identical failure (chain log iter 23/24/25; events 3089/3093/3097) — re-entrancy demonstrated; no residue (no template/scratch files).
+12. evidence_against_verdict:
+    - state.json `_state_meta` is empty, so the control-interface CAS version guard is not affirmatively active for this plan's state container (state-level CAS: code exists, metadata absent). The state.json file itself was mutated after PROCEED (latest_failure/resume_cursor/blocked at 00:53:46Z) — expected driver failure-recording, not a gate-result change, but it means "the PROCEED state" is immutable only at the artifact/last_gate level, not the whole state.json.
+    - The finalize token CAS was never exercised (no finalize.json published), so occurrence-idempotency for a completed finalize is not proven by observation — only by code inspection plus the zero-commit outcome.
+    - Attempt 3 has no phase_end event (chain halted at 00:53:46Z mid-attempt) — re-entry safety for an interrupted attempt relies on the same zero-commit property, which holds only because the handler fails before any write; this was not separately fault-injected.
+13. confidence: medium
+14. confidence_basis: HIGH on the limbs that decide safety (gate PROCEED artifact immutable + hash-pinned by WBC attempt ledger; zero committed side effects across all three attempts — artifact absence, SQLite row absence, frozen authority mtimes, and source-level write ordering all agree). MEDIUM/LOW on the exercised-CAS/idempotency limb: state-level CAS versions are unpopulated (_state_meta={}) and the finalize publication CAS is unexercised, so "CAS-protected/idempotent" is proven as mechanism + outcome, not as observed dedup. Compound claim therefore supported, but the mandatory stop-gate "same-occurrence CAS/idempotency affirmatively proven" is only partially satisfied (artifact-level yes; state-container version guard no).
+15. immediate_decision_informed: Same-occurrence resume is NOT barred by any committed side effect: the PROCEED gate result is durable and unaltered (hash-pinned gate.json + last_gate), no finalize/custody/WBC/authority effect was committed by the three failed invocations, and the finalize handler is cleanly re-entrant from state=gated. CAVEATS for Sol: (a) current_state is now "blocked" and require_state(finalize) demands STATE_GATED (handlers/finalize.py:2241-2245), so resume requires the driver/repair seam (resume_cursor phase=finalize, retry_strategy=repair_phase_contract) to restore the gated entry state — an authority/driver question (FQ-03/FQ-04), not a custody one; (b) re-running finalize under the bound runtime A will deterministically fail again (critique_custody.py A lacks the accepted_tradeoff branch; B has it — FQ-02); (c) state-level CAS version guard is not affirmatively active for this state file, so the "CAS-protected" stop-gate is satisfied only at artifact level.
+16. durable_decision_informed: The custody layer is structured so finalize publication is CAS-protected and immutable (finalize_authority.py token CAS + os.link no-replace + same-content no-op + version-chained receipts) — a migrated child under runtime B publishing the same content would be an idempotent no-op, and a first publish under fresh authority would be exactly-once. The three failures left the plan at a clean blocked boundary with resume cursor, not a half-committed state. Durable remediation should treat the gate/carry/custody artifacts (gate.json 9df95825...) as authoritative and unchangeable, and route the fix at the runtime contract mismatch (A->B custody branch), NOT at artifact repair.
+17. safety_observations:
+    - No mutation performed; every command read-only (stat/sha256sum/sed/rg/tail/find + read-only sqlite3 URI mode + json parsing); no lifecycle/network/credential activity.
+    - work_ledger emit_transition TypeError (M9_WARN_EMIT_AUTO_WORK_LEDGER) is best-effort observability only — emitted events are _non_authoritative; it is NOT a committed ledger effect (consistent with FQ-09 scope).
+    - .events.supervision-checkpoint.lock/.json and .events.store-incarnation (mtime 2026-08-06T09:07:18-19Z) are supervision-infra artifacts (checkpoint marked _non_authoritative), written ~8h13m after the last driver write — not chain-driver activity; flagged for completeness, not adjudicated.
+    - Chain runtime binding still points at A with empty rebind_events — B is not bound; any A->B move requires separate authority adjudication (FQ-07); ancestry/code-parity is not execution authority.
+    - No credentials, tokens, or secrets were read or printed.
+18. unresolved_questions:
+    - How does the repair/resume seam re-enter finalize given current_state=blocked vs require_state(STATE_GATED)? (FQ-03/FQ-04)
+    - Why is `_state_meta.versions` empty — is the versioned CAS path feature-flagged (typed_ports_on, _core/state.py:1468-1489) and would a repair under B populate it?
+    - Whether an interrupted 3rd attempt (no phase_end) could leave any in-memory/tmp residue not covered by on-disk absence (fault-injection not permitted here).
+    - Identity of the 09:07:18Z supervision-checkpoint writer (observer infra vs stale watchdog).
+    - No repair-request/custody-lease exists for this blocker (only the earlier 74403266 revise-era request) — fresh blocker-specific authority would be needed for any resume (FQ-04).
+```
+
+**Key findings summary:** Verdict **supported** — the v5 PROCEED gate record is immutable and hash-pinned (gate.json/gate_v5.json identical, sha256 `9df95825...`, matching the WBC gate attempt artifact_hash), the three failed finalize invocations committed **zero** side effects (all seven finalize artifacts absent, no finalize WBC rows, authority/custody/WBC stores frozen since 21:40:57Z, failure raised at `write_critique_clearance` before any write), and the handler re-entered cleanly three times from state=gated. However, **MISSING_STRUCTURE** for full proof: state.json `_state_meta` is empty (state-level CAS version guard not populated) and the finalize publication CAS (`finalize_authority._publish_locked`) is code-present but unexercised (no finalize.json ever published). Same-occurrence resume is not barred by side effects but faces the `blocked`→`gated` re-entry requirement and the runtime A custody defect — both Sol-only judgment calls.

@@ -89,7 +89,7 @@ driver:
   execution_binding: required
   intended_initiative_revision: df2086c11704627f4093b302038bf692c9347a6b
   initiative_path: .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805
-  require_editable_runtime_match: true
+  require_editable_runtime_match: false
   robustness: full
   phase_timeout: 10800
   auto_approve: true

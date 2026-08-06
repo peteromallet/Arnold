@@ -1,0 +1,21 @@
+{
+  "schema": "arnold.superfixer.fan_child_custody.v1",
+  "occurrence": "occ_critique_r7_superfixer_retry_20260806_v4_14834310cdddb1f2b0eed77e",
+  "fan_pid": 1172175,
+  "fan_owner": "this-occurrence",
+  "model": "hermes:deepseek:deepseek-v4-flash (fan runtime_model deepseek:deepseek-v4-flash)",
+  "started_utc": "2026-08-06T13:28:00Z",
+  "interrupted_at_utc": "2026-08-06T13:33:00Z",
+  "interrupt_reason": "occurrence hard tool-budget (timeout 300s at fan wall-clock 308s; agents in-flight on read-only inspection)",
+  "terminal_status": "interrupted",
+  "children": [
+    "fq-02-attempt-record",
+    "fq-05-finalize-reentry",
+    "fq-07-runtime-rebind"
+  ],
+  "all_interrupted": true,
+  "report_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/fan_out/_report.json",
+  "no_live_owner": true,
+  "suppresses_recovery_inflight": false,
+  "escalated_to": "Sol stage 2 with prior full swarm (10 reports, same blocker) + fresh read-only reproductions"
+}

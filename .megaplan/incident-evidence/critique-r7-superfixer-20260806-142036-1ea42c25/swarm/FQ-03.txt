@@ -1,0 +1,85 @@
+# FQ-03 Flash Evidence Brief — Independent DeepSeek V4 Flash (READ-ONLY)
+
+## question_id
+FQ-03 — "Which fields besides `depends_on` and `dependency_reasons` carry task identities through finalize?"
+
+## verdict
+**Six additional structured fields carry task identities through finalize.** Two are model-emitted in the raw candidate (`sense_checks[].task_id`, `critique_resolution_coverage[].task_ids`); four are handler-generated/derived inside `_write_finalize_artifacts` (`validation.plan_steps_covered[].finalize_item_ids`, `validation.orphan_tasks`, `validation_jobs[].task_id`/`scope`/`evidence_label`/`reason`, and schema-defined `user_actions[].blocks_task_ids` — empty here). **`watch_items` and `meta_commentary` carry no structured task identity (prose only).** The splitter (`split_high_complexity_tasks`/`split_task`) rewires **none** of them: it replaces 6 parent tasks (T1–T5, T7) with 12 `_impl`/`_proof` subtasks in `payload["tasks"]` only, leaving `depends_on`/`dependency_reasons` dangling (the blocker), and also leaving **6 stale `sense_checks[].task_id` refs (SC1,SC2,SC3,SC4,SC5,SC7), 55 stale `critique_resolution_coverage[].task_ids` entries, and pre-split-generated `finalize_item_ids`** in the payload that would be published on a fixed path. `validation_jobs` are compiled **after** the split and therefore already carry post-split ids — they need no transformation, only the existing ordering invariant (split → compile jobs → feasibility). `graph_admission.py` and `execution_evidence.py` consume task identities only as byte-digests or via `tasks[].id`/`sense_checks[].id`, never via the stale-able fields.
+
+## vantage_point
+Independent read-only inspection of the bound engine `/workspace/runtime-candidates/arnold-r7-fresh-child-20260805` @ `234ac3524da29c1f630aee90ab1767a142a68a83` (clean tree) and the evidence pack `…/critique-r7-superfixer-20260806-142036-1ea42c25/`. No mutation, no writes, no launch, no delegation; single in-memory Python computation (no file output) to enumerate the post-split ID set.
+
+## utc_interval
+2026-08-06T14:37Z → 2026-08-06T14:42Z (report written immediately after; `date -u` at close: 2026-08-06T14:42:14Z).
+
+## artifacts (path + sha256)
+Evidence pack (all read-only):
+- `raw/local-strict-artifacts/finalize-15274aaf2cb2445487647129704dcccd.candidate.json` = `cfc7d701c18c070ba15679d5279cc943119ec9d4fa412b8ef4d02115a75c76c8` (byte-identical twin `finalize-59daae926dcd4447b40cbb790e68e36b.candidate.json`, same hash) — the **pre-mutation** raw candidate (19 tasks; no top-level `validation` key)
+- `raw/repro_finalize_mutations.py` = `6bef84dec62c676b4ac2d1928f84dda4db8cf9ecc1d058e9437d80c8de8c22fd`
+- `raw/repro-output.txt` = `d89a46a3dbc7157c1a9f2f0aa9534ac6980fb161eeacf06c8adffec38d4a4c27` (canonical after-state: 25 tasks, 12× dependency_unknown + dependency_graph_invalid)
+- `raw/finalize_revise_feedback.json` = `12638269d6fa7fcd60f83d036348c423154501ae6aa4024d40d8b00ff89c8fa8`
+- `evidence-pack.md`, `swarm-briefs/FQ-03.md` (prose identity)
+
+Bound engine sources:
+- `arnold_pipelines/megaplan/handlers/finalize.py` = `13efbdb7937bb73330f5aa4d19abeaf73904bea082d13cb0fbac650522695a4e`
+- `arnold_pipelines/megaplan/orchestration/validation_jobs.py` = `c740a6e032189dbf218b542de9cd501a7a9cb96a4f2cd7461688701c43996a2f`
+- `arnold_pipelines/megaplan/orchestration/graph_admission.py` = `5cfaaf9395737f2434fdec8c228c59371d733c8d8c35e0f2c7f5b4af2c4b6f41`
+- `arnold_pipelines/megaplan/orchestration/execution_evidence.py` = `d4a1f205ab161c2501b086b32cf14cc27036ed9c7adbb095ccd781f050ab7865`
+- `arnold_pipelines/megaplan/orchestration/task_splitter.py` = `851932dd007b2c9b3c7fa6f7092e08ad718f02a14e7a7c0cc9a98fadd1b3a462`
+- `arnold_pipelines/megaplan/orchestration/task_feasibility.py` = `c7932ece4baeab8f18a4deaea4331c30744c6adaa136db4586b28127907cd2a7`
+- `arnold_pipelines/megaplan/schemas/runtime.py` = `bd54b42c339b692bd4b87d088d19bb04c6b380b4aaa664e65058ff0474cb5c96`
+- `arnold_pipelines/megaplan/orchestration/critique_custody.py` = `f6b1920c06762c02acc60d24eb73c7a32a2571cc4934fca45e649a488860e4ac`
+- Engine HEAD: `234ac3524da29c1f630aee90ab1767a142a68a83` (branch `fix/r7-fresh-child-launch-20260805`, tracked clean)
+
+## commands (read-only; all exit 0 unless noted)
+- `sha256sum *.candidate.json; jq -r 'keys[]'` — cwd `…/raw/local-strict-artifacts` — exit 0 (both candidates identical)
+- `jq` dumps of `tasks[].id/depends_on/complexity`, `.sense_checks`, `.watch_items`, `.validation_jobs`, `.critique_resolution_coverage`, `.user_actions`, `.meta_commentary` — same cwd — exit 0
+- `jq` path-walk for `\bT\d+\b` tokens by location — exit 0 (structured: `sense_checks[].task_id`, `critique_resolution_coverage[].task_ids`; prose only: `meta_commentary`, 1× `watch_items` "…or T0 must halt")
+- `git rev-parse HEAD; git status --short` — cwd engine root — exit 0 (HEAD `234ac352…`, clean)
+- `wc -l` on the six engine files — exit 0
+- `rg` (search_files) for `task_id|task_ids|finalize_item_ids|sense_check|watch_item|depends_on|dependency_reasons|plan_steps_covered|orphan_tasks|critique_resolution_coverage` across `arnold_pipelines/megaplan` — exit 0
+- `read_file` on finalize.py L243–432, L629–667, L1035–1071, L2012–2191; validation_jobs.py L1–100, L237–446; graph_admission.py L1–134; execution_evidence.py L1–430; task_splitter.py L260–379, L380–519; task_feasibility.py L290–349; schemas/runtime.py L720–829; critique_custody.py L520–595; review.py L480–519, L845–874; execute_creative.py L205–234 — exit 0
+- `git log --oneline -- task_splitter.py / finalize.py; git log -S "sense_check" -- task_splitter.py` — cwd engine root — exit 0 (single splitter commit `86c1de74c`; no historical rewiring)
+- `python3 - <<EOF` in-memory splitter enumeration (deep-copy, no file writes) — cwd `/workspace` — exit 0
+- `jq` on `model-response/*` (content-addressed blob envelopes; candidate content lives in local-strict-artifacts) — exit 0
+- `date -u; sha256sum` of inspected files — exit 0
+
+## raw_excerpts
+- Schema (`schemas/runtime.py` L733–744, L765–776, L777–807): `sense_checks` items require `["id","task_id","question","executor_note","verdict"]`; `critique_resolution_coverage` items require `["finding_id","task_ids","resolution_evidence"]`; `validation` requires `plan_steps_covered` (`finalize_item_ids` array of strings), `orphan_tasks`, `completeness_notes`, `coverage_complete`; `watch_items` = `{"type":"array","items":{"type":"string"}}` (L732); `user_actions[].blocks_task_ids` (L755).
+- Pipeline order (`finalize.py` L2050–2087): `_ensure_verification_task` → `_ensure_user_actions_pre_gate_task`/`_post_gate_task` → **`_apply_programmatic_coverage` (L2057)** → `_normalize_task_complexity` → **`_split_finalize_tasks` (L2059)** → `compile_validation_jobs` (L2068) → `compile_task_feasibility` (L2080, raises `TaskFeasibilityError` on `admitted=False`). Second pass: `_split_finalize_tasks` again (L2135), `compile_validation_jobs` again (L2140), `_reconcile_validation_after_mutation` (L2141), second `compile_task_feasibility` (L2146).
+- Coverage generation is pre-split (`finalize.py` L396–407): `task_ids = [task["id"] for task in tasks if … _task_covers_plan_step(task, step)]` → `"finalize_item_ids": task_ids`.
+- Reconcile is append-only (`finalize.py` L274–284): `task_ids = {t["id"] for t in payload.get("tasks",[])}` … `for tid in task_ids: if tid not in covered_ids and tid not in orphan_ids: orphan_ids.add(tid)`; `finalize_item_ids` never rewritten.
+- Splitter mutates only tasks (`task_splitter.py` L461–507): `split_high_complexity_tasks` rebuilds `output` from `payload["tasks"]` and returns `(tasks, diagnostics)`; `split_task` (L294–295) mints `impl_id = f"{task_id}_impl"`, `proof_id = f"{task_id}_proof"`; `impl["depends_on"] = list(task.get("depends_on", []))` (L322) — **copies the parent's deps verbatim**; no call site touches `sense_checks`, `watch_items`, `validation`, or `critique_resolution_coverage`.
+- Feasibility validates only deps (`task_feasibility.py` L293–331): `deps = task.get("depends_on")` … `if dep not in id_set or dep == task_id: dependency_unknown`; `compute_task_batches` ValueError → `dependency_graph_invalid`. No check of `sense_checks[].task_id`, coverage `task_ids`, `finalize_item_ids`, or `orphan_tasks`.
+- Repro output (`repro-output.txt`): `raw candidate tasks: 19` … `mutated tasks: 25` … `admitted: False`, `diagnostic count: 13`; e.g. `{"code":"dependency_unknown","task_id":"T2_impl","dependency_id":"T1"}`, `{"code":"dependency_graph_invalid","message":"Unknown dependency ID 'T1' for task 'T2_impl'"}`; non-blocking `split_mutating_validation` for T10/T13/T16.
+- Execute-time sense-check filter (`execute_creative.py` L218–219): `batch_sense_checks = [sc for sc in projected_sense_checks if sc.get("task_id") in set(batch_task_ids)]`.
+- Custody binding (`critique_custody.py` L1462, L1480–1484): `"resolution_coverage_digest": _digest(payload.get("critique_resolution_coverage", []))`; array-type check only.
+- Admission journal (`graph_admission.py` L37–42): `graph = {… "tasks": …, "validation_jobs": …, "sense_checks": …}`; digest-bound only.
+- Feedback (`finalize_revise_feedback.json`): 12× `dependency_unknown` + `dependency_graph_invalid`; `next_step: override recover-blocked`; circuit open at 2 occurrences.
+
+## trace
+1. **Before-state IDs (raw candidate, evidence artifact):** `T0,T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18` (19 tasks). `sense_checks` = SC0→T0 … SC18→T18 (all 19). `critique_resolution_coverage` = 100 entries with `task_ids` drawn from {T0,T1,T3,T4,T5,T6,T7,T8,T10,T11,T12,T13,T15,T16,T17,T18} (no T2/T9/T14 — those never appear in coverage). `validation_jobs=[]`, `user_actions=[]`, `watch_items`=23 prose strings (one prose "T0 must halt" mention), no `validation` key.
+2. **Mutation pipeline (in order):** `_ensure_verification_task` (description-suffix only) → user-actions gate tasks (no-op: empty) → **`_apply_programmatic_coverage` writes `validation.plan_steps_covered[].finalize_item_ids` from pre-split task ids** → complexity normalize → **split** → compile validation jobs (post-split) → feasibility (fails here on the real path; `_reconcile_validation_after_mutation` never runs on the failure path).
+3. **After-state IDs (in-memory replay, engine splitter, exit 0):** 25 tasks = `T0, T1_impl, T1_proof, T2_impl, T2_proof, T3_impl, T3_proof, T4_impl, T4_proof, T5_impl, T5_proof, T6, T7_impl, T7_proof, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18`; **removed parents = T1,T2,T3,T4,T5,T7**. T10/T13/T16 (complexity ≥7 but test-kind with write paths) refused split via `split_mutating_validation` — kept in place with their dangling deps (T10→T3, T13→T5, T15→T3,T5).
+4. **Stale structured refs after split (computed in-memory):** `sense_checks` with removed-parent `task_id`: **SC1,SC2,SC3,SC4,SC5,SC7 (6/19)**; `critique_resolution_coverage` entries containing ≥1 removed parent: **55/100** (e.g. CF-1E7444307FAF171918C4 [T4,T7], CF-6D5608CE301B445465C3 [T1]); `validation.plan_steps_covered[].finalize_item_ids` generated pre-split → stale by construction; `orphan_tasks` (had it been reached) would be flooded with the 12 new impl/proof ids by `_reconcile_validation_after_mutation`, since `finalize_item_ids` is never rewritten.
+5. **Structured consumers of each carrier (rg + read):**
+   - `depends_on`/`dependency_reasons` → `task_feasibility.py` L293–331 (the only hard gate; emits the canonical 12+1 diagnostics); also `compute_task_batches`.
+   - `sense_checks[].task_id` → **live execution-time filter** `execute_creative.py:219` and `execute_doc.py:255-263` (sense check silently omitted when its `task_id` matches no batch); review.py keys verdicts by `sense_check_id` (L855–867); `execution_evidence.py` reads `id`/`executor_note` only (L199–208, L356–365); `graph_admission.py` digests the array (L41).
+   - `critique_resolution_coverage[].task_ids` → `critique_custody.py:1462` digest binding + L1480–1484 type check only (no existence cross-check).
+   - `validation.plan_steps_covered[].finalize_item_ids` / `orphan_tasks` → `finalize.py` L265–284 (append-only orphan reconcile), L314–330 (append), L381–421 (generate), L570–589 (U-prefix-only semantic check); `recovery_topology_surfaces.py:1365` (baseline template).
+   - `validation_jobs[].task_id/scope/evidence_label/reason` → compiled post-split (finalize.py L2068/L2140 from `validation_jobs.py` L290–311) → already consistent.
+   - `watch_items`/`meta_commentary` → no structured consumer (schema strings).
+   - `user_actions[].blocks_task_ids` → schema L755; empty in this candidate; not rewritten by any handler either.
+6. **Negative evidence:** `git log` on `task_splitter.py` = single commit `86c1de74c`; `git log -S "sense_check" -- task_splitter.py` = nothing; no `rewir`/`remap` of task ids anywhere (only `critique_custody.py:545-578` `remapped`, which is CF-finding-id normalization, not task ids).
+
+## confidence
+**High (0.90)** for the field enumeration and staleness claim: before/after ID sets are reproduced exactly by the engine's own splitter in-memory (25 tasks, removed parents T1–T5/T7, 6 stale sense checks, 55 stale coverage entries), and the mutation order (coverage-before-split, jobs-after-split, append-only orphan reconcile) is read directly from `finalize.py`. **Medium (0.75)** for the claim that `validation.finalize_item_ids` would actually contain removed parents in the real run: `_apply_programmatic_coverage` executes before the split in the real path, but the persisted evidence only shows the repro where coverage was skipped (`KeyError: -1` with the minimal fake state) — the ordering fact is code-proven, the concrete stale ID list for that block is inferred from ordering, not from a persisted post-coverage artifact. No inference of IDs from prose was used anywhere.
+
+## structure_classification
+Root cause is a **structural identity-integrity defect (single-transform, multi-consumer)**: one mutator (`split_high_complexity_tasks`) rewrites the identity set of one container (`tasks`) while five sibling structured consumers (`depends_on`/`dependency_reasons`, `sense_checks[].task_id`, `critique_resolution_coverage[].task_ids`, `validation.plan_steps_covered[].finalize_item_ids`, `validation.orphan_tasks`) are keyed on the pre-mutation identity set and are never re-keyed. The hard failure is gated only at the `depends_on` consumer; the other four fail **silently** (no existence validation anywhere: feasibility checks only deps; semantic postcheck checks only U-prefixed ids; custody digests bind bytes without validating existence; execution filters sense checks by task_id at batch time). `validation_jobs` is structurally immune (derived post-mutation). `watch_items`/`meta_commentary` are prose, structurally immune.
+
+## immediate_decision_informed
+Yes — the pending Sol repair ("rewire dependents after split, or map removed parent ids → impl/proof") must **not stop at `depends_on`/`dependency_reasons`**. The same post-split transformation policy is required for: `sense_checks[].task_id` (6 stale: SC1–SC5, SC7), `critique_resolution_coverage[].task_ids` (55 stale entries), and `validation.plan_steps_covered[].finalize_item_ids` + `orphan_tasks` (regenerate or re-key after split; `_reconcile_validation_after_mutation` is insufficient — it only adds orphans). Otherwise a repaired candidate passes feasibility but publishes a contract whose sense checks never fire for split tasks, whose critique-coverage digest binds removed-parent ids, and whose validation block claims non-existent tasks. `validation_jobs` and `watch_items` need no transformation.
+
+## durable_decision_informed
+Yes — three durable engineering conclusions: (1) introduce a single post-split identity-rewrite pass with an explicit parent→impl/proof mapping table, applied uniformly to `depends_on`/`dependency_reasons`, `sense_checks[].task_id`, `critique_resolution_coverage[].task_ids`, and `validation` (recompute `finalize_item_ids` and `orphan_tasks` after rewiring); (2) preserve the ordering invariant split → rewire → `compile_validation_jobs` → `compile_task_feasibility` (jobs are already last-compiled, which is why they self-heal); (3) add an existence cross-check (all task-id references in `sense_checks`, `critique_resolution_coverage`, `validation.plan_steps_covered[].finalize_item_ids`, `orphan_tasks` ⊆ `tasks[].id`) inside `compile_task_feasibility` or `_finalize_semantic_postcheck`, so silent staleness in any consumer becomes a deterministic rejection instead of a silent contract drift. Also note T10/T13/T16's `split_mutating_validation` non-splits mean their (legitimately dangling post-rewire) deps must map onto the split parents' impl subtasks, not the removed parents, for the rewrite table to be complete.
