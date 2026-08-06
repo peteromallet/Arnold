@@ -1471,14 +1471,40 @@ if not projection.get("active_request_ids"):
     _superfixer_only = os.environ.get("MEGAPLAN_SUPERFIXER_ONLY", "").strip().lower() in {
         "1", "true", "yes", "on",
     }
+    if _superfixer_only:
+        # Status-based trigger: launch the EXACT SAME superfixer agent as the
+        # hourly schedule (deepseek-v4-flash + render_goal /goal) for this
+        # blocked/failed/errored chain. Never route to the layered repair stack.
+        try:
+            import subprocess, tempfile
+            from arnold_pipelines.megaplan.skills.fix_the_fixer.scripts.render_goal import render_goal
+            goal_text = render_goal(session)
+            goal_fd, goal_path = tempfile.mkstemp(suffix=".md", prefix="superfixer-goal-")
+            with os.fdopen(goal_fd, "w") as fh:
+                fh.write(goal_text)
+            grant_path = "/tmp/superfixer-grant.json"
+            import datetime
+            at_iso = (datetime.datetime.utcnow() + datetime.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            cmd = [
+                "python3", "-P", "-m", "arnold_pipelines.megaplan", "resident", "schedule", "add",
+                "--id", "sched_superfixer_status_" + session.replace("/", "_")[:60],
+                "--description", "Status-trigger superfixer (same flow as hourly) for " + session,
+                "--prompt-file", goal_path,
+                "--grant-file", grant_path,
+                "--at", at_iso, "--timezone", "UTC",
+                "--work-intent", "execution", "--task-kind", "autonomous",
+                "--model", "hermes:deepseek:deepseek-v4-flash",
+                "--project-dir", str(workspace),
+            ]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        except Exception:
+            pass
+        return True
     enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
         session=session,
-        # Status-based trigger: with MEGAPLAN_SUPERFIXER_ONLY=1, a blocked/failed/
-        # errored chain routes to the superfixer instead of the layered repair
-        # stack. Reversible feature flag; default keeps the legacy watchdog route.
-        source="superfixer" if _superfixer_only else "watchdog",
+        source="watchdog",
         target={
             "workspace": str(workspace),
             "remote_spec": remote_spec_raw,
