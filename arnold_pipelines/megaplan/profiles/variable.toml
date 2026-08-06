@@ -54,10 +54,15 @@ tiebreaker_challenger = "premium:low"
 
 [profiles.variable.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-pro"
+2 = "hermes:deepseek:deepseek-v4-flash"
 3 = "hermes:deepseek:deepseek-v4-pro"
-4 = "premium:low"
-5 = "premium"
+4 = "hermes:deepseek:deepseek-v4-pro"
+5 = "premium:low"
+6 = "premium:low"
+7 = "premium:low"
+8 = "premium:low"
+9 = "premium:low"
+10 = "premium:low"
 
 [profiles.variable.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"

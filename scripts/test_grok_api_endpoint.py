@@ -124,6 +124,10 @@ if __name__ == "__main__":
         print()
         print("The endpoint, model, and auth details above can be copied")
         print("directly into any OpenAI-compatible client or tool.")
+        print()
+        print("In Arnold/Hermes (via prefix like claude: or hermes:xxx:):")
+        print("  hermes:xai:grok-4.5   or   --phase-model foo=hermes:xai:grok-4.5")
+        print("  (XAI_API_KEY added to .env + ~/.hermes/.env)")
         # Exit 0 with guidance (per acceptance criteria graceful path)
     else:
         print(f"{AUTH_ENV} detected (value hidden for safety).")

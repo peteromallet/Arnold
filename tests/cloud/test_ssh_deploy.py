@@ -150,4 +150,6 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
 
     assert "/workspace/.secrets/megaplan-resident-discord.env" in entrypoint
     assert "tmux has-session -t megaplan-resident-discord" in entrypoint
-    assert "python -m arnold_pipelines.megaplan resident discord" in entrypoint
+    assert "MEGAPLAN_RESIDENT_STORE_ROOT" in entrypoint
+    assert "--store-root" in entrypoint
+    assert "python -P -m arnold_pipelines.megaplan resident discord" in entrypoint
