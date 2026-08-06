@@ -15,10 +15,42 @@ def _target_text(value: str) -> str:
     return value
 
 
+def _prior_session_summaries(target: str, max_n: int = 3) -> str:
+    """Return the last ``max_n`` fixer-session summaries for this project, if any."""
+    from pathlib import Path
+    # derive project dir from target is not reliable; fall back to a well-known store
+    candidates = [
+        Path("/workspace") / target / "Arnold" / ".megaplan" / "fixer-sessions",
+        Path("/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold") / ".megaplan" / "fixer-sessions",
+    ]
+    for store in candidates:
+        idx = store / "index.md"
+        if idx.exists():
+            lines = [l.strip() for l in idx.read_text(errors="ignore").splitlines() if l.strip().startswith("- [")]
+            recent = lines[-max_n:]
+            if recent:
+                return "\n".join(recent)
+    return ""
+
+
 def render_goal(target: str) -> str:
     encoded_target = json.dumps(target, ensure_ascii=False)
+    _prior = _prior_session_summaries(target)
+    _prior_block = (
+        "\n\nPrior fixer sessions (last 3) — account for recurring issues and do not repeat them:\n"
+        + _prior
+        + "\n\nThe full session-summary index lives at .megaplan/fixer-sessions/index.md "
+        "(one line per run: session, model, outcome). Review it for recurring patterns. "
+        "When you invoke any Sol (gpt-5.6-sol) subagent, share the relevant prior-session "
+        "summaries and the index location so it accounts for recurring issues too."
+        if _prior else
+        "\n\nIf prior fixer-session summaries exist under .megaplan/fixer-sessions/index.md, "
+        "review them for recurring issues, account for them, and share them with any Sol "
+        "(gpt-5.6-sol) subagents you invoke (point them at the index)."
+    )
     return f"""/goal
 Act as the only implementation/recovery agent for target {encoded_target}.
+{_prior_block}
 
 Diagnose the failed fixer and the backstop that missed it; implement and verify
 the fixer repair; use the supported resident/cloud transport; retrigger ordinary
