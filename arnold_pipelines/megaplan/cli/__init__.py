@@ -3774,6 +3774,47 @@ def _main(argv: list[str] | None = None) -> int:
         return error_response(error, root=root)
 
 
+
+def _load_cloud_hot_env() -> None:
+    """In a trusted container, source ``/workspace/.cloud-hot-env`` into the env.
+
+    Mirrors the wrapper convention (``set -a; . /workspace/.cloud-hot-env; set +a``)
+    so phase/worker processes inherit the configured provider credentials (for
+    example GLM/Zhipu) without each caller having to re-source the file. Never
+    overwrites an already-present environment value. No-op when not in a trusted
+    container or when the file is absent.
+    """
+
+    if not os.environ.get("MEGAPLAN_TRUSTED_CONTAINER", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }:
+        return
+    hot_env = os.environ.get("ARNOLD_CLOUD_HOT_ENV") or "/workspace/.cloud-hot-env"
+    try:
+        with open(hot_env, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one CLI process under the canonical managed-run lease lifecycle.
 
@@ -3786,6 +3827,8 @@ def main(argv: list[str] | None = None) -> int:
     from arnold_pipelines.megaplan.cloud.liveness_lease import (
         managed_runner_lifecycle,
     )
+
+    _load_cloud_hot_env()
 
     with managed_runner_lifecycle():
         return _main(argv)

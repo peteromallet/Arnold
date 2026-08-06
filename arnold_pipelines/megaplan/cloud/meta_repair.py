@@ -41,6 +41,8 @@ from arnold_pipelines.megaplan.cloud.current_target_liveness import (
 )
 from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
     render_process_custody_policy,
+    render_profile_integrity_policy,
+    render_fast_path_policy,
 )
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
@@ -1667,6 +1669,10 @@ def build_meta_repair_prompt(
 
         parts.append("### Instructions\n")
         parts.append(render_process_custody_policy())
+        parts.append("\n\n")
+        parts.append(render_profile_integrity_policy())
+        parts.append("\n\n")
+        parts.append(render_fast_path_policy())
         parts.append("\n\n")
         parts.append(
             "Diagnose the root cause of the repair-system failure described above. "

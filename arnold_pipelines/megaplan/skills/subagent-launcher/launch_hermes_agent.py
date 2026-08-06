@@ -108,6 +108,17 @@ def _prefer_legacy_megaplan_distribution() -> None:
     ``megaplan`` distribution and put its source root first.
     """
 
+    # A managed resident run carries an occurrence-bound ``ARNOLD_PATH``.  That
+    # path is the runtime identity being repaired and must win over any legacy
+    # ``megaplan`` distribution visible in the worker environment.  Selecting
+    # the legacy checkout here silently reintroduced the old 90-turn agent even
+    # when the scheduler had pinned the corrected runtime.
+    if (
+        os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1"
+        and os.environ.get("ARNOLD_PATH")
+    ):
+        return
+
     try:
         from importlib.metadata import distribution
 
@@ -532,7 +543,27 @@ def run(
             sys.exit(2)
         os.chdir(target)
         target_str = str(target)
-        if target_str not in sys.path:
+        runtime_root = os.environ.get("ARNOLD_PATH", "").strip()
+        if runtime_root:
+            runtime_path = Path(runtime_root).expanduser().resolve()
+            if runtime_path.is_dir():
+                # Keep the project as cwd for file/terminal tools, but make
+                # the occurrence-bound runtime the first import root.  Without
+                # this ordering ``arnold.agent`` resolves from the target
+                # checkout while the worker claims to run the pinned runtime.
+                runtime_str = str(runtime_path)
+                sys.path[:] = [
+                    runtime_str,
+                    target_str,
+                    *(
+                        p
+                        for p in sys.path
+                        if p not in {runtime_str, target_str}
+                    ),
+                ]
+            elif target_str not in sys.path:
+                sys.path.insert(0, target_str)
+        elif target_str not in sys.path:
             sys.path.insert(0, target_str)
 
     # Imports happen after env load so any module-level credential lookups see
@@ -586,6 +617,9 @@ def run(
         conversation_history = session_db.get_messages_as_conversation(str(session_id))
 
     try:
+        resident_unbounded = (
+            os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1"
+        )
         agent = AIAgent(
             model=resolved_model,
             # [] is an explicit no-tools capability set.  None means "use the
@@ -597,6 +631,10 @@ def run(
             skip_context_files=True,
             skip_memory=True,
             quiet_mode=True,
+            # The resident recovery contract is completion-driven.  The
+            # runtime implements ``None`` as an explicit no-call-cap mode;
+            # generic/interactive launches retain the normal 90-turn default.
+            **({"max_iterations": None} if resident_unbounded else {}),
             **agent_kwargs,
         )
     except Exception:
