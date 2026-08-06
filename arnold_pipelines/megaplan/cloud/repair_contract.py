@@ -1843,6 +1843,7 @@ def admit_repair_effect_class(
     effect_class: str | RepairEffectClass,
     *,
     source: str = "",
+    admission: Mapping[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Gate repair admission on the effect-class allowlist.
 
@@ -1853,6 +1854,24 @@ def admit_repair_effect_class(
         A ``(admitted, reason)`` tuple.  *admitted* is ``True`` only when
         the effect class is approved for repair via the allowlist.
     """
+    # ``engine_runtime`` is intentionally not globally allowlisted.  It may
+    # cross the effect barrier only with the explicit, immutable Horizon-A
+    # source-repair admission bound to the exact occurrence.  Keep this check
+    # here (the common admission seam) so callers cannot turn a generic
+    # ``mutate`` label into source-edit authority.
+    if str(effect_class) == "engine_runtime" or effect_class == RepairEffectClass.ENGINE_RUNTIME:
+        from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
+            validate_engine_runtime_repair_admission,
+        )
+
+        admitted, admission_reason = validate_engine_runtime_repair_admission(admission)
+        if admitted:
+            return True, admission_reason
+        reason = admission_reason
+        if source:
+            reason += f" (source: {source})"
+        return False, reason
+
     result = check_effect_class(effect_class)
     if result.verdict == AllowlistVerdict.APPROVED:
         return True, result.reason
