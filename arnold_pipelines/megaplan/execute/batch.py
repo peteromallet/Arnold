@@ -3502,13 +3502,14 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 # at pre-dispatch. Record it as deferred and let dispatch proceed
                 # on the per-task narrow subsections. The backstop is a
                 # milestone-wide observe-only safety net, not a pre-dispatch gate.
+                _jid = str(job.get("id") or "vj")
                 evidence_results.append({
-                    "job_id": job_id,
+                    "job_id": _jid,
                     "kind": kind,
                     "status": "shadow_deferred",
                     "exit_code": None,
                 })
-                log.info("post-execute suite %s deferred in SHADOW mode (non-blocking pre-dispatch)", job_id)
+                log.info("post-execute suite %s deferred in SHADOW mode (non-blocking pre-dispatch)", _jid)
                 continue
         timeout = job.get("max_seconds") or job.get("timeout_seconds") or 600
         job_id = str(job.get("id") or "vj")
