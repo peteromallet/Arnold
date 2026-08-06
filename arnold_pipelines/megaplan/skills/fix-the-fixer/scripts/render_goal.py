@@ -15,7 +15,7 @@ def _target_text(value: str) -> str:
     return value
 
 
-def _prior_session_summaries(target: str, max_n: int = 3) -> str:
+def _prior_session_summaries(target: str, max_n: int = 5) -> str:
     """Return the last ``max_n`` fixer-session summaries for this project, if any."""
     from pathlib import Path
     # derive project dir from target is not reliable; fall back to a well-known store
@@ -37,7 +37,7 @@ def render_goal(target: str) -> str:
     encoded_target = json.dumps(target, ensure_ascii=False)
     _prior = _prior_session_summaries(target)
     _prior_block = (
-        "\n\nPrior fixer sessions (last 3) — account for recurring issues and do not repeat them:\n"
+        "\n\nPrior fixer sessions (last 5) — account for recurring issues and do not repeat them:\n"
         + _prior
         + "\n\nThe full session-summary index lives at .megaplan/fixer-sessions/index.md "
         "(one line per run: session, model, outcome). Review it for recurring patterns. "
