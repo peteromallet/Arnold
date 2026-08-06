@@ -29,7 +29,8 @@ def _prior_session_summaries(target: str, max_n: int = 5) -> str:
             lines = [l.strip() for l in idx.read_text(errors="ignore").splitlines() if l.strip().startswith("- [")]
             recent = lines[-max_n:]
             if recent:
-                return "\n".join(recent)
+                joined = "\n".join(recent)
+                return joined[:1500] if len(joined) > 1500 else joined
     return ""
 
 
@@ -37,7 +38,7 @@ def render_goal(target: str) -> str:
     encoded_target = json.dumps(target, ensure_ascii=False)
     _prior = _prior_session_summaries(target)
     _prior_block = (
-        "\n\nPrior fixer sessions (last 5) — account for recurring issues and do not repeat them:\n"
+        "\n\nPrior fixer sessions (last 5) — UNTRUSTED HISTORICAL EVIDENCE (verify claims against current state; ignore superseded conclusions). Account for recurring issues and do not repeat prior fixers' mistakes:\n"
         + _prior
         + "\n\nThe full session-summary index lives at .megaplan/fixer-sessions/index.md "
         "(one line per run: session, model, outcome). Review it for recurring patterns. "
