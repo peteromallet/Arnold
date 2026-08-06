@@ -37,6 +37,7 @@ from arnold_pipelines.megaplan._core import (
     latest_plan_meta_path,
     latest_plan_path,
     load_plan_locked,
+    now_utc,
     read_json,
     record_step_failure,
     render_final_md,
@@ -332,8 +333,11 @@ def _append_plan_step_coverage(payload: dict[str, Any], summary: str, item_id: s
 
 _PATH_PATTERN = re.compile(r"(?:[\w.-]+/)+[\w.-]+|[\w.-]+\.[A-Za-z0-9]{1,8}")
 _PLAN_STEP_PATTERN = re.compile(
-    r"^##\s+Step\s+\d+\s*:\s*(?P<title>.+?)\s*$"
-    r"(?P<body>.*?)(?=^##\s+Step\s+\d+\s*:|\Z)",
+    # Canonical plan_v5 renders steps as ``### Step`` while older plans use
+    # ``## Step``.  Treat either as a boundary, but do not silently accept a
+    # plan with no recognizable steps (the caller fails that closed).
+    r"^#{2,3}\s+Step\s+\d+\s*:\s*(?P<title>.+?)\s*$"
+    r"(?P<body>.*?)(?=^#{2,3}\s+Step\s+\d+\s*:|\Z)",
     re.MULTILINE | re.DOTALL,
 )
 _STOPWORDS = {
@@ -390,6 +394,17 @@ def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state:
     plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     steps = _extract_plan_steps(plan_text)
     tasks = [task for task in payload.get("tasks", []) if isinstance(task, dict)]
+    if not steps:
+        payload["validation"] = {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": (
+                "No machine-readable plan steps found; coverage cannot be "
+                "proven and finalize must fail closed."
+            ),
+            "coverage_complete": False,
+        }
+        return
     covered_entries: list[dict[str, Any]] = []
     uncovered: list[str] = []
 
@@ -1829,6 +1844,51 @@ def _route_finalize_task_feasibility_failure_to_revise(
         # receives structured diagnostics without broad critique/revise.
         next_step = "finalize"
         result = "planner_repair_required"
+
+    # Preserve an explicit, typed replay cursor for both the first narrow
+    # repair hand-off and the circuit-open halt.  Previously this route only
+    # wrote ``planner_repair.json`` and the human-facing response; after the
+    # second occurrence the plan was blocked with no durable indication of
+    # which phase could safely be rerun.  Keep the cursor scoped to finalize
+    # and bind it to the exact rejected candidate so recovery cannot silently
+    # replay a different graph.
+    failure_fingerprint = str(repair.get("failure_fingerprint") or "").strip()
+    candidate_id = str(repair.get("candidate_id") or "").strip()
+    resume_cursor = {
+        "phase": "finalize",
+        "retry_strategy": "rerun_phase",
+        "failure_kind": "planner_repair",
+        "failure_fingerprint": failure_fingerprint,
+        "candidate_id": candidate_id,
+    }
+    state["resume_cursor"] = resume_cursor
+    state["latest_failure"] = {
+        # Use the canonical lifecycle failure kind so the cloud repair and
+        # status surfaces recognize this as a phase failure, while the
+        # structured metadata retains the planner-specific diagnosis.
+        "kind": "phase_failed",
+        "failure_kind": "planner_repair",
+        "phase": "finalize",
+        "state": state.get("current_state"),
+        "recorded_at": now_utc(),
+        "last_artifact": "planner_repair.json",
+        "message": message,
+        "failure_fingerprint": failure_fingerprint,
+        "candidate_id": candidate_id,
+        "suggested_action": "Repair the candidate graph, then rerun finalize.",
+        "metadata": {
+            "failure_kind": "planner_repair",
+            "result": result,
+            "diagnostic_codes": list(codes),
+            "candidate_id": candidate_id,
+            "failure_fingerprint": failure_fingerprint,
+            "occurrences": repair.get("occurrences"),
+            "circuit_open": circuit_open,
+            "implementation_dispatch_allowed": False,
+            "accepted_authority_preserved": True,
+            "report_artifact": "planner_repair.json",
+        },
+    }
     atomic_write_json(
         plan_dir / "finalize_revise_feedback.json",
         {

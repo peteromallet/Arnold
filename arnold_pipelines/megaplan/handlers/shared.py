@@ -497,10 +497,16 @@ def _derive_exit_kind_funneled(step: str, result: str, state: PlanState) -> str:
 
     * ``step == "gate"`` and the result indicates a quality-gate block →
       ``blocked_by_quality``.
+    * Any non-success finalize result is a quality/contract block: the
+      candidate graph or finalize contract was rejected and no executable
+      authority was published.  It must never be represented as a successful
+      phase result/WBC attempt.
     * Everything else → ``success`` (funneled handlers don't have prereq
       blocks / timeouts — those come from execute).
     """
     if step == "gate" and result not in ("success",):
+        return ExitKind.blocked_by_quality.value
+    if step == "finalize" and result not in ("success",):
         return ExitKind.blocked_by_quality.value
     return ExitKind.success.value
 
@@ -1095,24 +1101,40 @@ def _finish_step(
                     },
                 )
             else:
-                complete_phase_wbc(
-                    state=state,
-                    plan_dir=plan_dir,
-                    step=step,
-                    agent=agent,
-                    payload={
-                        "phase": step,
-                        "status": "completed",
-                        "summary": summary,
-                        "next_step": response.get("next_step"),
-                        "phase_result_ref": "phase_result.json",
-                        "boundary_receipt_id": receipt.boundary_id if receipt is not None else None,
-                        "boundary_receipt_ids": receipt_ids,
-                        "artifacts_written": list(artifacts),
-                        "output_file": output_file,
-                        "artifact_hash": artifact_hash,
-                    },
-                )
+                terminal_payload = {
+                    "phase": step,
+                    "status": "completed" if success and result == "success" else "failed",
+                    "summary": summary,
+                    "next_step": response.get("next_step"),
+                    "phase_result_ref": "phase_result.json",
+                    "boundary_receipt_id": receipt.boundary_id if receipt is not None else None,
+                    "boundary_receipt_ids": receipt_ids,
+                    "artifacts_written": list(artifacts),
+                    "output_file": output_file,
+                    "artifact_hash": artifact_hash,
+                    "result": result,
+                }
+                if success and result == "success":
+                    complete_phase_wbc(
+                        state=state,
+                        plan_dir=plan_dir,
+                        step=step,
+                        agent=agent,
+                        payload=terminal_payload,
+                    )
+                else:
+                    # A handler can return a structured, non-zero result while
+                    # the subprocess itself exits cleanly.  Never emit a WBC
+                    # COMPLETED event for that path: the phase result and the
+                    # custody ledger must agree that no authority was
+                    # published (notably planner-repair failures in finalize).
+                    fail_phase_wbc(
+                        state=state,
+                        plan_dir=plan_dir,
+                        step=step,
+                        agent=agent,
+                        payload=terminal_payload,
+                    )
     clear_active_step(state, run_id=run_id)
     save_state_merge_meta(plan_dir, state)
     return response

@@ -16,6 +16,9 @@ from arnold_pipelines.megaplan.orchestration.task_splitter import (
     split_high_complexity_tasks,
     split_task,
 )
+from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+    compile_task_feasibility,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +627,38 @@ class TestBatchSplitter:
         assert "T2" in ids  # kept (ambiguous)
         assert "T3_impl" in ids
         assert "T3_proof" in ids
+
+    def test_dependents_wait_for_split_proof_and_batches_follow_order(self) -> None:
+        """Replacing a parent must preserve its full implementation+proof contract.
+
+        A consumer of the original task cannot run after ``_impl`` alone: the
+        original task was not complete until its validation proof passed.  The
+        rewritten edge therefore targets ``_proof`` and carries its semantic
+        dependency evidence under the new key.
+        """
+        parent = _task("T1", complexity=8)
+        consumer = _task("T2", complexity=4, depends_on=["T1"])
+
+        result, diags = split_high_complexity_tasks(_payload([parent, consumer]))
+        assert diags == []
+        by_id = {task["id"]: task for task in result}
+
+        assert by_id["T1_proof"]["depends_on"] == ["T1_impl"]
+        assert by_id["T2"]["depends_on"] == ["T1_proof"]
+        assert "T1_proof" in by_id["T2"]["dependency_reasons"]
+        assert "T1" not in by_id["T2"]["dependency_reasons"]
+
+        # The finalizer normalizes read-only proofs to ``audit`` before
+        # feasibility admission.  Reproduce that normalization here and
+        # assert the resulting dispatch batches are strictly ordered.
+        for task in result:
+            if task["id"] == "T1_proof":
+                task["kind"] = "audit"
+        report = compile_task_feasibility(_payload(result))
+        assert report["admitted"] is True
+        batches = report["batches"]
+        assert batches.index(["T1_impl"]) < batches.index(["T1_proof"])
+        assert batches.index(["T1_proof"]) < batches.index(["T2"])
 
 
 # ---------------------------------------------------------------------------

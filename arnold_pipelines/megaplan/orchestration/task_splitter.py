@@ -482,6 +482,14 @@ def split_high_complexity_tasks(
 
     output: list[dict[str, Any]] = []
     diagnostics: list[SplitDiagnostic] = []
+    # A successful split removes the original task id from the admitted
+    # graph.  Consumers that still point at that id would therefore become
+    # dangling edges (and make the whole candidate infeasible).  Keep the
+    # parent -> proof mapping while expanding the list so those edges can be
+    # rewritten in one deterministic pass below.  Dependents must wait for
+    # the proof, not merely the implementation, because the original task's
+    # completion contract included validation.
+    split_completion_by_parent: dict[str, str] = {}
 
     for raw in raw_tasks:
         if not isinstance(raw, Mapping):
@@ -501,8 +509,47 @@ def split_high_complexity_tasks(
                 output.append(task)
             else:
                 output.extend(result)
+                parent_id = task.get("id")
+                proof_id = result[1].get("id") if len(result) > 1 else None
+                if isinstance(parent_id, str) and isinstance(proof_id, str):
+                    split_completion_by_parent[parent_id] = proof_id
         else:
             output.append(task)
+
+    if split_completion_by_parent:
+        for task in output:
+            dependencies = task.get("depends_on")
+            if not isinstance(dependencies, list):
+                continue
+
+            remapped_dependencies = [
+                split_completion_by_parent.get(dep, dep)
+                if isinstance(dep, str)
+                else dep
+                for dep in dependencies
+            ]
+            task["depends_on"] = remapped_dependencies
+
+            # ``dependency_reasons`` is keyed by the dependency id.  Rewrite
+            # the key alongside the edge, preserving its evidence payload;
+            # otherwise the graph would have a valid edge but no semantic
+            # justification for it.  Do not invent evidence for malformed
+            # input and retain unrelated keys for the existing validator to
+            # reject as appropriate.
+            reasons = task.get("dependency_reasons")
+            if isinstance(reasons, Mapping):
+                remapped_reasons: dict[Any, Any] = {}
+                dependency_set = {
+                    dependency for dependency in dependencies if isinstance(dependency, str)
+                }
+                for dependency, reason in reasons.items():
+                    mapped = (
+                        split_completion_by_parent.get(dependency, dependency)
+                        if isinstance(dependency, str) and dependency in dependency_set
+                        else dependency
+                    )
+                    remapped_reasons[mapped] = deepcopy(reason)
+                task["dependency_reasons"] = remapped_reasons
 
     return output, diagnostics
 

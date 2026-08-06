@@ -343,6 +343,126 @@ def test_feasibility_failure_enters_narrow_planner_repair(tmp_path: Path) -> Non
     assert response["details"]["implementation_dispatch_allowed"] is False
     assert (plan_dir / "finalize_revise_feedback.json").exists()
     assert (plan_dir / "planner_repair.json").exists()
+    assert state["resume_cursor"] == {
+        "phase": "finalize",
+        "retry_strategy": "rerun_phase",
+        "failure_kind": "planner_repair",
+        "failure_fingerprint": state["meta"]["planner_repair"]["failure_fingerprint"],
+        "candidate_id": state["meta"]["planner_repair"]["candidate_id"],
+    }
+    assert state["latest_failure"]["kind"] == "phase_failed"
+    assert state["latest_failure"]["failure_kind"] == "planner_repair"
+    assert state["latest_failure"]["phase"] == "finalize"
+
+
+def test_planner_repair_phase_result_is_not_classified_as_success() -> None:
+    from arnold_pipelines.megaplan.handlers.shared import _derive_exit_kind_funneled
+
+    assert _derive_exit_kind_funneled("finalize", "planner_repair_required", {}) == "blocked_by_quality"
+    assert _derive_exit_kind_funneled("finalize", "planner_repair_blocked", {}) == "blocked_by_quality"
+    assert _derive_exit_kind_funneled("finalize", "success", {}) == "success"
+
+
+def test_planner_repair_failure_closes_phase_wbc_as_failed(monkeypatch, tmp_path: Path) -> None:
+    """A clean subprocess exit must not mint a WBC COMPLETED event."""
+    import argparse
+
+    from arnold_pipelines.megaplan.handlers import shared
+    from arnold_pipelines.megaplan.workers import WorkerResult
+
+    completed: list[dict] = []
+    failed: list[dict] = []
+    monkeypatch.setattr(shared, "phase_wbc_required", lambda step: True)
+    monkeypatch.setattr(shared, "phase_wbc_state", lambda state, step=None: {"step": step})
+    monkeypatch.setattr(shared, "complete_phase_wbc", lambda **kwargs: completed.append(kwargs))
+    monkeypatch.setattr(shared, "fail_phase_wbc", lambda **kwargs: failed.append(kwargs))
+    monkeypatch.setattr(shared, "_emit_receipt", lambda **kwargs: None)
+    monkeypatch.setattr(shared, "_emit_phase_result", lambda **kwargs: None)
+    monkeypatch.setattr(shared, "_emit_boundary_receipt", lambda **kwargs: None)
+    monkeypatch.setattr(shared, "build_monitor_hint", lambda plan_dir: {})
+    monkeypatch.setattr(shared, "apply_session_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr(shared, "append_history", lambda *args, **kwargs: None)
+    monkeypatch.setattr(shared, "clear_active_step", lambda *args, **kwargs: None)
+    monkeypatch.setattr(shared, "save_state_merge_meta", lambda *args, **kwargs: None)
+    monkeypatch.setattr(shared, "attach_agent_fallback", lambda *args, **kwargs: None)
+    monkeypatch.setattr(shared, "_attach_next_step_runtime", lambda response: None)
+
+    state = {"current_state": "blocked", "active_step": {"run_id": "r1"}}
+    worker = WorkerResult(payload={}, raw_output="", duration_ms=1, cost_usd=0.0)
+    response = shared._finish_step(
+        tmp_path,
+        state,
+        argparse.Namespace(plan="p"),
+        step="finalize",
+        worker=worker,
+        agent="sol",
+        mode="high",
+        refreshed=False,
+        summary="planner repair required",
+        artifacts=["planner_repair.json"],
+        output_file="planner_repair.json",
+        artifact_hash="sha256:test",
+        result="planner_repair_blocked",
+        success=False,
+        next_step="override recover-blocked",
+    )
+
+    assert response["success"] is False
+    assert completed == []
+    assert len(failed) == 1
+    assert failed[0]["payload"]["status"] == "failed"
+    assert failed[0]["payload"]["result"] == "planner_repair_blocked"
+
+
+def test_programmatic_coverage_accepts_h2_and_h3_plan_steps(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.handlers.finalize import (
+        _apply_programmatic_coverage,
+        _extract_plan_steps,
+    )
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan_v1.md").write_text(
+        "## Step 1: Legacy parser\nImplement parser behavior.\n"
+        "### Step 2: Canonical runner\nImplement canonical runner behavior.\n",
+        encoding="utf-8",
+    )
+    state = {"plan_versions": [{"file": "plan_v1.md"}]}
+    payload = _payload(
+        [
+            _task("T1"),
+            _task("T2"),
+        ]
+    )
+    payload["tasks"][0]["description"] = "Implement parser behavior."
+    payload["tasks"][1]["description"] = "Implement canonical runner behavior."
+
+    assert [step["summary"] for step in _extract_plan_steps((plan_dir / "plan_v1.md").read_text())] == [
+        "Legacy parser",
+        "Canonical runner",
+    ]
+    _apply_programmatic_coverage(payload, plan_dir, state)
+    assert payload["validation"]["coverage_complete"] is True
+    assert len(payload["validation"]["plan_steps_covered"]) == 2
+
+
+def test_programmatic_coverage_fails_closed_when_plan_has_zero_steps(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.handlers.finalize import _apply_programmatic_coverage
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan_v1.md").write_text(
+        "# Plan\n\nThis document contains no machine-readable step headings.\n",
+        encoding="utf-8",
+    )
+    state = {"plan_versions": [{"file": "plan_v1.md"}]}
+    payload = _payload([_task("T1")])
+
+    _apply_programmatic_coverage(payload, plan_dir, state)
+    assert payload["validation"]["coverage_complete"] is False
+    assert "No machine-readable plan steps" in payload["validation"]["completeness_notes"]
 
 
 # ---------------------------------------------------------------------------
