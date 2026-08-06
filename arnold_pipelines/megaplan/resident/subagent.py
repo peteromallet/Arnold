@@ -4531,6 +4531,24 @@ def _verify_managed_completion_contract(
     }
 
 
+def _summarize_completed_session(manifest_path: Path) -> None:
+    """Mandatory post-session hook: DeepSeek Flash writes the 2-sentence summary.
+
+    Runs from the terminal path (success/failure/timeout/kill) and never breaks
+    the run. Summary written to <project>/.megaplan/fixer-sessions/summaries/.
+    """
+    try:
+        m = json.loads(manifest_path.read_text(encoding="utf-8"))
+        run_dir = manifest_path.parent
+        session_id = run_dir.name
+        project = str(m.get("project_dir") or run_dir.parents[4])
+        store = Path(project) / ".megaplan" / "fixer-sessions"
+        from arnold_pipelines.megaplan.cloud.summarize_fixer_session import summarize
+        summarize(run_dir, store, session_id)
+    except Exception:
+        LOGGER.exception("post-session summarizer failed run_id=%s", manifest_path.parent.name)
+
+
 def _run_managed_manifest(manifest_path: Path) -> int:
     execution_handle = (manifest_path.parent / ".execution.lock").open("a+b")
     try:
@@ -5167,6 +5185,10 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             return 128 + interrupted_signal
         return 1
     finally:
+        try:
+            _summarize_completed_session(manifest_path)
+        except Exception:
+            LOGGER.exception("post-session summarizer failed run_id=%s", manifest_path.parent.name)
         if raw_handle is not None:
             raw_handle.close()
         for signum, handler in prior_handlers.items():
