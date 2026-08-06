@@ -1,0 +1,479 @@
+{
+  "schema": "cl.handoff.v1",
+  "handoff_id": "cl2-ledger-replay",
+  "generated_at": "2026-08-06T21:08:30Z",
+  "generated_by": "hermes-executor: T15",
+  "target_milestone": "CL3",
+  "description": "CL2 WBC-backed ledger persistence, import, and replay handoff. Records every Step 14 field: schema hashes (consumed, not redefined), the WAL/IMMEDIATE backend decision and gap/ordering APIs, the full CL2 public API surface (including the new LedgerReconciliationResult and explicit CumulativeProjection), the legacy filter-and-tag import map, deterministic replay hashes and the three conjunctive admission conditions, the six fixture categories with their fault results, governed freshness/tombstone rules, backup-and-restore prerequisites, the accepted_for_cl2=false BRIDGE with five blockers, per-contribution authority boundaries, the standalone-redaction limitation, unsupported-target precedence, and the CL3-CL5 deferred source-identity enforcement. source_identity records ONLY the verified baseline commit and baseline tree hashes.",
+
+  "schema_hashes": {
+    "occurrence_envelope_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "CritiqueOccurrenceEnvelope",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb",
+      "status": "consumed_not_redefined"
+    },
+    "reconciliation_event_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "FindingReconciliationEvent",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb",
+      "status": "consumed_not_redefined"
+    },
+    "disposition_event_schema": {
+      "schema_version": "cl.schema.v1",
+      "class_name": "FindingDispositionEvent",
+      "source_file": "arnold/critique_ledger/schemas.py",
+      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb",
+      "status": "consumed_not_redefined"
+    },
+    "cl2_persistence_module": {
+      "source_file": "arnold/critique_ledger/persistence_service.py",
+      "sha256": "8eb18e3bfe2a2aa9d730d1d08fd087e621d5b5fcdcd50e9cadbf9be0af50b9a3",
+      "lines": 583
+    },
+    "cl2_projections_module": {
+      "source_file": "arnold/critique_ledger/projections.py",
+      "sha256": "46acb575dab5e7c7234dcc7424320324b3ba0615262f2934be1963e6e66fd9a8",
+      "lines": 396
+    },
+    "cl2_legacy_import_module": {
+      "source_file": "arnold/critique_ledger/legacy_import.py",
+      "sha256": "d5c83d58e1ab6f6b469fe39207b60e11fdca5eb8bc749a0b9940a5feafec1f07",
+      "lines": 399
+    },
+    "cl2_freshness_module": {
+      "source_file": "arnold/critique_ledger/freshness.py",
+      "sha256": "e336f763be0930c51897e1ef60ed900bfd7879cdb060c961a4602908d9b4cd51",
+      "lines": 267
+    },
+    "cl2_redaction_module": {
+      "source_file": "arnold/critique_ledger/redaction.py",
+      "sha256": "dac7410bc4b8e809137cfce94b18b843c30ded8d4239d0c6eee10c317e37d8f4",
+      "lines": 127
+    },
+    "note": "CL1 schema_version is cl.schema.v1 and SUPPORTED_VERSIONS == {cl.schema.v1}. All CL1 domain types are consumed as payload content on EXTERNAL_EFFECT_OUTCOME events; the CL1 schema module (schemas.py) is not modified or redefined by CL2. CL1 schema hashes are inherited from docs/critique-ledger/handoffs/cl1-contract-oracle.json."
+  },
+
+  "backend_decision": {
+    "store": "SqliteAttemptLedgerStore",
+    "source_file": "arnold/workflow/attempt_ledger_store.py",
+    "rationale": "The only landed backend satisfying single-document atomicity: SQLite WAL mode (PRAGMA journal_mode=WAL on open) for concurrent readers plus one BEGIN IMMEDIATE transaction per append that acquires the write lock. Every append enforces ordering, idempotency-key deduplication, append-position monotonicity, and the exactly-one-terminal invariant inside one BEGIN IMMEDIATE transaction, with busy-retry across processes.",
+    "gap_detection_api": {
+      "method": "SqliteAttemptLedgerStore.query_gaps(attempt_id: str) -> list[GapEntry]",
+      "role": "Sole detector of NON-CONTIGUOUS sequence gaps.",
+      "gap_entry_dataclass": {
+        "source_file": "arnold/workflow/attempt_ledger_store.py:503",
+        "fields": {
+          "attempt_id": "str",
+          "gap_start": "int — the highest persisted sequence before the gap (inclusive lower bound of the missing region; 0 if the gap starts at sequence 1)",
+          "gap_end": "int — the lowest persisted sequence after the gap (EXCLUSIVE upper bound)",
+          "missing_count": "int — gap_end - gap_start - 1"
+        },
+        "format_convention": "Inclusive missing range renders as gap_start..gap_end-1"
+      }
+    },
+    "ordering_violation_api": {
+      "method": "validate_ledger_event_ordering(events) -> list[str]",
+      "source_file": "arnold/workflow/execution_attempt_ledger.py:1276",
+      "role": "Sole detector of monotonicity, duplicate-sequence, append-position, causal-predecessor-chain, and lifecycle-precedence violations.",
+      "known_limitation": "Uses a STRICTLY monotonic comparison (event.sequence <= prev_sequence) and deliberately does NOT detect non-contiguous sequence gaps. query_gaps is the sole gap detector; the two detectors map to distinct LedgerReconciliationResult statuses."
+    },
+    "atomicity_table_reference": "_append_tx inside a single BEGIN IMMEDIATE transaction; SQLite WAL provides crash-safe single-document atomicity."
+  },
+
+  "api_surface": {
+    "LedgerPersistenceService": {
+      "module": "arnold/critique_ledger/persistence_service.py",
+      "role": "Sole side-effecting CL2 ledger write entry point over SqliteAttemptLedgerStore. No dual write: CL2 events flow exclusively through this service -> store.",
+      "constructor": "LedgerPersistenceService(store: SqliteAttemptLedgerStore, mapper: type[LedgerEventMapper] = LedgerEventMapper)",
+      "methods": [
+        "record_intent(attempt_id: str, intent_payload: Mapping[str, Any], *, idempotency_key: str, context: LedgerEventContext) -> AppendResult",
+        "persist_occurrence(attempt_id: str, envelope: CritiqueOccurrenceEnvelope, *, idempotency_key: str, context: LedgerEventContext) -> AppendResult",
+        "persist_reconciliation(attempt_id: str, reconciliation: FindingReconciliationEvent, *, idempotency_key: str, context: LedgerEventContext) -> AppendResult",
+        "persist_disposition(attempt_id: str, disposition: FindingDispositionEvent, *, idempotency_key: str, context: LedgerEventContext) -> AppendResult",
+        "start_attempt(attempt_id: str, *, context: LedgerEventContext, idempotency_key: str) -> AttemptReservation",
+        "complete_attempt(attempt_id: str, *, context: LedgerEventContext, idempotency_key: str, succeeded: bool = True) -> AppendResult",
+        "reconcile_on_restart(attempt_id: str) -> LedgerReconciliationResult"
+      ],
+      "invariants": [
+        "All CL1 domain records are carried as EXTERNAL_EFFECT_OUTCOME payload content tagged by cl2_kind; the store's lifecycle precedence (OUTCOME requires prior INTENT) and exactly-one-terminal guard are reused, not reimplemented.",
+        "start_attempt reserves first then durably appends STARTED before dispatch; already-terminal reservations raise AttemptAlreadyTerminalError before any STARTED write.",
+        "persist_* validate via from_dict round-trip so stored bytes are exactly the validated bytes."
+      ]
+    },
+    "LedgerReconciliationResult": {
+      "module": "arnold/critique_ledger/persistence_service.py",
+      "kind": "NEW frozen dataclass, deliberately disambiguated from the two existing ReconciliationResult types",
+      "fields": {
+        "attempt_id": "str",
+        "status": "Literal['complete', 'persistence_failed', 'indeterminate', 'ordering_violation', 'sequence_gap']",
+        "issues": "list[str]",
+        "event_snapshot": "dict[str, Any] — stable JSON-serializable snapshot (attempt_id, is_reserved, is_new, reservation_count, event_count, last_sequence, has_started, has_terminal, sequences, event_types)"
+      },
+      "status_split": {
+        "ordering_violation": "produced ONLY by validate_ledger_event_ordering",
+        "sequence_gap": "produced ONLY by store.query_gaps",
+        "persistence_failed": "reserved but no STARTED durable (unstarted)",
+        "indeterminate": "STARTED but no terminal (in-flight)",
+        "complete": "no defects and clean lifecycle"
+      },
+      "disambiguation": {
+        "arnold_workflow_effect_reconciliation": "arnold/workflow/effect_reconciliation.py:84 — fields (verdict, provider_idempotency_key, evidence_payload, query_failure, is_authoritative, provider_version). Incompatible schema; NOT aliased, NOT merged, NOT modified.",
+        "custody_outbox": "arnold_pipelines/megaplan/custody/outbox.py:335 — fields (reference_type, disposition, expected_value). Incompatible schema; NOT aliased, NOT merged, NOT modified."
+      },
+      "authority": "Evidence only — never grants authority, grant, or completion power; an observable projection consumed by a restart worker to decide recovery."
+    },
+    "LedgerEventMapper": {
+      "module": "arnold/critique_ledger/persistence_service.py",
+      "role": "Pure mapping from validated CL1 records to WBC ledger events.",
+      "classmethods": [
+        "occurrence(envelope, *, idempotency_key, context, sequence) -> LedgerEvent",
+        "reconciliation(event, *, idempotency_key, context, sequence) -> LedgerEvent",
+        "disposition(event, *, idempotency_key, context, sequence) -> LedgerEvent",
+        "intent(intent_payload, *, idempotency_key, context, sequence) -> LedgerEvent",
+        "started(*, idempotency_key, context, sequence) -> LedgerEvent",
+        "terminal(event_type, *, idempotency_key, context, sequence, outcome) -> LedgerEvent"
+      ]
+    },
+    "ProjectionBuilder": {
+      "module": "arnold/critique_ledger/projections.py",
+      "role": "Read-only projection/replay surface. Filters the replay partition with the three conjunctive admission conditions BEFORE reconstruction (exclude-then-reconstruct), rebuilds the three CL1 domain lists, and calls semantic_loop.replay_full read-only. No model calls, no external effects, no store mutations.",
+      "constructor": "ProjectionBuilder(store: SqliteAttemptLedgerStore)",
+      "methods": [
+        "replay(attempt_id: str, *, wbc_receipt_chain: dict[str, Any] | None = None) -> ProjectionResult",
+        "read_legacy_context(attempt_id: str) -> list[LedgerEvent]",
+        "verify_byte_equivalence(attempt_id: str, expected_manifest_hash: str, expected_briefing_hash: str, *, wbc_receipt_chain: dict[str, Any] | None = None) -> bool",
+        "build_cumulative(attempt_ids: list[str]) -> CumulativeProjection"
+      ]
+    },
+    "ProjectionResult": {
+      "module": "arnold/critique_ledger/projections.py",
+      "fields": {
+        "attempt_id": "str",
+        "occurrences": "list[CritiqueOccurrenceEnvelope]",
+        "reconciliations": "list[FindingReconciliationEvent]",
+        "dispositions": "list[FindingDispositionEvent]",
+        "manifest": "LedgerRevisionManifest",
+        "briefing": "DomainBriefingEnvelope",
+        "manifest_hash": "str — canonical_hash(manifest)",
+        "briefing_hash": "str — canonical_hash(briefing)",
+        "replay_excluded": "list[ReplayExclusion]",
+        "replay_result": "dict[str, Any] — full replay_full return dict for audit"
+      }
+    },
+    "Contribution": {
+      "module": "arnold/critique_ledger/projections.py",
+      "fields": {
+        "attempt_id": "str",
+        "sequence": "int",
+        "cl2_kind": "str",
+        "authority_scope": "Literal['authoritative', 'non_authoritative'] — PER-CONTRIBUTION (per-OUTCOME payload), NOT per-attempt"
+      }
+    },
+    "CumulativeProjection": {
+      "module": "arnold/critique_ledger/projections.py",
+      "fields": {
+        "contributions": "list[Contribution] — one entry per persisted OUTCOME payload, each carrying its own authority_scope",
+        "attempt_authority_summary": "dict[str, str] — per-attempt rollup keyed by attempt_id"
+      }
+    },
+    "ReplayExclusion": {
+      "module": "arnold/critique_ledger/projections.py",
+      "fields": {
+        "sequence": "int",
+        "cl2_kind": "str",
+        "reason": "Literal['legacy_derived', 'schema_version_mismatch']"
+      }
+    },
+    "OneTimeImporter": {
+      "module": "arnold/critique_ledger/legacy_import.py",
+      "role": "Non-authoritative one-time importer of legacy r5 NDJSON evidence. Never calls persist_occurrence or CritiqueOccurrenceEnvelope.from_dict; builds the legacy_historical outcome payload directly and appends via the store. Idempotent within an epoch.",
+      "constructor": "OneTimeImporter(store: SqliteAttemptLedgerStore, *, target_schema: str = SCHEMA_VERSION, admissible_target_schemas: frozenset[str] | None = None)",
+      "methods": [
+        "import_ndjson(path: Path, *, epoch: int, attempt_id: str, context: LedgerEventContext) -> ImportReport"
+      ]
+    },
+    "ImportReport": {
+      "module": "arnold/critique_ledger/legacy_import.py",
+      "fields": {
+        "total_records": "int",
+        "imported": "int",
+        "skipped_duplicates": "int",
+        "epoch_prefixes": "tuple[int, ...]",
+        "legacy_unavailable_count": "int",
+        "errors": "tuple[str, ...]",
+        "derived_from_legacy_count": "int"
+      },
+      "property": "epoch_prefixes_set -> frozenset[int]"
+    },
+    "FreshnessTracker": {
+      "module": "arnold/critique_ledger/freshness.py",
+      "role": "Read-only, side-effect-free staleness/availability signal only. Never infers authority from markers, state JSON, PIDs, or model prose.",
+      "constructor": "FreshnessTracker(store: SqliteAttemptLedgerStore)",
+      "methods": [
+        "compute_freshness(attempt_id: str, *, now: str | None = None, max_age_seconds: int | None = None) -> list[FreshnessVector]",
+        "required_for_briefing_unavailable(attempt_id: str, evidence_class: str | None = None, *, now: str | None = None, max_age_seconds: int | None = None) -> bool"
+      ]
+    },
+    "FreshnessVector": {
+      "module": "arnold/critique_ledger/freshness.py",
+      "fields": {
+        "occurrence_id": "str",
+        "last_observed_at": "str",
+        "evidence_class": "str",
+        "is_stale": "bool",
+        "staleness_reason": "str — '' when fresh; otherwise 'tombstoned' | 'unavailable' | 'observation_exceeded_max_age'"
+      }
+    },
+    "validate_redaction_policy": {
+      "module": "arnold/critique_ledger/redaction.py",
+      "signature": "validate_redaction_policy(policy: RetentionPayloadPolicy, *, payload: Mapping[str, Any] | None = None) -> list[str]",
+      "companion": "is_dual_hash_required(policy: RetentionPayloadPolicy) -> bool",
+      "standalone_status": "WIRED_INTO_CL2_PERSISTENCE == False. The validator is a policy/contract check only; it is NOT called from LedgerPersistenceService, OneTimeImporter, ProjectionBuilder, or any CL2 write path. See standalone_redaction_limitation below."
+    },
+    "cl2_kind_discriminators": {
+      "occurrence": "replay-eligible CL1 CritiqueOccurrenceEnvelope payload",
+      "reconciliation": "replay-eligible CL1 FindingReconciliationEvent payload",
+      "disposition": "replay-eligible CL1 FindingDispositionEvent payload",
+      "legacy_historical": "OneTimeImporter output; reserved; excluded from replay by the admission filter",
+      "critic_intent": "EXTERNAL_EFFECT_INTENT payload (lifecycle context, not a replay input)"
+    }
+  },
+
+  "import_map": {
+    "model": "filter-and-tag (North Star immutability forbids version rewriting). Legacy records are NEVER upgraded to cl.schema.v1.",
+    "input": "r5 NDJSON, one JSON object per line",
+    "stable_event_id": "legacy-{epoch}-{canonical_sha256_digest(record)} — epoch-prefixed canonical SHA-256 makes the same record distinct across epochs and idempotent within an epoch",
+    "idempotency_key": "legacy_historical:{epoch}:{digest}",
+    "legacy_key_normalization": {
+      "10_field_repair_occurrence_key": "normalize_repair_occurrence_key(record) -> RepairOccurrenceKey",
+      "6_field_custody_target_key": "normalize_custody_target_key(record) -> CustodyTargetKey (also derived from the repair key's target when only the 10-field form is present)",
+      "both_forms_supported": true
+    },
+    "routing": "Every record routes through IndependentChildDisposition (never migrated). Recorded under envelope.metadata.independent_child_disposition (action, reason, requires_human_approval).",
+    "schema_version_resolution": "The ORIGINAL schema_version is preserved byte-for-byte (default 'cl.m6-corpus.v1' only when absent). derived_from_legacy=True is stamped in envelope.metadata. cl2_kind='legacy_historical' is the payload discriminator.",
+    "write_path": "Appends the raw legacy_historical outcome DIRECTLY via store.append_event, bypassing persist_occurrence / CritiqueOccurrenceEnvelope.from_dict (both hard-reject non-v1 schema versions). The store still enforces monotonicity and idempotency.",
+    "missing_evidence_labelling": "evidence_availability = EvidenceAvailability.UNAVAILABLE.value with unavailable_reason = 'legacy_import'. This is a LABELLING convention for downstream consumers; the cl2_kind discriminator is the sole operative defense (it excludes these records from the replay partition before semantic_loop.replay_full).",
+    "replay_exclusion": "Legacy records never enter the v1 replay partition; they remain queryable via ProjectionBuilder.read_legacy_context for audit/historical purposes."
+  },
+
+  "replay_hashes": {
+    "determinism": "Replaying the same persisted partition is deterministic: canonical_hash(manifest) and canonical_hash(briefing) are identical across replays (byte-equivalence). verify_byte_equivalence asserts this.",
+    "derivation": "manifest_hash = canonical_hash(ProjectionResult.manifest); briefing_hash = canonical_hash(ProjectionResult.briefing). canonical_hash uses stable canonical-JSON serialization via freeze_for_hashing.",
+    "legacy_exclusion_filter_rules": {
+      "order": "exclude-then-reconstruct: the admission filter runs BEFORE from_dict so excluded records never raise",
+      "condition_i_cl2_kind": "cl2_kind must be in the admitted set {occurrence, reconciliation, disposition}. legacy_historical (or any non-admitted kind) is excluded here.",
+      "condition_ii_schema_version": "envelope.schema_version must be exactly cl.schema.v1.",
+      "condition_iii_derived_from_legacy": "envelope.metadata.derived_from_legacy must NOT be True (defense-in-depth; condition (i) or (ii) is already independently sufficient).",
+      "conjunction": "Admitted iff ALL three conditions hold. Exclusion reason precedence: legacy_derived (conditions i/iii) over schema_version_mismatch (condition ii)."
+    }
+  },
+
+  "fixture_index": {
+    "count": 6,
+    "categories": [
+      {
+        "category": "concurrent_and_crash_recovery",
+        "task": "T8",
+        "test_file": "tests/arnold/critique_ledger/test_concurrent_crash_fixtures.py",
+        "coverage": [
+          "Two independent SqliteAttemptLedgerStore connections racing on the same idempotency key yield exactly one successful append and one idempotent rejection with no partial/duplicate records and monotonic sequences.",
+          "An exception injected inside the append transaction (after INSERT, before COMMIT) is rolled back, leaving no partial record.",
+          "An attempt reserved but never STARTED reconciles to persistence_failed on restart.",
+          "Direct-SQL non-contiguous sequences 1,2,4 prove validate_ledger_event_ordering stays empty (strict monotonicity) while query_gaps and reconcile_on_restart surface sequence_gap with no incomplete projection published."
+        ]
+      },
+      {
+        "category": "current_source_multi_schema_import",
+        "task": "T9",
+        "test_file": "tests/arnold/critique_ledger/test_current_source_import.py",
+        "fixture": "tests/fixtures/critique_ledger/m6-corpus.json",
+        "coverage": [
+          "m6-corpus is a multi-schema corpus with ZERO cl.schema.v1 records; attempting to persist its heterogeneous records as cl2_kind:occurrence yields zero authoritative writes and a clean ledger after every shape/version rejection.",
+          "Every ParseStatus and EvidenceAvailability value is exercised.",
+          "A synthetic cl.schema.v99-future envelope is rejected without partial publication (unsupported-target precedence).",
+          "No cl2_kind occurrence or half-written state survives a failed persistence attempt."
+        ]
+      },
+      {
+        "category": "redacted_fixture",
+        "task": "T10",
+        "test_file": "tests/arnold/critique_ledger/test_redacted_fixture.py",
+        "coverage": [
+          "DEFAULT_ON and ALWAYS dual-hash behaviour (both redacted_prompt_hash and raw_prompt_hash required).",
+          "NONE imposes no dual-hash requirement.",
+          "validate_retention_payload_policy with an explicit RetentionPayloadPolicy rejects every forbidden secret key.",
+          "The validator's standalone status (WIRED_INTO_CL2_PERSISTENCE == False) is asserted unmistakably."
+        ]
+      },
+      {
+        "category": "legacy_one_time_import",
+        "task": "T11",
+        "test_file": "tests/arnold/critique_ledger/test_one_time_import_fixture.py",
+        "fixture": "tests/fixtures/critique_ledger/r5_sample_events.ndjson",
+        "fixture_record_count": "50 records",
+        "coverage": [
+          "Both epoch prefixes, both legacy key formats, missing evidence, and admissible/inadmissible target_schema markers.",
+          "Complete import with a correct ImportReport; stable epoch-prefixed canonical event IDs; no-op re-import within an epoch (idempotency).",
+          "Every record routes through IndependentChildDisposition (never migrated); nested provenance (producer/model/round/semantic finding/evidence) survives.",
+          "Exact UNAVAILABLE / legacy_import labelling for missing evidence.",
+          "Full legacy-context queries via ProjectionBuilder.read_legacy_context; replay exclusion (legacy records never enter the v1 replay partition)."
+        ]
+      },
+      {
+        "category": "freshness_and_tombstone_governance",
+        "task": "T12",
+        "test_file": "tests/arnold/critique_ledger/test_freshness_fixture.py",
+        "coverage": [
+          "A single attempt ledger carrying available, unavailable, and tombstoned evidence (some decorated with incidental authority-like markers).",
+          "Freshness reasons correct (retained=fresh; unavailable/tombstoned=stale); tombstone precedence wins over the availability class.",
+          "Stale/unavailable/tombstoned evidence surfaces as stale (unknown for use), never as authoritative or known.",
+          "Tombstones NEVER confer authority: FreshnessVector has no authority field; incidental markers (authority, accepted_for_cl2, producer_id, model_id, grant_ref, derived_from_legacy) never change the staleness classification.",
+          "Briefing-required unavailable/tombstoned evidence blocks briefing."
+        ]
+      },
+      {
+        "category": "readonly_isolation_and_authority",
+        "task": "T14",
+        "test_file": "tests/arnold/critique_ledger/test_readonly_isolation.py",
+        "coverage": [
+          "Seven local/external isolation spies (plan, gate, lifecycle, queue, git/provider, delivery, external-effect) assert ProjectionBuilder.replay() mutates nothing; a store read-guard asserts replay calls only the read-only store API; a filesystem write-spy asserts replay writes no files.",
+          "Positive authority-neutrality: legacy cl2_kind=legacy_historical / derived_from_legacy context markers; legacy replay exclusion (legacy_derived); per-contribution non_authoritative scope.",
+          "Mixed-attempt coverage: an attempt with BOTH v1 and legacy_historical contributions under one attempt_id yields per-contribution authoritative (v1) + non_authoritative (legacy) scopes and an attempt_authority_summary rollup of mixed_authoritative.",
+          "UNAVAILABLE-encoding labelling assertion: missing-evidence legacy record carries evidence_availability==UNAVAILABLE and unavailable_reason=='legacy_import' but NOT metadata.required_for_briefing==True and NOT reopen_condition (labeling convention, not a fails-closed guard); the record is excluded from replay (legacy_derived)."
+        ]
+      }
+    ]
+  },
+
+  "freshness_rules": {
+    "staleness_computation": {
+      "precedence": "tombstone (absence) > unavailable > observation age",
+      "reasons": {
+        "tombstoned": "parse_status == ParseStatus.TOMBSTONED.value (ParseStatus.TOMBSTONED)",
+        "unavailable": "evidence_availability == EvidenceAvailability.UNAVAILABLE.value",
+        "observation_exceeded_max_age": "now and max_age_seconds both supplied AND observed_at older than max_age_seconds"
+      },
+      "age": "Computed only when both now and max_age_seconds are supplied; an unparseable timestamp disables age-based staleness (never establishes authority)."
+    },
+    "tombstone_governance": "A tombstone marks ABSENCE, never authorization. Tombstoned evidence is surfaced as stale (unknown for use). FreshnessVector deliberately has NO authority field; a fresh vector is never an authorization and a stale vector is never an authorization either.",
+    "authority_neutral_ignored_fields": ["derived_from_legacy", "producer_id", "model_id", "grant_ref", "authority", "accepted_for_cl2"],
+    "briefing_block": "Briefing-required evidence (metadata.required_for_briefing == True) that is unavailable or tombstoned blocks briefing (required_for_briefing_unavailable returns True). Age-based staleness alone does NOT block briefing (the evidence still exists, it is merely old)."
+  },
+
+  "fault_results": {
+    "concurrent_append": {
+      "result": "Two independent connections racing on the same idempotency key yield exactly one successful append and one idempotent duplicate rejection (AppendResult.is_duplicate). No partial or duplicate records; monotonic sequences preserved. SQLite WAL + BEGIN IMMEDIATE serializes the writers.",
+      "status": "atomic"
+    },
+    "crash_during_append": {
+      "result": "An exception injected inside the append transaction (after INSERT, before COMMIT) is rolled back by SQLite, leaving no partial record.",
+      "status": "atomic"
+    },
+    "restart_reconciliation": {
+      "clean": "Reserved+STARTED+terminal with no defects -> status 'complete'.",
+      "reservation_only": "Reserved but no STARTED durable -> status 'persistence_failed'.",
+      "in_flight": "STARTED but no terminal -> status 'indeterminate'.",
+      "ordering_violation": "validate_ledger_event_ordering reports monotonicity/causal/append-position/lifecycle issues -> status 'ordering_violation'.",
+      "sequence_gap": "store.query_gaps reports non-contiguous gaps (e.g. direct-SQL sequences 1,2,4) while validate_ledger_event_ordering stays empty -> status 'sequence_gap'; no incomplete projection is published.",
+      "mapped_types": "All four defect/lifecycle statuses are carried on the new LedgerReconciliationResult type, disambiguated from the two existing ReconciliationResult dataclasses."
+    }
+  },
+
+  "gate_status": {
+    "accepted_for_cl2": false,
+    "bridge": {
+      "is_bridge": true,
+      "bypass": "CL2 proceeds with accepted_for_cl2=false as a BRIDGE that bypasses verify_cl2_admission (arnold/critique_ledger/contract_gate.py:675; raises DerivedAcceptanceFalseError at line 419 when accepted_for_cl2.value is not True).",
+      "justification": "The store consumes no AcceptedCL1Binding and CL2 output carries no positive authority. CL2 output is non-authoritative historical context + read-only replay; projections are rebuildable and carry no positive authority.",
+      "gate_visibility": "The deviation is documented in the plan assumptions, in the CL3 handoff gate_status field (here), and in source_identity so the gate sees it rather than inheriting it silently."
+    },
+    "five_blockers": [
+      "review_status_not_present: reviewer_state.reviewed=false, no reviewer assigned",
+      "m6_prerequisite_incoherent: M5 final attestation missing 3 bound artifacts",
+      "proof_index_failed: validation_passed=false with 2 errors",
+      "ownership_blockers: 4 blockers in ownership-decision-record",
+      "portfolio_gate_blocked: PC-SCOPE-BLOCKER-001 requires human approval"
+    ],
+    "cl3_requirement": "CL3 MUST verify gate resolution (all five blockers cleared so accepted_for_cl2 becomes true) before consuming CL2 output for authority. Until then CL2 output carries no positive authority.",
+    "source": "Five blockers inherited from docs/critique-ledger/handoffs/cl1-contract-oracle.json accepted_for_cl2.blocking_reasons."
+  },
+
+  "backup_restore_prerequisites": {
+    "summary": "Backup and restore procedures required before CL3 consumes CL2 output. The SQLite WAL database is the single source of truth for persisted CL2 events; restore must preserve atomicity and be re-replayable.",
+    "backup": [
+      "Snapshot the SQLite WAL database file (the .sqlite3 file backing SqliteAttemptLedgerStore) together with its -wal and -shm sidecar files in a consistent state (quiesce the writer or take a filesystem snapshot).",
+      "Prefer a 'PRAGMA wal_checkpoint(FULL)' followed by a file copy, or a SQLite online backup (sqlite3 Backup API), so the snapshot is crash-consistent."
+    ],
+    "restore": [
+      "Verify WAL checkpoint integrity on the restored database: run 'PRAGMA wal_checkpoint(TRUNCATE)' / 'PRAGMA integrity_check' and assert a clean result before replaying.",
+      "Reopen with SqliteAttemptLedgerStore (WAL mode + BEGIN IMMEDIATE) and run reconcile_on_restart across all attempt streams; require no ordering_violation or sequence_gap statuses for streams CL3 will consume.",
+      "Restore-and-replay validation: replay each consumed attempt via ProjectionBuilder.replay and assert byte-equivalence (manifest_hash and briefing_hash match the pre-restore recorded hashes). Any divergence aborts restore.",
+      "Never patch or hand-edit sequence rows; a non-contiguous gap is reported by query_gaps and must be resolved by a documented recovery, not by silent repair."
+    ]
+  },
+
+  "source_identity": {
+    "baseline_commit_hash": "c116f38cc83de11a1a508eff6153205504d1ba5a",
+    "baseline_tree_hash": "02193759bb6e4c1d31a0b5b880de3891d5f92546",
+    "baseline_resolution": "verified_present_and_ancestor_of_head",
+    "single_commit_tree_identity_algorithm": "One clean commit and its exact tree, applied identically at CL2 finalization, direct execute, batch execute, and CL2 handoff. The baseline commit and baseline tree hashes are immutable and known before any CL2 work, so they can be safely embedded in this committed handoff.",
+    "enforcement_points": {
+      "step_0": "After baseline-resolution succeeds, HEAD MUST equal the baseline commit and the worktree MUST be clean ('git status --porcelain' empty).",
+      "step_15": "At finalization (after all CL2 work is committed) the baseline commit MUST be reachable in the git ancestry ('git merge-base --is-ancestor c116f38cc83 HEAD'); this is NOT strict HEAD equality because Steps 1-14 legitimately advance HEAD."
+    },
+    "delivery_hash_policy": "The delivery COMMIT hash AND the delivery TREE hash are intentionally NOT recorded in this committed file. A commit cannot contain its own hash, AND a tree cannot contain its own hash (a tree's content includes the handoff bytes, so writing the tree hash into the handoff changes the tree hash). Both are post-commit values captured ONLY in the untracked, gitignored sidecar 'docs/critique-ledger/handoffs/.cl2_delivery_commit.txt' (records BOTH delivery_commit_hash and delivery_tree_hash) AND as a 'git notes' entry on the delivery commit. The clean-worktree assertion at Step 15.5 is satisfiable because the sidecar is gitignored and git notes do not dirty the working tree.",
+    "deferred_live_enforcement": "Full source-identity enforcement at direct-execute, batch-execute, and live-cutover is CL3-CL5 scope; CL2 enforces only at its own finalization boundary (see unresolved_limits)."
+  },
+
+  "authority_boundary": {
+    "derived_from_legacy_marker": {
+      "location": "Stored in envelope.metadata (a serialized dict field), so it survives to_dict/from_dict round-trips. CritiqueOccurrenceEnvelope has no top-level derived_from_legacy field; the marker therefore lives at envelope.metadata['derived_from_legacy'] = True.",
+      "access_path": "ProjectionBuilder reads it from the nested path: payload.envelope.get('metadata', {}).get('derived_from_legacy') is not True."
+    },
+    "legacy_never_enters_replay": "Legacy records (cl2_kind=legacy_historical and/or derived_from_legacy=True) are excluded from the v1 replay partition by the three conjunctive admission conditions BEFORE reconstruction. They are queryable via read_legacy_context for audit but never reach semantic_loop.replay_full and never produce authority-bearing projections.",
+    "per_contribution_authority_scope": {
+      "granularity": "PER-CONTRIBUTION (per-OUTCOME payload), NOT per-attempt. An attempt stream may legitimately contain BOTH v1 and legacy_historical contributions under one attempt_id; each carries its own authority_scope.",
+      "values": {
+        "authoritative": "the contribution satisfied all three admission conditions",
+        "non_authoritative": "the contribution was excluded (legacy_derived or schema_version_mismatch)"
+      },
+      "derivation": "_authority_scope_for(payload) = authoritative iff _admission(payload) admits; else non_authoritative."
+    },
+    "per_attempt_authority_rollup": {
+      "field": "CumulativeProjection.attempt_authority_summary[attempt_id]",
+      "values": {
+        "mixed_authoritative": "attempt contains BOTH authoritative (v1) and non_authoritative (legacy) contributions",
+        "authoritative": "only authoritative (v1) contributions",
+        "non_authoritative": "only non_authoritative (legacy) contributions",
+        "empty": "no authority-bearing contributions"
+      }
+    },
+    "unavailable_encoding_is_labeling_not_guard": "The UNAVAILABLE encoding on legacy records (evidence_availability=UNAVAILABLE, unavailable_reason='legacy_import') is a LABELING convention for downstream consumers, NOT a fails-closed guard. FailureMode.BRIEFING_INPUT_UNAVAILABLE triggers ONLY when metadata.required_for_briefing is True (which the importer does NOT set), and FailureMode.CUSTODY_UNAVAILABLE_EVIDENCE requires BOTH unavailable_reason AND reopen_condition (the importer sets only unavailable_reason). The cl2_kind=legacy_historical discriminator is the SOLE operative defense: it excludes legacy records from the replay partition before they ever reach semantic_loop."
+  },
+
+  "standalone_redaction_limitation": {
+    "summary": "validate_redaction_policy (arnold/critique_ledger/redaction.py) is a STANDALONE policy/contract check. It is NOT wired into CL2 persistence.",
+    "wired_into_cl2_persistence": false,
+    "scope": "It inspects a RetentionPayloadPolicy.redaction_mode and (optionally) a payload dict and returns a list of issue strings. DEFAULT_ON and ALWAYS require a dual hash (redacted_prompt_hash + raw_prompt_hash); NONE imposes no dual-hash requirement.",
+    "not_called_from": ["LedgerPersistenceService", "OneTimeImporter", "ProjectionBuilder", "any CL2 write path"],
+    "consequence": "CL2 persists whatever validated envelope it receives. Write-time redaction enforcement is intentionally out of scope for CL2; the validator documents and tests the privacy/security contract without being implicitly bypassed. CL2 redaction enforcement is a deferred concern."
+  },
+
+  "unsupported_target_precedence": {
+    "summary": "Unsupported target_schema is rejected BEFORE any write — no partial publication.",
+    "mechanism": "OneTimeImporter.import_ndjson checks record.target_schema against admissible_target_schemas (default SUPPORTED_VERSIONS == {cl.schema.v1}) before any append. An unsupported target (e.g. a synthetic cl.schema.v99-future envelope) is recorded as an error and skipped without publication.",
+    "current_source_mechanism": "For current-source cl.schema.v1 persistence, persist_occurrence validates via CritiqueOccurrenceEnvelope.from_dict, which hard-rejects any schema_version != cl.schema.v1; no half-written state survives a failed attempt."
+  },
+
+  "unresolved_limits": [
+    "Background reconciliation worker deferred to CL3+: reconcile_on_restart is a read-only classification; no autonomous restart recovery worker is implemented in CL2.",
+    "OS-process concurrency testing beyond two connections is deferred; CL2 tests two independent connections to one WAL file but does not exercise a full multi-process scheduler.",
+    "Live cutover deferred to CL5: CL2 is implemented and tested but not wired into the live runtime cutover.",
+    "Full source-identity enforcement at direct-execute, batch-execute, and live-cutover is CL3-CL5 scope; CL2 enforces only at its own finalization boundary (Step 0 and Step 15).",
+    "Write-time redaction enforcement is deferred: validate_redaction_policy is standalone and not wired into CL2 persistence (see standalone_redaction_limitation).",
+    "CL3-CL5 deferred source enforcement and gate authority consumption: CL3 must verify gate resolution before consuming CL2 output for authority (see gate_status)."
+  ]
+}
