@@ -21,6 +21,18 @@ blocking seam is repairable. No route may fabricate history, bypass authority, o
 weaken a validator; a genuinely external approval remains an explicit gate with an
 active next-owner route.
 
+## No-op and coordination guards (run these first)
+
+Before doing anything else:
+- NO-OP: enumerate blocked/failed chains. If none are blocked or failed, report
+  "No blocked/failed chains found; nothing to fix" and end. Do not invent work,
+  fabricate a failure, or touch healthy/running chains.
+- COORDINATION: check whether another fixer/repair is already active for the
+  target chain (per-chain lease held, active repair request/claim, or a running
+  managed subagent for that session). If one is active, report "Another fixer is
+  already active for this chain; standing down" and end — never launch a
+  competing fixer.
+
 ## The execution charge (non-negotiable)
 
 Sol is not being asked for a diagnosis that the fixer can hand back. Its Horizon A
