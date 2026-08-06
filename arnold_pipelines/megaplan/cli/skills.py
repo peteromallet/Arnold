@@ -202,9 +202,7 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets", "data": "_codex_skills/megaplan-tickets", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-prep/SKILL.md", "data": "prep_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-prep", "data": "_codex_skills/megaplan-prep", "install": "symlink"},
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/superfixer-debug/SKILL.md", "data": "superfixer_debug_skill.md", "install": "symlink"},    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/epic-babysitting/SKILL.md", "data": "skills/epic-babysitting/SKILL.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/epic-babysitting/SKILL.md", "data": "skills/epic-babysitting/SKILL.md", "install": "symlink"},
-
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/superfixer-debug/SKILL.md", "data": "superfixer_debug_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/superfixer-debug", "data": "skills/superfixer-debug", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/progress-auditor-debug/SKILL.md", "data": "progress_auditor_debug_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/progress-auditor-debug", "data": "_codex_skills/progress-auditor-debug", "install": "symlink"},

@@ -36,6 +36,47 @@ Before doing anything else:
   "Another fixer is already active for this chain; standing down" and end —
   never launch a competing fixer.
 
+## Epic-babysitting operational loop
+
+This skill also covers "epic-babysitting": keeping the target chain actually
+moving, not just fixing one layer. Repeat this loop until the canonical milestone
+advances (index > 0):
+
+1. OBSERVE authoritative state — `megaplan cloud status --all --compact
+   --cloud-yaml <cloud.yaml>`; `<plan>/state.json` (current_state, active_step,
+   latest_failure); `.megaplan/plans/.chains/chain-*.json`
+   (current_milestone_index, completed[]); `<plan>/events.seq` (advancing =
+   cooking; filter out llm_token_heartbeat/state_written noise);
+   `execute_batches/*/tasks_*.json` (done/blocked).
+2. DIAGNOSE the blocker — common gates: finalize feasibility (plan config
+   missing phase_timeout_seconds), the pre-dispatch full-suite backstop running
+   synchronously in shadow mode, cgroup OOM (raise memory), executor
+   "No module named pytest" (PATH issue — use sys.executable -m pytest), runtime
+   binding drift (CAS rebind or relax require_editable_runtime_match), and
+   stale-blocked tasks whose validation passes but need re-admission.
+3. FIX the fixer or infra — fix upstream engine bugs directly (shadow-mode
+   defer, memory ceiling, runtime-match toggle, scheduler/watchdog); let the
+   fixer fix everything else, and grant it the authority it needs (rebind) plus
+   a durable-restart handoff (not just a gate name).
+4. RE-DRIVE — `python3 -P -m arnold_pipelines.megaplan resume --plan <plan>
+   --project-dir <p>`; or trigger the superfixer via `resident schedule add`
+   (one-shot/hourly, deepseek-v4-flash, render_goal) + `resident schedule run-once`.
+5. VERIFY durable movement — the canonical chain state must show the milestone
+   advanced with matching identities and exactly one terminal notification. A
+   PID, commit, or "successful" summary is NOT proof.
+6. SUMMARIZE — after each fixer session, a DeepSeek Flash agent writes a 2-sentence
+   summary to `.megaplan/fixer-sessions/summaries/` + `index.md` (git-committed);
+   the last 5 are injected into every new fixer /goal as "UNTRUSTED HISTORICAL
+   EVIDENCE — verify against current state", and recurring issues are shared
+   with Sol subagents.
+7. repeat until the milestone advances.
+
+Recurring patterns: every runtime change needs a rebind (or relax
+require_editable_runtime_match); each fix reveals the next blocker; the fixer
+stops at authority gates (rebind) — grant authority or escalate; blocked tasks
+are often stale — they need re-admission. The success condition is canonical
+milestone advancement, not a fixer exit, a commit, or a live PID.
+
 ## The execution charge (non-negotiable)
 
 Sol is not being asked for a diagnosis that the fixer can hand back. Its Horizon A
