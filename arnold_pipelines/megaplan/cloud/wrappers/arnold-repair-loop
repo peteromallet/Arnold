@@ -7332,26 +7332,6 @@ print(render_process_custody_policy())
 PY
 }
 
-render_profile_integrity_policy() {
-  local runtime_python="${MEGAPLAN_SUPERVISOR_PYTHON:-python3}"
-  PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" \
-    "$runtime_python" -P - <<'PY'
-from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import render_profile_integrity_policy
-
-print(render_profile_integrity_policy())
-PY
-}
-
-render_fast_path_policy() {
-  local runtime_python="${MEGAPLAN_SUPERVISOR_PYTHON:-python3}"
-  PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" \
-    "$runtime_python" -P - <<'PY'
-from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import render_fast_path_policy
-
-print(render_fast_path_policy())
-PY
-}
-
 write_dev_prompt_legacy() {
   set +a
   local prompt_path="$1"
@@ -7368,10 +7348,6 @@ write_dev_prompt_legacy() {
   delivery_policy="$(repair_delivery_policy)"
   process_custody_policy="$(render_process_custody_policy)" || return 1
   [[ -n "$process_custody_policy" ]] || return 1
-  profile_integrity_policy="$(render_profile_integrity_policy)" || return 1
-  [[ -n "$profile_integrity_policy" ]] || return 1
-  fast_path_policy="$(render_fast_path_policy)" || return 1
-  [[ -n "$fast_path_policy" ]] || return 1
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
 10. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
@@ -7399,10 +7375,6 @@ EOF
 You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud session.
 
 $process_custody_policy
-
-$profile_integrity_policy
-
-$fast_path_policy
 
 $failure_summary
 $chain_health_block
@@ -7491,10 +7463,6 @@ write_dev_prompt() {
   delivery_policy="$(repair_delivery_policy)"
   process_custody_policy="$(render_process_custody_policy)" || return 1
   [[ -n "$process_custody_policy" ]] || return 1
-  profile_integrity_policy="$(render_profile_integrity_policy)" || return 1
-  [[ -n "$profile_integrity_policy" ]] || return 1
-  fast_path_policy="$(render_fast_path_policy)" || return 1
-  [[ -n "$fast_path_policy" ]] || return 1
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="The controlled-field symptom recurred. Trace the exact regenerating mechanism, but remain inside the receipt's mutation boundary."
   else
@@ -7504,10 +7472,6 @@ write_dev_prompt() {
 You are the sole mutating owner for one watchdog L1 repair cycle.
 
 $process_custody_policy
-
-$profile_integrity_policy
-
-$fast_path_policy
 
 Immutable identity and provenance:
 - session: $SESSION
@@ -7565,18 +7529,10 @@ write_kimi_prompt() {
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   process_custody_policy="$(render_process_custody_policy)" || return 1
   [[ -n "$process_custody_policy" ]] || return 1
-  profile_integrity_policy="$(render_profile_integrity_policy)" || return 1
-  [[ -n "$profile_integrity_policy" ]] || return 1
-  fast_path_policy="$(render_fast_path_policy)" || return 1
-  [[ -n "$fast_path_policy" ]] || return 1
   cat > "$prompt_path" <<EOF
 You are the focused Kimi launch/diagnosis turn in the watchdog repair loop.
 
 $process_custody_policy
-
-$profile_integrity_policy
-
-$fast_path_policy
 
 $failure_summary
 
@@ -7865,12 +7821,7 @@ run_repair_investigator_turn() {
   investigator_mode="${CLOUD_WATCHDOG_REPAIR_FORCE_INVESTIGATOR_MODE:-auto}"
   investigator_model="$REPAIR_INVESTIGATOR_MODEL"
   if [[ "$investigator_mode" == "auto" ]]; then
-    # Merge: prefer the gpt-5.6-sol (codex) fixer whenever codex is usable,
-    # including trusted containers where bwrap is unavailable. Only fall back
-    # to the brokered (hermes) path when codex genuinely cannot run.
-    if command -v codex >/dev/null 2>&1 && \
-       { command -v bwrap >/dev/null 2>&1 && bwrap --ro-bind / / true >/dev/null 2>&1 \
-         || [[ "${MEGAPLAN_TRUSTED_CONTAINER:-}" == "1" ]]; }; then
+    if command -v bwrap >/dev/null 2>&1 && bwrap --ro-bind / / true >/dev/null 2>&1; then
       investigator_mode="codex_read_only"
     else
       investigator_mode="brokered_no_tools"
@@ -7960,13 +7911,9 @@ EOF
     --link "phase=repair_investigator"
     "${parent_args[@]}"
   )
-  codex_sandbox_flags=(--sandbox read-only)
-  if [[ "${MEGAPLAN_TRUSTED_CONTAINER:-}" == "1" ]]; then
-    codex_sandbox_flags=(--dangerously-bypass-approvals-and-sandbox)
-  fi
   if [[ "$investigator_mode" == "codex_read_only" ]]; then
     managed_cmd+=(
-      -- timeout "$investigator_timeout" codex exec --skip-git-repo-check "${codex_sandbox_flags[@]}"
+      -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only
         -c model="$REPAIR_INVESTIGATOR_MODEL" -c model_reasoning_effort=high
         --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
     )

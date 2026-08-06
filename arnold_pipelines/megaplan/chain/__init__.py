@@ -601,33 +601,6 @@ def _warn_vendor_ignored_for_locked_profile(
     )
 
 
-def _seed_plan_phase_timeout(root: Path, plan: str, timeout_seconds: float) -> None:
-    """Seed the plan's execute-phase budget from the chain driver's phase timeout.
-
-    The chain spec's ``driver.phase_timeout`` is the chain-authoritative per-phase
-    budget.  Feasibility derives the execute-phase budget from the plan config
-    (``phase_timeout_seconds`` / ``phase_timeout``) and falls back to the engine
-    default when the plan config does not carry it, which can reject a graph the
-    chain owner explicitly sized for a longer phase.  Idempotent: never overwrites
-    an explicit plan-level setting.
-    """
-    try:
-        state_path = root / ".megaplan" / "plans" / plan / "state.json"
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    config = state.get("config")
-    if not isinstance(config, dict):
-        return
-    if (
-        config.get("phase_timeout_seconds") is not None
-        or config.get("phase_timeout") is not None
-    ):
-        return
-    config["phase_timeout_seconds"] = float(timeout_seconds)
-    atomic_write_json(state_path, state)
-
-
 def _drive_plan(
     root: Path,
     plan: str,
@@ -648,9 +621,6 @@ def _drive_plan(
         if self_hosted:
             os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = "self_hosted_editable"
     try:
-        # Align the plan's execute-phase budget with the chain-authoritative
-        # driver.phase_timeout before any phase runs (idempotent seeding).
-        _seed_plan_phase_timeout(root, plan, spec.phase_timeout)
         return auto_drive(
             plan,
             cwd=root,

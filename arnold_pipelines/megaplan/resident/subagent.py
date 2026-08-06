@@ -4717,35 +4717,6 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             worker_env = environment_with_provenance(worker_provenance)
         if worker_env is None:
             worker_env = os.environ.copy()
-        if backend == "hermes":
-            # The launcher is executed from the resident package, but its
-            # process cwd is the target project.  Without an explicit runtime
-            # root, launch_hermes_agent's fallback discovery selects the
-            # target checkout (or a stale global PYTHONPATH), so an editable
-            # runtime patch is not actually the code the fixer imports.
-            # Bind the provider process to the same approved runtime source
-            # recorded in launch custody and make that identity observable to
-            # every terminal command it delegates.
-            context_directory = manifest.get("context_directory")
-            runtime_root = (
-                context_directory.get("resident_runtime_source")
-                if isinstance(context_directory, Mapping)
-                else None
-            )
-            if not runtime_root:
-                launch_custody = manifest.get("git_custody")
-                runtime_root = (
-                    launch_custody.get("runtime_root")
-                    if isinstance(launch_custody, Mapping)
-                    else None
-                )
-            if runtime_root:
-                runtime_root = str(Path(str(runtime_root)).expanduser().resolve())
-                worker_env["ARNOLD_PATH"] = runtime_root
-                prior_pythonpath = worker_env.get("PYTHONPATH", "")
-                worker_env["PYTHONPATH"] = os.pathsep.join(
-                    part for part in (runtime_root, prior_pythonpath) if part
-                )
         if backend == "hermes" and timeout_s is None:
             worker_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
         if backend == "claude":

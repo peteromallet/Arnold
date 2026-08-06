@@ -1119,14 +1119,6 @@ ordinary repair can succeed.
 - Do NOT modify the running workspace/project tree.
 - Keep fixes narrow, testable, and bounded.
 - Validate fixes with `python3 -m py_compile` and focused tests.
-- For an approved editable runtime/source repair, execute the bounded loop
-  `edit -> focused test -> authoritative observe -> Sol/Horizon-A sense-check`.
-  Keep the repair cursor non-terminal while any member of that loop fails;
-  never convert a clean fixer exit or an unchanged fingerprint into success.
-- The source candidate, test receipt, observation digest, Sol sense-check,
-  effect-barrier receipt, and fence token must remain attached to the same
-  admission.  A new edit requires a new candidate/admission rather than
-  silently reusing an old approval.
 
 ### Retrigger
 - After applying any fix, retrigger the ordinary repair loop for
@@ -1236,14 +1228,6 @@ ordinary repair can succeed.
 - Do NOT modify the running workspace/project tree.
 - Keep fixes narrow, testable, and bounded.
 - Validate fixes with `python3 -m py_compile` and focused tests.
-- For an approved editable runtime/source repair, execute the bounded loop
-  `edit -> focused test -> authoritative observe -> Sol/Horizon-A sense-check`.
-  Keep the repair cursor non-terminal while any member of that loop fails;
-  never convert a clean fixer exit or an unchanged fingerprint into success.
-- The source candidate, test receipt, observation digest, Sol sense-check,
-  effect-barrier receipt, and fence token must remain attached to the same
-  admission.  A new edit requires a new candidate/admission rather than
-  silently reusing an old approval.
 
 ### Retrigger
 - After applying any fix, retrigger the ordinary repair loop for

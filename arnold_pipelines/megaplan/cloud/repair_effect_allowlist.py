@@ -26,11 +26,6 @@ class RepairEffectClass(StrEnum):
     DELIVER = "deliver"
     COMPENSATE = "compensate"
     REVERT = "revert"
-    # Editable engine source/runtime repairs require a separate typed
-    # admission (Run Authority + Custody + WBC + effect fence).  Keeping this
-    # as a named class prevents the trigger from collapsing it into generic
-    # ``mutate`` and accidentally bypassing the source-repair gate.
-    ENGINE_RUNTIME = "engine_runtime"
     UNKNOWN = "unknown"
 
 
@@ -41,7 +36,6 @@ class RepairFamily(StrEnum):
     IDEMPOTENT_DELIVER = "idempotent_deliver"
     COMPENSATABLE_WRITE = "compensatable_write"
     REVERTIBLE_MUTATE = "revertible_mutate"
-    SOURCE_REPAIR = "source_repair"
     NONE = "none"
 
 
@@ -151,18 +145,6 @@ ALLOWLIST: tuple[EffectClassEntry, ...] = (
         queryable=True,
         approved_for_repair=False,
         reason="M10: revert effects remain action-off; enable in M11",
-    ),
-    EffectClassEntry(
-        effect_class=RepairEffectClass.ENGINE_RUNTIME,
-        repair_family=RepairFamily.SOURCE_REPAIR,
-        reconciliation=ReconciliationCapability.QUERYABLE,
-        idempotent=True,
-        queryable=True,
-        approved_for_repair=False,
-        reason=(
-            "engine-runtime source edits require the typed Horizon-A "
-            "admission; generic repair authority is insufficient"
-        ),
     ),
 )
 

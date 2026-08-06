@@ -457,7 +457,7 @@ class IterationBudget:
     :meth:`refund` so they don't eat into the budget.
     """
 
-    def __init__(self, max_total: int | None):
+    def __init__(self, max_total: int):
         self.max_total = max_total
         self._used = 0
         self._lock = threading.Lock()
@@ -465,11 +465,7 @@ class IterationBudget:
     def consume(self) -> bool:
         """Try to consume one iteration.  Returns True if allowed."""
         with self._lock:
-            # ``None`` is the explicit completion-driven mode used by the
-            # resident fixer.  It is intentionally not represented as a
-            # large magic number: the fixer must stop on its machine-checked
-            # postcondition, not on an arbitrary call count.
-            if self.max_total is not None and self._used >= self.max_total:
+            if self._used >= self.max_total:
                 return False
             self._used += 1
             return True
@@ -487,11 +483,6 @@ class IterationBudget:
     @property
     def remaining(self) -> int:
         with self._lock:
-            if self.max_total is None:
-                # Existing callers compare this property with ``<= 0``.
-                # Preserve that interface while making the unbounded state
-                # explicit in ``max_total``.
-                return 2**63 - 1
             return max(0, self.max_total - self._used)
 
 
@@ -946,7 +937,7 @@ class AIAgent:
         command: str = None,
         args: list[str] | None = None,
         model: str = "anthropic/claude-opus-4.6",  # OpenRouter format
-        max_iterations: int | None = 90,  # None = completion-driven (shared with subagents)
+        max_iterations: int = 90,  # Default tool-calling iterations (shared with subagents)
         tool_delay: float = 1.0,
         enabled_toolsets: List[str] = None,
         disabled_toolsets: List[str] = None,
@@ -998,9 +989,7 @@ class AIAgent:
             provider (str): Provider identifier (optional; used for telemetry/routing hints)
             api_mode (str): API mode override: "chat_completions" or "codex_responses"
             model (str): Model name to use (default: "anthropic/claude-opus-4.6")
-            max_iterations (int | None): Maximum number of tool calling iterations
-                (default: 90). ``None`` is completion-driven and is reserved for
-                managed recovery runs with an external machine-checked stop condition.
+            max_iterations (int): Maximum number of tool calling iterations (default: 90)
             tool_delay (float): Delay between tool calls in seconds (default: 1.0)
             enabled_toolsets (List[str]): Only enable tools from these toolsets (optional)
             disabled_toolsets (List[str]): Disable tools from these toolsets (optional)
@@ -1036,15 +1025,6 @@ class AIAgent:
         """
         _install_safe_stdio()
 
-        # The managed resident worker already marks a no-timeout recovery as
-        # ``ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1``.  Honour that contract here
-        # instead of silently falling back to the generic 90-turn guard.  Only
-        # the default is promoted; an explicit caller cap remains authoritative.
-        if (
-            max_iterations == 90
-            and os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1"
-        ):
-            max_iterations = None
         self.model = model
         self.max_iterations = max_iterations
         # Shared iteration budget — parent creates, children inherit.
@@ -6452,11 +6432,7 @@ class AIAgent:
           - Caution (70%): nudge to consolidate work
           - Warning (90%): urgent, must respond now
         """
-        if (
-            not self._budget_pressure_enabled
-            or self.max_iterations is None
-            or self.max_iterations <= 0
-        ):
+        if not self._budget_pressure_enabled or self.max_iterations <= 0:
             return None
         progress = api_call_count / self.max_iterations
         remaining = self.max_iterations - api_call_count
@@ -6930,10 +6906,7 @@ class AIAgent:
         # Clear any stale interrupt state at start
         self.clear_interrupt()
         
-        while (
-            (self.max_iterations is None or api_call_count < self.max_iterations)
-            and self.iteration_budget.remaining > 0
-        ):
+        while api_call_count < self.max_iterations and self.iteration_budget.remaining > 0:
             # Reset per-turn checkpoint dedup so each iteration can take one snapshot
             self._checkpoint_mgr.new_turn()
 
@@ -8489,10 +8462,7 @@ class AIAgent:
                 # role-alternation invariants.
 
                 # If we're near the limit, break to avoid infinite loops
-                if (
-                    self.max_iterations is not None
-                    and api_call_count >= self.max_iterations - 1
-                ):
+                if api_call_count >= self.max_iterations - 1:
                     final_response = f"I apologize, but I encountered repeated errors: {error_msg}"
                     # Append as assistant so the history stays valid for
                     # session resume (avoids consecutive user messages).
@@ -8500,10 +8470,7 @@ class AIAgent:
                     break
         
         if final_response is None and (
-            (
-                self.max_iterations is not None
-                and api_call_count >= self.max_iterations
-            )
+            api_call_count >= self.max_iterations
             or self.iteration_budget.remaining <= 0
         ):
             if self.iteration_budget.remaining <= 0 and not self.quiet_mode:
@@ -8511,9 +8478,7 @@ class AIAgent:
             final_response = self._handle_max_iterations(messages, api_call_count)
         
         # Determine if conversation completed successfully
-        completed = final_response is not None and (
-            self.max_iterations is None or api_call_count < self.max_iterations
-        )
+        completed = final_response is not None and api_call_count < self.max_iterations
 
         # Save trajectory if enabled
         self._save_trajectory(messages, user_message, completed)

@@ -20,8 +20,6 @@ SPLIT_INCOMPLETE_WRITE_SET = "split_incomplete_write_set"
 SPLIT_MUTATING_VALIDATION = "split_mutating_validation"
 SPLIT_PROOF_EXHAUSTED = "split_proof_exhausted"
 SPLIT_COMPLEXITY_TOO_LOW = "split_complexity_too_low"
-SPLIT_ID_COLLISION = "split_id_collision"
-SPLIT_DEPENDENCY_REASON_MERGE = "split_dependency_reason_merge"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -460,93 +458,30 @@ def _build_impl_narrow_tests(task: Mapping[str, Any]) -> dict[str, Any]:
 # Batch splitter (for whole payloads)
 # ---------------------------------------------------------------------------
 
-def _rewrite_task_references(
-    tasks: list[dict[str, Any]],
-    split_map: Mapping[str, Mapping[str, str]],
-    diagnostics: list[SplitDiagnostic],
-) -> None:
-    """Rewire downstream task references after splitting (two-pass closure).
-
-    Every ``depends_on`` entry and matching ``dependency_reasons`` key that
-    names a split original task is remapped to the implementation subtask
-    (``{original}_impl``), which carries the original's inherited
-    dependencies and output-bearing work.  Duplicate and self dependencies
-    are preserved verbatim so feasibility rejects malformed input
-    deterministically.  If re-keying reasons would merge two distinct
-    entries, the task is flagged fail-closed and left unchanged.
-    """
-    for task in tasks:
-        deps = task.get("depends_on")
-        if isinstance(deps, list):
-            task["depends_on"] = [
-                split_map[dep]["impl_id"] if dep in split_map else dep
-                for dep in deps
-            ]
-        reasons = task.get("dependency_reasons")
-        if not isinstance(reasons, Mapping):
-            continue
-        new_reasons: dict[str, Any] = {}
-        merged = False
-        for key, value in reasons.items():
-            new_key = split_map[key]["impl_id"] if key in split_map else key
-            if new_key in new_reasons and new_reasons[new_key] is not value:
-                merged = True
-            new_reasons[new_key] = value
-        if merged:
-            diagnostics.append(SplitDiagnostic(
-                SPLIT_DEPENDENCY_REASON_MERGE,
-                "dependency_reasons keys would merge after split rewiring; task left unchanged.",
-                str(task.get("id")),
-            ))
-        else:
-            task["dependency_reasons"] = new_reasons
-
-
 def split_high_complexity_tasks(
     payload: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], list[SplitDiagnostic], dict[str, dict[str, str]]]:
+) -> tuple[list[dict[str, Any]], list[SplitDiagnostic]]:
     """Apply :func:`split_task` to every complexity >= 7 task in *payload*.
-
-    Two-pass transform:
-
-    1. Preflight every original task id and every generated ``{id}_impl`` /
-       ``{id}_proof`` id.  A generated id colliding with any original or
-       previously generated id fails closed with a deterministic
-       ``split_id_collision`` diagnostic and the original task is kept
-       un-split (never silently overwritten).
-    2. Construct the implementation/proof children and the complete
-       ``original_id -> {impl_id, proof_id}`` map, then rewire every
-       downstream ``depends_on`` / ``dependency_reasons`` reference through
-       :func:`_rewrite_task_references`.
 
     Args:
         payload: A finalized-plan payload dict with a ``tasks`` list.
 
     Returns:
-        A tuple ``(tasks, diagnostics, split_map)`` where *tasks* is the
-        transformed task list, *diagnostics* lists every reject/blocker/
-        collision diagnostic, and *split_map* maps each split original id to
-        its ``{impl_id, proof_id}`` replacement ids (empty when nothing was
-        split).  An empty diagnostics list means every high-complexity task
-        was successfully split and every downstream reference was rewired.
+        A tuple ``(tasks, diagnostics)`` where *tasks* is the transformed
+        task list (high-complexity tasks replaced by their subtasks) and
+        *diagnostics* is a list of :class:`SplitDiagnostic` for every
+        task that could not be split.  An empty diagnostics list means
+        every high-complexity task was successfully split.
     """
     raw_tasks = payload.get("tasks")
     if not isinstance(raw_tasks, list):
         return [], [SplitDiagnostic(
             SPLIT_AMBIGUOUS_OBJECTIVE,
             "Payload has no tasks list.",
-        )], {}
-
-    original_ids = {
-        raw.get("id")
-        for raw in raw_tasks
-        if isinstance(raw, Mapping) and isinstance(raw.get("id"), str)
-    }
+        )]
 
     output: list[dict[str, Any]] = []
     diagnostics: list[SplitDiagnostic] = []
-    split_map: dict[str, dict[str, str]] = {}
-    generated_ids: set[str] = set()
 
     for raw in raw_tasks:
         if not isinstance(raw, Mapping):
@@ -564,36 +499,12 @@ def split_high_complexity_tasks(
                 diagnostics.append(result)
                 # Keep the original task in place (can't split it)
                 output.append(task)
-                continue
-
-            impl, proof = result
-            collided = [
-                new_id for new_id in (impl["id"], proof["id"])
-                if new_id in original_ids or new_id in generated_ids
-            ]
-            if collided:
-                diagnostics.append(SplitDiagnostic(
-                    SPLIT_ID_COLLISION,
-                    "Generated split ids collide with existing ids: "
-                    + ", ".join(sorted(collided)) + ".",
-                    task.get("id"),
-                ))
-                # Fail closed: keep the original task un-split rather than
-                # silently overwriting an existing id.
-                output.append(task)
-                continue
-
-            generated_ids.update((impl["id"], proof["id"]))
-            split_map[task["id"]] = {
-                "impl_id": impl["id"],
-                "proof_id": proof["id"],
-            }
-            output.extend([impl, proof])
+            else:
+                output.extend(result)
         else:
             output.append(task)
 
-    _rewrite_task_references(output, split_map, diagnostics)
-    return output, diagnostics, split_map
+    return output, diagnostics
 
 
 __all__ = [
