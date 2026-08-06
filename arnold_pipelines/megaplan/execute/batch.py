@@ -3487,6 +3487,29 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             applicable = False
         if not applicable:
             continue
+        if kind == "post_execute_suite":
+            _shadow_skip = False
+            try:
+                _ps = _json.loads(
+                    (Path(plan_dir) / "state.json").read_text(encoding="utf-8")
+                )
+                _cfg = _ps.get("config") if isinstance(_ps, dict) else None
+                _shadow_skip = isinstance(_cfg, dict) and _cfg.get("full_suite_backstop_mode") == "shadow"
+            except Exception:
+                pass
+            if _shadow_skip:
+                # Shadow mode: do NOT run the full-suite backstop synchronously
+                # at pre-dispatch. Record it as deferred and let dispatch proceed
+                # on the per-task narrow subsections. The backstop is a
+                # milestone-wide observe-only safety net, not a pre-dispatch gate.
+                evidence_results.append({
+                    "job_id": job_id,
+                    "kind": kind,
+                    "status": "shadow_deferred",
+                    "exit_code": None,
+                })
+                log.info("post-execute suite %s deferred in SHADOW mode (non-blocking pre-dispatch)", job_id)
+                continue
         timeout = job.get("max_seconds") or job.get("timeout_seconds") or 600
         job_id = str(job.get("id") or "vj")
         command = job.get("command")
