@@ -241,6 +241,14 @@ def _gate_prompt(
           not yet regenerated them; instead verify that the plan requires the
           ordinary finalizer's deterministic feasibility admission before
           execution. Finalize and execute remain fail-closed on that admission.
+        - Baseline commit presence is pre-verified by the engine and injected as
+          `signals.baseline_presence` in Gate signals, using git plumbing
+          (`git cat-file -e <sha>^{{commit}}` / `git rev-parse --verify`). Treat
+          that receipt as authoritative. Never infer a pinned baseline commit is
+          "absent" from a naive `.git/` filesystem content search: loose objects
+          are zlib-compressed, packed objects are binary, and objects may live
+          in alternates or a linked-worktree common directory. If you must
+          re-verify, use git plumbing commands, never a `.git` text search.
         - Decide exactly one of: PROCEED, ITERATE, ESCALATE, TIEBREAKER.
         - Use the weighted score, flag details (including `evidence`), plan delta, recurring critiques, and preflight results as judgment context.
         - PROCEED when execution should move forward now.
