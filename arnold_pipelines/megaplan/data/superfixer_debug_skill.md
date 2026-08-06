@@ -46,6 +46,24 @@ commands and idempotent effect barriers, but continue the repair loop until succ
 or a real external gate is proven. A quiet wait for a real external gate is a
 durable state; a terminal quarantine for an owned source repair is a fixer failure.
 
+### Fast path and bounded escalation
+
+Apply the smallest fix immediately when the fix is obvious: the root cause is
+unambiguous from the evidence, the change is minimal and contained, you can verify
+it with a focused test, and no owner/authority/credential gate blocks it. Do not
+spend the session re-investigating an already-obvious fix. Apply it, run the focused
+verification, and keep pushing until the verification genuinely passes and the
+occurrence advances.
+
+Escalate back to Sol stage 2 after **three distinct, verified fix attempts** that
+did not make the occurrence advance — never three blind retries. Count only attempts
+that materially changed something and were verified to still fail. Escalate sooner on
+unchanged evidence, a permission/infrastructure/credential blocker, widening scope,
+or destructive risk. Each escalation must carry an evidence delta: what was attempted,
+the exact change, the verification output, and the rollback state. Cap Sol
+re-adjudication cycles so the fixer cannot recurse to Sol indefinitely; once the cap
+is reached, stop at a documented external gate and keep the next owner/schedule active.
+
 An occurrence-bound run that carries the operator's explicit charge to get this
 occurrence moving is already the operator's approval to repair the named editable
 runtime within the named scope. Do not manufacture a second signed-approval gate
