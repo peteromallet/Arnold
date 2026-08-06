@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
 from difflib import SequenceMatcher
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 from arnold_pipelines.megaplan.schemas import GateSignals
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, FlagRecord, PlanState
@@ -18,6 +21,7 @@ from arnold_pipelines.megaplan._core import (
     load_debt_registry,
     load_flag_registry,
     normalize_text,
+    now_utc,
     read_json,
     scope_creep_flags,
     unresolved_significant_flags,
@@ -46,6 +50,120 @@ GATE_SIGNAL_WEIGHT_POLICY = MappingProxyType(
         "default_weight": 1.0,
     }
 )
+
+# --------------------------------------------------------------------------- #
+# Git-plumbing baseline-presence oracle (Horizon B)
+#
+# The gate worker must never infer that a pinned baseline commit is "absent"
+# from a naive `.git/` filesystem content search: loose objects are stored
+# zlib-compressed, packed objects are binary, and objects may be reachable
+# through alternates or a linked-worktree common directory. The only
+# authoritative presence check is git plumbing (`git cat-file -e` and
+# `git rev-parse --verify`). This oracle computes that receipt once, in the
+# engine, and injects it into gate signals so the gate worker receives ground
+# truth instead of guessing from a `.git/` search.
+# --------------------------------------------------------------------------- #
+
+#: Matches full 40-hex commit object ids referenced in plan text.
+_GIT_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
+
+#: Bounded number of referenced SHAs verified per gate-signals build.
+_MAX_BASELINE_PRESENCE_REFS = 12
+
+#: Default search roots for a pinned baseline commit, in priority order.
+_BASELINE_REF_SEARCH_PATHS = (
+    "NORTHSTAR.md",
+)
+
+
+def _git_plumbing(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one git plumbing command against *root*, never raising."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(
+            ["git", "-C", str(root), *args],
+            returncode=127,
+            stdout="",
+            stderr=f"git invocation failed: {exc}",
+        )
+
+
+def git_object_presence_receipt(project_dir: Path, sha: str) -> dict[str, Any]:
+    """Return a typed git-plumbing receipt for one commit object.
+
+    Presence is decided exclusively by ``git cat-file -e <sha>^{commit}`` and
+    ``git rev-parse --verify <sha>^{commit}``. The receipt also records the
+    repository identity (git dir, common dir, HEAD) and a resolved tree id
+    when the object exists, so downstream consumers never need to search
+    ``.git`` on disk.
+    """
+    cat_file = _git_plumbing(project_dir, "cat-file", "-e", f"{sha}^{{commit}}")
+    rev_parse = _git_plumbing(project_dir, "rev-parse", "--verify", f"{sha}^{{commit}}")
+    present = cat_file.returncode == 0 and rev_parse.returncode == 0
+    receipt: dict[str, Any] = {
+        "schema": "arnold.megaplan.git_object_presence.v1",
+        "sha": sha,
+        "present": present,
+        "method": "git cat-file -e <sha>^{commit} && git rev-parse --verify <sha>^{commit}",
+        "cat_file_exit": cat_file.returncode,
+        "rev_parse_exit": rev_parse.returncode,
+        "checked_at": now_utc(),
+    }
+    if present:
+        tree = _git_plumbing(project_dir, "rev-parse", f"{sha}^{{tree}}")
+        if tree.returncode == 0:
+            receipt["tree"] = tree.stdout.strip()
+        git_dir = _git_plumbing(project_dir, "rev-parse", "--git-dir")
+        if git_dir.returncode == 0:
+            receipt["git_dir"] = git_dir.stdout.strip()
+        common_dir = _git_plumbing(project_dir, "rev-parse", "--git-common-dir")
+        if common_dir.returncode == 0:
+            receipt["common_dir"] = common_dir.stdout.strip()
+        head = _git_plumbing(project_dir, "rev-parse", "HEAD")
+        if head.returncode == 0:
+            receipt["head"] = head.stdout.strip()
+    return receipt
+
+
+def baseline_presence_signals(plan_dir: Path, state: PlanState, root: Path | None = None) -> dict[str, Any]:
+    """Build the authoritative baseline-presence evidence block for gate signals.
+
+    Scans the latest plan text plus the NORTHSTAR/prelaunch-disposition anchor
+    documents for pinned 40-hex commit references and verifies each via git
+    plumbing. Returns ``{"schema": ..., "project_dir": ..., "receipts": [...]}``.
+    """
+    project_dir = Path(str((state.get("config") or {}).get("project_dir") or "."))
+    plan_path = latest_plan_path(plan_dir, state)
+    candidates: list[str] = []
+    for path in (plan_path, *_BASELINE_REF_SEARCH_PATHS):
+        candidate = path if isinstance(path, Path) else project_dir / path
+        try:
+            if candidate.is_file():
+                candidates.extend(_GIT_SHA_RE.findall(candidate.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    unique_shas: list[str] = []
+    for sha in candidates:
+        if sha not in unique_shas:
+            unique_shas.append(sha)
+    receipts = [
+        git_object_presence_receipt(project_dir, sha)
+        for sha in unique_shas[:_MAX_BASELINE_PRESENCE_REFS]
+    ]
+    return {
+        "schema": "arnold.megaplan.baseline_presence.v1",
+        "project_dir": str(project_dir),
+        "checked_at": now_utc(),
+        "receipts": receipts,
+        "count": len(receipts),
+    }
+
 
 
 def flag_weight(flag: FlagRecord) -> float:
@@ -237,6 +355,11 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
         },
         "warnings": [],
     }
+    # Horizon B: inject the authoritative git-plumbing baseline-presence receipt
+    # so gate workers never infer commit absence from a naive `.git/` content
+    # search (loose objects are compressed; packed/alternates/common-dir objects
+    # are invisible to filesystem text search).
+    result["signals"]["baseline_presence"] = baseline_presence_signals(plan_dir, state, root)
     if unverifiable_checks:
         result["signals"]["unverifiable_checks"] = unverifiable_checks
         result["signals"]["execution_acceptance_contract"] = {
