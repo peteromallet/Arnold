@@ -30,10 +30,6 @@ from arnold_pipelines.megaplan.cloud.repair_contract import append_incident_reco
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     enqueue_occurrence_bound_repair_request,
     normalize_repair_identity,
-    repair_identity_key,
-)
-from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
-    materialize_engine_runtime_repair_admission,
 )
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
 from arnold_pipelines.megaplan.source_cursor_contract import (
@@ -376,24 +372,6 @@ def enqueue_audit_repair_request(
         or _auditor_mapping(escalation_gate.get("repair_identity"))
         or _auditor_mapping(custody_summary.get("repair_identity"))
     )
-    # The auditor remains read-only: it may carry forward an explicit
-    # operator/Sol Horizon-A charge, but it cannot mint one from a label,
-    # liveness signal, WBC projection, or deterministic finding.  The typed
-    # bridge binds that charge to this exact occurrence before queueing.
-    operator_charge = (
-        _auditor_mapping(audit_item.get("operator_charge"))
-        or _auditor_mapping(audit_item.get("engine_runtime_repair_admission"))
-        or _auditor_mapping(escalation_gate.get("operator_charge"))
-        or _auditor_mapping(escalation_gate.get("engine_runtime_repair_admission"))
-    )
-    engine_runtime_admission = (
-        materialize_engine_runtime_repair_admission(
-            occurrence_fingerprint=repair_identity_key(occurrence_identity),
-            operator_charge=operator_charge,
-        )
-        if occurrence_identity is not None and operator_charge
-        else None
-    )
     evidence_cursor_digest = "sha256:" + sha256(
         json.dumps(
             evidence_cursor,
@@ -431,7 +409,6 @@ def enqueue_audit_repair_request(
             "repair_context_digest": str(audit_item.get("l3_repair_context_digest") or ""),
             "route": escalation_gate.get("route") or {},
             "occurrence_identity": occurrence_identity,
-            "engine_runtime_repair_admission": engine_runtime_admission or {},
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
