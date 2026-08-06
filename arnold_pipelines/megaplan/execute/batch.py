@@ -3406,48 +3406,6 @@ def _advance_batch_circuit(error, *, task_id="", attempt_id=""):
     return new_state, decision, fclass
 
 
-def _sanitize_suite_command(command: str, project_dir: Path) -> str:
-    """Drop dead path references from a pytest-style suite command.
-
-    The post-execute suite job command is compiled from the plan's test
-    selection, which may reference renamed/removed test files.  A path
-    token that does not exist on disk can never pass and only produces a
-    deterministic collection failure (pytest exit 2/4).  Only tokens that
-    look like relative paths are checked; flags and non-path tokens are
-    preserved verbatim.  Commands that are not pytest-style are left
-    untouched, and if every path token is dropped the caller falls back to
-    the full ``tests`` suite rather than running an empty command.
-    """
-    import shlex as _shlex
-
-    try:
-        parts = _shlex.split(command)
-    except ValueError:
-        return command
-    if not parts:
-        return command
-    head = os.path.basename(parts[0])
-    if head not in ("pytest", "python", "python3", "python3.11"):
-        return command
-    kept: list[str] = []
-    saw_path = False
-    for part in parts:
-        if part.startswith("-"):
-            kept.append(part)
-            continue
-        looks_path = "/" in part or part.endswith((".py", ".txt", ".json", ".cfg", ".toml"))
-        if not looks_path:
-            kept.append(part)
-            continue
-        if (project_dir / part).exists():
-            kept.append(part)
-            saw_path = True
-        # else: drop the dead reference
-    if not saw_path:
-        return "pytest tests --no-header -q"
-    return " ".join(kept)
-
-
 def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None):
     """Run deterministic harness validation jobs outside model dispatch (M8A T10).
 
@@ -3594,26 +3552,15 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         config = {
             "project_dir": str(project_dir),
             "plan_dir": str(plan_dir),
+            "test_command": command.strip(),
         }
         if kind == "post_execute_suite":
-            cmd = _sanitize_suite_command(command, Path(project_dir))
-            # The plan's baseline already recorded a known collection error
-            # (pytest_collection_error sentinel).  Tolerate baseline-known
-            # collection errors while still failing on any real test failure:
-            # with --continue-on-collection-errors pytest exits 0 when every
-            # collectable test passes and only stale files fail collection.
-            baseline_failures = finalize_data.get("baseline_test_failures")
-            if (
-                isinstance(baseline_failures, list)
-                and "pytest_collection_error" in baseline_failures
-                and "--continue-on-collection-errors" not in cmd
-            ):
-                cmd += " --continue-on-collection-errors"
-            config["test_command"] = cmd
             # The compiled suite timeout can be far smaller than the plan's
             # blast-radius suite actually needs.  Align the suite gate with
             # the chain-authoritative phase budget (bounded) so a slow but
-            # healthy suite is not a false gate.
+            # healthy suite is not a false gate.  The admitted command remains
+            # byte-for-byte authoritative: missing selectors and collection
+            # errors are failures, never an invitation to weaken the gate.
             try:
                 plan_state = _json.loads(
                     (Path(plan_dir) / "state.json").read_text(encoding="utf-8")
@@ -3624,8 +3571,6 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                     timeout = max(int(timeout), min(int(pb), 14400))
             except Exception:
                 pass
-        else:
-            config["test_command"] = command.strip()
         try:
             result = _suite_runner.run_suite(
                 Path(project_dir),
