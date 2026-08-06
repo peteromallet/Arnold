@@ -331,8 +331,15 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
         assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128"
 
 
+@pytest.mark.parametrize(
+    ("backend", "model"),
+    [("hermes", "zhipu:glm-5.2"), ("claude", "opus")],
+)
 def test_managed_worker_completion_emits_git_custody_event_without_unbound_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    model: str,
 ) -> None:
     """The managed-provider path must finish after custody verification.
 
@@ -340,12 +347,11 @@ def test_managed_worker_completion_emits_git_custody_event_without_unbound_local
     path.  The generic managed-provider supervisor did not, so an otherwise
     successful worker crashed with ``NameError`` after its strict receipt had
     already verified.  Exercise the generic path and require the durable
-    verification event, not merely a zero provider return code.
+    verification event, not merely a zero provider return code.  Both managed
+    provider launchers share this completion path, so exercise both.
     """
 
-    manifest_path = _worker_manifest(
-        tmp_path, backend="hermes", model="zhipu:glm-5.2"
-    )
+    manifest_path = _worker_manifest(tmp_path, backend=backend, model=model)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["git_custody"] = {
         "schema_version": "arnold-resident-git-custody-v1",
@@ -364,21 +370,48 @@ def test_managed_worker_completion_emits_git_custody_event_without_unbound_local
 
     def fake_popen(argv, **kwargs):
         output = kwargs["stdout"]
-        output.write(b"READY\n")
-        output.flush()
         session_id = argv[argv.index("--session-id") + 1]
-        Path(argv[argv.index("--metadata-file") + 1]).write_text(
-            json.dumps(
-                {
-                    "session_id": session_id,
-                    "resolved_model": "zhipu:glm-5.2",
-                    "toolsets": ["file"],
-                    "usage": {"output_tokens": 1},
-                    "events": [],
-                }
-            ),
-            encoding="utf-8",
-        )
+        if backend == "claude":
+            output.write(
+                (
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "init",
+                            "session_id": session_id,
+                            "model": model,
+                            "tools": ["Read"],
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "session_id": session_id,
+                            "is_error": False,
+                            "result": "READY",
+                            "usage": {"output_tokens": 1},
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+        else:
+            output.write(b"READY\n")
+            Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "resolved_model": model,
+                        "toolsets": ["file"],
+                        "usage": {"output_tokens": 1},
+                        "events": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        output.flush()
         return _Worker()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
