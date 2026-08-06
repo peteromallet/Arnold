@@ -1,0 +1,121 @@
+{
+  "schema": "megaplan.phase_result",
+  "schema_version": 1,
+  "phase_result_contract_version": 1,
+  "phase": "finalize",
+  "invocation_id": "79bfce4d64e74c15",
+  "exit_kind": "success",
+  "blocked_tasks": [],
+  "deviations": [],
+  "artifacts_written": [
+    "planner_repair.json",
+    "finalize_revise_feedback.json"
+  ],
+  "cli_provenance": {
+    "phase_model": [
+      "plan=hermes:zhipu:glm-5.2",
+      "prep=hermes:deepseek:deepseek-v4-pro",
+      "critique=hermes:deepseek:deepseek-v4-pro",
+      "critique_evaluator=hermes:zhipu:glm-5.2",
+      "revise=hermes:zhipu:glm-5.2",
+      "gate=hermes:deepseek:deepseek-v4-pro",
+      "finalize=codex:gpt-5.6-sol:high",
+      "execute=hermes:zhipu:glm-5.2",
+      "feedback=hermes:zhipu:glm-5.2",
+      "loop_plan=hermes:zhipu:glm-5.2",
+      "loop_execute=hermes:zhipu:glm-5.2",
+      "review=hermes:zhipu:glm-5.2",
+      "tiebreaker_researcher=hermes:zhipu:glm-5.2",
+      "tiebreaker_challenger=hermes:zhipu:glm-5.2"
+    ],
+    "profile": "partnered-5-glm",
+    "auto_approve": true,
+    "mode": "code",
+    "robustness": "thorough",
+    "tier_models": {
+      "execute": {
+        "1": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "2": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "3": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "4": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "5": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "6": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "7": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "8": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "9": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "10": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ]
+      },
+      "critique": {
+        "1": "hermes:deepseek:deepseek-v4-flash",
+        "2": "hermes:deepseek:deepseek-v4-pro",
+        "3": "hermes:deepseek:deepseek-v4-pro",
+        "4": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "5": "hermes:zhipu:glm-5.2"
+      }
+    },
+    "prep_models": {
+      "triage": "hermes:deepseek:deepseek-v4-pro",
+      "fanout": "hermes:deepseek:deepseek-v4-pro",
+      "distill": "hermes:deepseek:deepseek-v4-pro"
+    },
+    "prep_model_resolver_trace": {
+      "flat_prep_input": "hermes:deepseek:deepseek-v4-pro",
+      "explicit_prep_models": {},
+      "resolved_stage_models": {
+        "triage": "hermes:deepseek:deepseek-v4-pro",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "hermes:deepseek:deepseek-v4-pro"
+      },
+      "canonical_fallback_used": {
+        "triage": true,
+        "fanout": true,
+        "distill": true
+      }
+    }
+  },
+  "external_error": null
+}

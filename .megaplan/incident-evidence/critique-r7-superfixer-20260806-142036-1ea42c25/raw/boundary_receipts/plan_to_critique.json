@@ -1,0 +1,43 @@
+{
+  "boundary_id": "plan_to_critique",
+  "workflow_id": "megaplan-review",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s2.plan.1",
+  "invocation_id": "c13e2688a9e84ba4",
+  "artifact_refs": [
+    "plan_v1.md",
+    "plan_v1.meta.json",
+    "phase_result.json",
+    "plan.md"
+  ],
+  "state_observation": {
+    "current_phase": "plan",
+    "current_state": "planned",
+    "iteration": 1,
+    "next_step": "critique"
+  },
+  "history_ref": "plan_completed",
+  "phase_result_ref": "phase_result.json",
+  "outcome": "complete",
+  "details": {
+    "artifact_hash": "sha256:f2e00315ead524cf0c06b485eff4954115ccd8f57dbe1c684f648535dfc1f1c2",
+    "artifacts_written": [
+      "plan_v1.md",
+      "plan_v1.meta.json"
+    ],
+    "history": {
+      "step": "plan",
+      "result": "success",
+      "timestamp": "2026-08-05T22:05:19Z",
+      "output_file": "plan_v1.md"
+    },
+    "session": {
+      "id": "c7176996-6327-459a-aa32-4c44ca7c5599",
+      "session_key": "hermes_planner",
+      "mode": "persistent",
+      "worker_channel": "hermes",
+      "auth_channel": "glm_5.2"
+    },
+    "run_id": "63cfd5ca-7d68-4d05-abfd-a9204aed01b8"
+  }
+}

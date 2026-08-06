@@ -1,0 +1,190 @@
+{
+  "schema": "megaplan.candidate_graph_admission",
+  "schema_version": 1,
+  "candidate_id": "candidate:36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07",
+  "candidate_graph_hash": "36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07",
+  "task_contract_hash": "sha256:ae438ec6368397a331a556539cf3b662aa410adcd4a60ff40134ed1cc3bf1849",
+  "admitted": false,
+  "failure_fingerprint": "382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df",
+  "diagnostics": [
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T2_impl",
+      "dependency_id": "T1"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T3_impl",
+      "dependency_id": "T2"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T4_impl",
+      "dependency_id": "T1"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T5_impl",
+      "dependency_id": "T4"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T6",
+      "dependency_id": "T1"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T8",
+      "dependency_id": "T7"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T9",
+      "dependency_id": "T1"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T10",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T11",
+      "dependency_id": "T1"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T13",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15",
+      "dependency_id": "T3"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15",
+      "dependency_id": "T5"
+    },
+    {
+      "code": "dependency_graph_invalid",
+      "message": "Unknown dependency ID 'T1' for task 'T2_impl'"
+    }
+  ],
+  "observed_at": "2026-08-06T14:16:28Z",
+  "report": {
+    "schema_version": "megaplan-task-feasibility-v2",
+    "task_contract_hash": "sha256:ae438ec6368397a331a556539cf3b662aa410adcd4a60ff40134ed1cc3bf1849",
+    "plan_hash": "sha256:60125ebcf83ae6b3c9c3d81fb201b0a86847ecf897f7366ca141b9bcc1cdbf43",
+    "seed_epoch": null,
+    "task_count": 25,
+    "edge_count": 33,
+    "root_count": 0,
+    "max_width": 0,
+    "batches": [],
+    "critical_path_task_ids": [],
+    "critical_path_task_count": 0,
+    "critical_path_minutes": 0.0,
+    "seriality": 0.0,
+    "estimated_dispatch_minutes": 0,
+    "execute_phase_timeout_minutes": 60.0,
+    "warnings": [
+      {
+        "code": "task_count_high",
+        "message": "Task count exceeds 24; inspect scope."
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T2_impl",
+        "dependency_id": "T1"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T3_impl",
+        "dependency_id": "T2"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T4_impl",
+        "dependency_id": "T1"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T5_impl",
+        "dependency_id": "T4"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T6",
+        "dependency_id": "T1"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T8",
+        "dependency_id": "T7"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T9",
+        "dependency_id": "T1"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T10",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T11",
+        "dependency_id": "T1"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T13",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15",
+        "dependency_id": "T3"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15",
+        "dependency_id": "T5"
+      },
+      {
+        "code": "dependency_graph_invalid",
+        "message": "Unknown dependency ID 'T1' for task 'T2_impl'"
+      }
+    ],
+    "admitted": false
+  }
+}

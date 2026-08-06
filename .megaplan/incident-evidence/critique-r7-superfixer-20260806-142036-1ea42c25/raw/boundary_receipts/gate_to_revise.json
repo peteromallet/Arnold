@@ -1,0 +1,161 @@
+{
+  "boundary_id": "gate_to_revise",
+  "workflow_id": "megaplan-review",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s2.gate.1",
+  "invocation_id": "1d97e3c702fc4ee2",
+  "artifact_refs": [
+    "gate_signals_v4.json",
+    "gate.json",
+    "gate_carry.json",
+    "phase_result.json"
+  ],
+  "state_observation": {
+    "current_phase": "gate",
+    "current_state": "critiqued",
+    "iteration": 4,
+    "next_step": "revise"
+  },
+  "history_ref": "gate_iterate",
+  "phase_result_ref": "phase_result.json",
+  "outcome": "complete",
+  "authority_records": [
+    {
+      "actor": "deepseek-v4-pro",
+      "role": "boundary_observer",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "ITERATE",
+      "scope": "gate_to_revise",
+      "evidence_refs": [
+        "gate.json",
+        "gate_carry.json",
+        "phase_result.json"
+      ],
+      "details": {
+        "passed": false,
+        "rationale": "Weighted score trajectory is healthy (20.5\u219215.25\u219215.0\u219212.5) and v4 resolves 49 prior flags, but two significant correctness defects introduced in v4 are guaranteed runtime failures that block execution. CF-7B50AD8E/CF-1632D304 (tree-hash self-referential defect): Step 15.2 asserts HEAD^{tree} == delivery_tree_hash, but recording the tree hash in the handoff changes the handoff bytes, which changes the tree content, which changes the tree hash \u2014 the assertion is mathematically unsatisfiable (same chicken-and-egg the plan correctly acknowledged for commit hashes but failed to recognize for tree hashes). The fix is to move the delivery TREE hash to the same gitignored sidecar + git note as the delivery COMMIT hash; the committed handoff records only baseline commit+tree hashes. CF-50DE2C/CF-61A4C1 (ReconciliationResult name collision): the plan uses ReconciliationResult(status=..., issues=..., attempt_id=...) but an existing incompatible ReconciliationResult dataclass at arnold/workflow/effect_reconciliation.py:84 has fields (verdict: ReconciliationVerdict, provider_idempotency_key, evidence_payload, query_failure, is_authoritative, provider_version). The plan must explicitly declare a new disambiguated type (e.g., LedgerReconciliationResult) in persistence_service.py. CF-F716F109 (mixed-attempt authority_scope): per-attempt tag vs per-event cl2_kind discriminator creates ambiguity for attempts containing both v1 and legacy_historical events. All three are fixable in one more iteration. The baseline-resolution gate (Step 0.1) for CF-00D5682C/CF-1508FE is structurally correct \u2014 the outcome depends on runtime git state which no plan can fabricate.",
+        "warnings": [
+          "CF-7B50AD8E/CF-1632D304: Tree-hash self-referential defect is a guaranteed runtime failure. Fix: move delivery TREE hash to gitignored sidecar + git note alongside delivery COMMIT hash. Committed handoff records only baseline commit hash + baseline tree hash (both known pre-work, immutable). This mirrors the pattern already correctly used for the commit hash.",
+          "CF-50DE2C/CF-61A4C1: ReconciliationResult name collision. Existing arnold/workflow/effect_reconciliation.py:84 ReconciliationResult has incompatible fields (verdict: ReconciliationVerdict, provider_idempotency_key, evidence_payload, query_failure, is_authoritative, provider_version \u2014 no status/issues/attempt_id). Fix: declare a new LedgerReconciliationResult dataclass in persistence_service.py with fields (attempt_id: str, status: str, issues: list[str], event_snapshot: dict).",
+          "CF-F716F109: Mixed-attempt authority_scope ambiguity. Per-attempt tag (authority_scope) vs per-event discriminator (cl2_kind). Fix: either (a) require legacy records to use distinct attempt_ids from v1 records, or (b) specify authority_scope as per-contribution rather than per-attempt, or (c) add a mixed-attempt test case and define the resolution rule (e.g., authoritative if ANY v1 record present)."
+        ],
+        "settled_decisions": [
+          {
+            "id": "SD1",
+            "decision": "CL1 domain objects ride as payload content on EXTERNAL_EFFECT_OUTCOME events distinguished by cl2_kind discriminator (occurrence|reconciliation|disposition|legacy_historical), not as lifecycle event types",
+            "rationale": "Store's AttemptEventType precedence rules (RECONCILIATION requires prior PERSISTENCE_FAILED, COMPLETED is terminal with exactly-one-terminal guard) block one-to-one mapping. Verified at execution_attempt_ledger.py:212-234."
+          },
+          {
+            "id": "SD2",
+            "decision": "Schema-version conflict resolved by filter-and-tag, not upgrade: legacy records preserved with original schema_version, tagged cl2_kind=legacy_historical + metadata.derived_from_legacy=true, excluded from replay by 3-condition conjunctive filter (exclude-then-reconstruct order)",
+            "rationale": "Honors both 'preserves all available legacy evidence' (persisted, queryable via read_legacy_context) and 'rejects unsupported target versions without partial publish' (non-v1 records never enter v1 replay pipeline). North Star immutability clause forbids version rewriting."
+          },
+          {
+            "id": "SD3",
+            "decision": "OneTimeImporter bypasses persist_occurrence and builds LedgerEvent payloads directly via store.append_event with cl2_kind=legacy_historical",
+            "rationale": "persist_occurrence validates via CritiqueOccurrenceEnvelope.from_dict which rejects non-v1 schema_version (schemas.py:263-268, SUPPORTED_VERSIONS={'cl.schema.v1'}). Legacy records with original non-v1 version strings cannot pass from_dict."
+          },
+          {
+            "id": "SD4",
+            "decision": "UNAVAILABLE encoding on legacy records is a labeling convention, NOT a fails-closed guard; cl2_kind=legacy_historical discriminator is the sole operative defense excluding legacy records from replay",
+            "rationale": "Verified at source: FailureMode.BRIEFING_INPUT_UNAVAILABLE (semantic_loop.py:1068) requires required_for_briefing=True (not set by importer); FailureMode.CUSTODY_UNAVAILABLE_EVIDENCE (semantic_loop.py:206) requires both unavailable_reason AND reopen_condition (only former is set). Neither path is operative; cl2_kind filter is the sole defense."
+          },
+          {
+            "id": "SD5",
+            "decision": "Restart reconciliation uses two distinct store APIs: validate_ledger_event_ordering (returns list[str]) for ordering/precedence violations mapped to status=ordering_violation, and store.query_gaps (returns list[GapEntry]) for non-contiguous sequence gaps mapped to status=sequence_gap",
+            "rationale": "validate_ledger_event_ordering does NOT detect sequence gaps \u2014 confirmed by module's Known Limitation docstring (execution_attempt_ledger.py:46-65) and monotonicity check only testing sequence <= prev_sequence, never sequence != prev_sequence + 1. The two APIs serve distinct purposes with distinct ReconciliationResult status values."
+          }
+        ],
+        "debt_entries_added": null,
+        "auth_channel": "deepseek-v4-pro",
+        "auth_metadata": {
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-pro",
+          "provider": "deepseek-v4-pro",
+          "resolved_model": "deepseek-v4-pro",
+          "wbc_dispatch": {
+            "attempt_id": "bf7b617b-283f-582b-a8fb-2820b2b23117",
+            "writer_id": "megaplan.worker_dispatch.direct",
+            "surface_name": "megaplan.worker_dispatch.direct",
+            "expected_source_version": "gate:1d97e3c702fc4ee2:direct:gate:hermes:deepseek:deepseek-v4-pro:0",
+            "start_source_lookup_key": "gate:gate:direct:0:start",
+            "terminal_source_lookup_key": "gate:gate:direct:0:complete",
+            "start_event_sequence": 1,
+            "terminal_event_sequence": 2,
+            "promotion_mode": "action_off",
+            "route_kind": "direct",
+            "selected_spec": "hermes:deepseek:deepseek-v4-pro",
+            "attempt_index": 0,
+            "configured_specs": [],
+            "attempted_specs": [],
+            "failed_attempt_reasons": [],
+            "fallback_trigger": null,
+            "worker_channel": "hermes",
+            "auth_channel": "deepseek-v4-pro"
+          }
+        },
+        "worker_channel": "hermes"
+      }
+    }
+  ],
+  "details": {
+    "artifact_hash": "sha256:e3dc9a59e6ec6fa52581645714853e0b9f4a73eb951a333f03d8727b3069591c",
+    "artifacts_written": [
+      "gate_signals_v4.json",
+      "gate.json",
+      "gate_carry.json"
+    ],
+    "history": {
+      "step": "gate",
+      "result": "success",
+      "timestamp": "2026-08-06T00:08:07Z",
+      "output_file": "gate.json"
+    },
+    "session": {
+      "id": "234bbb43-e409-4e38-b0a5-8c6bb50969ac",
+      "session_key": "hermes_gatekeeper",
+      "mode": "persistent",
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro"
+    },
+    "run_id": "2f0ba1a0-22b4-486b-85cd-91fe3ab50e0f",
+    "gate_authority": {
+      "recommendation": "ITERATE",
+      "passed": false,
+      "rationale": "Weighted score trajectory is healthy (20.5\u219215.25\u219215.0\u219212.5) and v4 resolves 49 prior flags, but two significant correctness defects introduced in v4 are guaranteed runtime failures that block execution. CF-7B50AD8E/CF-1632D304 (tree-hash self-referential defect): Step 15.2 asserts HEAD^{tree} == delivery_tree_hash, but recording the tree hash in the handoff changes the handoff bytes, which changes the tree content, which changes the tree hash \u2014 the assertion is mathematically unsatisfiable (same chicken-and-egg the plan correctly acknowledged for commit hashes but failed to recognize for tree hashes). The fix is to move the delivery TREE hash to the same gitignored sidecar + git note as the delivery COMMIT hash; the committed handoff records only baseline commit+tree hashes. CF-50DE2C/CF-61A4C1 (ReconciliationResult name collision): the plan uses ReconciliationResult(status=..., issues=..., attempt_id=...) but an existing incompatible ReconciliationResult dataclass at arnold/workflow/effect_reconciliation.py:84 has fields (verdict: ReconciliationVerdict, provider_idempotency_key, evidence_payload, query_failure, is_authoritative, provider_version). The plan must explicitly declare a new disambiguated type (e.g., LedgerReconciliationResult) in persistence_service.py. CF-F716F109 (mixed-attempt authority_scope): per-attempt tag vs per-event cl2_kind discriminator creates ambiguity for attempts containing both v1 and legacy_historical events. All three are fixable in one more iteration. The baseline-resolution gate (Step 0.1) for CF-00D5682C/CF-1508FE is structurally correct \u2014 the outcome depends on runtime git state which no plan can fabricate.",
+      "warnings": [
+        "CF-7B50AD8E/CF-1632D304: Tree-hash self-referential defect is a guaranteed runtime failure. Fix: move delivery TREE hash to gitignored sidecar + git note alongside delivery COMMIT hash. Committed handoff records only baseline commit hash + baseline tree hash (both known pre-work, immutable). This mirrors the pattern already correctly used for the commit hash.",
+        "CF-50DE2C/CF-61A4C1: ReconciliationResult name collision. Existing arnold/workflow/effect_reconciliation.py:84 ReconciliationResult has incompatible fields (verdict: ReconciliationVerdict, provider_idempotency_key, evidence_payload, query_failure, is_authoritative, provider_version \u2014 no status/issues/attempt_id). Fix: declare a new LedgerReconciliationResult dataclass in persistence_service.py with fields (attempt_id: str, status: str, issues: list[str], event_snapshot: dict).",
+        "CF-F716F109: Mixed-attempt authority_scope ambiguity. Per-attempt tag (authority_scope) vs per-event discriminator (cl2_kind). Fix: either (a) require legacy records to use distinct attempt_ids from v1 records, or (b) specify authority_scope as per-contribution rather than per-attempt, or (c) add a mixed-attempt test case and define the resolution rule (e.g., authoritative if ANY v1 record present)."
+      ],
+      "settled_decisions": [
+        {
+          "id": "SD1",
+          "decision": "CL1 domain objects ride as payload content on EXTERNAL_EFFECT_OUTCOME events distinguished by cl2_kind discriminator (occurrence|reconciliation|disposition|legacy_historical), not as lifecycle event types",
+          "rationale": "Store's AttemptEventType precedence rules (RECONCILIATION requires prior PERSISTENCE_FAILED, COMPLETED is terminal with exactly-one-terminal guard) block one-to-one mapping. Verified at execution_attempt_ledger.py:212-234."
+        },
+        {
+          "id": "SD2",
+          "decision": "Schema-version conflict resolved by filter-and-tag, not upgrade: legacy records preserved with original schema_version, tagged cl2_kind=legacy_historical + metadata.derived_from_legacy=true, excluded from replay by 3-condition conjunctive filter (exclude-then-reconstruct order)",
+          "rationale": "Honors both 'preserves all available legacy evidence' (persisted, queryable via read_legacy_context) and 'rejects unsupported target versions without partial publish' (non-v1 records never enter v1 replay pipeline). North Star immutability clause forbids version rewriting."
+        },
+        {
+          "id": "SD3",
+          "decision": "OneTimeImporter bypasses persist_occurrence and builds LedgerEvent payloads directly via store.append_event with cl2_kind=legacy_historical",
+          "rationale": "persist_occurrence validates via CritiqueOccurrenceEnvelope.from_dict which rejects non-v1 schema_version (schemas.py:263-268, SUPPORTED_VERSIONS={'cl.schema.v1'}). Legacy records with original non-v1 version strings cannot pass from_dict."
+        },
+        {
+          "id": "SD4",
+          "decision": "UNAVAILABLE encoding on legacy records is a labeling convention, NOT a fails-closed guard; cl2_kind=legacy_historical discriminator is the sole operative defense excluding legacy records from replay",
+          "rationale": "Verified at source: FailureMode.BRIEFING_INPUT_UNAVAILABLE (semantic_loop.py:1068) requires required_for_briefing=True (not set by importer); FailureMode.CUSTODY_UNAVAILABLE_EVIDENCE (semantic_loop.py:206) requires both unavailable_reason AND reopen_condition (only former is set). Neither path is operative; cl2_kind filter is the sole defense."
+        },
+        {
+          "id": "SD5",
+          "decision": "Restart reconciliation uses two distinct store APIs: validate_ledger_event_ordering (returns list[str]) for ordering/precedence violations mapped to status=ordering_violation, and store.query_gaps (returns list[GapEntry]) for non-contiguous sequence gaps mapped to status=sequence_gap",
+          "rationale": "validate_ledger_event_ordering does NOT detect sequence gaps \u2014 confirmed by module's Known Limitation docstring (execution_attempt_ledger.py:46-65) and monotonicity check only testing sequence <= prev_sequence, never sequence != prev_sequence + 1. The two APIs serve distinct purposes with distinct ReconciliationResult status values."
+        }
+      ],
+      "reprompted": false
+    }
+  }
+}
