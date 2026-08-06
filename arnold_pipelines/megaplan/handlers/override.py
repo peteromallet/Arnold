@@ -1067,6 +1067,7 @@ def _override_replan(
     artifact_invalidation = invalidate_replan_derived_artifacts(
         plan_dir,
         timestamp=timestamp,
+        include_critique_epoch=True,
     )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
@@ -1275,6 +1276,7 @@ def _override_recover_blocked(
             },
         )
     phase_repair_evidence: dict[str, str] | None = None
+    artifact_invalidation: dict[str, Any] | None = None
     deterministic_phase_repair_required = bool(
         isinstance(latest_failure, dict)
         and (
@@ -1307,6 +1309,18 @@ def _override_recover_blocked(
             raise CliError("missing_phase_result", "deterministic repair evidence is missing")
         blocker_details: list[dict[str, Any]] = []
         blocker_ids: list[str] = []
+        # Re-entering the critique phase after a deterministic phase-contract
+        # repair collides with the create-once critique custody receipts
+        # (critique_custody_v*.json) published by the superseded attempt at the
+        # same iteration.  Archive the versioned critique family durably so the
+        # fresh run can publish new receipts; the create-once invariant still
+        # holds within the new planning epoch.
+        if phase == "critique":
+            artifact_invalidation = invalidate_replan_derived_artifacts(
+                plan_dir,
+                timestamp=now_utc(),
+                include_critique_epoch=True,
+            )
     elif phase_result is None:
         raise CliError(
             "missing_phase_result",
@@ -1371,6 +1385,11 @@ def _override_recover_blocked(
                 if phase_repair_evidence is not None
                 else {}
             ),
+            **(
+                {"artifact_invalidation": artifact_invalidation}
+                if artifact_invalidation is not None
+                else {}
+            ),
         },
     )
     if (
@@ -1397,6 +1416,11 @@ def _override_recover_blocked(
         "phase": phase,
         "resume_cursor": resume_cursor,
         "blockers": blocker_details,
+        **(
+            {"artifact_invalidation": artifact_invalidation}
+            if artifact_invalidation is not None
+            else {}
+        ),
     }
     if phase_repair_evidence is not None:
         response["phase_contract_repair"] = phase_repair_evidence

@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from arnold_pipelines.megaplan.handlers.override import (
+    _override_recover_blocked,
     _override_replan,
     _override_set_model,
     _override_set_profile,
@@ -1474,6 +1475,241 @@ class TestOverrideReplanBehavior:
             archived = plan_dir.parent / item["archive_path"]
             assert archived.is_file()
             assert item["sha256"].startswith("sha256:")
+
+    def test_override_replan_archives_stale_critique_epoch_receipts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v2.md"
+        plan_file.write_text("# repaired plan\n", encoding="utf-8")
+        (plan_dir / "task_feasibility.json").write_text(
+            '{"admitted": false, "task_count": 35}\n', encoding="utf-8"
+        )
+        (plan_dir / "critique_custody_v2.json").write_text(
+            '{"admitted": true, "iteration": 2, "produced_at": "OLD"}\n',
+            encoding="utf-8",
+        )
+        (plan_dir / "critique_v2.json").write_text('{"checks": []}\n', encoding="utf-8")
+        (plan_dir / "critique_parallel_manifest_v2.json").write_text(
+            '{"invocation_id": "OLD"}\n', encoding="utf-8"
+        )
+        (plan_dir / "critique_check_correctness_producer_v2.json").write_text(
+            '{"check_id": "correctness"}\n', encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": "critiqued",
+            "iteration": 2,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 2,
+                    "file": "plan_v2.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE"},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="new planning epoch", note=None),
+        )
+
+        invalidation = response["artifact_invalidation"]
+        archived_names = {item["artifact"] for item in invalidation["artifacts"]}
+        assert "critique_custody_v2.json" in archived_names
+        assert "critique_v2.json" in archived_names
+        assert "critique_parallel_manifest_v2.json" in archived_names
+        assert "critique_check_correctness_producer_v2.json" in archived_names
+        # The create-once receipt must no longer sit at its active path so the
+        # re-entered planning loop can publish a fresh receipt.
+        assert not (plan_dir / "critique_custody_v2.json").exists()
+        manifest = json.loads((plan_dir / invalidation["manifest"]).read_text())
+        for item in manifest["artifacts"]:
+            archived = plan_dir.parent / item["archive_path"]
+            assert archived.is_file()
+            assert item["sha256"].startswith("sha256:")
+
+
+class TestOverrideRecoverBlockedCritiqueRepair:
+    """Deterministic critique phase repair archives the stale create-once receipts."""
+
+    def test_recover_blocked_critique_repair_archives_custody_receipts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "critique_custody_v5.json").write_text(
+            '{"admitted": true, "iteration": 5, "produced_at": "OLD"}\n',
+            encoding="utf-8",
+        )
+        (plan_dir / "critique_v5.json").write_text('{"checks": []}\n', encoding="utf-8")
+        (plan_dir / "critique_parallel_manifest_v5.json").write_text(
+            '{"invocation_id": "OLD"}\n', encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "message": "phase 'critique' repeated the same internal_error 3 times: critique_custody_receipt_conflict: create-once custody receipt already exists with different authority: critique_custody_v5.json",
+                "phase": "critique",
+                "state": "blocked",
+                "recorded_at": "2026-08-06T22:09:40Z",
+            },
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+        }
+        repair_evidence = {
+            "failure_kind": "deterministic_phase_failure",
+            "phase": "critique",
+            "repair_commit": "a" * 40,
+            "failure_fingerprint": "f" * 64,
+            "repair_scope": "target_workspace",
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.validated_deterministic_phase_repair",
+            lambda *args, **kwargs: repair_evidence,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.apply_state_projection",
+            lambda state, recovered_state, route_signal=None: state.update(
+                {"current_state": recovered_state}
+            ),
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._archive_stale_phase_result_for_resume",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-08-06T22:30:00Z",
+        )
+
+        response = _override_recover_blocked(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(
+                reason="deterministic critique custody receipt conflict repaired",
+                repair_commit="a" * 40,
+                failure_fingerprint="f" * 64,
+                repair_scope="target_workspace",
+            ),
+        )
+
+        assert response["success"] is True
+        assert response["state"] == "planned"
+        assert response["phase"] == "critique"
+        invalidation = response["artifact_invalidation"]
+        assert invalidation is not None
+        archived_names = {item["artifact"] for item in invalidation["artifacts"]}
+        assert "critique_custody_v5.json" in archived_names
+        assert "critique_v5.json" in archived_names
+        assert not (plan_dir / "critique_custody_v5.json").exists()
+        # The durable override record carries the archive manifest reference.
+        assert state["meta"]["overrides"][-1]["artifact_invalidation"] == invalidation
+
+    def test_recover_blocked_non_critique_phase_keeps_receipts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Recovering a non-critique phase must not archive critique custody."""
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        receipt = plan_dir / "critique_custody_v5.json"
+        receipt.write_text('{"admitted": true, "iteration": 5}\n', encoding="utf-8")
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {
+                "kind": "deterministic_phase_failure",
+                "message": "finalize phase contract failure",
+                "phase": "finalize",
+                "state": "blocked",
+                "recorded_at": "2026-08-06T22:09:40Z",
+            },
+            "resume_cursor": {
+                "phase": "finalize",
+                "retry_strategy": "repair_phase_contract",
+            },
+        }
+        repair_evidence = {
+            "failure_kind": "deterministic_phase_failure",
+            "phase": "finalize",
+            "repair_commit": "a" * 40,
+            "failure_fingerprint": "f" * 64,
+            "repair_scope": "target_workspace",
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.validated_deterministic_phase_repair",
+            lambda *args, **kwargs: repair_evidence,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.apply_state_projection",
+            lambda state, recovered_state, route_signal=None: state.update(
+                {"current_state": recovered_state}
+            ),
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._archive_stale_phase_result_for_resume",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-08-06T22:30:00Z",
+        )
+
+        response = _override_recover_blocked(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(
+                reason="finalize phase contract repaired",
+                repair_commit="a" * 40,
+                failure_fingerprint="f" * 64,
+                repair_scope="target_workspace",
+            ),
+        )
+
+        assert response["success"] is True
+        assert "artifact_invalidation" not in response
+        assert receipt.exists()
 
 
 class TestOverrideFallbackChains:
