@@ -29,7 +29,39 @@ def render_process_custody_policy() -> str:
     return PROCESS_CUSTODY_FAIL_CLOSED_POLICY
 
 
+
+
+PROFILE_INTEGRITY_POLICY = """
+## Profile integrity — keep the configured profile; never re-route phases
+
+The configured chain/plan profile (for example ``partnered-5-glm``) and its
+``phase_model`` are authoritative and must be preserved. Never change a phase
+model, vendor, or provider to work around a missing credential, a routing
+failure, or any other infrastructure issue. In particular, never re-route
+``execute`` (or any other phase) from its configured provider/model to a
+different model (for example codex/gpt-5.6-sol) as a workaround.
+
+If a phase fails because a configured provider lacks credentials or is
+unreachable:
+- source the canonical environment file (for example ``set -a; . /workspace/.cloud-hot-env; set +a``)
+  so the configured provider's key reaches the workers; or
+- fix the environment plumbing that loads the provider credential; or
+- report the provider as genuinely unavailable (a stop condition).
+
+If you change any plan/chain config to diagnose an issue, switch it back to the
+configured profile before continuing. Never leave a profile mutation behind.
+""".strip()
+
+
+def render_profile_integrity_policy() -> str:
+    """Return the canonical profile-integrity prompt fragment for fixers."""
+
+    return PROFILE_INTEGRITY_POLICY
+
+
 __all__ = [
     "PROCESS_CUSTODY_FAIL_CLOSED_POLICY",
+    "PROFILE_INTEGRITY_POLICY",
     "render_process_custody_policy",
+    "render_profile_integrity_policy",
 ]
