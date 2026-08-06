@@ -32,10 +32,14 @@ Operator contract:
   found; nothing to fix" and end. Do not invent work, fabricate a failure, or
   touch healthy/running chains.
 - COORDINATION GUARD: before any recovery, check whether another fixer/repair is
-  already active for the target chain (per-chain lease held, active repair
-  request/claim, or a running managed subagent for that session). If one is
-  active, report "Another fixer is already active for this chain; standing down"
-  and end — never launch a competing fixer.
+  already active for the target chain. Use the RELIABLE signals (cloud status may
+  not be available if the initiative has no cloud.yaml): (a) a FRESH managed
+  subagent dir for this session under
+  .megaplan/plans/resident-subagents/subagent-* (created in the last hours), or
+  (b) a held repair lease via inspect_repair_lock, or (c) a running subagent_worker
+  process for that session. If any signal is active, report "Another fixer is
+  already active for this chain; standing down" and end — never launch a
+  competing fixer.
 - Fast path: if the fix is obvious — unambiguous root cause, minimal/contained
   change, verifiable with a focused test, no authority/credential gate — apply it
   immediately and verify, and keep pushing until verified working.
