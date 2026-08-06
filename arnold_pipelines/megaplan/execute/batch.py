@@ -3708,20 +3708,44 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 },
             )
         if result.exit_code not in expected_exit_codes:
-            raise CliError(
-                "validation_job_failed",
-                f"validation job {job_id} exited {result.exit_code}; "
-                f"expected one of {expected_exit_codes}",
-                valid_next=["execute", "revise", "finalize"],
-                extra={
-                    "job_id": job_id,
-                    "validation_job_kind": kind,
-                    "exit_code": result.exit_code,
-                    "expected_exit_codes": expected_exit_codes,
-                    "evidence_hash": evidence_hash,
-                    "artifact_path": str(artifact_path),
-                },
-            )
+            _shadow_backstop = False
+            try:
+                _ps = _json.loads(
+                    (Path(plan_dir) / "state.json").read_text(encoding="utf-8")
+                )
+                _cfg = _ps.get("config") if isinstance(_ps, dict) else None
+                _shadow_backstop = (
+                    kind == "post_execute_suite"
+                    and isinstance(_cfg, dict)
+                    and _cfg.get("full_suite_backstop_mode") == "shadow"
+                )
+            except Exception:
+                pass
+            if _shadow_backstop:
+                # Honor full_suite_backstop_mode=shadow: the full-suite backstop
+                # records/reports its result but does not gate dispatch. Real
+                # enforcement mode stays fail-closed below.
+                evidence["status"] = "shadow_nonblocking"
+                log.warning(
+                    "validation job %s exited %s in SHADOW backstop mode; "
+                    "recording without blocking dispatch",
+                    job_id, result.exit_code,
+                )
+            else:
+                raise CliError(
+                    "validation_job_failed",
+                    f"validation job {job_id} exited {result.exit_code}; "
+                    f"expected one of {expected_exit_codes}",
+                    valid_next=["execute", "revise", "finalize"],
+                    extra={
+                        "job_id": job_id,
+                        "validation_job_kind": kind,
+                        "exit_code": result.exit_code,
+                        "expected_exit_codes": expected_exit_codes,
+                        "evidence_hash": evidence_hash,
+                        "artifact_path": str(artifact_path),
+                    },
+                )
     return evidence_results
 
 
