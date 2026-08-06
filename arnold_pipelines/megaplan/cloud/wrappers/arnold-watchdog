@@ -1499,7 +1499,7 @@ if not projection.get("active_request_ids"):
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         except Exception:
             pass
-        return True
+        raise SystemExit(0)
     enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
