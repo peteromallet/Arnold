@@ -1068,6 +1068,7 @@ def _override_replan(
         plan_dir,
         timestamp=timestamp,
         include_critique_epoch=True,
+        include_gate_epoch=True,
     )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
@@ -1309,17 +1310,24 @@ def _override_recover_blocked(
             raise CliError("missing_phase_result", "deterministic repair evidence is missing")
         blocker_details: list[dict[str, Any]] = []
         blocker_ids: list[str] = []
-        # Re-entering the critique phase after a deterministic phase-contract
-        # repair collides with the create-once critique custody receipts
-        # (critique_custody_v*.json) published by the superseded attempt at the
-        # same iteration.  Archive the versioned critique family durably so the
-        # fresh run can publish new receipts; the create-once invariant still
-        # holds within the new planning epoch.
+        # Re-entering a phase after a deterministic phase-contract repair
+        # collides with the immutable versioned artifacts (critique_custody_v*.json
+        # receipts for the critique phase, gate_v*.json projections for the gate
+        # phase) published by the superseded attempt at the same iteration.
+        # Archive the corresponding versioned phase family durably so the fresh
+        # run can publish new evidence; the create-once/immutable invariant
+        # still holds within the new planning epoch.
         if phase == "critique":
             artifact_invalidation = invalidate_replan_derived_artifacts(
                 plan_dir,
                 timestamp=now_utc(),
                 include_critique_epoch=True,
+            )
+        elif phase == "gate":
+            artifact_invalidation = invalidate_replan_derived_artifacts(
+                plan_dir,
+                timestamp=now_utc(),
+                include_gate_epoch=True,
             )
     elif phase_result is None:
         raise CliError(
