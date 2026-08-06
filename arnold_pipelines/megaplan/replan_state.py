@@ -34,24 +34,58 @@ REPLAN_DERIVED_ARTIFACTS_TO_INVALIDATE: tuple[str, ...] = (
     "user_actions.md",
 )
 
+# Versioned critique-family artifacts are re-produced whenever the planning
+# loop re-enters the critique phase (an explicit ``override replan`` or a
+# deterministic ``override recover-blocked`` repair of the critique phase).
+# The create-once custody receipts (``critique_custody_v*.json``) are the
+# collision point: a fresh critique run at the same iteration computes a
+# different semantic payload, and the create-once publish refuses to overwrite
+# the stale receipt, producing a deterministic
+# ``critique_custody_receipt_conflict`` phase failure.  Archive the whole
+# versioned critique family so the fresh epoch starts from an empty active
+# namespace while the superseded bytes remain audit-preserved.  The create-once
+# invariant itself is unchanged: it still applies within a planning epoch.
+REPLAN_CRITIQUE_EPOCH_ARTIFACT_PATTERNS: tuple[str, ...] = (
+    "critique_custody_v*.json",
+    "critique_custody_legacy_migration_v*.json",
+    "critique_v*.json",
+    "critique_raw_v*.txt",
+    "critique_parallel_manifest_v*.json",
+    "critique_check_*.json",
+    "critique_check_*_raw*.txt",
+    "critique_evaluator_output*.json",
+    "critique_evaluator_raw_v*.txt",
+    "step_receipt_critique_v*.json",
+)
+
 
 def invalidate_replan_derived_artifacts(
     plan_dir: Path,
     *,
     timestamp: str,
+    include_critique_epoch: bool = False,
 ) -> dict[str, Any] | None:
     """Archive active post-gate artifacts invalidated by a replan.
 
     The archive sits outside the active plan directory so phase workers cannot
     mistake old finalize evidence for the current planning epoch.  A manifest
     remains in the plan directory and binds each preserved artifact by hash.
+    When ``include_critique_epoch`` is set, the versioned critique-family
+    artifacts (including the create-once custody receipts) are archived with
+    the same manifest so a re-entered planning loop can publish fresh receipts.
     """
 
-    existing = [
-        plan_dir / name
-        for name in REPLAN_DERIVED_ARTIFACTS_TO_INVALIDATE
-        if (plan_dir / name).is_file()
-    ]
+    matched: list[Path] = []
+    for name in REPLAN_DERIVED_ARTIFACTS_TO_INVALIDATE:
+        candidate = plan_dir / name
+        if candidate.is_file():
+            matched.append(candidate)
+    if include_critique_epoch:
+        for pattern in REPLAN_CRITIQUE_EPOCH_ARTIFACT_PATTERNS:
+            for candidate in plan_dir.glob(pattern):
+                if candidate.is_file() and candidate not in matched:
+                    matched.append(candidate)
+    existing = sorted(matched)
     if not existing:
         return None
 
