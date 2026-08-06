@@ -1357,6 +1357,45 @@ def test_clearance_accepts_explicit_gate_tradeoff_for_significant_finding(
     ]
 
 
+def test_clearance_accepts_carried_tradeoff_with_traceable_plan_mutation() -> None:
+    """A later gate may omit an old tradeoff envelope after revise fixed it."""
+    flag = {
+        "id": "CF-carried-tradeoff",
+        "status": "accepted_tradeoff",
+        "addressed_in": "plan_v2.md",
+        "resolution": {
+            "kind": "fixed",
+            "claim": "The plan records the bounded bridge and its authority-neutrality guard.",
+            "where": "Step 14 gate_status",
+        },
+    }
+    finding = {
+        "finding_id": "CF-carried-tradeoff",
+        "flag_id": "CF-carried-tradeoff",
+        "blocking": True,
+    }
+
+    resolution = critique_custody._resolution_for_finding(
+        flag,
+        finding,
+        current_plan_name="plan_v2.md",
+        current_plan_sha256="sha256:current-plan",
+        source_plan_name="plan_v1.md",
+        source_plan_sha256="sha256:source-plan",
+        plan_version_order={"plan_v1.md": 1, "plan_v2.md": 2},
+        gate_expected=True,
+    )
+
+    assert resolution == {
+        "finding_id": "CF-carried-tradeoff",
+        "flag_id": "CF-carried-tradeoff",
+        "disposition": "verified_plan_mutation",
+        "plan_artifact": "plan_v2.md",
+        "plan_sha256": "sha256:current-plan",
+        "evidence": "The plan records the bounded bridge and its authority-neutrality guard.",
+    }
+
+
 def test_clearance_rejects_reused_legacy_slot_with_blocking_occurrence(
     tmp_path: Path,
 ) -> None:

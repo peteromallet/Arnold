@@ -1258,6 +1258,22 @@ def _resolution_for_finding(
             "plan_sha256": current_plan_sha256,
             "evidence": gate_resolution.get("evidence") or flag.get("verify_rationale") or resolution.get("claim"),
         }
+    # A later critique/gate iteration may carry the registry status
+    # ``accepted_tradeoff`` forward after the gate worker has stopped
+    # repeating its accepted-tradeoff envelope. That status is not, by
+    # itself, a reason to fail finalization when the earlier revise phase
+    # already left a traceable fixed claim on an admitted descendant plan.
+    # Require the same exact mutation/lineage proof as a verified finding;
+    # tradeoffs without that proof remain fail-closed below.
+    if status == "accepted_tradeoff" and gate_expected and fixed_claim:
+        return {
+            "finding_id": finding["finding_id"],
+            "flag_id": flag_id,
+            "disposition": "verified_plan_mutation",
+            "plan_artifact": current_plan_name,
+            "plan_sha256": current_plan_sha256,
+            "evidence": gate_resolution.get("evidence") or flag.get("verify_rationale") or resolution.get("claim"),
+        }
     if status == "gate_disputed" and gate_expected:
         evidence = gate_resolution.get("evidence")
         if isinstance(evidence, str) and evidence.strip():
