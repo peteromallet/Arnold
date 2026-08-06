@@ -1468,11 +1468,17 @@ if not projection.get("active_request_ids"):
     latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
     metadata = latest_failure.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
+    _superfixer_only = os.environ.get("MEGAPLAN_SUPERFIXER_ONLY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
         session=session,
-        source="watchdog",
+        # Status-based trigger: with MEGAPLAN_SUPERFIXER_ONLY=1, a blocked/failed/
+        # errored chain routes to the superfixer instead of the layered repair
+        # stack. Reversible feature flag; default keeps the legacy watchdog route.
+        source="superfixer" if _superfixer_only else "watchdog",
         target={
             "workspace": str(workspace),
             "remote_spec": remote_spec_raw,
@@ -1487,6 +1493,7 @@ if not projection.get("active_request_ids"):
             "phase_or_step": str(latest_failure.get("phase") or ""),
             "milestone_or_plan": resolved_plan_name,
             "gate_recommendation": "",
+            "superfixer_only": "1" if _superfixer_only else "",
             "blocked_task_id": str(
                 metadata.get("blocked_task_id")
                 or _blocked_task_id_from_failure(latest_failure, metadata)
