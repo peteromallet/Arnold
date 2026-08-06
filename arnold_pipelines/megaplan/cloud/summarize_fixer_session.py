@@ -1,58 +1,33 @@
 #!/usr/bin/env python3
-"""Write a 2-sentence summary for one fixer session, prioritizing the agent's
-final message. Saves to <project>/.megaplan/fixer-sessions/summaries/<id>.md and
-appends to index.md so the last N summaries can be injected into future fixers.
-"""
+"""After each fixer session, a DeepSeek Flash agent writes a 2-sentence summary
+by browsing the session dir, prioritizing the agent's final message in the logs.
+Saved to .megaplan/fixer-sessions/summaries/<id>.md + index.md so the last N can
+be injected into future fixer prompts (accounting for recurring issues)."""
 from __future__ import annotations
-import argparse, json, re, sys
+import argparse, json, os, re, subprocess, sys
 from pathlib import Path
 
+LAUNCHER = "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+MODEL = "deepseek:deepseek-v4-flash"
+
 def _final_message(run_dir: Path) -> str:
-    # 1) result.md (agent's final user-facing summary)
     for f in ("result.md", "recovery-evidence.json"):
         p = run_dir / f
         if p.exists():
             txt = p.read_text(errors="ignore")
             if f.endswith(".json"):
                 try:
-                    d = json.loads(txt)
-                    # prefer a summary-ish field, else the raw
-                    txt = json.dumps(d.get("inference") or d, indent=1)
+                    txt = json.dumps(json.loads(txt).get("inference") or txt)
                 except Exception:
                     pass
             if txt.strip():
                 return txt[:1200]
-    # 2) last agent_message in run.log
     log = run_dir / "run.log"
     if log.exists():
         msgs = re.findall(r'"type":"agent_message","text":"((?:[^"\\]|\\.)*)"', log.read_text(errors="ignore"))
         if msgs:
             return msgs[-1].encode().decode("unicode_escape")[:1200]
     return "(no final message captured)"
-
-def _structured_summary(run_dir: Path) -> dict:
-    """Deterministic evidence-linked summary (Sol-sense-checked)."""
-    out = {"objective": "", "actions": "", "verification": "", "unresolved": "", "outcome": "", "evidence_paths": ""}
-    rev = run_dir / "recovery-evidence.json"
-    if rev.exists():
-        try:
-            d = json.loads(rev.read_text(errors="ignore"))
-            ev = d.get("evidence") or {}
-            ob = ev.get("original_blocker") or {}
-            after = ob.get("after") or {}
-            out["objective"] = " ".join(str(ob.get("before", {}).get("diagnostics", ""))[:200].split())
-            out["actions"] = " ".join(str(ev.get("source_repair", {}).get("fail_closed_commit", ""))[:200].split())
-            out["outcome"] = f"original_blocker_cleared={after.get('original_blocker_cleared')} cursor={after.get('cursor')}"
-            out["unresolved"] = " ".join(str(d.get("terminal_gate", {}).get("reason", ""))[:250].split())
-            out["evidence_paths"] = "recovery-evidence.json"
-        except Exception:
-            pass
-    # fall back to final message excerpt (optional field)
-    final = _final_message(run_dir)
-    if final and "(no final message" not in final:
-        out["verification"] = " ".join(final.split())[:300]
-    return out
-
 
 def summarize(run_dir: Path, store: Path, session_id: str) -> str:
     model = "?"
@@ -61,23 +36,47 @@ def summarize(run_dir: Path, store: Path, session_id: str) -> str:
         model = m.get("model", "?")
     except Exception:
         pass
-    s = _structured_summary(run_dir)
-    summary = (
-        f"Session {session_id} ({model}) [UNTRUSTED HISTORICAL EVIDENCE — verify against current state]\n"
-        f"  objective: {s['objective']}\n"
-        f"  actions/changes: {s['actions']}\n"
-        f"  verification: {s['verification']}\n"
-        f"  unresolved/blocker: {s['unresolved']}\n"
-        f"  outcome: {s['outcome']}\n"
-        f"  evidence: {s['evidence_paths']}"
-    ).strip()
-    if len(summary) > 900:
-        summary = summary[:900] + "…"
+    final = _final_message(run_dir)
+    brief = f"""You are summarizing a completed fixer session for future fixers.
+Browse the session dir: {run_dir}
+Read result.md, recovery-evidence.json, and the FINAL message in run.log (the last agent_message). The final message is the most important signal.
+Write exactly TWO sentences: (1) what this fixer session did/fixed, (2) its outcome and any unresolved blocker/gate.
+Do NOT include the session path. Do NOT speculate beyond the evidence. Keep it to 2 sentences.
+Final message excerpt: {final[:800]}"""
+    brief_path = Path("/tmp") / f"fixer-summary-brief-{session_id}.md"
+    brief_path.write_text(brief)
+    summary = ""
+    try:
+        env = dict(os.environ)
+        result = subprocess.run(
+            ["python3", LAUNCHER, "--model", MODEL, "--toolsets", "file,web",
+             "--query-file", str(brief_path), "--project-dir", str(run_dir),
+             "--max-tokens", "4096"],
+            capture_output=True, text=True, timeout=300,
+            env=env,
+        )
+        out = (result.stdout or "") + "\n" + (result.stderr or "")
+        # The agent's final reply is the non-launcher noise; drop tool/log lines.
+        lines = []
+        for ln in out.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if s.startswith(("[launch_hermes_agent]", "[tool]", "[done]", "──", "⚡", "📖", "🔎", "💻", "✿", "¬", "processing")):
+                continue
+            lines.append(s)
+        summary = " ".join(lines)[-800:]
+    except Exception as exc:
+        summary = ""
+    if not summary or len(summary) < 20:
+        # fallback: final message excerpt
+        summary = " ".join(final.split())[:500]
+    summary = (f"Session {session_id} ({model}) [UNTRUSTED HISTORICAL EVIDENCE — verify against current state]: {summary}").strip()
     (store / "summaries").mkdir(parents=True, exist_ok=True)
     (store / "summaries" / f"{session_id}.md").write_text(summary + "\n")
     idx = store / "index.md"
     with idx.open("a") as fh:
-        fh.write(f"- [{session_id}](summaries/{session_id}.md) — {model} :: {s['outcome']} :: {s['unresolved'][:120]}\n")
+        fh.write(f"- [{session_id}](summaries/{session_id}.md) — {summary[:220]}\n")
     return summary
 
 if __name__ == "__main__":
