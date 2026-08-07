@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# ============================================================================
+# arnold-resident-schedule-run-once-r7 — corrected schedule runner (Phase 0)
+#
+# Provenance: replaces the box's broken /usr/local/bin/arnold-resident-
+# schedule-run-once-r6 (2026-08-07). r6 hardcoded expected_head=234ac3524... in
+# its body; the box tree HEAD moves under the live repair-loop (the census
+# observed it advance 87a912beb -> 49af598c0 mid-census), so the baked SHA went
+# stale and the one-minute systemd timer failed every minute with exit 1 while
+# the REAL scheduling ran out-of-band (an ad-hoc 120s bash loop).
+#
+# Why the pin is operator-controlled (design Phase 0 interim,
+# docs/runtime-and-fixer-unification-design-20260807.md): a SHA baked into the
+# script body cannot track a live tree. This runner reads expected_head from
+# ${ARNOLD_SCHEDULE_EXPECTED_HEAD} first, then from an explicit pin file
+# (${ARNOLD_SCHEDULE_PIN_FILE:-/workspace/.megaplan/schedule-pin}), and FAILS
+# LOUDLY (exit 2) if neither is configured. It never silently proceeds unpinned
+# and never falls back to the tree's own HEAD — that would disable the drift
+# guard, which is the point of the check.
+#
+# Phase-2 target: read expected_head from the per-runtime manifest
+# (runtime_manifest.json via runtime_manifest.py) instead of the interim pin.
+#
+# Census finding (2026-08-07, noted but NOT fixed here): the box references
+# CLOUD_WATCHDOG_META_REPAIR_BIN=/usr/local/bin/arnold-meta-repair-loop, but
+# that binary is MISSING on the box.
+#
+# Test-only escape hatch: ARNOLD_SCHEDULE_SKIP_DOCKER_CHECK=1 skips the docker
+# container-liveness check (used by tests/cloud/test_schedule_runner_pin.py).
+# ============================================================================
+set -euo pipefail
+
+runtime_root="${ARNOLD_SCHEDULE_RUNTIME_ROOT:-/workspace/runtime-candidates/arnold-r7-fresh-child-20260805}"
+container="${MEGAPLAN_RESIDENT_CONTAINER:-megaplan-cloud-agent-resident-only}"
+pin_file="${ARNOLD_SCHEDULE_PIN_FILE:-/workspace/.megaplan/schedule-pin}"
+dependency_root="/workspace/.megaplan/resident-deps"
+
+# --- expected_head resolution: env override -> pin file -> loud failure -------
+# NOTE: resolved BEFORE .cloud-hot-env sourcing (below) so the pin always comes
+# from the unit's environment (systemd Environment= / drop-in) or the pin file,
+# never from hot-env, which the design moves to credentials-only.
+expected_head="${ARNOLD_SCHEDULE_EXPECTED_HEAD:-}"
+if [[ -z "$expected_head" ]] && [[ -f "$pin_file" ]]; then
+    expected_head="$(sed -n '1p' "$pin_file" | tr -d '[:space:]')"
+    if ! printf '%s\n' "$expected_head" | grep -Eq '^[0-9a-f]{40}$'; then
+        echo "schedule-run-once: pin file $pin_file has invalid expected_head content (first line: '$(sed -n '1p' "$pin_file" | tr -d '[:space:]')'); expected a 40-hex git SHA" >&2
+        exit 2
+    fi
+fi
+if [[ -z "$expected_head" ]]; then
+    echo "schedule-run-once: no expected_head pin configured — set ARNOLD_SCHEDULE_EXPECTED_HEAD or write $pin_file" >&2
+    exit 2
+fi
+
+# --- git drift guards (same as r6: pinned HEAD + clean tree) ------------------
+actual_head="$(git -C "$runtime_root" rev-parse HEAD 2>/dev/null || true)"
+if [[ -z "$actual_head" ]]; then
+    echo "schedule-run-once: cannot resolve HEAD of runtime_root '$runtime_root' (not a git repository?)" >&2
+    exit 1
+fi
+if [[ "$actual_head" != "$expected_head" ]]; then
+    echo "schedule-run-once: runtime_root HEAD drift — actual: $actual_head, pinned: $expected_head" >&2
+    exit 1
+fi
+if [[ -n "$(git -C "$runtime_root" status --porcelain --untracked-files=no)" ]]; then
+    echo "schedule-run-once: runtime_root '$runtime_root' has uncommitted changes; refusing to run" >&2
+    exit 1
+fi
+
+# --- container liveness check (same guard as r6) --------------------------------
+if [[ "${ARNOLD_SCHEDULE_SKIP_DOCKER_CHECK:-0}" != "1" ]]; then
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" != "true" ]]; then
+        echo "schedule-run-once: container '$container' is not running (docker inspect failed or State.Running != true)" >&2
+        exit 1
+    fi
+fi
+
+# --- environment ------------------------------------------------------------------
+set -a
+if [[ -f /workspace/.cloud-hot-env ]]; then
+    # shellcheck disable=SC1091
+    . /workspace/.cloud-hot-env
+fi
+set +a
+export CODEX_HOME=/workspace/.codex
+export ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1
+umask 077
+
+# Seed /root/.hermes/.env from DEEPSEEK_API_KEY (idempotent; never overwrite an
+# existing key line).
+if [[ -n "${DEEPSEEK_API_KEY:-}" ]] && ! grep -q '^DEEPSEEK_API_KEY=' /root/.hermes/.env 2>/dev/null; then
+    printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY" >> /root/.hermes/.env
+    chmod 600 /root/.hermes/.env
+fi
+
+# --- dependency roots + auth guards ------------------------------------------
+for dep in fire openai requests; do
+    if [[ ! -f "$dependency_root/$dep/__init__.py" ]]; then
+        echo "schedule-run-once: missing dependency root $dependency_root/$dep/__init__.py" >&2
+        exit 1
+    fi
+done
+if [[ ! -s "$CODEX_HOME/auth.json" ]]; then
+    echo "schedule-run-once: $CODEX_HOME/auth.json missing or empty" >&2
+    exit 1
+fi
+if [[ ! -f /root/.hermes/.env ]] || [[ "$(stat -c %a /root/.hermes/.env 2>/dev/null || true)" != "600" ]]; then
+    echo "schedule-run-once: /root/.hermes/.env missing or not mode 600" >&2
+    exit 1
+fi
+
+# --- dispatch (mirrors r6's exec invocation) ------------------------------------
+docker exec "$container" bash -lc "env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"$dependency_root:$runtime_root\" python -P -m arnold_pipelines.megaplan resident schedule --store-root /workspace/arnold/.megaplan/resident --mode production run-once"
