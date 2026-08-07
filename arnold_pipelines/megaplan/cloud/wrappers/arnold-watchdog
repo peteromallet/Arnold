@@ -142,27 +142,102 @@ EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
+# Phase 2: launcher binaries resolve from the per-runtime manifest after one
+# stable bootstrap path.  The manifest is tried first; env + SRC_DIR remain
+# the fallback chain so behavior is unchanged when no manifest exists.
+RUNTIME_MANIFEST_PATH="${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
+
+runtime_manifest_field() {
+  # Print one dotted epic field from the runtime manifest, or nothing when the
+  # manifest is absent/unreadable so callers keep their legacy fallback chain.
+  # Prefers the canonical runtime_manifest reader; falls back to a plain JSON
+  # read when the module is not importable yet (pre-bootstrap launcher).
+  local field="$1"
+  # Callers pass dotted paths (epic.repair_bin / epic.runtime_root); the epic
+  # block is the only section launchers read, so normalize to the bare key.
+  field="${field#epic.}"
+  [[ -n "$field" ]] || return 0
+  [[ -f "$RUNTIME_MANIFEST_PATH" ]] || return 0
+  python3 - "$RUNTIME_MANIFEST_PATH" "$field" <<'PY'
+import json
+import pathlib
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+value = None
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
+
+    manifest = bootstrap_manifest(pathlib.Path(path))
+    epic = getattr(manifest, "epic", None)
+    value = epic.get(field) if isinstance(epic, dict) else None
+except Exception:
+    try:
+        payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        epic = payload.get("epic") if isinstance(payload, dict) else None
+        value = epic.get(field) if isinstance(epic, dict) else None
+    except Exception:
+        sys.exit(0)
+if isinstance(value, str) and value:
+    print(value)
+PY
+}
+
+MANIFEST_REPAIR_BIN="$(runtime_manifest_field epic.repair_bin)"
+MANIFEST_RUNTIME_ROOT="$(runtime_manifest_field epic.runtime_root)"
 PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
-PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
-if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
-  if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-primary-repair "$PRIMARY_REPAIR_SOURCE_BIN" "$PRIMARY_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
-    PRIMARY_REPAIR_BIN="$selected_fallback"
-  else
-    PRIMARY_REPAIR_BIN=""
+if [[ -n "$MANIFEST_REPAIR_BIN" && -x "$MANIFEST_REPAIR_BIN" ]]; then
+  PRIMARY_REPAIR_BIN="$MANIFEST_REPAIR_BIN"
+else
+  if [[ -n "$MANIFEST_REPAIR_BIN" ]]; then
+    printf '[watchdog %s] runtime manifest repair bin not executable: %s\n' \
+      "$(date -Iseconds)" "$MANIFEST_REPAIR_BIN" >>"$LOG" 2>&1 || true
+  fi
+  PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
+  if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
+    if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-primary-repair "$PRIMARY_REPAIR_SOURCE_BIN" "$PRIMARY_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
+      PRIMARY_REPAIR_BIN="$selected_fallback"
+    else
+      PRIMARY_REPAIR_BIN=""
+    fi
   fi
 fi
 META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
 META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"
-META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
-if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
-  if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-meta-repair "$META_REPAIR_SOURCE_BIN" "$META_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
-    META_REPAIR_BIN="$selected_fallback"
-  else
-    META_REPAIR_BIN=""
+MANIFEST_META_REPAIR_BIN=""
+if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then
+  MANIFEST_META_REPAIR_BIN="$MANIFEST_RUNTIME_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+fi
+if [[ -n "$MANIFEST_META_REPAIR_BIN" && -x "$MANIFEST_META_REPAIR_BIN" ]]; then
+  META_REPAIR_BIN="$MANIFEST_META_REPAIR_BIN"
+else
+  if [[ -n "$MANIFEST_META_REPAIR_BIN" ]]; then
+    printf '[watchdog %s] runtime manifest meta repair bin not executable: %s\n' \
+      "$(date -Iseconds)" "$MANIFEST_META_REPAIR_BIN" >>"$LOG" 2>&1 || true
+  fi
+  META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
+  if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
+    if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-meta-repair "$META_REPAIR_SOURCE_BIN" "$META_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
+      META_REPAIR_BIN="$selected_fallback"
+    else
+      META_REPAIR_BIN=""
+    fi
   fi
 fi
-REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
+MANIFEST_REPAIR_TRIGGER_BIN=""
+if [[ -n "$MANIFEST_RUNTIME_ROOT" ]]; then
+  MANIFEST_REPAIR_TRIGGER_BIN="$MANIFEST_RUNTIME_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger"
+fi
+if [[ -n "$MANIFEST_REPAIR_TRIGGER_BIN" && -x "$MANIFEST_REPAIR_TRIGGER_BIN" ]]; then
+  REPAIR_TRIGGER_BIN="$MANIFEST_REPAIR_TRIGGER_BIN"
+else
+  if [[ -n "$MANIFEST_REPAIR_TRIGGER_BIN" ]]; then
+    printf '[watchdog %s] runtime manifest repair trigger bin not executable: %s\n' \
+      "$(date -Iseconds)" "$MANIFEST_REPAIR_TRIGGER_BIN" >>"$LOG" 2>&1 || true
+  fi
+  REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
+fi
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
 if [[ "$COOPERATIVE_ONCE" == "1" ]]; then

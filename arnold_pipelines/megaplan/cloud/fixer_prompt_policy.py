@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+
+POLICY_SHA_ALGORITHM = "sha256"
+
 
 PROCESS_CUSTODY_FAIL_CLOSED_POLICY = """
 ## Process custody — hard fail-closed invariant
@@ -91,10 +95,40 @@ def render_fast_path_policy() -> str:
     return FAST_PATH_POLICY
 
 
+# Fixed canonical order: process custody first, then profile integrity, then
+# the obvious-fix fast path.  Both policy_sha() and render_policy_briefing()
+# derive from this single tuple so the digest and the rendered block can never
+# drift apart in ordering.
+_POLICY_FRAGMENTS = (
+    PROCESS_CUSTODY_FAIL_CLOSED_POLICY,
+    PROFILE_INTEGRITY_POLICY,
+    FAST_PATH_POLICY,
+)
+
+
+def policy_sha() -> str:
+    """Return a deterministic digest over the three canonical fragments in order."""
+
+    return hashlib.new(
+        POLICY_SHA_ALGORITHM,
+        "\n\n".join(_POLICY_FRAGMENTS).encode("utf-8"),
+    ).hexdigest()
+
+
+def render_policy_briefing() -> str:
+    """Return the full canonical policy block (all three fragments) for prompts."""
+
+    return "\n\n".join(_POLICY_FRAGMENTS)
+
+
 __all__ = [
     "PROCESS_CUSTODY_FAIL_CLOSED_POLICY",
     "PROFILE_INTEGRITY_POLICY",
     "FAST_PATH_POLICY",
+    "POLICY_SHA_ALGORITHM",
+    "_POLICY_FRAGMENTS",
+    "policy_sha",
+    "render_policy_briefing",
     "render_process_custody_policy",
     "render_profile_integrity_policy",
     "render_fast_path_policy",

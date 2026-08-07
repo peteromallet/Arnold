@@ -8,7 +8,12 @@ set -m
 # for the lifetime of this invocation while retaining the authoritative origin
 # for sibling/runtime discovery.
 repair_loop_current="${BASH_SOURCE[0]:-$0}"
-if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
+if [[ "${ARNOLD_REPAIR_LOOP_SKIP_SELF_COPY:-0}" == "1" ]]; then
+  # Test-only escape hatch (documented in tests): skip the immutable snapshot
+  # self-copy so tests can execute the checked-out script directly.
+  export ARNOLD_REPAIR_LOOP_ORIGIN="${ARNOLD_REPAIR_LOOP_ORIGIN:-$repair_loop_current}"
+  :
+elif [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
   || -z "${ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH:-}" \
   || "$repair_loop_current" != "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH" ]]; then
   if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" == "1" ]]; then
@@ -31,6 +36,11 @@ fi
 ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
 
 cleanup_repair_loop_snapshot() {
+  if [[ "${ARNOLD_REPAIR_LOOP_SKIP_SELF_COPY:-0}" == "1" ]]; then
+    # With the self-copy disabled the snapshot path aliases the origin script,
+    # which must never be deleted on exit.
+    return 0
+  fi
   rm -f -- "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH"
 }
 
@@ -59,13 +69,43 @@ trap 'repair_loop_signal_exit INT 130' INT
 trap 'repair_loop_signal_exit TERM 143' TERM
 
 if [[ $# -lt 3 ]]; then
-  echo "usage: arnold-repair-loop <session> <workspace> <remote-spec>" >&2
+  echo "usage: arnold-repair-loop [--mode=reactive|proactive] [--dry-run] <session> <workspace> <remote-spec>" >&2
   exit 64
 fi
 
-SESSION="$1"
-WORKSPACE="$2"
-REMOTE_SPEC="$3"
+# Phase 3A entry seam: one script, two modes.  --mode=proactive reuses the
+# exact investigate->mutate->redrive pipeline with a longer budget, a
+# Flash-first model set, and a NO-OP guard; --mode=reactive (the default) is
+# today's flow.  --dry-run prints what a live run WOULD do and exits 0 without
+# acquiring locks, mutating markers, spawning agents, or running git commands.
+REPAIR_LOOP_MODE="reactive"
+REPAIR_LOOP_DRY_RUN=0
+repair_loop_positional_args=()
+for repair_loop_arg in "$@"; do
+  case "$repair_loop_arg" in
+    --mode=*)
+      REPAIR_LOOP_MODE="${repair_loop_arg#--mode=}"
+      ;;
+    --dry-run)
+      REPAIR_LOOP_DRY_RUN=1
+      ;;
+    *)
+      repair_loop_positional_args+=("$repair_loop_arg")
+      ;;
+  esac
+done
+if [[ "$REPAIR_LOOP_MODE" != "reactive" && "$REPAIR_LOOP_MODE" != "proactive" ]]; then
+  echo "arnold-repair-loop: invalid --mode '$REPAIR_LOOP_MODE' (expected reactive|proactive)" >&2
+  exit 64
+fi
+if [[ "${#repair_loop_positional_args[@]}" -lt 3 ]]; then
+  echo "usage: arnold-repair-loop [--mode=reactive|proactive] [--dry-run] <session> <workspace> <remote-spec>" >&2
+  exit 64
+fi
+
+SESSION="${repair_loop_positional_args[0]}"
+WORKSPACE="${repair_loop_positional_args[1]}"
+REMOTE_SPEC="${repair_loop_positional_args[2]}"
 
 if [[ -f /workspace/.cloud-hot-env ]]; then
   set -a
@@ -78,6 +118,172 @@ WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/../../../.." &&
 
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
+
+# --- Phase 3A mode policy (design section 3) --------------------------------
+# Reactive is exactly today's flow.  Proactive reuses the same
+# investigate->mutate->redrive pipeline with a longer budget and a Flash-first
+# model set.  Constants and selectors live here, before any mutation, so the
+# --dry-run path can project the exact live configuration from pure reads.
+PROACTIVE_MODEL="${CLOUD_WATCHDOG_PROACTIVE_MODEL:-deepseek:deepseek-v4-flash}"
+PROACTIVE_BUDGET_MULTIPLIER=3
+
+select_mode_models() {
+  local mode="$1"
+  if [[ "$mode" == "proactive" ]]; then
+    # Proactive policy (design section 3 model table): Flash for the whole
+    # flow by default.  Explicit CLOUD_WATCHDOG_REPAIR_*_MODEL operator
+    # overrides (e.g. .cloud-hot-env) still win over the Flash default.
+    if [[ -n "${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-}" ]]; then
+      REPAIR_INVESTIGATOR_MODEL="$CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL"
+    else
+      REPAIR_INVESTIGATOR_MODEL="$PROACTIVE_MODEL"
+    fi
+    if [[ -n "${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-}" ]]; then
+      REPAIR_BROKERED_INVESTIGATOR_MODEL="$CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL"
+    else
+      REPAIR_BROKERED_INVESTIGATOR_MODEL="$PROACTIVE_MODEL"
+    fi
+    if [[ -n "${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-}" ]]; then
+      REPAIR_OWNER_MODEL="$CLOUD_WATCHDOG_REPAIR_OWNER_MODEL"
+    else
+      REPAIR_OWNER_MODEL="$PROACTIVE_MODEL"
+    fi
+    return 0
+  fi
+  # Reactive policy: exactly today's defaults; operator env overrides apply.
+  REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
+  REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek:deepseek-v4-pro}"
+  REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
+}
+
+# Pure-read NO-OP classification shared by the proactive NO-OP guard and the
+# --dry-run path.  Prints one line: "no-op:<reason>" (nothing is blocked) or
+# "blocked:<evidence>" (repair dispatch required).  Never acquires locks,
+# mutates markers, spawns agents, or runs git commands; safe to call
+# concurrently from multiple fixer attempts.
+repair_loop_noop_decision() {
+  local session="$1" workspace="$2" remote_spec="$3" marker_path="$4"
+  python3 - "$session" "$workspace" "$remote_spec" "$marker_path" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+session, workspace_text, remote_spec_text, marker_path_text = sys.argv[1:5]
+workspace = pathlib.Path(workspace_text) if workspace_text else None
+marker_path = pathlib.Path(marker_path_text)
+
+def load_json(path):
+    try:
+        payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+def terminal(reason):
+    print("no-op:" + reason + "; nothing is blocked")
+    raise SystemExit(0)
+
+def blocked(reason):
+    print("blocked:" + reason)
+    raise SystemExit(0)
+
+if not marker_path.exists():
+    terminal("no session marker exists")
+
+marker = load_json(marker_path)
+marker_text = json.dumps(marker, sort_keys=True)
+if "workspace_drift:" in marker_text or "sandbox_refused_outside_project_root" in marker_text:
+    blocked("marker carries repair-forcing evidence")
+
+plan_name = str(marker.get("plan_name") or "").strip()
+run_kind = str(marker.get("run_kind") or "").strip()
+if not run_kind:
+    run_kind = "plan" if plan_name else "chain"
+
+terminal_states = {"done", "complete", "completed", "finalized", "awaiting_pr_merge"}
+
+if workspace is not None and workspace.is_dir():
+    chain_paths = sorted(
+        (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
+        key=lambda p: p.stat().st_mtime if p.exists() else 0,
+        reverse=True,
+    )
+    for chain_path in chain_paths[:1]:
+        chain_state = load_json(chain_path)
+        last_state = str(chain_state.get("last_state") or "").strip().lower()
+        if last_state in terminal_states:
+            terminal("chain complete (last_state=" + last_state + ")")
+        current_plan_name = str(chain_state.get("current_plan_name") or plan_name or "").strip()
+        if current_plan_name:
+            plan_state = load_json(workspace / ".megaplan" / "plans" / current_plan_name / "state.json")
+            current_state = str(plan_state.get("current_state") or plan_state.get("state") or "").strip().lower()
+            if current_state in terminal_states:
+                terminal("plan complete (current_state=" + current_state + ")")
+
+# Liveness: a live target worker is moving, not blocked.  tmux/ps reads only.
+alive = False
+try:
+    if subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True,
+        timeout=10,
+    ).returncode == 0:
+        alive = True
+except Exception:
+    pass
+if not alive:
+    try:
+        proc = subprocess.run(["ps", "-eww", "-o", "args="], capture_output=True, text=True, timeout=10)
+        args_text = proc.stdout or ""
+        plan_pattern = re.compile(
+            r"[p]ython[0-9.]*(\s+-P)?\s+-m arnold_pipelines\.megaplan "
+            r"(init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)"
+        )
+        if plan_name and plan_pattern.search(args_text) and re.search(
+            r"(--plan[= ]" + re.escape(plan_name) + r"|--name[= ]" + re.escape(plan_name) + r".*--auto-start)",
+            args_text,
+        ):
+            alive = True
+        if not alive and remote_spec_text and re.search(
+            r"[p]ython[0-9.]*(\s+-P)?\s+-m arnold_pipelines\.megaplan chain start", args_text
+        ) and remote_spec_text in args_text:
+            alive = True
+    except Exception:
+        pass
+if alive:
+    terminal("target worker is alive")
+
+blocked("target not alive and no completion evidence; repair dispatch required")
+PY
+}
+
+if [[ "$REPAIR_LOOP_DRY_RUN" == "1" ]]; then
+  # Dry-run: report exactly what a live invocation would do, then exit 0
+  # WITHOUT acquiring locks, mutating markers, spawning agents, or running git
+  # commands.  Pure read of inputs; safe to run concurrently.
+  select_mode_models "$REPAIR_LOOP_MODE"
+  dry_run_budget="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
+  if ! [[ "$dry_run_budget" =~ ^[0-9]+$ ]] || (( dry_run_budget <= 0 )); then
+    dry_run_budget=7200
+  fi
+  if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
+    dry_run_budget=$((dry_run_budget * PROACTIVE_BUDGET_MULTIPLIER))
+  fi
+  dry_run_noop="$(repair_loop_noop_decision "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$MARKER_PATH" 2>/dev/null || echo "blocked:noop-classifier-unavailable")"
+  printf '%s\n' \
+    "arnold-repair-loop dry-run: mode=$REPAIR_LOOP_MODE" \
+    "dry-run: session=$SESSION" \
+    "dry-run: workspace=$WORKSPACE" \
+    "dry-run: remote-spec=$REMOTE_SPEC" \
+    "dry-run: investigator_model=$REPAIR_INVESTIGATOR_MODEL" \
+    "dry-run: brokered_investigator_model=$REPAIR_BROKERED_INVESTIGATOR_MODEL" \
+    "dry-run: owner_model=$REPAIR_OWNER_MODEL" \
+    "dry-run: budget_secs=$dry_run_budget" \
+    "dry-run: noop_decision=$dry_run_noop"
+  exit 0
+fi
 EARLY_SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${EARLY_SAFE_SESSION}.repair-loop.pid}"
 REPAIR_PID_FILE_OWNED=0
@@ -149,9 +355,7 @@ REPAIR_RECURRENCE_MIN_DISPATCHES="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_MIN_DISPATC
 REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-21600}"
 REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
 REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"
-REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
-REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek:deepseek-v4-pro}"
-REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
+select_mode_models "$REPAIR_LOOP_MODE"
 COMMIT_REPAIRS="${CLOUD_WATCHDOG_COMMIT_REPAIRS:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 REPAIR_GOAL_POLL_SECS="${CLOUD_WATCHDOG_REPAIR_GOAL_POLL_SECS:-30}"
@@ -263,6 +467,11 @@ fi
 
 if ! [[ "$REPAIR_BUDGET_SECS" =~ ^[0-9]+$ ]] || (( REPAIR_BUDGET_SECS <= 0 )); then
   REPAIR_BUDGET_SECS=7200
+fi
+if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
+  # Longer budget for proactive mode: PROACTIVE_BUDGET_MULTIPLIER applied to
+  # the reactive step budget (design section 3 mode semantics).
+  REPAIR_BUDGET_SECS=$((REPAIR_BUDGET_SECS * PROACTIVE_BUDGET_MULTIPLIER))
 fi
 if ! [[ "$REPAIR_ITERATION_MAX" =~ ^[0-9]+$ ]] || (( REPAIR_ITERATION_MAX <= 0 )); then
   REPAIR_ITERATION_MAX=3
@@ -8457,7 +8666,7 @@ send_discord_escalation() {
   printf '%s' "canonical_notification_outbox"
 }
 
-log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH"
+log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH mode=$REPAIR_LOOP_MODE"
 
 RUN_KIND="$(json_field "$MARKER_PATH" run_kind 2>/dev/null || true)"
 PLAN_NAME="$(json_field "$MARKER_PATH" plan_name 2>/dev/null || true)"
@@ -8507,6 +8716,22 @@ PY
 # repair.  Preserve duplicate/recursive suppression even when target liveness
 # is UNKNOWN, then release the claim on the fenced exit below.
 guard_against_recursive_repair_loop || exit 0
+if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
+  # Proactive NO-OP guard (design section 3 mode semantics): exit 0 cleanly
+  # with a typed no-op when nothing is blocked, BEFORE lock acquisition,
+  # marker mutation, agent spawn, or relaunch.  Completion already exited
+  # above; this covers a healthy live target with no repair-forcing evidence.
+  proactive_noop_health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+  if [[ "$proactive_noop_health" == "alive" ]]; then
+    proactive_noop_forced="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-115" "authority-risk bypass converted to typed evidence gap")"
+    if [[ -z "$proactive_noop_forced" ]]; then
+      log "proactive NO-OP guard: target alive and nothing blocked; clean no-op exit session=$SESSION mode=proactive"
+      printf '%s\n' "NOOP exit 0: target alive; nothing is blocked (mode=proactive session=$SESSION)"
+      exit 0
+    fi
+    log "proactive NO-OP guard: target alive but marker requires repair session=$SESSION reason=$proactive_noop_forced"
+  fi
+fi
 acquire_repair_lock || exit 75
 export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
 export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
