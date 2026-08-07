@@ -4915,6 +4915,59 @@ def _reset_stale_authority_done_tasks(
     return sorted(reset_ids)
 
 
+def _adopt_authority_completed_blocked_tasks(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path,
+    root: Path | None,
+    state: PlanState,
+) -> list[str]:
+    """Promote blocked rows whose accepted-attempt authority is dependency-closed.
+
+    A task can be terminal-success in the kernel authority (accepted attempt,
+    dependencies closed) while finalize.json still shows ``blocked`` from a stale
+    harness projection (e.g. ``task_test_budget_exhausted``). The authority reader
+    is the source of truth: promote those rows to ``done`` so the milestone
+    completion evidence can satisfy.
+    """
+
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return []
+    decisions: dict[str, Any] = {}
+    completed_ids = _scheduler_completed_ids_for_tasks(
+        [task for task in tasks if isinstance(task, dict)],
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+        decisions=decisions,
+    )
+    adopted_ids: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        raw_status = task.get("status")
+        if not isinstance(task_id, str) or raw_status != "blocked":
+            continue
+        if task_id not in completed_ids:
+            continue
+        decision = decisions.get(task_id)
+        if decision is None or not getattr(decision, "satisfied", False):
+            continue
+        task["status"] = "done"
+        for key in (
+            "blocked_reason",
+            "blocked_by",
+            "task_test_budget_exhausted",
+            "blocked_attempt_ids",
+            "unresolved_dependency_ids",
+        ):
+            task.pop(key, None)
+        adopted_ids.append(task_id)
+    return sorted(adopted_ids)
+
+
 _BASELINE_VERIFICATION_MARKER = "introduce no new failures vs the recorded baseline"
 _BASELINE_UNAVAILABLE_BLOCKER_KIND = "baseline-unavailable-no-new-failures-checkpoint"
 
@@ -5626,6 +5679,26 @@ def handle_execute_auto_loop(
             "stale-authority-retry: reset %d stale done task(s) to pending: %s",
             len(stale_authority_reset_ids),
             ", ".join(stale_authority_reset_ids),
+        )
+        tasks = finalize_data.get("tasks", [])
+
+    authority_adopted_ids = _adopt_authority_completed_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
+    if authority_adopted_ids:
+        _publish_execute_finalize(
+            plan_dir,
+            finalize_data,
+            operation="adopt-authority-completed-blocked",
+            state=state,
+        )
+        log.info(
+            "authority-adopt: promoted %d authority-completed blocked task(s) to done: %s",
+            len(authority_adopted_ids),
+            ", ".join(authority_adopted_ids),
         )
         tasks = finalize_data.get("tasks", [])
 
