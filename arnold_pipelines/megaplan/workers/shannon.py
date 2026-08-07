@@ -68,6 +68,7 @@ from arnold_pipelines.megaplan.model_seam import (
     capture_step_output,
     coerce_plan_markdown_payload,
     render_compact_review_prompt,
+    render_compact_gate_prompt,
     render_prompt_for_dispatch,
     render_step_message,
 )
@@ -2478,23 +2479,39 @@ def run_shannon_step(
             **(prompt_kwargs or {}),
         )
     except ModelBudgetError as error:
-        if step != "review":
+        if step not in ("review", "gate"):
             raise
-        rendered_step = render_compact_review_prompt(
-            "claude",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            worker=session_agent,
-            model=model,
-            normalized_model=model,
-            tier=ModelTier.NON_ENFORCED,
-            schema=schema,
-            prompt_size_error={"message": str(error)},
-            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
-            projection_capabilities=projection_capabilities,
-        )
+        if step == "gate":
+            rendered_step = render_compact_gate_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error={"message": str(error)},
+                contract_context=(prompt_kwargs or {}).get("contract_context"),
+            )
+        else:
+            rendered_step = render_compact_review_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error={"message": str(error)},
+                pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+                projection_capabilities=projection_capabilities,
+            )
     base_prompt = rendered_step.prompt
     if output_path is not None:
         output_path = Path(output_path)
@@ -2503,23 +2520,39 @@ def run_shannon_step(
     try:
         check_prompt_size(prompt, phase=step)
     except CliError as error:
-        if step != "review" or error.code != "prompt_oversized":
+        if step not in ("review", "gate") or error.code != "prompt_oversized":
             raise
-        compacted = render_compact_review_prompt(
-            "claude",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            worker=session_agent,
-            model=model,
-            normalized_model=model,
-            tier=ModelTier.NON_ENFORCED,
-            schema=schema,
-            prompt_size_error=error.extra,
-            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
-            projection_capabilities=projection_capabilities,
-        )
+        if step == "gate":
+            compacted = render_compact_gate_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error=error.extra,
+                contract_context=(prompt_kwargs or {}).get("contract_context"),
+            )
+        else:
+            compacted = render_compact_review_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error=error.extra,
+                pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+                projection_capabilities=projection_capabilities,
+            )
         base_prompt = compacted.prompt
         prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
         check_prompt_size(prompt, phase=step)
