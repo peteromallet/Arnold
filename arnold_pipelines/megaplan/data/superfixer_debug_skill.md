@@ -397,16 +397,43 @@ status. Reports are evidence, not authority and not a vote.
 Send Sol the original evidence, Sol stage 1, the swarm index, and every Flash report.
 Ask for a second explicit GPT-5.6 Sol high-reasoning read-only pass. On the
 Hetzner image, use the same cloud-compatible `--sandbox danger-full-access`
-mode and the same pre/post fingerprint guard. It must return
-two separately labelled horizons. Do not let a convenient “restart” satisfy the
-immediate horizon, and do not let a broad architecture essay substitute for it.
+mode and the same pre/post fingerprint guard. It must return THREE separately labelled tiers. Do not let a convenient
+“restart” satisfy the immediate tier, and do not let a broad architecture essay
+substitute for the structural tier.
+
+The three tiers are:
+
+1. **Tier 1 — UNBLOCK (get it moving today):** the smallest, safe,
+   occurrence-preserving action that advances THIS occurrence/milestone now and
+   proves it moved. This is what the operator should execute immediately if they
+   only want the chain moving. Name the exact command/operation and the proof.
+
+2. **Tier 2 — PROPER STRUCTURAL FIX (prevent recurrence for anyone):** the
+   complete, correct, cross-pipeline fix that closes the failure CATEGORY so no
+   other chain hits it. Name the exact module/file, the mechanism, and the
+   regression. This is the fix the platform should land, distinct from the
+   one-off unblock.
+
+3. **Tier 3 — ROOT BEHIND THE ROOT (the deeper structural cause):** the
+   meta-level diagnosis. Is the failure because a REQUIRED structure is MISSING
+   (no adopt-existing-tree transaction, no capability boundary, no canonical
+   runtime root)? Or because an EXISTING structure is NOT BEING ADHERED TO
+   (fixers writing out-of-band code, custody validator ignoring semantic facts)?
+   Name the structural gap or the adherence failure at the deepest level, and the
+   structural remedy that addresses the cause rather than the symptom.
+
+Then Sol must give a **RECOMMENDATION**: should the operator do Tier 1 (unblock)
+alone, Tier 2 (proper fix) alone, or BOTH (Tier 1 now + Tier 2/3 landed after)?
+Default to BOTH when the unblock and the structural fix are independent, but be
+explicit: if the unblock alone would immediately re-trigger the same failure,
+say so and require Tier 2/3 before declaring victory.
 Sol stage 2 must also emit the machine-readable recovery handoff described below,
 including the exact canonical owner, the route for repairing a missing authority
 seam, the route for an authority-approved migration, and the proof/return condition
 the execution agent must satisfy. A prose quarantine recommendation without that
 route is an incomplete Sol decision.
 
-### Horizon A — shortest safe path to durable movement (agent-actionable now)
+### Tier 1 — UNBLOCK: shortest safe path to durable movement (agent-actionable now)
 
 This is the smallest occurrence-preserving recovery that can make the accepted work
 advance and prove it genuinely advanced. It is not merely the shortest command or a
@@ -415,7 +442,23 @@ new live PID. It must state:
 Sol must write Horizon A as an execution charge to the fixer: use the approved
 editable runtime; implement the fix; run the focused test; inspect the actual
 failure; revise the source when it fails; and repeat until the canonical cursor or
-milestone advances. Include an explicit `iteration_loop` with the editable source
+milestone advances.
+
+EDITABLE-INSTALL (Sol must require this in Horizon A): the fix must LAND in the
+executable editable install that the chain engine actually imports — resolve the
+import root under the resident/supervisor runtime (`python3 -P -c "import
+arnold_pipelines.megaplan as m; print(m.__file__)"`), patch+commit there (mirror
+to workspace/worktree only if different), and verify by re-importing and running
+the focused regression through the SAME resolved root. A fix present only in the
+workspace clone or a worktree is NOT applied.
+
+LAUNCH-AND-KEEP-MOVING (Sol must require this in Horizon A): after the fix is
+applied and verified, Sol must direct the fixer to launch/re-drive the actual
+chain (`resume --plan` / supported auto/resume seam) and keep it moving
+task-by-task until the canonical milestone index advances past idx 0 and events
+are durably advancing (fresh plan state, not a stale marker). A commit, PID,
+heartbeat, or single finalize/replan is NOT the stopping condition; durable
+milestone movement is. Include an explicit `iteration_loop` with the editable source
 root, test command, evidence delta path, Sol re-adjudication trigger, and success
 proof. Do not describe this as “try once and quarantine.” Runtime rebind, provenance,
 and repair-request bookkeeping are part of this route, not reasons to hand the work
@@ -454,7 +497,7 @@ remaining gate, and then it must keep the schedule/next owner active. Sol must n
 answer with quarantine alone or label an owned editable repair
 `agent_actionable: false`.
 
-### Horizon B — deepest complete solution for the failure category (epic-actionable)
+### Tier 2 — PROPER STRUCTURAL FIX: deepest complete solution for the failure category (epic-actionable)
 
 This is the smallest *complete* cross-pipeline solution that closes the category,
 not an invitation to overbuild. It must state the first broken contract, any deeper
