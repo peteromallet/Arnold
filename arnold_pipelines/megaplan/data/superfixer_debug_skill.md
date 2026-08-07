@@ -1,6 +1,6 @@
 ---
 name: superfixer-debug
-description: Evidence-first recovery protocol for a stuck Megaplan epic or any autonomous pipeline. Capture the complete failure, ask GPT-5.6 Sol which bounded DeepSeek V4 Flash investigations are needed, run a read-only Flash swarm, then ask Sol for an executable immediate recovery that edits the approved editable runtime, tests and iterates until the preserved occurrence advances, plus the durable cross-pipeline architecture. Use when a validator, worker, watchdog, fixer, observer, or notification path is stalled, contradictory, or repeating.
+description: Evidence-first recovery protocol for a stuck Megaplan epic or any autonomous pipeline. Pipeline: bounded DeepSeek V4 Flash evidence swarm to understand all context → Codex/Sol decision-maker produces an ordered implementation plan (durable root fix + get-it-moving) → DeepSeek implementer executes it in the approved editable runtime, tests and iterates until the preserved occurrence advances → restart and drive the chain through the next milestones. Includes a durable root-cause checklist for the recurring stall classes (stale blocked dispositions, liveness-fenced chain auto-advance, chain spec drift, runtime split-brain, reader-side accounting bugs). Use when a validator, worker, watchdog, fixer, observer, or notification path is stalled, contradictory, or repeating.
 ---
 
 # superfixer-debug
@@ -76,6 +76,50 @@ require_editable_runtime_match); each fix reveals the next blocker; the fixer
 stops at authority gates (rebind) — grant authority or escalate; blocked tasks
 are often stale — they need re-admission. The success condition is canonical
 milestone advancement, not a fixer exit, a commit, or a live PID.
+
+### Durable root-cause checklist — the recurring stall classes
+
+Every one of these has frozen a healthy plan for hours. Before accepting a
+"blocked" disposition as legitimate, verify it against CURRENT state — a stale
+observation is not a gate.
+
+1. **A "blocked" disposition is often STALE, not authoritative.** A task/phase
+   recorded `blocked` against old state (a pre-work git HEAD, a dirty tree, a
+   baseline captured before work landed) is frozen as terminal and never
+   re-verified, cascading into `accepted_attempt_dependency_unresolved` /
+   `blocked-by-prereq`. CHECK: is the block's own recorded head_sha / baseline
+   the CURRENT head? Is the tree now clean? Is the prerequisite now satisfied?
+   If so, reset the blocked task(s) to pending and re-dispatch — the objective
+   is usually met. Over-strict executor checks (e.g. requiring HEAD == the
+   milestone base instead of verifying ancestry) are the trigger; the stated
+   task objective is the contract, not the executor's invented stricter
+   condition.
+2. **A DONE plan does not auto-advance its chain when the session is
+   liveness-fenced.** The chain runner only drives chains it can confirm are
+   live (identity-bound liveness). A `liveness_unknown` session is fenced, so a
+   completed plan leaves its milestone parked. CHECK: after a plan reaches
+   `done`, read `.megaplan/plans/.chains/chain-*.json` and run `megaplan chain
+   status`; if the milestone is still `in_progress`/`blocked` and not
+   `completed`, reconcile spec drift (below) then `megaplan chain start`. The
+   durable fix is for the runner to advance a terminal plan even when liveness
+   is unknown.
+3. **Chain spec drift silently blocks advancement.** Modifying `chain.yaml` (or
+   NORTHSTAR.md) after the chain is bound invalidates the execution binding and
+   raises `chain_spec_not_at_intended_revision`. CHECK `megaplan chain status`
+   for active_errors / execution-binding drift; reconcile via `megaplan chain
+   rebind` to the current spec before advancing.
+4. **Runtime split-brain.** The editable-install `.pth` may point at one tree
+   while the container `PYTHONPATH` resolves a different tree, so the drive and
+   the resident run different code. CHECK the effective import
+   (`python3 -P -c "import arnold_pipelines.megaplan as m; print(m.__file__)"`)
+   under the exact launcher env, and confirm the fix landed in the tree that
+   actually runs.
+5. **Reader-side accounting bugs recur.** Three shapes have each blocked a
+   healthy plan: a stale reload discarding in-memory merged evidence before a
+   count; keeping ONE artifact per batch and dropping the claim union; and
+   comparing per-task evidence against a GLOBAL newest head instead of the
+   task's own batch head. CHECK counts against the artifacts the workers
+   actually wrote, not the reloaded projection.
 
 ## The execution charge (non-negotiable)
 
@@ -170,6 +214,11 @@ in every evidence index and Sol handoff.
 - Notifications are effects, not observations. A stale poll cannot mint a new
   message, and an ambiguous provider delivery is `INDETERMINATE`, not permission to
   resend.
+- A "blocked" disposition is evidence, not a verdict. Verify the block's
+  preconditions against CURRENT state (head_sha, tree cleanliness, baseline
+  ancestry, prerequisite satisfaction) before accepting it as a gate. Stale
+  observations and over-strict executor checks have repeatedly frozen healthy
+  work; the stated task objective is the contract.
 
 ## Phase 0 — build the evidence pack
 
