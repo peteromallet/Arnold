@@ -1723,6 +1723,93 @@ class TestOverrideRecoverBlockedCritiqueRepair:
         assert "gate_signals_v5.json" in archived_names
         assert not gate.exists()
 
+    def test_recover_blocked_gate_human_decision_archives_immutable_gate_projection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Human-decision (gate_escalated) recovery must archive gate_v*.json too.
+
+        Bounded sibling instance (r7 CL2): the previous fix archived the
+        immutable gate family only on the deterministic-phase-repair branch;
+        a gate_escalated / human_decision recover-blocked left gate_v5.json
+        in place, so the fresh gate run failed on the create-once guard.
+        """
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        gate = plan_dir / "gate_v5.json"
+        gate.write_text('{"recommendation": "ESCALATE"}\n', encoding="utf-8")
+        (plan_dir / "gate_signals_v5.json").write_text(
+            '{"signals": {}}\n', encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 5,
+            "config": {},
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {
+                "kind": "gate_escalated",
+                "message": "gate escalated and requires an operator decision",
+                "phase": "gate",
+                "state": "blocked",
+                "recorded_at": "2026-08-06T22:47:18Z",
+            },
+            "resume_cursor": {
+                "phase": "gate",
+                "retry_strategy": "human_decision",
+            },
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.apply_state_projection",
+            lambda state, recovered_state, route_signal=None: state.update(
+                {"current_state": recovered_state}
+            ),
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._archive_stale_phase_result_for_resume",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-08-06T23:51:00Z",
+        )
+        # phase_result.json exists (exit_kind success) so the recovery takes the
+        # non-deterministic evaluate_blocker_recovery branch with no blockers.
+        (plan_dir / "phase_result.json").write_text(
+            '{"schema": "megaplan.phase_result", "phase": "gate", "exit_kind": "success", "blocked_tasks": [], "deviations": [], "artifacts_written": [], "cli_provenance": {}, "invocation_id": "test"}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.evaluate_blocker_recovery",
+            lambda *args, **kwargs: argparse.Namespace(
+                blockers=[], can_continue=True, requires_rerun=False
+            ),
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.command_blocker_details",
+            lambda *args, **kwargs: [],
+        )
+
+        response = _override_recover_blocked(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="gate escalation on false baseline premise repaired"),
+        )
+
+        assert response["success"] is True
+        invalidation = response.get("artifact_invalidation")
+        assert invalidation is not None
+        archived_names = {item["artifact"] for item in invalidation["artifacts"]}
+        assert "gate_v5.json" in archived_names
+        assert "gate_signals_v5.json" in archived_names
+        assert not gate.exists()
+
+
     def test_recover_blocked_non_critique_phase_keeps_receipts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
