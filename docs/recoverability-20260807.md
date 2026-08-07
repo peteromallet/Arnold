@@ -150,12 +150,12 @@ Full evidence per probe: see `probe_records.py` (canonical) or the render in thi
 
 ---
 
-## 5. Structural findings surfaced (not fixed — Phase-1+ scope, or operator decision)
+## 5. Structural findings surfaced (not fixed box-side — candidates landed in-worktree)
 
 1. **`CLOUD_WATCHDOG_META_REPAIR_BIN=/usr/local/bin/arnold-meta-repair-loop` → file missing on box.** If meta-repair is triggered, it fails. Candidate: restore the binary from the r7 bundle (it lives in-tree at `arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop`).
-2. **Test drift on the build branch:** `tests/cloud/test_repair_lock_namespace_fencing.py::test_wrappers_fail_closed_on_unknown_and_do_not_reap_pidfile_projection` fails on the pristine build branch (asserts `result.status == "stale"` in `arnold-watchdog`; wrapper lacks it). Pre-existing — not caused by this session's additive changes. The box watchdog has drifted from the test's contract; repair at Phase 3A (control-plane unification) when the seam lands.
-3. **The systemd timer + the ad-hoc 120s loop both exist; the timer fails.** Interim fix landed as candidate `arnold_pipelines/megaplan/cloud/systemd/arnold-resident-schedule-run-once-r7` (operator-controlled `expected_head` pin, never a baked SHA; Phase-2 target: read from `runtime_manifest.json`). Deployment to the box + ≥2h green verification is a promotion step, NOT done in this session (the box has a live repair loop; the candidate is verified in-worktree only).
-4. **`/workspace/arnold/.megaplan/fixer-sessions/` does not exist** although the design's swarm stage expects it — the summary store must be created when the unified seam lands.
+2. **Test drift on the build branch:** `tests/cloud/test_repair_lock_namespace_fencing.py::test_wrappers_fail_closed_on_unknown_and_do_not_reap_pidfile_projection` fails on the pristine build branch (asserts `result.status == "stale"` in `arnold-watchdog`; wrapper lacks it). Pre-existing — verified identical with all session changes stashed. The box watchdog has drifted from the test's contract; surfaced for Phase 3A when the seam is promoted.
+3. **The systemd timer + the ad-hoc 120s loop both exist; the timer fails.** Interim fix landed as candidate `arnold_pipelines/megaplan/cloud/systemd/arnold-resident-schedule-run-once-r7` (operator-controlled `expected_head` pin — env → pin file, exit 2 if unpinned; never a baked SHA; Phase-2 target: read from `runtime_manifest.json`, now implemented in-worktree). **Deployment to the box is NOT done** — operator direction for this session: no box-side deployment. The box remains byte-identical to its pre-session state (drop-in reverted to r6, r7 binary + pin file removed, bundle scratch removed — all verified).
+4. **`/workspace/arnold/.megaplan/fixer-sessions/` does not exist** although the design's swarm stage expects it — the summary store must be created when the unified seam is promoted.
 5. **Design-doc corrections from census:** r7-fresh-child is at `87a912beb`/`49af598c0` (not `f5a38311`); `/workspace/arnold` at `3299a4f0` (not `7d8426ca`); `fixer_prompt_policy.py` IS present in the box trees (design open-Q8 premise false for the box); `OPENROUTER` alias is commented out (not active).
 
 ---
@@ -166,8 +166,10 @@ Full evidence per probe: see `probe_records.py` (canonical) or the render in thi
 - Build branch `fixer/critique-epoch-invalidation-20260806` fast-forward pushed to origin: `5299c299c…` → `49af598c0b…` (box-only commits `87a912beb` + `49af598c0` now on origin; no force push).
 - Snapshot tags pushed: `box-snapshot/r7-fresh-child-20260807`, `box-snapshot/4ed-live-20260807`, `box-snapshot/workspace-arnold-20260807`.
 - Bundles + dirty artifacts copied off-box, checksums verified both sides.
-- Phase-0 code landed in worktree (see §7), tests green (34 new + adjacent suites), restore drill green (RTO ≈ 53s).
-- Box itself NOT mutated this session (live repair loop active; candidates only).
+- Phase-0 code landed in worktree (`fd9e6015e5`), tests green, restore drill green (RTO ≈ 53s).
+- **Phases 1–6 implemented in-worktree (`2965975c4e`)** per the design doc §6 file-changes table — see §8. 108 new tests + 329 adjacent pass; the only failures are 12 pre-existing host-environment ones (`.profile`→missing `.cargo/env`, `/proc`-less heartbeat probe, watchdog-wrapper extraction) verified identical on pristine HEAD.
+- **Base branch seeded:** `base/editable-install` @ `49af598c0b` created off the build branch and pushed to origin (Phase 1 — the durable source line; `origin/editible-install` stays the deploy-snapshot mirror, NOT the fixer base).
+- **Box NOT mutated this session** (operator direction: no box-side deployment; live repair loop active). Box verified byte-identical to pre-session state after an interim deployment was reverted (drop-in → r6, r7 binary + pin file + bundle scratch removed, unit failing exactly as before).
 
 ---
 
@@ -181,4 +183,23 @@ Full evidence per probe: see `probe_records.py` (canonical) or the render in thi
 | `arnold_pipelines/megaplan/cloud/systemd/arnold-resident-schedule-run-once-r7` | corrected schedule runner: operator-controlled `expected_head` (env → pin file, exit 2 if unpinned), same load-bearing guards as r6, never a baked stale SHA |
 | `tests/cloud/test_runtime_census.py`, `test_shadow_attestation.py`, `test_probe_records.py`, `test_schedule_runner_pin.py` | 34 tests, all passing |
 
-Not wired into runtime callers (Phase-2 work): the shadow gate is opt-in; the r7 runner is a candidate for promotion, not deployed.
+## 8. Phases 1–6 code delivered in this worktree (commit `2965975c4e`)
+
+| design §6 path | change | verification |
+|---|---|---|
+| `cloud/runtime_manifest.py` (new) | schema-v1 manifest: atomic flock R/W, load-by-epic + index, bootstrap-path resolution, content attestation, generation advance with rollback records, promotion journal | `test_runtime_manifest.py` 24 passed |
+| `cloud/wrappers/arnold-repair-trigger` | manifest-first repair_bin/meta_bin resolution (`bootstrap_manifest` → env → with_name + deprecation); dispatch untouched | `test_launcher_manifest_conformance.py` 5 passed + py_compile |
+| `cloud/wrappers/arnold-watchdog` | PRIMARY/META/TRIGGER bins resolve manifest-first (bash `runtime_manifest_field`), fallbacks preserved; heartbeat already present (not duplicated) | conformance + bash -n |
+| `cloud/systemd/megaplan-repair-trigger.service` | pins `ARNOLD_RUNTIME_MANIFEST` bootstrap path | conformance |
+| `cloud/repair_lock.py` | fenced durable job state machine added: `pending→running→committing→redriving→done`, dedupe key = chain UUID + failure fingerprint, monotonic fencing epoch, quarantine/reconcile on crash, acknowledge-after-redrive; existing lock API untouched | `test_repair_lock_state_machine.py` 18 passed + `test_repair_lock.py` 34 passed |
+| `cloud/wrappers/arnold-repair-loop` | `--mode=reactive\|proactive` seam (reactive byte-identical), `--dry-run` pure-read, proactive = Flash + 3× budget + NO-OP guard | `test_repair_loop_mode_seam.py` 9 passed |
+| `cloud/fixer_model_policy.py` (new) | mode+rung→{backend, provider, model, budget} table; Flash rows `gated` (PolicyError without replay approval); hot-env credentials-only validation; `model_policy_sha()` | `test_fixer_model_policy.py` 13 passed |
+| `cloud/fixer_prompt_policy.py` | additive: `policy_sha()` + `render_policy_briefing()`; existing fragments byte-identical | `test_fixer_prompt_policy_sha.py` 8 passed |
+| `tests/fixer_replay/` (new) | replay harness + 5 canned traces + predeclared non-inferiority thresholds; baseline fixture FAILS the bar (Flash stays gated); live replay opt-in via `FIXER_REPLAY_LIVE=1` | 19 passed + 1 opt-in skip |
+| `cloud/wrappers/arnold-runtime-create` (new) | worktree add + push-at-creation (fail loud) + atomic manifest write; slug-exists guard | `test_runtime_lifecycle.py` 12 passed |
+| `cloud/wrappers/arnold-promote` (new) | staged CAS promotion (plain push, exit 3 on reject), promotion journal, canary-verification warning ('push is NOT a safe cutover') | lifecycle |
+| `cloud/wrappers/arnold-close` (new) | two-phase: verify clean+pushed+no-locks → state=closed | lifecycle |
+| `cloud/wrappers/arnold-gc-sweep` (new) | closed-only + origin-resolvable + restore-proven gate; never infers stale; needs-reconcile surfaced; `--dry-run` | lifecycle |
+| `base/editable-install` branch | seeded @ `49af598c0b` from build branch, pushed to origin | pushed |
+
+**Not landed (by operator direction, no box deployment):** the r7 runner, the lifecycle wrappers, and the manifest resolver are verified candidates in the worktree only. The box continues to run its drifted pre-session state (timer failing on stale pin, ad-hoc 120s loop, two fixer flows). Promotion = the operator's generation switch, gated on the box's live repair loop standing down.
