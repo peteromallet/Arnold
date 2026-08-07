@@ -1109,6 +1109,100 @@ def test_resolve_current_target_active_step_heartbeat_absent(tmp_path: Path) -> 
     assert hb["attempt"] == 0
 
 
+def test_resolve_current_target_active_step_heartbeat_default_probe(
+    tmp_path: Path,
+) -> None:
+    """A live active-step worker in the observer's namespace is probed by a
+    default namespace-aware probe when the caller supplies none.
+
+    Regression: the watchdog canonical-control path never passed a probe, so a
+    provably live worker was labelled ``stale_active_step_dead_pid`` and every
+    repair/retrigger dispatch was fenced on liveness ``unknown``.
+    """
+    import os as _os
+
+    live_pid = _os.getpid()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hb-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "running",
+                "active_step": {
+                    "phase": "execute",
+                    "attempt": 2,
+                    "worker_pid": str(live_pid),
+                    "started_at": "2025-07-01T12:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {"session": "demo", "workspace": str(workspace), "plan_name": plan_name}
+        ),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    hb = record["active_step_heartbeat"]
+    assert hb["active"] is True
+    assert hb["pid_live"] is True
+    assert hb["worker_pid"] == str(live_pid)
+    kinds = [item.get("kind") for item in record["stale_evidence"]]
+    assert "stale_active_step_dead_pid" not in kinds
+
+
+def test_resolve_current_target_unprobeable_worker_is_not_stale(
+    tmp_path: Path,
+) -> None:
+    """A worker PID that cannot be probed (foreign namespace) is ``unknown``,
+    not a false ``stale_active_step_dead_pid`` claim."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hb-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "running",
+                "active_step": {
+                    "phase": "execute",
+                    "attempt": 1,
+                    "worker_pid": "999999",
+                    "started_at": "2025-07-01T12:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {"session": "demo", "workspace": str(workspace), "plan_name": plan_name}
+        ),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    hb = record["active_step_heartbeat"]
+    assert hb["active"] is False
+    kinds = [item.get("kind") for item in record["stale_evidence"]]
+    assert "stale_active_step_dead_pid" not in kinds
+
+
 def test_snapshots_distinguish_unchanged_live_from_fresh_activity(tmp_path: Path) -> None:
     """Two snapshots taken at different times expose evidence deltas.
 

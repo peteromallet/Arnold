@@ -371,6 +371,68 @@ class TestBrokenStateMachineEnforcementDispatch:
 
 
 # ===========================================================================
+# STALE_DERIVED_STATE enforcement dispatch (live worker beats stale label)
+# ===========================================================================
+
+
+class TestStaleDerivedStateEnforcementDispatch:
+    """A live worker with a stale derived label is trusted, never escalated.
+
+    Regression: STALE_DERIVED_STATE is produced only for a *live* worker
+    (``running=True``, ``next_action=trust_live_worker_suppress_stale_label``),
+    yet the canonical dispatch mapping escalated it to broken_superfixer,
+    labelling a healthy live run as a broken fixer and feeding the repair
+    backstop's false ``broken_superfixer`` drift diagnostics.
+    """
+
+    @staticmethod
+    def _stale_derived_target(**overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "tmux_process": {
+                "live_status": "alive",
+                "pid": 12345,
+                "pid_live": True,
+                "session_live": True,
+            },
+            "plan_state": {
+                "current_state": "executing",
+                "fingerprint": "plan-live-rc",
+                "mtime": 1.0,
+            },
+            "chain_state": {
+                "last_state": "blocked",
+                "current_plan_name": "demo-plan",
+                "fingerprint": "chain-stale-rc",
+                "mtime": 1.0,
+            },
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "plan_current_state": "executing",
+            },
+            "authoritative_source": "plan_state",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_live_worker_stale_label_is_no_action(self, tmp_path: Path) -> None:
+        target = self._stale_derived_target()
+        canonical = resolve_run_state(target)
+        assert canonical.canonical_state.name == "STALE_DERIVED_STATE"
+        assert canonical.running is True
+
+        decision = classify_repair_dispatch(
+            canonical_run_state=canonical,
+            event_plan_dir=_event_plan_dir(tmp_path),
+            plan_state=_plan_state(),
+            current_target=target,
+            custody_projection=_custody(request_id="req-stale-001"),
+        )
+        assert decision.decision == DISPATCH_DECISION_NO_ACTION
+        assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
+        assert "trust_live_worker_suppress_stale_label" in decision.rationale[0]
+
+
+# ===========================================================================
 # Typed human gates (approval, credential) preserve needs-human under enforcement
 # ===========================================================================
 

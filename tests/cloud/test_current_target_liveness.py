@@ -103,6 +103,75 @@ def test_complete_active_step_binding_beats_unbound_marker_pid(tmp_path: Path) -
     assert observed["identity"]["source"] == "active_step"
 
 
+def test_local_active_step_binding_beats_foreign_marker_pid(tmp_path: Path) -> None:
+    """A marker PID bound to a foreign namespace must not blind the observer to
+    a live active-step worker bound to this observer's namespace.
+
+    Regression: the launch (marker) identity was preferred whenever it was
+    complete, so a stale runner-container PID in the marker collapsed the
+    canonical liveness to ``unknown`` and fenced every repair/retrigger
+    decision even while the plan's own active worker was provably live in the
+    observer's namespace.
+    """
+    marker = _marker(
+        tmp_path,
+        pid=4242,
+        pid_namespace_id="pid:[foreign]",
+        process_start_identity="boot-a:10",
+    )
+    observed = observe_current_target_liveness(
+        marker,
+        marker_dir=tmp_path,
+        active_step={
+            "worker_pid": 222,
+            "worker_pid_namespace_id": "pid:[same]",
+            "worker_process_start_identity": "boot-a:20",
+        },
+        observer_pid_namespace_id="pid:[same]",
+        pid_is_live=lambda pid: pid == 222,
+        process_start_identity=lambda pid: "boot-a:20" if pid == 222 else None,
+    )
+
+    assert observed["state"] == "live"
+    assert observed["identity"]["source"] == "active_step"
+    assert observed["identity"]["namespace_matches"] is True
+
+
+def test_local_active_step_nested_runner_incarnation_beats_foreign_marker(
+    tmp_path: Path,
+) -> None:
+    """The plan engine writes the active-worker binding inside
+    ``active_step.runner_incarnation``; the observer must read it there."""
+    marker = _marker(
+        tmp_path,
+        pid=4242,
+        pid_namespace_id="pid:[foreign]",
+        process_start_identity="boot-a:10",
+    )
+    observed = observe_current_target_liveness(
+        marker,
+        marker_dir=tmp_path,
+        active_step={
+            "worker_pid": 222,
+            "runner_incarnation": {
+                "schema": "arnold.megaplan.runner_incarnation.v1",
+                "host_id": "host-1",
+                "pid_namespace_id": "pid:[same]",
+                "worker_pid": 222,
+                "worker_process_start_identity": "boot-a:20",
+            },
+        },
+        observer_pid_namespace_id="pid:[same]",
+        pid_is_live=lambda pid: pid == 222,
+        process_start_identity=lambda pid: "boot-a:20" if pid == 222 else None,
+    )
+
+    assert observed["state"] == "live"
+    assert observed["source"] == "matched_local_process_identity"
+    assert observed["identity"]["source"] == "active_step"
+    assert observed["identity"]["pid"] == 222
+
+
 def test_same_pid_with_different_start_identity_proves_old_target_dead(
     tmp_path: Path,
 ) -> None:
