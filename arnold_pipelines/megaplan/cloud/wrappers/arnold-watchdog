@@ -1476,8 +1476,16 @@ if not projection.get("active_request_ids"):
         # hourly schedule (deepseek-v4-flash + render_goal /goal) for this
         # blocked/failed/errored chain. Never route to the layered repair stack.
         try:
-            import subprocess, tempfile
-            from arnold_pipelines.megaplan.skills.fix_the_fixer.scripts.render_goal import render_goal
+            import subprocess, tempfile, runpy
+            from pathlib import Path as _Path
+            _renderer = (
+                _Path("/workspace/runtime-candidates/arnold-r7-fresh-child-20260805")
+                / "arnold_pipelines/megaplan/skills/fix-the-fixer/scripts/render_goal.py"
+            )
+            _ns = runpy.run_path(str(_renderer))
+            render_goal = _ns.get("render_goal")
+            if not callable(render_goal):
+                raise RuntimeError("fix-the-fixer goal renderer is unavailable")
             goal_text = render_goal(session)
             goal_fd, goal_path = tempfile.mkstemp(suffix=".md", prefix="superfixer-goal-")
             with os.fdopen(goal_fd, "w") as fh:
@@ -1497,8 +1505,8 @@ if not projection.get("active_request_ids"):
                 "--project-dir", str(workspace),
             ]
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        except Exception:
-            pass
+        except Exception as _sfx:
+            log "status-trigger superfixer failed session=$session err=$_sfx" 2>&1 || true
         raise SystemExit(0)
     enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
