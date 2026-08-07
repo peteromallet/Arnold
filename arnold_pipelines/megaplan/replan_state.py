@@ -78,6 +78,7 @@ def invalidate_replan_derived_artifacts(
     timestamp: str,
     include_critique_epoch: bool = False,
     include_gate_epoch: bool = False,
+    scope: str | None = None,
 ) -> dict[str, Any] | None:
     """Archive active post-gate artifacts invalidated by a replan.
 
@@ -89,9 +90,38 @@ def invalidate_replan_derived_artifacts(
     the same manifest so a re-entered planning loop can publish fresh receipts.
     ``include_gate_epoch`` does the same for the versioned gate family
     (including the immutable ``gate_v*.json`` projections).
+
+    ``scope`` selects a NARROWER, phase-scoped invalidation for a deterministic
+    retry (e.g. a gate re-run after a tiebreaker or provider retry):
+    - ``"gate_retry"``: archive ONLY the current-iteration gate family. The
+      critique custody receipt + critique producer/raw/manifest set stay ACTIVE
+      because ``validate_gate_input_custody()`` requires them on resume. This
+      fixes the over-archive that removed critique custody and broke gate resume.
+    - ``"critique_retry"``: archive ONLY the current-iteration critique family
+      (fresh critique re-run publishes a new receipt).
+    - ``"full_replan"``: archive both critique and gate families (same as
+      include_critique_epoch + include_gate_epoch).
     """
 
     matched: list[Path] = []
+    if scope == "gate_retry":
+        for pattern in REPLAN_GATE_EPOCH_ARTIFACT_PATTERNS:
+            for candidate in plan_dir.glob(pattern):
+                if candidate.is_file() and candidate not in matched:
+                    matched.append(candidate)
+        existing = sorted(matched)
+        if not existing:
+            return None
+        return _archive_matched(plan_dir, existing, timestamp)
+    if scope == "critique_retry":
+        for pattern in REPLAN_CRITIQUE_EPOCH_ARTIFACT_PATTERNS:
+            for candidate in plan_dir.glob(pattern):
+                if candidate.is_file() and candidate not in matched:
+                    matched.append(candidate)
+        existing = sorted(matched)
+        if not existing:
+            return None
+        return _archive_matched(plan_dir, existing, timestamp)
     for name in REPLAN_DERIVED_ARTIFACTS_TO_INVALIDATE:
         candidate = plan_dir / name
         if candidate.is_file():
@@ -109,7 +139,15 @@ def invalidate_replan_derived_artifacts(
     existing = sorted(matched)
     if not existing:
         return None
+    return _archive_matched(plan_dir, existing, timestamp)
 
+
+def _archive_matched(
+    plan_dir: Path,
+    existing: list[Path],
+    timestamp: str,
+) -> dict[str, Any]:
+    """Archive a concrete artifact list to .replan-invalidated with a manifest."""
     safe_timestamp = "".join(character for character in timestamp if character.isalnum())
     snapshots = [
         (source, source.read_bytes())
