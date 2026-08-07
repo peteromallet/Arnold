@@ -4035,10 +4035,7 @@ def handle_execute_one_batch(
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
-    # Batches merge authoritative task and sense-check results into this
-    # in-memory ledger. Interim finalize.json publication is intentionally
-    # deferred, so reloading here would discard that merged evidence before
-    # aggregate accounting and the final authoritative publish.
+    finalize_data = load_finalize_for_update(plan_dir)
     if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
@@ -6443,7 +6440,9 @@ def handle_execute_auto_loop(
     if trace_chunks:
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
-    finalize_data = load_finalize_for_update(plan_dir)
+    # Keep the in-memory merged ledger: batches merge accepted acks/task results
+    # into it and interim finalize.json is not published, so reloading here
+    # would discard that evidence before aggregate accounting and final publish.
     reconcile_finalized_review_scope_claims(
         finalize_data,
         plan_dir=plan_dir,
