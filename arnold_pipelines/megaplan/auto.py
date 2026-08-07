@@ -5866,13 +5866,25 @@ def drive(
                         last_phase=last_phase,
                     )
                 log(f"stalled at state={state} for {stall_count} iterations")
+                # Preserve the original blocked-phase cursor instead of wedging
+                # on a recovery-helper phase.  `_failure_resume_cursor_for_step`
+                # keeps the cursor of the phase that actually blocked when a
+                # recovery command (e.g. recover-blocked) is the projected next
+                # step; the iteration-cap path uses the same helper.  Without
+                # this, a stall after repeated recover-blocked attempts persists
+                # `phase='recover-blocked'`, which has no topology predecessor
+                # and permanently blocks recover-blocked/resume.
+                stall_cursor = _failure_resume_cursor_for_step(
+                    last_phase or str(next_step or "status"),
+                    plan_dir=plan_dir,
+                )
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="stalled",
                     message=f"stalled at '{state}' for {stall_count} iterations",
                     current_state=None,
                     phase=last_phase,
-                    resume_cursor={"phase": last_phase or str(next_step or "status"), "retry_strategy": "manual_review"},
+                    resume_cursor={**stall_cursor, "retry_strategy": "manual_review"},
                     suggested_action="Review the plan state before resuming automation.",
                     metadata={
                         "stall_count": stall_count,
