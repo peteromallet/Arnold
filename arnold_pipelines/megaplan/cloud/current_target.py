@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -272,7 +273,7 @@ def resolve_current_target(
         )
         rationale.append("needs-human sidecar references an older plan")
 
-    if active_step_heartbeat.get("worker_pid") and not active_step_heartbeat.get("active"):
+    if active_step_heartbeat.get("worker_pid") and active_step_heartbeat.get("pid_live") is False:
         stale_evidence.append(
             _artifact(
                 kind="stale_active_step_dead_pid",
@@ -1057,6 +1058,35 @@ def _collect_chain_log_evidence(
     }
 
 
+def _pid_is_live_probe(pid: int) -> bool | None:
+    """Namespace-aware liveness probe for an active-step worker PID.
+
+    Returns ``True``/``False`` only when the worker lives in this observer's
+    PID namespace; a foreign-namespace PID is ``None`` (unknown) rather than a
+    false ``dead`` claim.  The probe mirrors the semantics used by
+    :mod:`arnold_pipelines.megaplan.cloud.current_target_liveness`.
+    """
+
+    if pid <= 0:
+        return False
+    try:
+        observer_ns = os.readlink("/proc/self/ns/pid")
+        worker_ns = os.readlink(f"/proc/{pid}/ns/pid")
+    except OSError:
+        return None
+    if not observer_ns or observer_ns != worker_ns:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def _collect_active_step_heartbeat(
     plan_state: Mapping[str, Any],
     *,
@@ -1067,6 +1097,9 @@ def _collect_active_step_heartbeat(
 
     Returns the ``active_step`` sub-dict with phase, attempt, worker_pid,
     and started_at fields, plus an ``active`` boolean for quick liveness checks.
+    When no explicit probe is supplied a default namespace-aware probe is used
+    so a live worker in the observer's namespace is never mislabelled
+    ``stale_active_step_dead_pid``.
     """
     active_step = plan_state.get("active_step")
     if not isinstance(active_step, dict):
@@ -1089,9 +1122,10 @@ def _collect_active_step_heartbeat(
             pid_live = True
         elif bound.get("state") == "dead":
             pid_live = False
-    elif worker_pid and pid_is_live is not None:
+    elif worker_pid:
+        probe = pid_is_live or _pid_is_live_probe
         try:
-            pid_live = pid_is_live(int(worker_pid))
+            pid_live = probe(int(worker_pid))
         except (TypeError, ValueError):
             pid_live = False
     return {

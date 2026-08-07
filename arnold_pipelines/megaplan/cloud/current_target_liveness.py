@@ -73,25 +73,52 @@ def _pid_live(pid: int) -> bool:
 
 
 def _candidate(
-    marker: Mapping[str, Any], active_step: Mapping[str, Any]
+    marker: Mapping[str, Any],
+    active_step: Mapping[str, Any],
+    observer_namespace: str = "",
 ) -> dict[str, Any]:
-    """Prefer launch identity, then an explicitly-bound active worker."""
+    """Prefer launch identity, then an explicitly-bound active worker.
+
+    The launch (marker) identity is preferred whenever it is complete, but a
+    marker PID belongs to the original runner container.  When the marker
+    identity is bound to a *foreign* namespace while the active-step worker is
+    bound to this observer's namespace with a recorded start identity, the
+    active worker is the only identity this observer can verify.  Preferring a
+    complete candidate in the observer's own namespace keeps the local live
+    worker visible (``live``) instead of collapsing to ``unknown`` and fencing
+    every repair/retrigger decision.  Everything else keeps the existing
+    fail-closed fallback order: first complete candidate, then first candidate.
+
+    Nested ``runner_incarnation`` fields (written by the plan engine into
+    ``state.json``) are read as the active-worker binding: a flat
+    ``worker_pid_namespace_id``/``worker_process_start_identity`` pair and the
+    nested ``runner_incarnation.pid_namespace_id`` /
+    ``runner_incarnation.worker_process_start_identity`` pair are equivalent.
+    """
 
     candidates: list[dict[str, Any]] = []
     for source, value in (("marker", marker), ("active_step", active_step)):
+        incarnation = value.get("runner_incarnation")
+        incarnation = (
+            incarnation if isinstance(incarnation, Mapping) else {}
+        )
         pid = _integer(
-            value.get("pid") if source == "marker" else value.get("worker_pid")
+            value.get("pid")
+            if source == "marker"
+            else value.get("worker_pid") or incarnation.get("worker_pid")
         )
         namespace = _text(
             value.get("pid_namespace_id")
             or value.get("runner_pid_namespace_id")
             or value.get("worker_pid_namespace_id")
+            or incarnation.get("pid_namespace_id")
         )
         start = _text(
             value.get("process_start_identity")
             or value.get("runner_process_start_identity")
             or value.get("target_process_start_identity")
             or value.get("worker_process_start_identity")
+            or incarnation.get("worker_process_start_identity")
         )
         if pid is not None:
             candidates.append(
@@ -102,6 +129,13 @@ def _candidate(
                     "process_start_identity": start,
                 }
             )
+    if observer_namespace:
+        for candidate in candidates:
+            if (
+                candidate["pid_namespace_id"] == observer_namespace
+                and candidate["process_start_identity"]
+            ):
+                return candidate
     for candidate in candidates:
         if candidate["pid_namespace_id"] and candidate["process_start_identity"]:
             return candidate
@@ -162,15 +196,15 @@ def observe_current_target_liveness(
     session = _text(marker.get("session"))
     lease = observe_liveness_lease(marker, marker_dir=Path(marker_dir), now=now)
 
-    identity = _candidate(marker, active_step)
-    expected_pid = _integer(identity.get("pid"))
-    expected_namespace = _text(identity.get("pid_namespace_id"))
-    expected_start = _text(identity.get("process_start_identity"))
     observer_namespace = (
         _text(observer_pid_namespace_id)
         if observer_pid_namespace_id is not None
         else _namespace_id()
     )
+    identity = _candidate(marker, active_step, observer_namespace=observer_namespace)
+    expected_pid = _integer(identity.get("pid"))
+    expected_namespace = _text(identity.get("pid_namespace_id"))
+    expected_start = _text(identity.get("process_start_identity"))
     identity.update(
         {
             "observer_pid_namespace_id": observer_namespace,

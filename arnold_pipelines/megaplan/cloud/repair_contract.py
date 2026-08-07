@@ -2119,6 +2119,18 @@ def _classify_repair_dispatch_canonical(
             retry_strategy=retry_strategy,
             failure_kind=failure_kind,
         )
+    if state is CanonicalState.STALE_DERIVED_STATE and canonical_run_state.running:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("live worker suppresses stale derived label (trust_live_worker_suppress_stale_label)",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
     if state in {
         CanonicalState.BROKEN_STATE_MACHINE,
         CanonicalState.STALE_DERIVED_STATE,

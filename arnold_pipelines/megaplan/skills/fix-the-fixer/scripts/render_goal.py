@@ -35,6 +35,10 @@ def _prior_session_summaries(target: str, max_n: int = 5) -> str:
 
 
 def render_goal(target: str) -> str:
+    return render_goal_with_charge(target)
+
+
+def _render_goal_original(target: str) -> str:
     encoded_target = json.dumps(target, ensure_ascii=False)
     _prior = _prior_session_summaries(target)
     _prior_block = (
@@ -127,3 +131,29 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _editable_install_charge() -> str:
+    """Explicit editable-install + durable-launch charge appended to the /goal."""
+    return """
+- EDITABLE-INSTALL (mandatory): the fix must LAND in the executable editable
+  install that the chain engine actually imports — resolve it first by running
+  `python3 -P -c "import arnold_pipelines.megaplan as m; print(m.__file__)"`
+  under the resident/supervisor runtime, and confirm the resolved import root.
+  Patch + commit in that tree (and mirror to the workspace/worktree only if they
+  differ). Then verify the installed module picked up the change by re-importing
+  and running the focused regression through the SAME python/resolved root. A
+  fix that exists only in the workspace clone or a worktree is NOT applied.
+- LAUNCH AND KEEP MOVING (mandatory): after the fix is applied and verified,
+  launch/re-drive the actual chain (e.g. `python3 -P -m arnold_pipelines.megaplan
+  resume --plan <plan> --project-dir <project>` or the supported auto/resume
+  seam), then OBSERVE the canonical milestone index and events. Keep the chain
+  moving task-by-task and re-driving until the canonical milestone index
+  advances past idx 0 and events are durably advancing (fresh plan state, not a
+  stale marker). Do not finish on a commit, PID, heartbeat, or a single
+  finalize/replan; the stopping condition is durable milestone movement.
+"""
+
+
+def render_goal_with_charge(target: str) -> str:
+    return _render_goal_original(target) + _editable_install_charge()
