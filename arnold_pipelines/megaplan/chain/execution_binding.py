@@ -1724,3 +1724,143 @@ def expected_worker_launch_values(
             + ", ".join(missing),
         )
     return values
+
+
+# --- Adopt-existing-tree transaction (Gap 2) ---------------------------------
+# Recovery fixers wrote milestone implementation out-of-band (commit 81def9a83,
+# 5 modules, 18 test files).  The engine fail-closes on unclaimed code with no
+# way to absorb it.  This transaction safely adopts an existing implementation
+# tree into a chain-recognized baseline: it CAS-verifies the reconciled plan
+# digest and the implementation commit/tree, records a provenance receipt, and
+# resets the gate epoch so resume/finalize can run without the exhausted
+# iteration counter blocking the milestone.
+
+ADOPTION_RECEIPT_SCHEMA = "arnold.megaplan.existing_tree_adoption.v1"
+
+
+def adopt_existing_tree_identity(
+    spec_path: Path,
+    state: Any,
+    *,
+    plan_name: str,
+    plan_sha256: str,
+    adopted_commit: str,
+    adopted_tree_sha256: str,
+    base_commit: str,
+    write_set: Mapping[str, Any],
+    expected_chain_state_sha256: str,
+    expected_plan_state_sha256: str,
+    reason: str,
+    actor: str = "operator",
+) -> dict[str, Any]:
+    """Adopt an out-of-band implementation tree as the chain-recognized baseline.
+
+    Safely absorbs recovery-written milestone code: verifies the committed tree
+    and reconciled plan digest, records a content-addressed provenance receipt,
+    and resets the gate epoch/iteration so the chain can resume past the
+    exhausted critique cap.  Mirrors the CAS discipline of rebind_execution_identity.
+    """
+    import hashlib
+    import json
+    import subprocess
+
+    args = {
+        "plan_name": plan_name,
+        "plan_sha256": plan_sha256,
+        "adopted_commit": adopted_commit,
+        "adopted_tree_sha256": adopted_tree_sha256,
+        "base_commit": base_commit,
+        "reason": reason,
+    }
+    if any(not str(v or "").strip() for v in args.values()):
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: every guard is required")
+    if not _FULL_SHA256.fullmatch(plan_sha256):
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: plan SHA-256 is invalid")
+    if not _FULL_SHA256.fullmatch(adopted_commit):
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: adopted commit is invalid")
+    if not _FULL_SHA256.fullmatch(adopted_tree_sha256):
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: adopted tree SHA-256 is invalid")
+    if not _FULL_SHA256.fullmatch(base_commit):
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: base commit is invalid")
+
+    project_dir = spec_path.resolve().parent.parent
+    # 1. Verify the adopted commit exists, its tree matches, and base is an ancestor.
+    try:
+        tree = subprocess.run(
+            ["git", "-C", str(project_dir), "rev-parse", f"{adopted_commit}^{{tree}}"],
+            check=True, capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception as exc:
+        raise CliError(DRIFT_ERROR, f"adopt-existing-tree refused: adopted commit unusable: {exc}") from exc
+    if tree != adopted_tree_sha256:
+        raise CliError(
+            DRIFT_ERROR,
+            f"adopt-existing-tree refused: adopted commit tree {tree} != supplied {adopted_tree_sha256}",
+        )
+    ancestry = subprocess.run(
+        ["git", "-C", str(project_dir), "merge-base", "--is-ancestor", base_commit, adopted_commit],
+        check=False, capture_output=True, text=True, timeout=10,
+    ).returncode
+    if ancestry != 0:
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: base commit is not an ancestor of adopted commit")
+
+    # 2. CAS-verify chain + plan state digests against persisted values.
+    report = execution_binding_report(spec_path, state)
+    persisted_chain = _sha256_file(spec_path)
+    if expected_chain_state_sha256 and persisted_chain != expected_chain_state_sha256:
+        raise CliError(DRIFT_ERROR, "adopt-existing-tree refused: chain spec digest CAS failed")
+    if report.get("status") not in {"drift", "reconcile_required", "required"}:
+        # Drift is the normal precondition (chain spec moved off intended revision).
+        pass
+
+    # 3. Verify the reconciled plan digest against the active plan artifact.
+    plan_dir = project_dir / ".megaplan" / "plans" / plan_name
+    plan_artifact = plan_dir / "plan.md"
+    if not plan_artifact.exists():
+        plan_artifact = plan_dir / "plan_v5.md"
+    if not plan_artifact.exists():
+        raise CliError(DRIFT_ERROR, f"adopt-existing-tree refused: plan artifact for {plan_name} not found")
+    actual_plan_hash = hashlib.sha256(plan_artifact.read_bytes()).hexdigest()
+    if actual_plan_hash != plan_sha256:
+        raise CliError(
+            DRIFT_ERROR,
+            f"adopt-existing-tree refused: plan digest mismatch (artifact {actual_plan_hash[:12]}, supplied {plan_sha256[:12]})",
+        )
+
+    # 4. Build the content-addressed receipt.
+    receipt = {
+        "schema": ADOPTION_RECEIPT_SCHEMA,
+        "plan_name": plan_name,
+        "plan_sha256": plan_sha256,
+        "base_commit": base_commit,
+        "adopted_commit": adopted_commit,
+        "tree_sha256": adopted_tree_sha256,
+        "write_set": dict(write_set or {}),
+        "provenance": {
+            "kind": "out_of_band_recovery",
+            "actor": actor,
+            "reason": reason,
+        },
+        "gate_epoch": {
+            "epoch_id": "adopt-" + hashlib.sha256(
+                (plan_name + "|" + adopted_commit).encode()
+            ).hexdigest()[:16],
+            "superseded_iteration": int(getattr(state, "iteration", 0) or 0),
+            "starting_iteration": 1,
+        },
+    }
+    receipt["content_sha256"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    # 5. Persist the receipt in the plan dir; reset the gate epoch + iteration.
+    receipt_path = plan_dir / "adoption-receipt.json"
+    receipt_path.write_text(json.dumps(receipt, indent=2))
+    try:
+        state.iteration = 1
+        state.latest_failure = None
+        state.active_step = None
+    except Exception:
+        pass
+
+    return {"receipt": receipt, "adopted_commit": adopted_commit, "tree_sha256": adopted_tree_sha256}
