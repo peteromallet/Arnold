@@ -1,5 +1,5 @@
 # `partnered-5-glm` is GLM-led and keeps every Execute route in the GLM
-# family.  DeepSeek remains deliberately scoped to prep/critique/gate only.
+# family.  DeepSeek remains deliberately scoped to prep/critique only; gate now routes through GLM-5.2.
 # Finalization is deliberately pinned to GPT-5.6 Sol at high reasoning because
 # it must compile the planning result into the exact execution contract.
 # Finalize remains the sole Codex route.  Execute prefers direct Zhipu GLM
