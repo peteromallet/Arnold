@@ -374,6 +374,7 @@ def _compute_execute_scope_drift(
 ):
     milestone_base_sha: str | None = None
     carry_forward_paths: set[str] = set()
+    scope_exclusion_paths: set[str] = set()
     if state is not None and isinstance(state, dict):
         meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
         chain_policy = (
@@ -401,6 +402,16 @@ def _compute_execute_scope_drift(
                 for path in raw_carry_forward
                 if isinstance(path, str) and path.strip()
             }
+        raw_exclusions = []
+        if isinstance(meta, dict) and isinstance(meta.get("scope_exclusions"), list):
+            raw_exclusions += meta["scope_exclusions"]
+        if isinstance(chain_policy, dict) and isinstance(chain_policy.get("engine_hotpatch_files"), list):
+            raw_exclusions += chain_policy["engine_hotpatch_files"]
+        scope_exclusion_paths = {
+            _normalize_execute_claimed_path(path, project_dir)
+            for path in raw_exclusions
+            if isinstance(path, str) and path.strip()
+        }
 
     # This call's own claims drive the per-call ``files_missing`` (fabrication)
     # signal; the per-batch union below only widens ``files_claimed`` so prior
@@ -417,6 +428,9 @@ def _compute_execute_scope_drift(
     # Retain claims reconciled by earlier batches when a retry only has a
     # partial/reconstructed current payload.
     files_claimed |= _collect_finalized_task_claimed_paths(plan_dir, project_dir)
+    # Explicit operator exclusions cover declared engine/runtime hot patches;
+    # undeclared paths remain subject to the normal scope-drift gate.
+    files_claimed |= scope_exclusion_paths
     if state is not None:
         config = state.get("config") or {}
         if config.get("mode") == "doc":

@@ -4327,11 +4327,9 @@ def handle_execute_auto_loop(
     if trace_chunks:
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
-    finalize_data = read_json(plan_dir / "finalize.json")
-    finalize_data = apply_authoritative_execute_overrides(
-        finalize_data,
-        plan_dir=plan_dir,
-    )
+    # Preserve the in-memory ledger merged by the batch loop.  Interim
+    # finalize.json publication is deferred, so a reload here loses accepted
+    # task updates and sense-check acknowledgments before final accounting.
     reconcile_finalized_review_scope_claims(
         finalize_data,
         plan_dir=plan_dir,
