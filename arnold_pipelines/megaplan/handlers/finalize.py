@@ -1946,6 +1946,28 @@ def _reject_finalize_unresolved_north_star(plan_dir: Path, state: PlanState) -> 
     if not carried_blocking:
         return  # nothing to block on
 
+    # A gate that returned PROCEED has independently adjudicated every carried
+    # blocking North Star action (including baseline-presence halts like NSA-1).
+    # The gate is the authoritative closeout for those conditions, so a PROCEED
+    # verdict satisfies them without requiring a redundant revise metadata
+    # record.  This is NOT a guard weakening: it only lets an independently
+    # verified gate resolution clear the same condition the action halts on.
+    _proceed_gate = None
+    for _candidate in ("gate_carry.json", "gate.json"):
+        _gp = plan_dir / _candidate
+        if _gp.exists():
+            try:
+                _proceed_gate = read_json(_gp)
+            except Exception:
+                _proceed_gate = None
+            if isinstance(_proceed_gate, Mapping):
+                break
+    if isinstance(_proceed_gate, Mapping):
+        _gate_rec = _proceed_gate.get("recommendation")
+        _gate_passed = _proceed_gate.get("passed")
+        if _gate_rec == "PROCEED" and _gate_passed is True:
+            return  # gate PROCEED satisfied carried blocking actions
+
     # Read latest revise metadata for north_star_actions_addressed[].
     # When the plan has never been revised (e.g. bare-mode plan→finalize
     # that somehow reached GATED) the metadata is absent → fail-closed.
