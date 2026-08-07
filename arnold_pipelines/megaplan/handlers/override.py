@@ -1370,6 +1370,20 @@ def _override_recover_blocked(
         )
 
     previous_state = state["current_state"]
+    # Re-entering the critique or gate phase after ANY recover-blocked recovery
+    # collides with the immutable versioned artifacts (critique_custody_v*.json
+    # receipts for the critique phase, gate_v*.json projections for the gate
+    # phase) published by the superseded attempt at the same iteration.
+    # The deterministic-phase-repair branch above already archives them; the
+    # human-decision/gate-escalated branch (r7 CL2 gate escalation) must too,
+    # otherwise the fresh phase run fails on the create-once/immutable guard.
+    if artifact_invalidation is None and phase in {"critique", "gate"}:
+        artifact_invalidation = invalidate_replan_derived_artifacts(
+            plan_dir,
+            timestamp=now_utc(),
+            include_critique_epoch=(phase == "critique"),
+            include_gate_epoch=(phase == "gate"),
+        )
     apply_state_projection(
         state, recovered_state, route_signal="recover-blocked"
     )
