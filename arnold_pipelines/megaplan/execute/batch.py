@@ -147,6 +147,11 @@ from arnold_pipelines.megaplan.orchestration.plan_contracts import (
 )
 from arnold_pipelines.megaplan.calibration import query_route_if_enabled
 from arnold_pipelines.megaplan.blocker_recovery import build_prerequisite_scopes
+from arnold_pipelines.megaplan.quality_resolutions import (
+    is_non_terminal_quality_resolution,
+    latest_quality_resolutions,
+)
+from arnold_pipelines.megaplan.blocker_recovery import quality_blocker_id
 from arnold_pipelines.megaplan.prompts import (
     _execute_batch_prompt,
     _write_execute_batch_template,
@@ -2653,6 +2658,63 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
         f"{', '.join(blocked_ids)}. Resolve or replan the blocked task(s) "
         "before continuing."
     )
+
+
+def _drop_resolved_quality_blocking_reasons(
+    blocking_reasons: list[str],
+    *,
+    state: PlanState | None,
+) -> list[str]:
+    """Drop blocking reasons whose quality blocker the operator already
+    resolved as non-terminal debt.
+
+    The execute phase and the auto driver consume ``blocking_reasons`` to
+    decide quality-gate blocking, but only ``override recover-blocked``
+    consulted ``quality_gate_resolutions``.  That asymmetry meant an operator
+    ``accepted_with_debt`` resolution (the designed debt-acceptance seam) could
+    never clear a recurring execute deviation: the plan looped
+    blocked -> recover-blocked -> finalized -> execute -> same deviation ->
+    circuit open forever.  Honor the recorded resolution here so a resolved
+    deviation no longer re-blocks execute while the debt record stays durable
+    in state meta.
+    """
+
+    if not blocking_reasons or not isinstance(state, dict):
+        return list(blocking_reasons)
+    meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+    raw_resolutions = meta.get("quality_gate_resolutions", [])
+    resolutions = latest_quality_resolutions(
+        raw_resolutions if isinstance(raw_resolutions, list) else []
+    )
+    if not resolutions:
+        return list(blocking_reasons)
+    kept: list[str] = []
+    for reason in blocking_reasons:
+        try:
+            deviation = Deviation.from_string(str(reason))
+        except Exception:
+            deviation = None
+        blocker_id = (
+            quality_blocker_id(deviation)
+            if deviation is not None
+            else None
+        )
+        event = resolutions.get(blocker_id) if blocker_id is not None else None
+        if event is None:
+            kept.append(reason)
+            continue
+        resolution = event.get("resolution")
+        if is_non_terminal_quality_resolution(resolution, deviation_active=True):
+            log.info(
+                "dropping resolved quality blocking reason %r (blocker %s "
+                "resolved %s)",
+                reason,
+                blocker_id,
+                resolution,
+            )
+            continue
+        kept.append(reason)
+    return kept
 
 
 def _is_transient_execute_advisory(message: object) -> bool:
@@ -6558,6 +6620,10 @@ def handle_execute_auto_loop(
             else None
         ),
     )
+    blocking_reasons = _drop_resolved_quality_blocking_reasons(
+        blocking_reasons,
+        state=state,
+    )
     active_blocked_task_ids = {
         task["id"]
         for task in finalize_data.get("tasks", [])
@@ -6573,7 +6639,7 @@ def handle_execute_auto_loop(
     prereq_blocked_task_ids = _prerequisite_blocked_task_ids(
         finalize_data.get("tasks", []),
         active_task_ids=active_task_ids,
-    )
+    ) - completed_task_ids
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
@@ -6773,7 +6839,9 @@ def handle_execute_auto_loop(
         "user_approved_gate": user_approved_gate,
         "_phase_outcome": phase_outcome,
     }
-    if active_blocked_task_ids:
+    if phase_outcome == "blocked_by_prereq":
+        response["blocked_task_ids"] = sorted(prereq_blocked_task_ids)
+    elif active_blocked_task_ids:
         response["blocked_task_ids"] = sorted(active_blocked_task_ids)
     if deferred_evidence:
         response["deferred_evidence"] = deferred_evidence
