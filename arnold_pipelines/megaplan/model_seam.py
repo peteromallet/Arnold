@@ -1248,40 +1248,60 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     parts: list[str] = []
     title = _optional_str(payload.get("title"))
-    if title:
-        parts.append(f"# {title}")
     overview = _optional_str(payload.get("overview"))
-    if overview:
-        parts.append("## Overview")
-        parts.append(overview)
     steps = payload.get("steps")
-    if isinstance(steps, list):
+    if isinstance(steps, list) and steps:
+        # Deterministic Plan-IR -> canonical Markdown render (Gap 5).
+        # The structural auditor requires flat `## Step N:` headings, numbered
+        # substeps, and backticked file refs.  Render exactly that so a valid
+        # JSON steps[] payload never trips worker_structural_audit_failed.
+        if title:
+            parts.append(f"# {title}")
+        if overview:
+            parts.append("## Overview")
+            parts.append(overview)
         step_number = 1
         for step in steps:
-            if isinstance(step, Mapping):
-                step_title = _optional_str(step.get("title") or step.get("name"))
-                step_desc = _optional_str(step.get("description") or step.get("details"))
-                if step_title:
-                    if re.match(r"(?i)^step\s+\d+:", step_title):
-                        parts.append(f"### {step_title}")
+            if not isinstance(step, Mapping):
+                continue
+            step_title = _optional_str(step.get("title") or step.get("name") or f"Step {step_number}")
+            parts.append(f"## Step {step_number}: {step_title}")
+            step_desc = _optional_str(step.get("description") or step.get("details"))
+            if step_desc:
+                parts.append(step_desc)
+            files = step.get("files")
+            if isinstance(files, list) and files:
+                file_list = ", ".join(f"`{_optional_str(f)}`" for f in files if _optional_str(f))
+                if file_list:
+                    parts.append(f"Files: {file_list}")
+            actions = (
+                step.get("actions")
+                or step.get("substeps")
+                or step.get("instructions")
+            )
+            if isinstance(actions, list):
+                for idx, act in enumerate(actions, 1):
+                    if isinstance(act, Mapping):
+                        text = _optional_str(act.get("instruction") or act.get("text") or act.get("action"))
                     else:
-                        parts.append(f"### Step {step_number}: {step_title}")
-                    step_number += 1
-                if step_desc:
-                    parts.append(step_desc)
-                substeps = step.get("substeps") or step.get("instructions")
-                if isinstance(substeps, list):
-                    for sub in substeps:
-                        if isinstance(sub, Mapping):
-                            sub_text = _optional_str(
-                                sub.get("instruction") or sub.get("text")
-                            )
-                            if sub_text:
-                                parts.append(f"- {sub_text}")
-                        elif isinstance(sub, str):
-                            parts.append(f"- {sub}")
-            elif isinstance(step, str):
-                parts.append(f"- {step}")
+                        text = _optional_str(act)
+                    if text:
+                        parts.append(f"{idx}. {text}")
+            step_number += 1
+        if isinstance(payload.get("execution_order"), list) and payload["execution_order"]:
+            parts.append("## Execution Order")
+            for i, eid in enumerate(payload["execution_order"], 1):
+                parts.append(f"{i}. Step {eid}")
+        elif len(steps) > 1:
+            parts.append("## Execution Order")
+            for i in range(1, len(steps) + 1):
+                parts.append(f"{i}. Step {i}")
+    else:
+        if title:
+            parts.append(f"# {title}")
+        if overview:
+            parts.append("## Overview")
+            parts.append(overview)
     plan_text = payload.get("plan_text") or payload.get("markdown") or "\n\n".join(parts)
     if not isinstance(plan_text, str):
         plan_text = "\n\n".join(parts)
