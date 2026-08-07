@@ -1,4 +1,14 @@
-"""Durable scheduled-job worker and resident job handlers."""
+"""Durable scheduled-job worker and resident job handlers.
+
+Manifest-pin + proactive-seam integration (fixer-unification Phase 2/3A):
+``runtime_pin_ok`` verifies the executed runtime tree against the per-runtime
+manifest's pinned ``expected_head`` before proactive dispatch, and
+``proactive_seam_dispatch`` plans the hourly superfixer dispatch through the
+unified ``arnold-repair-loop --mode=proactive`` seam.  The resident job state
+machine (``cloud.repair_lock``) is part of the occurrence lifecycle: a pin
+failure fails the occurrence through the backend's existing ``mark_failed``
+retry/cancel path, exactly like any other handler failure.
+"""
 
 from __future__ import annotations
 
@@ -7,14 +17,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 from typing import Any, Protocol
 from uuid import uuid4
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from .timezone import TimezoneService, localize_text_timestamps
+from arnold_pipelines.megaplan.cloud.runtime_manifest import ManifestError, load_manifest
 from arnold_pipelines.megaplan.store import ProgressEventInput, ScheduledJobInput, Store, deterministic_idempotency_key
 
 from .auth import AuthorizationSubject, ConfirmationManager
@@ -39,6 +52,134 @@ TERMINAL_OR_INPUT_NEEDED: frozenset[CloudClassification] = frozenset(
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _git_head(root: Path) -> str | None:
+    """Read-only HEAD probe of *root*; ``None`` when not a git repository."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _git_tree_dirty(root: Path) -> bool:
+    """True when tracked files differ from HEAD (untracked files ignored)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True  # cannot verify cleanliness -> fail closed
+    return bool(proc.stdout.strip())
+
+
+def runtime_pin_ok(
+    *,
+    manifest_path: Path | None = None,
+    expected_head: str | None = None,
+    runtime_root: Path | None = None,
+) -> tuple[bool, str]:
+    """Verify the executed runtime matches its pinned revision.
+
+    When *manifest_path* is set and loadable, ``epic["expected_head"]`` and
+    ``epic["runtime_root"]`` supply the pin (fixer-unification Phase 2);
+    otherwise the explicit *expected_head*/*runtime_root* arguments are used.
+    The check is read-only: ``git -C <runtime_root> rev-parse HEAD`` must equal
+    the expected head and the tree must be clean
+    (``git status --porcelain --untracked-files=no`` empty).  Returns
+    ``(True, "ok")`` on success or ``(False, reason)``; with neither a
+    loadable manifest nor explicit pin values it returns
+    ``(True, "no_pin_configured")`` — an absent pin never fails (backward
+    compatible with today's unpinned scheduling).
+    """
+    if manifest_path is not None:
+        try:
+            manifest = load_manifest(manifest_path)
+        except (ManifestError, OSError, ValueError, TypeError):
+            manifest = None
+        if manifest is not None:
+            expected_head = str(manifest.epic.get("expected_head") or "")
+            runtime_root_value = manifest.epic.get("runtime_root")
+            runtime_root = (
+                Path(runtime_root_value) if runtime_root_value else None
+            )
+    if not expected_head or runtime_root is None:
+        if expected_head or runtime_root is not None:
+            return False, "runtime pin incomplete: expected_head and runtime_root both required"
+        return True, "no_pin_configured"
+    head = _git_head(runtime_root)
+    if head is None:
+        return False, f"runtime root {runtime_root} is not a git repository"
+    if head != expected_head:
+        return False, (
+            f"expected_head mismatch: tree {runtime_root} is at {head}, "
+            f"pin expects {expected_head}"
+        )
+    if _git_tree_dirty(runtime_root):
+        return False, f"runtime tree {runtime_root} is dirty (uncommitted changes)"
+    return True, "ok"
+
+
+def _runtime_manifest_path() -> Path:
+    """Manifest path from ``ARNOLD_RUNTIME_MANIFEST`` or the workspace default."""
+    env_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+    if env_path:
+        return Path(env_path)
+    return Path("/workspace/.megaplan/runtime-manifest.json")
+
+
+def proactive_seam_dispatch(
+    *,
+    session: str,
+    workspace: Path,
+    remote_spec: Path,
+    manifest_path: Path | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Plan the proactive (hourly superfixer) dispatch through the unified seam.
+
+    Returns a dispatch record naming the seam invocation — the
+    ``arnold-repair-loop`` wrapper in ``--mode=proactive`` (fixer-unification
+    Phase 3A) — together with the manifest pin status.  This is a
+    dispatch-PLANNING hook: it never launches a process itself.  Actual
+    process launch stays with the existing ``subagent_worker --run-managed``
+    machinery, which the caller wires to this record's ``command``.
+    """
+    pin_ok, pin_reason = runtime_pin_ok(manifest_path=manifest_path)
+    wrapper = (
+        Path(__file__).resolve().parents[1]
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    )
+    command = [
+        str(wrapper),
+        "--mode=proactive",
+        session,
+        str(workspace),
+        str(remote_spec),
+    ]
+    return {
+        "seam": "arnold-repair-loop",
+        "mode": "proactive",
+        "command": command,
+        "dry_run": dry_run,
+        "pin_ok": pin_ok,
+        "pin_reason": pin_reason,
+    }
 
 
 @dataclass(frozen=True)
@@ -193,6 +334,7 @@ class ResidentJobHandlers:
             "heartbeat": self.handle_heartbeat,
             "confirmation_expiry": self.handle_confirmation_expiry,
             "vp_todo_sweep": self.handle_vp_todo_sweep,
+            "superfixer_proactive": self.handle_superfixer_proactive,
         }
 
     async def handle_cloud_check(self, job_payload: dict[str, Any]) -> None:
@@ -265,6 +407,56 @@ class ResidentJobHandlers:
             message="Expired resident confirmation requests",
             details={"job_id": job.id, "expired_request_ids": [request.id for request in expired]},
             idempotency_key=deterministic_idempotency_key("resident-confirmation-expiry", job.id, job.attempt_count),
+        )
+
+    async def handle_superfixer_proactive(self, job_payload: dict[str, Any]) -> None:
+        """Plan the proactive superfixer dispatch for this scheduled occurrence.
+
+        Runs the manifest pin check (manifest from ``ARNOLD_RUNTIME_MANIFEST``
+        or the ``/workspace/.megaplan`` default), then records the seam
+        dispatch plan on the job payload.  A pin failure fails the occurrence
+        through the worker's existing ``mark_failed`` path (raised here, like
+        the other handlers); the actual process launch stays with the
+        ``subagent_worker --run-managed`` machinery, which consumes this
+        record's ``command``.
+        """
+        job = _job_from_payload(job_payload)
+        manifest_path = _runtime_manifest_path()
+        pin_ok, pin_reason = runtime_pin_ok(manifest_path=manifest_path)
+        if not pin_ok:
+            raise ValueError(f"superfixer_proactive pin check failed: {pin_reason}")
+        session = str(job.payload.get("session") or job.conversation_id or "")
+        workspace_value = _optional_str(job.payload.get("workspace"))
+        workspace = Path(workspace_value) if workspace_value else Path("/workspace")
+        remote_spec_value = _optional_str(job.payload.get("remote_spec"))
+        remote_spec = (
+            Path(remote_spec_value) if remote_spec_value else workspace / "chain.yaml"
+        )
+        dispatch = proactive_seam_dispatch(
+            session=session,
+            workspace=workspace,
+            remote_spec=remote_spec,
+            manifest_path=manifest_path,
+            dry_run=bool(job.payload.get("dry_run", False)),
+        )
+        payload = dict(job.payload)
+        payload["seam_dispatch_plan"] = dispatch
+        self.store.update_scheduled_job(
+            job.id,
+            payload=payload,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-superfixer-proactive-plan", job.id, job.attempt_count
+            ),
+        )
+        self._emit_sink().log_system_event(
+            level="info",
+            category="system",
+            event_type="resident_superfixer_proactive",
+            message="superfixer proactive seam dispatch planned",
+            details={"job_id": job.id, **dispatch},
+            idempotency_key=deterministic_idempotency_key(
+                "resident-superfixer-proactive-fire", job.id, job.attempt_count
+            ),
         )
 
     async def handle_vp_todo_sweep(self, job_payload: dict[str, Any]) -> None:
