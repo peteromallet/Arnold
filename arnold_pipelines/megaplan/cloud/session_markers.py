@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 CANONICAL_SIDECAR_SUFFIXES = (
+    ".liveness-fence.json",
+    ".liveness-lease.json",
     ".repair-progress.json",
     ".reap-progress.json",
     ".chain-health.progress.json",
