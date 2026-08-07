@@ -409,6 +409,12 @@ def resume_suspended_phase_wbc(
     step: str,
     agent: str,
 ) -> str:
+    # Operator recovery is deliberately callable from a fresh process.  The
+    # process that activated the attempt registered these writers only in its
+    # own memory, so bootstrap the same explicit controlled-writer set before
+    # the resume append.  The WBC facade still performs its normal guard; this
+    # does not bypass or relax authorization.
+    register_phase_wbc_writers()
     metadata = phase_wbc_suspension_state(state, step=step)
     if metadata is None:
         raise RuntimeError(f"durable phase WBC suspension is required to resume {step!r}")
