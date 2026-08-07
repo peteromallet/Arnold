@@ -1490,3 +1490,106 @@ def test_drive_execute_prereq_block_with_user_action_stays_awaiting_human(
     assert outcome.status == "awaiting_human"
     assert outcome.final_state == "finalized"
     assert "awaiting user action" in outcome.reason
+def test_drive_stall_preserves_original_blocked_cursor_not_recover_blocked(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A stall after repeated recover-blocked attempts must not wedge the cursor.
+
+    Bounded sibling instance (r7 CL2): the stall path recorded
+    ``resume_cursor={"phase": last_phase or next_step, ...}`` where last_phase
+    was the recovery helper ``recover-blocked`` (no topology predecessor), so
+    the plan wedged: recover-blocked rejected ``invalid_resume_cursor`` and
+    resume tried to exec a nonexistent ``recover-blocked`` binary.  The stall
+    path must preserve the original blocked-phase cursor exactly like the
+    iteration-cap path via ``_failure_resume_cursor_for_step``.
+    """
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    original_cursor = {
+        "phase": "gate",
+        "retry_strategy": "repair_workflow_projection",
+    }
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "workflow_cursor_mismatch",
+                    "phase": "gate",
+                    "state": "blocked",
+                },
+                "resume_cursor": original_cursor,
+                "history": [
+                    {"step": "gate", "result": "success"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status_calls = 0
+    run_calls = 0
+
+    def fake_status(plan: str, **kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        assert plan == "demo"
+        return {
+            "state": "blocked",
+            "next_step": "recover-blocked",
+            "valid_next": ["recover-blocked"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        nonlocal run_calls
+        run_calls += 1
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
+        # Retryable recover-blocked failure: missing phase_result, not one of
+        # the non-retryable codes, so the loop keeps iterating into the stall.
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "missing_phase_result",
+                    "message": (
+                        "recover-blocked requires phase_result.json with "
+                        "current blocker details"
+                    ),
+                }
+            ),
+        )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        stall_threshold=2,
+        max_iterations=10,
+        poll_sleep=0,
+    )
+
+    assert outcome.status == "stalled"
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    persisted_cursor = persisted.get("resume_cursor") or {}
+    assert persisted_cursor.get("phase") == "gate", (
+        f"stall must preserve original blocked-phase cursor, got {persisted_cursor!r}"
+    )
+    assert persisted_cursor.get("retry_strategy") == "manual_review"
+    assert persisted.get("latest_failure", {}).get("kind") == "stalled"
+    assert status_calls >= 2
