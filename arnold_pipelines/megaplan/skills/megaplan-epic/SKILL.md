@@ -1,1 +1,0 @@
-../../data/epic_skill.md

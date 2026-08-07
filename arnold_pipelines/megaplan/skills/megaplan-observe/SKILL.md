@@ -1,1 +1,0 @@
-../../data/observe_skill.md

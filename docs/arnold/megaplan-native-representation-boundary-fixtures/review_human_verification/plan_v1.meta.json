@@ -1,8 +1,0 @@
-{
-  "success_criteria": [
-    {
-      "criterion": "Human signoff",
-      "priority": "must"
-    }
-  ]
-}

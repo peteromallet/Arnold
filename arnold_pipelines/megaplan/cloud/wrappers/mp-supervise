@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated — use arnold-supervise instead.
-echo "mp-supervise: this wrapper is deprecated, use arnold-supervise instead." >&2
-exec "$(dirname "$0")/arnold-supervise" "$@"

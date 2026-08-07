@@ -1,8 +1,0 @@
-{
-  "sections": "<artifact_root>/outline/sections.json",
-  "intro": "<artifact_root>/section_drafts/intro.md",
-  "body": "<artifact_root>/section_drafts/body.md",
-  "critique": "<artifact_root>/critique/v1.md",
-  "revise": "<artifact_root>/revise/v1.md",
-  "final": "<artifact_root>/assembly/final.md"
-}

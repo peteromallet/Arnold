@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "/Users/peteromalley/Documents/poms_skills/subagent-launcher/fan.py", line 473, in _run_one
-    agent = AIAgent(
-            ^^^^^^^^
-  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 1364, in __init__
-    from arnold.agent.tools.checkpoint_manager import CheckpointManager
-ImportError: cannot import name 'CheckpointManager' from 'arnold.agent.tools.checkpoint_manager' (/Users/peteromalley/Documents/megaplan/arnold/agent/tools/checkpoint_manager.py)

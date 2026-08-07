@@ -1,9 +1,0 @@
-{
-  "candidate_score": "<artifact_root>/score_candidates/candidate_2.json",
-  "__select_tournament_candidate_score_0": "<artifact_root>/score_candidates/candidate_0.json",
-  "__select_tournament_candidate_score_1": "<artifact_root>/score_candidates/candidate_1.json",
-  "__select_tournament_candidate_score_2": "<artifact_root>/score_candidates/candidate_2.json",
-  "bracket_result": "<artifact_root>/pairwise_bracket/v1.json",
-  "winner_result": "<artifact_root>/winner/v1.json",
-  "select_tournament_winner": "c"
-}

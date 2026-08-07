@@ -1,8 +1,0 @@
-{
-  "assembly/final.md": "sha256:<content-dependent>",
-  "critique/v1.md": "sha256:<content-dependent>",
-  "outline/sections.json": "sha256:<content-dependent>",
-  "revise/v1.md": "sha256:<content-dependent>",
-  "section_drafts/body.md": "sha256:<content-dependent>",
-  "section_drafts/intro.md": "sha256:<content-dependent>"
-}

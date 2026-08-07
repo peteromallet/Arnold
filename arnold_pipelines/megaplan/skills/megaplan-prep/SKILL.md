@@ -1,1 +1,0 @@
-../../data/prep_skill.md
