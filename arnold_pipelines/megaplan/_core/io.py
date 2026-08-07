@@ -1781,7 +1781,7 @@ def list_batch_artifacts(plan_dir: Path) -> list[Path]:
     legacy flat ``execution_batch_{N}.json`` artifacts are included only when no
     S4 artifact exists for the same index (migration-only read compatibility).
     """
-    by_index: dict[int, Path] = {}
+    by_index: dict[int, list[Path]] = {}
     batches_root = plan_dir / EXECUTE_BATCHES_DIRNAME
     if batches_root.is_dir():
         for entry in sorted(batches_root.iterdir()):
@@ -1799,7 +1799,9 @@ def list_batch_artifacts(plan_dir: Path) -> list[Path]:
                 and child.suffix == ".json"
             ]
             if candidates:
-                by_index[index] = _preferred_batch_attempt(candidates)
+                # Same-index resumes may have distinct task-set receipts. Keep
+                # all audited claims so aggregate scope accounting sees the union.
+                by_index[index] = sorted(candidates)
     for path in plan_dir.glob("execution_batch_*.json"):
         if not path.is_file():
             continue
@@ -1807,8 +1809,8 @@ def list_batch_artifacts(plan_dir: Path) -> list[Path]:
         if m is None:
             continue
         index = int(m.group(1))
-        by_index.setdefault(index, path)
-    return [by_index[i] for i in sorted(by_index)]
+        by_index.setdefault(index, [path])
+    return [path for index in sorted(by_index) for path in by_index[index]]
 
 
 def current_iteration_artifact(plan_dir: Path, prefix: str, iteration: int) -> Path:

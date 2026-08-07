@@ -4035,7 +4035,10 @@ def handle_execute_one_batch(
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
-    finalize_data = load_finalize_for_update(plan_dir)
+    # Batches merge authoritative task and sense-check results into this
+    # in-memory ledger. Interim finalize.json publication is intentionally
+    # deferred, so reloading here would discard that merged evidence before
+    # aggregate accounting and the final authoritative publish.
     if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"

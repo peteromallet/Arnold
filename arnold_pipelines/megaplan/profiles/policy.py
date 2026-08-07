@@ -48,6 +48,7 @@ KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 ROBUSTNESS_ALIASES: dict[str, str] = {
     "tiny": "bare",
+    "medium": "light",
     "standard": "full",
     "robust": "thorough",
     "superrobust": "extreme",
