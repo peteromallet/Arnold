@@ -172,6 +172,89 @@ def _load_hot_env(path: Path = HOT_ENV_PATH) -> None:
             value = value[1:-1]
         os.environ[key] = value
 
+RUNTIME_MANIFEST_DEFAULT_PATH = "/workspace/.megaplan/runtime-manifest.json"
+WITH_NAME_REPAIR_BIN_DEPRECATION = (
+    "with_name repair-bin resolution is deprecated — bootstrap from the runtime manifest"
+)
+
+
+def _runtime_manifest_path() -> Path:
+    """Return the manifest path from the stable bootstrap env or the default."""
+
+    return Path(os.environ.get("ARNOLD_RUNTIME_MANIFEST", RUNTIME_MANIFEST_DEFAULT_PATH))
+
+
+def _bootstrap_runtime_manifest() -> Any | None:
+    """Bootstrap the per-runtime manifest, or None when unavailable.
+
+    Phase 2: the runtime manifest is the single post-bootstrap runtime
+    resolver.  Absence of the module or of a readable manifest degrades to
+    None so callers keep the legacy env/with_name fallback chain unchanged.
+    """
+
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
+    except ImportError:
+        return None
+    try:
+        return bootstrap_manifest(_runtime_manifest_path())
+    except Exception:
+        return None
+
+
+def _manifest_epic() -> dict[str, Any] | None:
+    manifest = _bootstrap_runtime_manifest()
+    if manifest is None:
+        return None
+    epic = getattr(manifest, "epic", None)
+    return epic if isinstance(epic, dict) else None
+
+
+def _manifest_repair_bin() -> str | None:
+    epic = _manifest_epic()
+    if epic is None:
+        return None
+    value = epic.get("repair_bin")
+    return str(value) if value else None
+
+
+def _manifest_runtime_root() -> str | None:
+    epic = _manifest_epic()
+    if epic is None:
+        return None
+    value = epic.get("runtime_root")
+    return str(value) if value else None
+
+
+def _default_repair_bin() -> str:
+    """Resolve the repair loop: runtime manifest, env override, then with_name."""
+
+    manifest_bin = _manifest_repair_bin()
+    if manifest_bin:
+        return manifest_bin
+    env_bin = os.getenv("ARNOLD_REPAIR_TRIGGER_REPAIR_BIN")
+    if env_bin:
+        return env_bin
+    print(WITH_NAME_REPAIR_BIN_DEPRECATION, file=sys.stderr)
+    return str(Path(__file__).resolve().with_name("arnold-repair-loop"))
+
+
+def _default_meta_repair_bin() -> str:
+    """Resolve the meta repair loop: runtime_root, env override, then with_name."""
+
+    runtime_root = _manifest_runtime_root()
+    if runtime_root:
+        derived = str(
+            Path(runtime_root)
+            / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+        )
+        return derived
+    env_bin = os.getenv("ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN")
+    if env_bin:
+        return env_bin
+    print(WITH_NAME_REPAIR_BIN_DEPRECATION, file=sys.stderr)
+    return str(Path(__file__).resolve().with_name("arnold-meta-repair-loop"))
+
 
 def main(argv: list[str] | None = None) -> int:
     _load_hot_env()
@@ -1704,17 +1787,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--repair-bin",
-        default=os.getenv(
-            "ARNOLD_REPAIR_TRIGGER_REPAIR_BIN",
-            str(Path(__file__).resolve().with_name("arnold-repair-loop")),
-        ),
+        default=_default_repair_bin(),
     )
     parser.add_argument(
         "--meta-repair-bin",
-        default=os.getenv(
-            "ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN",
-            str(Path(__file__).resolve().with_name("arnold-meta-repair-loop")),
-        ),
+        default=_default_meta_repair_bin(),
     )
     parser.add_argument("--lock-dir", default=os.getenv("ARNOLD_REPAIR_TRIGGER_LOCK_DIR", ""))
     parser.add_argument(
