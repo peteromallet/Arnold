@@ -61,7 +61,11 @@ _AUTHORITY_LIKE_MARKERS: dict[str, Any] = {
 }
 
 
-def _context(attempt_id: str) -> LedgerEventContext:
+def _context(
+    attempt_id: str,
+    *,
+    observed_at: str = "2026-08-01T00:00:00+00:00",
+) -> LedgerEventContext:
     return LedgerEventContext(
         identity=AttemptIdentity(
             workflow_id="wf-cl2",
@@ -73,8 +77,8 @@ def _context(attempt_id: str) -> LedgerEventContext:
         adapter=RuntimeAdapter(AdapterKind.NATIVE, "cl2-freshness-fixture"),
         versions=VersionSet(code_version="c116f38cc83"),
         grant_ref=GrantRef(grant_id="bridge-no-positive-authority"),
-        occurred_at="2026-08-01T00:00:00+00:00",
-        observed_at="2026-08-01T00:00:00+00:00",
+        occurred_at=observed_at,
+        observed_at=observed_at,
     )
 
 
@@ -86,8 +90,9 @@ def _persist(
     evidence_availability: str = EvidenceAvailability.RETAINED.value,
     parse_status: str = ParseStatus.SELECTED.value,
     metadata: dict[str, Any] | None = None,
+    observed_at: str = "2026-08-01T00:00:00+00:00",
 ) -> None:
-    context = _context(attempt_id)
+    context = _context(attempt_id, observed_at=observed_at)
     service = LedgerPersistenceService(store)
     envelope = CritiqueOccurrenceEnvelope(
         occurrence_id=occurrence_id,
@@ -354,3 +359,91 @@ def test_freshness_is_read_only_and_idempotent(ledger: Any) -> None:
     assert len(first) == len(second) == 4
     for a, b in zip(first, second):
         assert a == b
+
+
+def test_all_four_freshness_categories_in_one_ledger(ledger: Any) -> None:
+    """Seed available, age-stale, unavailable, and tombstoned evidence end-to-end.
+
+    The fixture task names four categories -- available, *stale* (age-based),
+    unavailable, and tombstoned -- and this builds all four in ONE ledger, then
+    computes freshness with an explicit window and asserts each carries its
+    explicit reason.  Age-staleness is distinct from absence: an available
+    record older than the window surfaces with
+    ``observation_exceeded_max_age``, while unavailable/tombstoned keep their
+    absence reasons by precedence (the age detector is never reached for them).
+    No category confers authority.
+    """
+    store, attempt_id = ledger
+
+    # Window: 1 hour.  ``now`` is 2 hours after the baseline observation time.
+    now = "2026-08-01T02:00:00+00:00"
+    max_age_seconds = 3600
+
+    # 1. Available evidence observed recently -- inside the window -> fresh.
+    _persist(
+        store,
+        attempt_id,
+        occurrence_id="occ-available-recent",
+        observed_at="2026-08-01T01:30:00+00:00",
+    )
+
+    # 2. Available evidence observed at the baseline time -- outside the window
+    #    -> age-stale (distinct reason, NOT an absence reason).
+    _persist(
+        store,
+        attempt_id,
+        occurrence_id="occ-available-age-stale",
+        observed_at="2026-08-01T00:00:00+00:00",
+    )
+
+    # 3. Unavailable evidence (also at the baseline time, but precedence beats
+    #    age so the reason is "unavailable", not the age reason).
+    _persist(
+        store,
+        attempt_id,
+        occurrence_id="occ-unavailable",
+        evidence_availability=EvidenceAvailability.UNAVAILABLE.value,
+    )
+
+    # 4. Tombstoned evidence (precedence beats both unavailable and age).
+    _persist(
+        store,
+        attempt_id,
+        occurrence_id="occ-tombstoned",
+        parse_status=ParseStatus.TOMBSTONED.value,
+    )
+
+    vectors = FreshnessTracker(store).compute_freshness(
+        attempt_id, now=now, max_age_seconds=max_age_seconds
+    )
+    by_id = {vec.occurrence_id: vec for vec in vectors}
+
+    # (1) Recent available -> fresh.
+    recent = by_id["occ-available-recent"]
+    assert recent.is_stale is False
+    assert recent.staleness_reason == ""
+
+    # (2) Available but old -> age-stale with the explicit age reason.
+    age_stale = by_id["occ-available-age-stale"]
+    assert age_stale.is_stale is True
+    assert age_stale.staleness_reason == REASON_OBSERVATION_EXCEEDED_MAX_AGE
+
+    # (3) Unavailable -> stale, reason "unavailable".
+    unavail = by_id["occ-unavailable"]
+    assert unavail.is_stale is True
+    assert unavail.staleness_reason == REASON_UNAVAILABLE
+
+    # (4) Tombstoned -> stale, reason "tombstoned".
+    tomb = by_id["occ-tombstoned"]
+    assert tomb.is_stale is True
+    assert tomb.staleness_reason == REASON_TOMBSTONED
+
+    # All four categories are represented by exactly these distinct reasons;
+    # none of them exposes an authority channel.
+    observed_reasons = {vec.staleness_reason for vec in vectors}
+    assert "" in observed_reasons  # one fresh
+    assert REASON_OBSERVATION_EXCEEDED_MAX_AGE in observed_reasons
+    assert REASON_UNAVAILABLE in observed_reasons
+    assert REASON_TOMBSTONED in observed_reasons
+    for vec in vectors:
+        assert not hasattr(vec, "authority")
