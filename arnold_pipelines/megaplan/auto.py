@@ -4118,6 +4118,24 @@ def _project_auto_dispatch(
         for item in (cursor_payload.get("next_dispatch_phases") if isinstance(cursor_payload, Mapping) else ())
         if isinstance(item, str) and item
     )
+    # The static pypeline cursor is plan-agnostic: it describes the canonical
+    # full workflow, not the plan's actual robustness-pruned topology (for
+    # example at light robustness there is no gate step: critiqued -> revise).
+    # Reconcile the control projection against the plan's own topology so
+    # legitimate robustness-pruned transitions are not flagged as drift.
+    if state.get("current_state"):
+        try:
+            from arnold_pipelines.megaplan._core.workflow import workflow_next
+
+            plan_next = tuple(
+                str(item) for item in workflow_next(state) if isinstance(item, str) and item
+            )
+        except Exception:
+            plan_next = ()
+        if plan_next:
+            cursor_next_dispatches = tuple(
+                dict.fromkeys((*cursor_next_dispatches, *plan_next))
+            )
     blocker_recovery = status.get("blocker_recovery")
     if (
         state.get("current_state") == STATE_BLOCKED
