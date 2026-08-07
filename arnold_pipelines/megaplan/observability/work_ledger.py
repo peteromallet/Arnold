@@ -1063,14 +1063,19 @@ def emit_transition_activity(
     elapsed_ms: int | None = 0,
     metadata: dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    # transition is an explicit keyword argument to emit_transition,
+    # so it must win over any transition key smuggled inside the caller
+    # payload.  Merging it here avoids the duplicate-keyword TypeError while
+    # preserving the explicit value.
+    merged = dict(metadata or {})
+    merged["transition"] = transition
     return emit_transition(
         plan_dir,
         task_id=phase or "transition",
         from_state=from_state or "unknown",
         to_state=to_state or transition,
         duration_ms=elapsed_ms,
-        transition=transition,
-        **dict(metadata or {}),
+        **merged,
     )
 
 
