@@ -259,6 +259,34 @@ def _require_equal(actual: object, expected: object, field: str) -> None:
         )
 
 
+
+def _semantic_integration_status(value: object) -> str:
+    """Normalize integration.status aliases to a semantic outcome.
+
+    Both the canonical 'integrated' and the worker-familiar 'completed' describe
+    a successfully integrated git-backed mutation; 'blocked_ambiguity' is the
+    only legitimate non-success gate. Unknown values fail closed.
+    """
+    status = str(value or "").strip().lower()
+    if status in {"integrated", "completed"}:
+        return "success"
+    if status == "blocked_ambiguity":
+        return "blocked"
+    return "invalid"
+
+
+def _semantic_test_status(value: object) -> str:
+    """Normalize test status aliases.  A regression that adds no NEW failures
+    (passed_with_preexisting_failures) is still a non-regression and must not
+    mark otherwise-valid work failed on a literal string."""
+    status = str(value or "").strip().lower()
+    if status in {"passed", "passed_with_preexisting_failures", "non_regression"}:
+        return "non_regression"
+    if status in {"failed", "regressed"}:
+        return "failure"
+    return "invalid"
+
+
 def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
     """Validate a worker receipt against live git state and launch facts."""
 
@@ -281,11 +309,12 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
         _require_equal(integration.get("status"), "blocked_ambiguity", "integration.status")
         _require_equal(integration.get("gate"), resolution.get("gate"), "integration.gate")
         return {"status": "verified_ambiguity_gate", "evidence_path": str(evidence_path)}
-    blocked_after_launch = integration.get("status") == "blocked_ambiguity"
-    if integration.get("status") not in {"integrated", "blocked_ambiguity"}:
+    _integration_semantic = _semantic_integration_status(integration.get("status"))
+    blocked_after_launch = _integration_semantic == "blocked"
+    if _integration_semantic not in {"success", "blocked"}:
         raise GitCustodyError(
-            "resolved launch target requires integration.status 'integrated' or "
-            "a provable post-launch ambiguity gate"
+            "resolved launch target requires integration.status 'integrated' (or "
+            "worker alias 'completed') or a provable post-launch ambiguity gate"
         )
     if blocked_after_launch:
         resolved_target_path = Path(str(resolution.get("target_path") or "")).resolve()
@@ -304,7 +333,7 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
         ):
             raise GitCustodyError(
                 "launch target was resolved and remains on the recorded lineage; "
-                "integration.status must be 'integrated', not an ambiguity gate"
+                "integration.status must be a successful integration outcome, not an ambiguity gate"
             )
 
     launch_target = _mapping(evidence.get("launch_target"), "launch_target")
@@ -329,8 +358,11 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
         raise GitCustodyError("git custody evidence requires at least one test command")
     for index, test in enumerate(tests):
         item = _mapping(test, f"verification.tests[{index}]")
-        if not str(item.get("command") or "").strip() or item.get("status") != "passed":
-            raise GitCustodyError(f"git custody test evidence is not passed at index {index}")
+        if (
+            not str(item.get("command") or "").strip()
+            or _semantic_test_status(item.get("status")) != "non_regression"
+        ):
+            raise GitCustodyError(f"git custody test evidence is not a non-regression at index {index}")
 
     worktree_path = Path(str(implementation.get("worktree_path") or "")).resolve()
     launch_paths = {
@@ -496,7 +528,12 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
             "worktree_path": str(worktree_path),
         }
 
-    _require_equal(integration.get("status"), "integrated", "integration.status")
+    _integration_semantic_2 = _semantic_integration_status(integration.get("status"))
+    if _integration_semantic_2 != "success":
+        raise GitCustodyError(
+            "integration.status must be a successful integration outcome "
+            "('integrated' or 'completed')"
+        )
     after_revision = str(integration.get("after_revision") or "")
     if not after_revision:
         raise GitCustodyError("integration.after_revision is required")
