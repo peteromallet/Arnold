@@ -1,6 +1,6 @@
 ---
 name: superfixer-debug
-description: Evidence-first recovery protocol for a stuck Megaplan epic or any autonomous pipeline. Capture the complete failure, ask GPT-5.6 Sol which bounded DeepSeek V4 Flash investigations are needed, run a read-only Flash swarm, then ask Sol for an executable immediate recovery that edits the approved editable runtime, tests and iterates until the preserved occurrence advances, plus the durable cross-pipeline architecture. Use when a validator, worker, watchdog, fixer, observer, or notification path is stalled, contradictory, or repeating.
+description: Evidence-first recovery protocol for a stuck Megaplan epic or any autonomous pipeline. Pipeline: bounded DeepSeek V4 Flash evidence swarm to understand all context → Codex/Sol decision-maker produces an ordered implementation plan (durable root fix + get-it-moving) → DeepSeek implementer executes it in the approved editable runtime, tests and iterates until the preserved occurrence advances → restart and drive the chain through the next milestones. Includes a durable root-cause checklist for the recurring stall classes (stale blocked dispositions, liveness-fenced chain auto-advance, chain spec drift, runtime split-brain, reader-side accounting bugs). Use when a validator, worker, watchdog, fixer, observer, or notification path is stalled, contradictory, or repeating.
 ---
 
 # superfixer-debug
@@ -20,6 +20,106 @@ cursor/milestone advancement. “No safe retry” is not a durable answer when t
 blocking seam is repairable. No route may fabricate history, bypass authority, or
 weaken a validator; a genuinely external approval remains an explicit gate with an
 active next-owner route.
+
+## No-op and coordination guards (run these first)
+
+Before doing anything else:
+- NO-OP: enumerate blocked/failed chains. If none are blocked or failed, report
+  "No blocked/failed chains found; nothing to fix" and end. Do not invent work,
+  fabricate a failure, or touch healthy/running chains.
+- COORDINATION: check whether another fixer/repair is already active for the
+  target chain. Use the RELIABLE signals (cloud status may not be available if
+  the initiative has no cloud.yaml): (a) a FRESH managed subagent dir for this
+  session under .megaplan/plans/resident-subagents/subagent-* (created in the
+  last hours), (b) a held repair lease via inspect_repair_lock, or (c) a running
+  subagent_worker process for that session. If any signal is active, report
+  "Another fixer is already active for this chain; standing down" and end —
+  never launch a competing fixer.
+
+## Epic-babysitting operational loop
+
+This skill also covers "epic-babysitting": keeping the target chain actually
+moving, not just fixing one layer. Repeat this loop until the canonical milestone
+advances (index > 0):
+
+1. OBSERVE authoritative state — `megaplan cloud status --all --compact
+   --cloud-yaml <cloud.yaml>`; `<plan>/state.json` (current_state, active_step,
+   latest_failure); `.megaplan/plans/.chains/chain-*.json`
+   (current_milestone_index, completed[]); `<plan>/events.seq` (advancing =
+   cooking; filter out llm_token_heartbeat/state_written noise);
+   `execute_batches/*/tasks_*.json` (done/blocked).
+2. DIAGNOSE the blocker — common gates: finalize feasibility (plan config
+   missing phase_timeout_seconds), the pre-dispatch full-suite backstop running
+   synchronously in shadow mode, cgroup OOM (raise memory), executor
+   "No module named pytest" (PATH issue — use sys.executable -m pytest), runtime
+   binding drift (CAS rebind or relax require_editable_runtime_match), and
+   stale-blocked tasks whose validation passes but need re-admission.
+3. FIX the fixer or infra — fix upstream engine bugs directly (shadow-mode
+   defer, memory ceiling, runtime-match toggle, scheduler/watchdog); let the
+   fixer fix everything else, and grant it the authority it needs (rebind) plus
+   a durable-restart handoff (not just a gate name).
+4. RE-DRIVE — `python3 -P -m arnold_pipelines.megaplan resume --plan <plan>
+   --project-dir <p>`; or trigger the superfixer via `resident schedule add`
+   (one-shot/hourly, deepseek-v4-flash, render_goal) + `resident schedule run-once`.
+5. VERIFY durable movement — the canonical chain state must show the milestone
+   advanced with matching identities and exactly one terminal notification. A
+   PID, commit, or "successful" summary is NOT proof.
+6. SUMMARIZE — after each fixer session, a DeepSeek Flash agent writes a 2-sentence
+   summary to `.megaplan/fixer-sessions/summaries/` + `index.md` (git-committed);
+   the last 5 are injected into every new fixer /goal as "UNTRUSTED HISTORICAL
+   EVIDENCE — verify against current state", and recurring issues are shared
+   with Sol subagents.
+7. repeat until the milestone advances.
+
+Recurring patterns: every runtime change needs a rebind (or relax
+require_editable_runtime_match); each fix reveals the next blocker; the fixer
+stops at authority gates (rebind) — grant authority or escalate; blocked tasks
+are often stale — they need re-admission. The success condition is canonical
+milestone advancement, not a fixer exit, a commit, or a live PID.
+
+### Durable root-cause checklist — the recurring stall classes
+
+Every one of these has frozen a healthy plan for hours. Before accepting a
+"blocked" disposition as legitimate, verify it against CURRENT state — a stale
+observation is not a gate.
+
+1. **A "blocked" disposition is often STALE, not authoritative.** A task/phase
+   recorded `blocked` against old state (a pre-work git HEAD, a dirty tree, a
+   baseline captured before work landed) is frozen as terminal and never
+   re-verified, cascading into `accepted_attempt_dependency_unresolved` /
+   `blocked-by-prereq`. CHECK: is the block's own recorded head_sha / baseline
+   the CURRENT head? Is the tree now clean? Is the prerequisite now satisfied?
+   If so, reset the blocked task(s) to pending and re-dispatch — the objective
+   is usually met. Over-strict executor checks (e.g. requiring HEAD == the
+   milestone base instead of verifying ancestry) are the trigger; the stated
+   task objective is the contract, not the executor's invented stricter
+   condition.
+2. **A DONE plan does not auto-advance its chain when the session is
+   liveness-fenced.** The chain runner only drives chains it can confirm are
+   live (identity-bound liveness). A `liveness_unknown` session is fenced, so a
+   completed plan leaves its milestone parked. CHECK: after a plan reaches
+   `done`, read `.megaplan/plans/.chains/chain-*.json` and run `megaplan chain
+   status`; if the milestone is still `in_progress`/`blocked` and not
+   `completed`, reconcile spec drift (below) then `megaplan chain start`. The
+   durable fix is for the runner to advance a terminal plan even when liveness
+   is unknown.
+3. **Chain spec drift silently blocks advancement.** Modifying `chain.yaml` (or
+   NORTHSTAR.md) after the chain is bound invalidates the execution binding and
+   raises `chain_spec_not_at_intended_revision`. CHECK `megaplan chain status`
+   for active_errors / execution-binding drift; reconcile via `megaplan chain
+   rebind` to the current spec before advancing.
+4. **Runtime split-brain.** The editable-install `.pth` may point at one tree
+   while the container `PYTHONPATH` resolves a different tree, so the drive and
+   the resident run different code. CHECK the effective import
+   (`python3 -P -c "import arnold_pipelines.megaplan as m; print(m.__file__)"`)
+   under the exact launcher env, and confirm the fix landed in the tree that
+   actually runs.
+5. **Reader-side accounting bugs recur.** Three shapes have each blocked a
+   healthy plan: a stale reload discarding in-memory merged evidence before a
+   count; keeping ONE artifact per batch and dropping the claim union; and
+   comparing per-task evidence against a GLOBAL newest head instead of the
+   task's own batch head. CHECK counts against the artifacts the workers
+   actually wrote, not the reloaded projection.
 
 ## The execution charge (non-negotiable)
 
@@ -45,6 +145,24 @@ There is no hard time or attempt budget for this charge. Use bounded individual
 commands and idempotent effect barriers, but continue the repair loop until success
 or a real external gate is proven. A quiet wait for a real external gate is a
 durable state; a terminal quarantine for an owned source repair is a fixer failure.
+
+### Fast path and bounded escalation
+
+Apply the smallest fix immediately when the fix is obvious: the root cause is
+unambiguous from the evidence, the change is minimal and contained, you can verify
+it with a focused test, and no owner/authority/credential gate blocks it. Do not
+spend the session re-investigating an already-obvious fix. Apply it, run the focused
+verification, and keep pushing until the verification genuinely passes and the
+occurrence advances.
+
+Escalate back to Sol stage 2 after **three distinct, verified fix attempts** that
+did not make the occurrence advance — never three blind retries. Count only attempts
+that materially changed something and were verified to still fail. Escalate sooner on
+unchanged evidence, a permission/infrastructure/credential blocker, widening scope,
+or destructive risk. Each escalation must carry an evidence delta: what was attempted,
+the exact change, the verification output, and the rollback state. Cap Sol
+re-adjudication cycles so the fixer cannot recurse to Sol indefinitely; once the cap
+is reached, stop at a documented external gate and keep the next owner/schedule active.
 
 An occurrence-bound run that carries the operator's explicit charge to get this
 occurrence moving is already the operator's approval to repair the named editable
@@ -96,6 +214,11 @@ in every evidence index and Sol handoff.
 - Notifications are effects, not observations. A stale poll cannot mint a new
   message, and an ambiguous provider delivery is `INDETERMINATE`, not permission to
   resend.
+- A "blocked" disposition is evidence, not a verdict. Verify the block's
+  preconditions against CURRENT state (head_sha, tree cleanliness, baseline
+  ancestry, prerequisite satisfaction) before accepting it as a gate. Stale
+  observations and over-strict executor checks have repeatedly frozen healthy
+  work; the stated task objective is the contract.
 
 ## Phase 0 — build the evidence pack
 
@@ -323,16 +446,43 @@ status. Reports are evidence, not authority and not a vote.
 Send Sol the original evidence, Sol stage 1, the swarm index, and every Flash report.
 Ask for a second explicit GPT-5.6 Sol high-reasoning read-only pass. On the
 Hetzner image, use the same cloud-compatible `--sandbox danger-full-access`
-mode and the same pre/post fingerprint guard. It must return
-two separately labelled horizons. Do not let a convenient “restart” satisfy the
-immediate horizon, and do not let a broad architecture essay substitute for it.
+mode and the same pre/post fingerprint guard. It must return THREE separately labelled tiers. Do not let a convenient
+“restart” satisfy the immediate tier, and do not let a broad architecture essay
+substitute for the structural tier.
+
+The three tiers are:
+
+1. **Tier 1 — UNBLOCK (get it moving today):** the smallest, safe,
+   occurrence-preserving action that advances THIS occurrence/milestone now and
+   proves it moved. This is what the operator should execute immediately if they
+   only want the chain moving. Name the exact command/operation and the proof.
+
+2. **Tier 2 — PROPER STRUCTURAL FIX (prevent recurrence for anyone):** the
+   complete, correct, cross-pipeline fix that closes the failure CATEGORY so no
+   other chain hits it. Name the exact module/file, the mechanism, and the
+   regression. This is the fix the platform should land, distinct from the
+   one-off unblock.
+
+3. **Tier 3 — ROOT BEHIND THE ROOT (the deeper structural cause):** the
+   meta-level diagnosis. Is the failure because a REQUIRED structure is MISSING
+   (no adopt-existing-tree transaction, no capability boundary, no canonical
+   runtime root)? Or because an EXISTING structure is NOT BEING ADHERED TO
+   (fixers writing out-of-band code, custody validator ignoring semantic facts)?
+   Name the structural gap or the adherence failure at the deepest level, and the
+   structural remedy that addresses the cause rather than the symptom.
+
+Then Sol must give a **RECOMMENDATION**: should the operator do Tier 1 (unblock)
+alone, Tier 2 (proper fix) alone, or BOTH (Tier 1 now + Tier 2/3 landed after)?
+Default to BOTH when the unblock and the structural fix are independent, but be
+explicit: if the unblock alone would immediately re-trigger the same failure,
+say so and require Tier 2/3 before declaring victory.
 Sol stage 2 must also emit the machine-readable recovery handoff described below,
 including the exact canonical owner, the route for repairing a missing authority
 seam, the route for an authority-approved migration, and the proof/return condition
 the execution agent must satisfy. A prose quarantine recommendation without that
 route is an incomplete Sol decision.
 
-### Horizon A — shortest safe path to durable movement (agent-actionable now)
+### Tier 1 — UNBLOCK: shortest safe path to durable movement (agent-actionable now)
 
 This is the smallest occurrence-preserving recovery that can make the accepted work
 advance and prove it genuinely advanced. It is not merely the shortest command or a
@@ -341,7 +491,23 @@ new live PID. It must state:
 Sol must write Horizon A as an execution charge to the fixer: use the approved
 editable runtime; implement the fix; run the focused test; inspect the actual
 failure; revise the source when it fails; and repeat until the canonical cursor or
-milestone advances. Include an explicit `iteration_loop` with the editable source
+milestone advances.
+
+EDITABLE-INSTALL (Sol must require this in Horizon A): the fix must LAND in the
+executable editable install that the chain engine actually imports — resolve the
+import root under the resident/supervisor runtime (`python3 -P -c "import
+arnold_pipelines.megaplan as m; print(m.__file__)"`), patch+commit there (mirror
+to workspace/worktree only if different), and verify by re-importing and running
+the focused regression through the SAME resolved root. A fix present only in the
+workspace clone or a worktree is NOT applied.
+
+LAUNCH-AND-KEEP-MOVING (Sol must require this in Horizon A): after the fix is
+applied and verified, Sol must direct the fixer to launch/re-drive the actual
+chain (`resume --plan` / supported auto/resume seam) and keep it moving
+task-by-task until the canonical milestone index advances past idx 0 and events
+are durably advancing (fresh plan state, not a stale marker). A commit, PID,
+heartbeat, or single finalize/replan is NOT the stopping condition; durable
+milestone movement is. Include an explicit `iteration_loop` with the editable source
 root, test command, evidence delta path, Sol re-adjudication trigger, and success
 proof. Do not describe this as “try once and quarantine.” Runtime rebind, provenance,
 and repair-request bookkeeping are part of this route, not reasons to hand the work
@@ -380,7 +546,7 @@ remaining gate, and then it must keep the schedule/next owner active. Sol must n
 answer with quarantine alone or label an owned editable repair
 `agent_actionable: false`.
 
-### Horizon B — deepest complete solution for the failure category (epic-actionable)
+### Tier 2 — PROPER STRUCTURAL FIX: deepest complete solution for the failure category (epic-actionable)
 
 This is the smallest *complete* cross-pipeline solution that closes the category,
 not an invitation to overbuild. It must state the first broken contract, any deeper
