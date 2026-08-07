@@ -204,6 +204,59 @@ def render_compact_review_prompt(
     )
 
 
+def render_compact_gate_prompt(
+    agent: str,
+    step: str,
+    state: Mapping[str, Any],
+    plan_dir: Path,
+    *,
+    root: Path | None = None,
+    worker: str | None = None,
+    model: str | None = None,
+    normalized_model: str | None = None,
+    tier: ModelTier | str = ModelTier.NON_ENFORCED,
+    schema: Mapping[str, Any] | None = None,
+    prompt_size_error: dict[str, Any] | None = None,
+    contract_context: Mapping[str, Any] | None = None,
+) -> RenderedStepMessage:
+    """Render a compacted gate prompt through the model seam.
+
+    Mirrors :func:`render_compact_review_prompt`: the normal gate prompt embeds
+    the full plan, plan metadata, gate signals and the complete open-flag set
+    (with evidence + revise summaries).  On large milestones with many flags the
+    prompt can exceed the phase size guard; this bounded projection keeps every
+    flag id/severity/status/category/weight and all fail-closed decision
+    requirements while truncating long prose and dropping the redundant flag
+    duplicates.  The full artifacts remain on disk for file-tool inspection.
+    """
+
+    from arnold_pipelines.megaplan.prompts.gate import compact_gate_prompt
+
+    compacted_text = compact_gate_prompt(
+        state,  # type: ignore[arg-type]
+        plan_dir,
+        root,
+        contract_context=contract_context,
+        prompt_size_error=prompt_size_error,
+    )
+    tier_value = tier.value if isinstance(tier, ModelTier) else str(tier)
+    return render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": tier_value,
+                "worker": worker or agent,
+                "model": normalized_model or model,
+                "normalized_model": normalized_model or model,
+                "validation_step": step,
+                "prompt": compacted_text,
+                "prompt_components": compacted_text,
+                "schema": dict(schema) if schema is not None else None,
+            },
+        )
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Capture path (recovery-aware wrapper around the generic core)
 # --------------------------------------------------------------------------- #
@@ -1864,6 +1917,7 @@ __all__ = [
     "assert_all_compatibility_modes_native",
     "install_model_step_adapter",
     "render_compact_review_prompt",
+    "render_compact_gate_prompt",
     "render_prompt_for_dispatch",
     "render_step_message",
     "schema_audits_step_payload",

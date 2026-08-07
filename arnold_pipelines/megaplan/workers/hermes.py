@@ -2115,15 +2115,27 @@ def run_hermes_step(
     try:
         check_prompt_size(prompt, phase=step)
     except CliError as error:
-        if step != "review" or error.code != "prompt_oversized":
+        if step not in ("review", "gate") or error.code != "prompt_oversized":
             raise
-        prompt = compact_review_prompt(
-            state,
-            plan_dir,
-            root,
-            prompt_size_error=error.extra,
-            projection_capabilities=projection_capabilities,
-        )
+        if step == "gate":
+            from arnold_pipelines.megaplan.prompts.gate import compact_gate_prompt
+
+            prompt = compact_gate_prompt(
+                state,
+                plan_dir,
+                root,
+                prompt_size_error=error.extra,
+            )
+        else:
+            from arnold_pipelines.megaplan.prompts.review import compact_review_prompt
+
+            prompt = compact_review_prompt(
+                state,
+                plan_dir,
+                root,
+                prompt_size_error=error.extra,
+                projection_capabilities=projection_capabilities,
+            )
         if output_path is not None:
             prompt += (
                 f"\n\nOUTPUT FILE: {output_path}\n"
