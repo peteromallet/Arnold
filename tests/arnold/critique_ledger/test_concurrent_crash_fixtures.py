@@ -407,7 +407,7 @@ def test_direct_sql_sequence_gap_detected_by_query_gaps_only(
     # non-contiguous gap (strict monotonicity only).
     assert validate_ledger_event_ordering(events) == []
 
-    # POSITIVE: query_gaps detects the missing sequence 3 with inclusive bounds.
+    # POSITIVE: query_gaps detects the missing sequence 3.
     gaps = store.query_gaps(attempt_id)
     assert gaps == [
         GapEntry(
@@ -423,8 +423,8 @@ def test_direct_sql_sequence_gap_detected_by_query_gaps_only(
     service = LedgerPersistenceService(store)
     result = service.reconcile_on_restart(attempt_id)
     assert result.status == RECONCILE_STATUS_SEQUENCE_GAP
-    # Inclusive bounds formatted as gap_start..gap_end-1.
-    assert result.issues == ["gap 2..3 (missing 1)"]
+    # Actually-missing range formatted as gap_start+1..gap_end-1 (here 3..3).
+    assert result.issues == ["gap 3..3 (missing 1)"]
     # The gap status means no complete/indeterminate projection is published —
     # the stream is flagged for recovery, not replayed as-is.
     assert result.status not in ("complete", "indeterminate")
