@@ -111,8 +111,12 @@ PY
     isolated=1
   fi
   if [[ "$isolated" == "1" ]]; then
-    if ! env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P -c \
-      'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
+    # Gap 3: bind the supervisor import path to the canonical Arnold source root
+    # even in isolated mode. The venv supplies dependencies + interpreter; the
+    # Arnold CODE must come from the same canonical tree the fixers patch, not
+    # a static site-packages copy, so watchdog/repair fixes actually take.
+    if ! PYTHONSAFEPATH=1 PYTHONPATH="$source_root" \
+      "$resolved" -P -c 'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
       >/dev/null 2>&1; then
       arnold_supervisor_failure_artifact "$component" "readiness_import_failed"
       printf '%s\n' "$component: supervisor interpreter readiness import failed: $resolved" >&2
@@ -149,10 +153,12 @@ PY
       esac
     done
     if [[ "$MEGAPLAN_SUPERVISOR_ISOLATED" == "1" && "$need_safe_path" == "1" ]]; then
-      env -u PYTHONPATH PYTHONSAFEPATH=1 \
+      PYTHONSAFEPATH=1 \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT" \
         "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
     elif [[ "$MEGAPLAN_SUPERVISOR_ISOLATED" == "1" ]]; then
-      env -u PYTHONPATH PYTHONSAFEPATH=1 \
+      PYTHONSAFEPATH=1 \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT" \
         "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
     elif [[ "$need_safe_path" == "1" ]]; then
       PYTHONSAFEPATH=1 \
