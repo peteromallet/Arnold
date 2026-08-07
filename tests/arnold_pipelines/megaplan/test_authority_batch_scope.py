@@ -655,3 +655,161 @@ def test_no_pending_replay_routes_off_scope_enveloped_rows_to_validator(
     assert validation["outcome"] == "rejected"
     assert validation["reason"] == "subject_outside_dispatched_batch"
     assert validation["source_path"] == str(artifact_path)
+
+
+def test_blocked_by_prereq_emits_prereq_blocked_task_ids_when_active_blocked_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the CL2 execute-phase crash.
+
+    ``handle_execute_auto_loop`` selects ``blocked_by_prereq`` from
+    ``prereq_blocked_task_ids`` (execute/batch.py:6705-6719) but previously
+    published only ``active_blocked_task_ids`` (execute/batch.py:6775-6783).
+    The two sets can diverge: a harness-generated block is kept in the active
+    blocked set while being dropped from the prereq set (and a
+    baseline-unavailable checkpoint is dropped from active while kept in
+    prereq).  When the prereq set contains a task the active set does not --
+    the CL2 baseline/prerequisite case -- the old projection emitted the wrong
+    set or, when active was empty, no ``blocked_task_ids`` at all, and the
+    handler's ``PhaseResult`` rejected ``blocked_by_prereq``
+    (``blocked_by_prereq requires at least one blocked_task``).  The response
+    must emit the set that selected the outcome.
+    """
+    import argparse
+    import types as _types
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _BASELINE_VERIFICATION_MARKER,
+        handle_execute_auto_loop,
+    )
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        BlockedTask,
+        ExitKind,
+        PhaseResult,
+    )
+
+    # The M10 task-graph admission re-assertion is unrelated to the projection
+    # under test and rejects a minimal non-v2 fixture, so stub it out.
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._guard_execute_batch_admission",
+        lambda **kwargs: None,
+    )
+
+    # Drive one dispatch round without an LLM: a pending batch is "executed" by
+    # a stub that re-blocks its tasks (pinned-baseline unresolved).  H carries a
+    # harness-generated block note, so the late projection keeps H in
+    # ``active_blocked_task_ids`` but drops it from ``prereq_blocked_task_ids``;
+    # X is a genuine prerequisite block that stays in both.  The prereq set
+    # {X} therefore differs from the active set {H, X}, and the old projection
+    # (which published the active set) dropped nothing but reverted would fail.
+    def _fake_run_and_merge_batch(**kwargs):
+        fin = kwargs["finalize_data"]
+        batch_ids = set(kwargs["batch_task_ids"])
+        for task in fin.get("tasks", []):
+            if isinstance(task, dict) and task.get("id") in batch_ids:
+                task["status"] = "blocked"
+                task["executor_notes"] = (
+                    "[harness] synthetic block"
+                    if task.get("id") == "H"
+                    else "pinned baseline unresolved"
+                )
+        worker = _types.SimpleNamespace(
+            duration_ms=0, cost_usd=0.0, prompt_tokens=0, completion_tokens=0,
+            total_tokens=0, rate_limit=None, session_id=None, model_actual=None,
+            worker_channel=None, auth_channel=None, auth_metadata=None,
+            rendered_prompt=None, trace_output=None,
+        )
+        return _types.SimpleNamespace(
+            worker=worker,
+            agent=kwargs.get("agent", "shadow"),
+            mode=kwargs.get("mode", "code"),
+            refreshed=kwargs.get("refreshed", False),
+            payload={"task_updates": [], "sense_check_acknowledgments": []},
+            batch_number=kwargs.get("batch_number", 1),
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs.get("batch_sense_check_ids", []),
+            merged_task_count=0,
+            total_task_count=len(kwargs["batch_task_ids"]),
+            acknowledged_sense_check_count=0,
+            total_sense_check_count=len(kwargs.get("batch_sense_check_ids", [])),
+            missing_task_evidence=[],
+            execution_audit={},
+            finalize_hash="",
+            attribution_records=[],
+            routing_degradations=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.execute.batch._run_and_merge_batch",
+        _fake_run_and_merge_batch,
+    )
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "X",
+                "status": "pending",
+                "depends_on": [],
+                "description": "complete the pinned-baseline audit",
+                "executor_notes": "",
+            },
+            {
+                "id": "H",
+                "status": "pending",
+                "depends_on": [],
+                "description": "synthetic harness checkpoint",
+                "executor_notes": "",
+            },
+        ],
+        "sense_checks": [],
+        "baseline_test_failures": None,
+        "user_actions": [],
+    }
+    (tmp_path / "finalize.json").write_text(
+        json.dumps(finalize_data), encoding="utf-8"
+    )
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "executed",
+        "iteration": 1,
+        "config": {"mode": "code", "project_dir": str(tmp_path)},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    response = handle_execute_auto_loop(
+        root=tmp_path,
+        plan_dir=tmp_path,
+        state=state,
+        args=argparse.Namespace(),
+        auto_approve=False,
+        agent="shadow",
+        mode="code",
+        refreshed=False,
+    )
+
+    assert response["_phase_outcome"] == "blocked_by_prereq"
+    blocked_ids = response["blocked_task_ids"]
+    # The emitted set must come from the set that selected the outcome
+    # (prereq_blocked_task_ids) -- the genuine prerequisite block X, not the
+    # active set which also carries the harness-generated block H.
+    assert blocked_ids == ["X"]
+    # Mirror the handler's PhaseResult emission contract
+    # (handlers/execute.py:1197-1220): blocked_by_prereq builds one BlockedTask
+    # per emitted blocked_task_ids entry.
+    blocked = tuple(
+        BlockedTask(task_id=tid, reason="blocked_by_prereq", notes="")
+        for tid in blocked_ids
+    )
+    result = PhaseResult(
+        phase="execute",
+        invocation_id="test",
+        exit_kind=ExitKind.blocked_by_prereq.value,
+        blocked_tasks=blocked,
+    )
+    assert result.blocked_tasks
+    assert result.blocked_tasks[0].task_id == "X"
