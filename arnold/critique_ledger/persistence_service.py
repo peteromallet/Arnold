@@ -464,14 +464,17 @@ class LedgerPersistenceService:
 
     @staticmethod
     def _format_gap(gap: GapEntry) -> str:
-        """Format inclusive ``GapEntry`` bounds as ``gap_start..gap_end-1``.
+        """Format the actually-missing sequence range.
 
-        Per the settled reconciliation contract ``GapEntry.gap_start`` is the
-        inclusive lower bound of the missing region and ``gap_end`` is the
-        exclusive upper bound, so the inclusive missing range renders as
-        ``gap_start..gap_end-1``.
+        Per the ``GapEntry`` contract ``gap_start`` is the highest persisted
+        sequence *before* the gap (it is NOT itself a missing sequence) and
+        ``gap_end`` is the lowest persisted sequence *after* the gap (exclusive
+        upper bound).  The actually-missing range is therefore
+        ``gap_start+1`` through ``gap_end-1`` inclusive, e.g. for persisted
+        sequences ``[1, 2, 4]`` the gap is ``gap_start=2, gap_end=4`` and the
+        missing range renders as ``3..3``.
         """
-        return f"gap {gap.gap_start}..{gap.gap_end - 1} (missing {gap.missing_count})"
+        return f"gap {gap.gap_start + 1}..{gap.gap_end - 1} (missing {gap.missing_count})"
 
     def _event_snapshot(
         self,

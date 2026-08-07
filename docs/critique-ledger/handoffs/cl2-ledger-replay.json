@@ -67,11 +67,11 @@
         "source_file": "arnold/workflow/attempt_ledger_store.py:503",
         "fields": {
           "attempt_id": "str",
-          "gap_start": "int — the highest persisted sequence before the gap (inclusive lower bound of the missing region; 0 if the gap starts at sequence 1)",
-          "gap_end": "int — the lowest persisted sequence after the gap (EXCLUSIVE upper bound)",
+          "gap_start": "int — the highest persisted sequence BEFORE the missing region; the missing region itself starts at gap_start+1 (0 if the gap begins at sequence 1). gap_start is NOT part of the missing region.",
+          "gap_end": "int — the lowest persisted sequence after the gap (EXCLUSIVE upper bound of the missing region)",
           "missing_count": "int — gap_end - gap_start - 1"
         },
-        "format_convention": "Inclusive missing range renders as gap_start..gap_end-1"
+        "format_convention": "Inclusive missing range renders as gap_start+1..gap_end-1, e.g. persisted sequences [1,2,4] -> gap_start=2, gap_end=4 -> 'gap 3..3 (missing 1)'. Matches _format_gap at arnold/critique_ledger/persistence_service.py:477 and the assertions in test_persistence_service.py:751 and test_concurrent_crash_fixtures.py:427."
       }
     },
     "ordering_violation_api": {

@@ -695,8 +695,8 @@ def test_reconcile_sequence_gap_uses_query_gaps_and_negative_validator(
     The negative assertion: ``validate_ledger_event_ordering`` returns an
     empty list because it only checks strict monotonicity, not contiguity.
     The positive assertion: ``query_gaps`` detects the missing sequence 3 and
-    ``reconcile_on_restart`` surfaces ``sequence_gap`` with inclusive bounds
-    formatted as ``gap_start..gap_end-1``.
+    ``reconcile_on_restart`` surfaces ``sequence_gap`` with the actually-missing
+    range ``gap_start+1..gap_end-1`` (here ``3..3``).
     """
     store, service, attempt_id, context = ledger
     store.reserve_attempt(attempt_id)
@@ -747,5 +747,5 @@ def test_reconcile_sequence_gap_uses_query_gaps_and_negative_validator(
 
     result = service.reconcile_on_restart(attempt_id)
     assert result.status == RECONCILE_STATUS_SEQUENCE_GAP
-    # Inclusive bounds formatted as gap_start..gap_end-1.
-    assert result.issues == ["gap 2..3 (missing 1)"]
+    # Actually-missing range formatted as gap_start+1..gap_end-1 (here 3..3).
+    assert result.issues == ["gap 3..3 (missing 1)"]
