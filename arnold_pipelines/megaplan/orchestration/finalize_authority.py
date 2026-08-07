@@ -81,6 +81,14 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         "sections_written",
         "stance",
         "stop_signal",
+        # Evidence-context fields the execute seam stamps/merges onto task
+        # records (batch.py:_stamp_head_sha_on_task_records and
+        # merge.py evidence_context_fields).  The M2 authority reader treats
+        # evidence without a matching head_sha as stale, so the execute owner
+        # must be able to publish them or every completed batch aborts with
+        # FinalizeFieldOwnershipError before finalize.json is updated.
+        "head_sha",
+        "code_hash",
     }
 )
 _EXECUTE_SENSE_CHECK_MUTABLE = frozenset({"verdict", "executor_note"})

@@ -152,6 +152,36 @@ def test_execute_owner_can_publish_only_runtime_fields(tmp_path: Path) -> None:
     assert saved["tasks"][0]["description"] == "implement authority"
 
 
+def test_execute_owner_can_publish_stamped_evidence_context_fields(tmp_path: Path) -> None:
+    """Regression: the execute seam stamps/merges head_sha and code_hash onto
+    task records (batch.py:_stamp_head_sha_on_task_records and merge.py
+    evidence_context_fields).  The execute owner must be able to publish those
+    fields, or every completed batch aborts with FinalizeFieldOwnershipError
+    before finalize.json is updated — which surfaced as the recurring
+    ``17/17 sense checks have no executor acknowledgment`` execute blocker.
+    """
+    _publish_initial(tmp_path)
+    payload = load_finalize_for_update(tmp_path)
+    payload["tasks"][0]["status"] = "done"
+    payload["tasks"][0]["executor_notes"] = "verified"
+    payload["tasks"][0]["head_sha"] = "8e80ecc950e36e3126f14f1d24e73919d6779b7d"
+    payload["tasks"][0]["code_hash"] = "sha256:deadbeef"
+    payload["sense_checks"][0]["executor_note"] = "checked"
+
+    token = publish_finalize_update(
+        tmp_path,
+        payload,
+        context=_context("execute", "publish-completion", "execute-9"),
+    )
+
+    assert token.version == 2
+    saved = json.loads((tmp_path / "finalize.json").read_text())
+    assert saved["tasks"][0]["status"] == "done"
+    assert saved["tasks"][0]["head_sha"] == "8e80ecc950e36e3126f14f1d24e73919d6779b7d"
+    assert saved["tasks"][0]["code_hash"] == "sha256:deadbeef"
+    assert saved["sense_checks"][0]["executor_note"] == "checked"
+
+
 def test_only_finalize_owner_can_create_document(tmp_path: Path) -> None:
     payload = _candidate()
     # A detached payload cannot smuggle itself into the update path.
