@@ -798,8 +798,37 @@ def test_reserved_service_session_is_not_a_canonical_run_marker() -> None:
 
 
 def test_is_canonical_session_marker_path_false_for_sidecars() -> None:
-    for suffix in (".repair-progress.json", ".reap-progress.json", ".chain-health.progress.json", ".progress.json"):
+    for suffix in (
+        ".liveness-fence.json",
+        ".liveness-lease.json",
+        ".repair-progress.json",
+        ".reap-progress.json",
+        ".chain-health.progress.json",
+        ".progress.json",
+    ):
         assert is_canonical_session_marker_path(f"session{suffix}") is False
+
+
+def test_is_canonical_session_marker_path_false_for_liveness_sidecars() -> None:
+    """Liveness fence/lease sidecars must never be scanned as session markers.
+
+    The watchdog marker scan iterates every ``*.json`` in the marker dir and
+    treats canonical-looking files as sessions; a ``liveness-fence.json`` that
+    lacks a ``workspace`` field then emits a spurious ``workspace_missing``
+    flag for a session whose marker is actually intact (and whose fence file
+    exists). Regression: r5/r6/r7 watchdog reports flagged
+    ``missing workspace: ...liveness-fence.json`` while the file was present.
+    """
+    for name in (
+        "critique-ledger-accountability-v3-r7-launch-20260805.liveness-fence.json",
+        "critique-ledger-accountability-v3-r7-launch-20260805.liveness-lease.json",
+        "session.liveness-fence.json",
+        "session.liveness-lease.json",
+    ):
+        assert is_canonical_sidecar_path(name) is True
+        assert is_canonical_session_marker_path(name) is False
+    # The real session marker is still a marker.
+    assert is_canonical_session_marker_path("critique-ledger-accountability-v3-r7-launch-20260805.json") is True
 
 
 def test_collect_sibling_sessions_excludes_canonical_sidecar_jsons(tmp_path: Path) -> None:
