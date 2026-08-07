@@ -63,6 +63,7 @@ from arnold_pipelines.megaplan.workflows.components import EXECUTE_POLICY, FINAL
 from .shared import (
     _active_step_fallback_fields,
     _agent_mode_parts,
+    _attach_next_step_runtime,
     _emit_phase_notice,
     attach_agent_fallback,
     worker_module,
