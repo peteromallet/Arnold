@@ -41,6 +41,29 @@ ACTIVE_STATUSES = frozenset({"reserved", "launching", "running", "adopting"})
 TERMINAL_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
+
+# Capability profile for automatic repair agents.  Recovery fixers may mutate
+# ONLY the canonical engine worktree; the milestone/target worktree is read-only.
+# Enforced at process launch with an OS-level read-only bind (bubblewrap) plus a
+# post-run git assertion, so a prompt rule or git hook alone is not trusted.
+FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY = "recovery_engine_only"
+FILESYSTEM_CAPABILITY_UNRESTRICTED = "unrestricted"
+_DEFAULT_FILESYSTEM_CAPABILITY = FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY
+
+
+def _resolve_fs_capability(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the effective filesystem capability block for an automatic run."""
+    raw = manifest.get("filesystem_capability")
+    if not isinstance(raw, Mapping):
+        return {
+            "profile": _DEFAULT_FILESYSTEM_CAPABILITY,
+            "writable_roots": [],
+            "read_only_roots": [],
+            "protected_git_refs": [],
+            "sha256": "",
+        }
+    return dict(raw)
+
 AUTOMATIC_RUN_KINDS = frozenset(
     {
         "automatic_repair",
@@ -377,6 +400,7 @@ class ManagedCommandSpec:
     require_output: bool = False
     tee_output: bool = True
     child_difficulty_ceiling: int | None = None
+    filesystem_capability: dict[str, Any] | None = None
 
 
 def _root_for(spec: ManagedCommandSpec) -> Path:
@@ -765,6 +789,58 @@ def run_managed_command(spec: ManagedCommandSpec, *, run_id_file: Path | None = 
         execution_handle.close()
 
 
+
+def _record_target_git_state(manifest: dict[str, Any], capability: Mapping[str, Any]) -> None:
+    """Record the milestone worktree git state before an automatic repair runs, so a
+    post-run assertion can prove the fixer did not mutate milestone code."""
+    protected_refs = [str(ref) for ref in (capability.get("protected_git_refs") or [])]
+    read_only_roots = [
+        Path(str(root)).resolve()
+        for root in (capability.get("read_only_roots") or [])
+    ]
+    states: dict[str, dict[str, str]] = {}
+    for root in read_only_roots:
+        git_root = root / ".git"
+        if not git_root.exists():
+            states[str(root)] = {"error": "no_git_dir"}
+            continue
+        try:
+            head = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            states[str(root)] = {"head": head}
+        except Exception as exc:
+            states[str(root)] = {"error": str(exc)}
+    manifest["target_git_state_before"] = states
+    manifest["protected_git_refs"] = protected_refs
+
+
+def _assert_target_unchanged(manifest: dict[str, Any]) -> None:
+    """Fail the run if any protected milestone worktree changed under the fixer."""
+    before = manifest.get("target_git_state_before")
+    if not isinstance(before, Mapping):
+        return
+    for root_raw, state in before.items():
+        if not isinstance(state, Mapping):
+            continue
+        if state.get("error"):
+            continue
+        root = Path(root_raw)
+        try:
+            head = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+        except Exception:
+            continue
+        if head != state.get("head"):
+            raise RuntimeError(
+                f"automatic repair mutated protected milestone worktree {root}: "
+                f"HEAD {state.get('head')} -> {head}"
+            )
+
+
 def _run_managed_command_locked(
     spec: ManagedCommandSpec,
     manifest_path: Path,
@@ -874,8 +950,33 @@ def _run_managed_command_locked(
         ]
         if any(SEALED_STDIN_PLACEHOLDER in item for item in worker_argv):
             raise RuntimeError("managed stdin placeholder used without sealed stdin")
+        capability = _resolve_fs_capability(manifest)
+        launch_argv = list(worker_argv)
+        if (
+            spec.run_kind in AUTOMATIC_RUN_KINDS
+            and capability.get("profile") == FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY
+        ):
+            engine_roots = [
+                Path(str(root)).resolve()
+                for root in (capability.get("writable_roots") or [])
+            ]
+            read_only_roots = [
+                Path(str(root)).resolve()
+                for root in (capability.get("read_only_roots") or [])
+            ]
+            if not engine_roots:
+                engine_roots = [Path(str(spec.project_dir)).resolve()]
+            bwrap_cmd = ["bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"]
+            for root in engine_roots:
+                bwrap_cmd += ["--bind", str(root), str(root)]
+            for root in read_only_roots:
+                bwrap_cmd += ["--ro-bind", str(root), str(root)]
+            bwrap_cmd += ["--"]
+            bwrap_cmd += launch_argv
+            launch_argv = bwrap_cmd
         child = subprocess.Popen(
-            worker_argv,
+            launch_argv,
+
             cwd=str(spec.project_dir),
             stdin=child_stdin,
             stdout=subprocess.PIPE,
@@ -886,7 +987,13 @@ def _run_managed_command_locked(
             child_stdin.close()
         raw_cmdline = b"\0".join(os.fsencode(item) for item in worker_argv) + b"\0"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            spec.run_kind in AUTOMATIC_RUN_KINDS
+            and capability.get("profile") == FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY
+        ):
+            _record_target_git_state(manifest, capability)
         manifest["worker_pid"] = child.pid
+
         manifest["worker_start_ticks"] = _pid_start_ticks(child.pid)
         manifest["worker_started_at"] = utc_now()
         manifest["worker_cmdline_sha256"] = hashlib.sha256(raw_cmdline).hexdigest()
@@ -1136,8 +1243,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("managed command is required after --")
     if not 1 <= args.difficulty <= 10:
         raise SystemExit("difficulty must be D1-D10")
+    _fs_capability: dict[str, Any] | None = None
+    if args.run_kind in AUTOMATIC_RUN_KINDS:
+        _target_root = None
+        if getattr(args, "target_root", None):
+            _target_root = Path(args.target_root).resolve()
+        elif getattr(args, "project_dir", None):
+            _target_root = Path(args.project_dir).resolve()
+        _fs_capability = {
+            "profile": FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY,
+            "writable_roots": [],
+            "read_only_roots": [str(_target_root)] if _target_root else [],
+            "protected_git_refs": [],
+            "sha256": "",
+        }
     spec = ManagedCommandSpec(
         run_kind=args.run_kind,
+
         identity_key=args.identity_key,
         project_dir=Path(args.project_dir).resolve(),
         argv=tuple(command),
@@ -1163,6 +1285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stdin_path=Path(args.stdin_file).resolve() if args.stdin_file else None,
         require_output=args.require_output,
         child_difficulty_ceiling=args.child_difficulty_ceiling,
+        filesystem_capability=_fs_capability,
     )
     return run_managed_command(
         spec,
