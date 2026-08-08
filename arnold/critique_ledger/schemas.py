@@ -57,6 +57,12 @@ class Relationship(str, Enum):
     REOPEN = "REOPEN"
     BLOCKS = "BLOCKS"
     BLOCKED_BY = "BLOCKED_BY"
+    # CL4 additions: explicit reconciliation semantics. These are pure
+    # additive members; no existing serialized value changes.
+    MERGE = "MERGE"
+    NEW = "NEW"
+    UNRELATED = "UNRELATED"
+    UNCERTAIN = "UNCERTAIN"
 
 
 class Authority(str, Enum):
@@ -87,6 +93,13 @@ class DispositionFamily(str, Enum):
     ACCEPTED_RISK = "accepted-risk"
     UNKNOWN = "unknown"
     RESOLVED = "resolved"
+    # CL4 additions. RESOLVED_VERIFIED supersedes the deprecated RESOLVED;
+    # ADDRESSED_PENDING_VERIFICATION is a gate-blocking pending state.
+    # The legacy RESOLVED value is preserved verbatim for stored
+    # dispositions and existing handoffs; it is normalized at the
+    # semantic_loop validation/projection layer, never aliased here.
+    RESOLVED_VERIFIED = "resolved-verified"
+    ADDRESSED_PENDING_VERIFICATION = "addressed-pending-verification"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -419,6 +432,11 @@ class FindingDispositionEvent:
     is_reopen: bool = False
     reopen_predicate: Optional[str] = None
     evidence_refs: tuple[str, ...] = ()
+    # CL4 additions: structured evidence limits and outstanding questions
+    # for pending-verification and verified resolutions. Default empty so
+    # existing dispositions round-trip unchanged.
+    evidence_limits: list[str] = field(default_factory=list)
+    remaining_questions: list[str] = field(default_factory=list)
     authority: str = Authority.EVALUATOR.value
     timestamp_utc: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -438,6 +456,8 @@ class FindingDispositionEvent:
             "is_reopen": self.is_reopen,
             "reopen_predicate": self.reopen_predicate,
             "evidence_refs": list(self.evidence_refs),
+            "evidence_limits": list(self.evidence_limits),
+            "remaining_questions": list(self.remaining_questions),
             "authority": self.authority,
             "timestamp_utc": self.timestamp_utc,
             "metadata": dict(self.metadata),
@@ -458,7 +478,8 @@ class FindingDispositionEvent:
             "schema_version", "disposition_id", "semantic_finding_id",
             "family", "reason_subcode", "severity", "action_taken",
             "action_description", "accountable_scope", "is_reopen",
-            "reopen_predicate", "evidence_refs", "authority",
+            "reopen_predicate", "evidence_refs", "evidence_limits",
+            "remaining_questions", "authority",
             "timestamp_utc", "metadata",
         }
         extra = {}
@@ -481,6 +502,8 @@ class FindingDispositionEvent:
             is_reopen=data.get("is_reopen", False),
             reopen_predicate=data.get("reopen_predicate"),
             evidence_refs=tuple(data.get("evidence_refs", ())),
+            evidence_limits=list(data.get("evidence_limits", [])),
+            remaining_questions=list(data.get("remaining_questions", [])),
             authority=data.get("authority", Authority.EVALUATOR.value),
             timestamp_utc=data.get("timestamp_utc", ""),
             metadata=dict(data.get("metadata", {})),

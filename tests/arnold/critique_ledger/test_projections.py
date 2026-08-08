@@ -138,6 +138,7 @@ def _valid_disposition() -> FindingDispositionEvent:
         semantic_finding_id="sf-1",
         family=DispositionFamily.ACCEPTED_RISK.value,
         authority=Authority.EVALUATOR.value,
+        reopen_predicate="revisit when reproducer available",
     )
 
 

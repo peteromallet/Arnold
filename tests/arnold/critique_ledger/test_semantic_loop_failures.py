@@ -83,7 +83,12 @@ def _disp(
     authority: str = Authority.EVALUATOR.value,
     reason_subcode: str = "",
     evidence_refs: tuple[str, ...] = (),
+    reopen_predicate: str = "default reopen predicate",
 ) -> FindingDispositionEvent:
+    # CL4 (Step 5): ACCEPTED_RISK (the default family) requires a
+    # reopen_predicate under per-family field-presence validation, so the
+    # helper supplies one by default. Tests that exercise a missing-field
+    # failure pass reopen_predicate=None explicitly.
     return FindingDispositionEvent(
         disposition_id=disposition_id,
         semantic_finding_id=semantic_finding_id,
@@ -91,6 +96,7 @@ def _disp(
         authority=authority,
         reason_subcode=reason_subcode,
         evidence_refs=evidence_refs,
+        reopen_predicate=reopen_predicate,
     )
 
 
@@ -114,6 +120,35 @@ def _assert_mode(mode: FailureMode, **kwargs) -> SemanticLoopError:
         _replay(**kwargs)
     assert exc.value.mode == mode
     return exc.value
+
+
+def _occ_for_status(status: str) -> CritiqueOccurrenceEnvelope:
+    """Build a custody-valid occurrence for a given parse status.
+
+    TOMBSTONED occurrences require a tombstone_reason to pass replay_full's
+    Phase 0 check; the other statuses need no extra metadata under the
+    default evidence/producer setup.
+    """
+    if status == ParseStatus.TOMBSTONED.value:
+        return _occ(
+            parse_status=status, metadata={"tombstone_reason": "revoked"}
+        )
+    return _occ(parse_status=status)
+
+
+# CL4 (Step 4): finding-eligible parse statuses REQUIRE exactly one
+# reconciliation mapping; every other status is accounted without one.
+_REQUIRES_RECONCILIATION_STATUSES = (
+    ParseStatus.SELECTED.value,
+    ParseStatus.COMPLETED.value,
+)
+_NO_RECONCILIATION_REQUIRED_STATUSES = (
+    ParseStatus.FAILED.value,
+    ParseStatus.DROPPED.value,
+    ParseStatus.MALFORMED.value,
+    ParseStatus.TOMBSTONED.value,
+    ParseStatus.NO_ADDITIONAL_FINDINGS.value,
+)
 
 
 def test_duplicate_occurrence_identity_fails_before_projection() -> None:
@@ -153,10 +188,27 @@ def test_attempt_and_freshness_failures_are_typed(
 
 
 def test_dropped_attempt_is_not_treated_as_no_finding() -> None:
-    _assert_mode(
-        FailureMode.ATTEMPT_DROPPED,
+    # CL4 (Step 3): a DROPPED occurrence no longer halts replay. It flows
+    # through reconciliation and receives an explicit excluded-from-finding-map
+    # accounting entry with a reason, preserving the invariant — DROPPED is
+    # surfaced (never silently ignored) and never confused with
+    # NO_ADDITIONAL_FINDINGS.
+    result = _replay(
         occurrences=[_occ(parse_status=ParseStatus.DROPPED.value)],
+        reconciliations=[],
+        dispositions=[],
     )
+    accounting = result["reconciliation"]["occurrence_accounting"]
+    assert len(accounting) == 1
+    row = accounting[0]
+    assert row["occurrence_id"] == "occ-1"
+    assert row["parse_status"] == ParseStatus.DROPPED.value
+    assert row["disposition"] == "excluded-from-finding-map"
+    assert ParseStatus.DROPPED.value in row["reason"]
+    assert row["semantic_finding_id_or_null"] is None
+    # DROPPED is distinct from a no-additional-findings assertion.
+    assert result["gate_projection"]["no_additional_findings"] is False
+    assert result["gate_projection"]["no_known_findings"] is True
 
 
 def test_unavailable_evidence_requires_reason_and_reopen_condition() -> None:
@@ -189,23 +241,81 @@ def test_tombstone_requires_explicit_reason() -> None:
     )
 
 
-def test_every_parseable_occurrence_requires_one_reconciliation() -> None:
-    _assert_mode(
-        FailureMode.OCCURRENCE_UNMAPPED,
-        reconciliations=[],
-        dispositions=[],
-    )
+@pytest.mark.parametrize(
+    ("status", "requires_reconciliation"),
+    [
+        (status, True) for status in _REQUIRES_RECONCILIATION_STATUSES
+    ] + [
+        (status, False) for status in _NO_RECONCILIATION_REQUIRED_STATUSES
+    ],
+)
+def test_every_parseable_occurrence_requires_one_reconciliation(
+    status: str, requires_reconciliation: bool,
+) -> None:
+    # CL4 (Step 4): the accounting completeness proof is exercised across
+    # every ParseStatus. Finding-eligible statuses (SELECTED, COMPLETED) with
+    # no reconciliation raise OCCURRENCE_UNMAPPED; excluded and no-content
+    # statuses are covered by exactly one accounting row and accepted.
+    occurrence = _occ_for_status(status)
+    if requires_reconciliation:
+        _assert_mode(
+            FailureMode.OCCURRENCE_UNMAPPED,
+            occurrences=[occurrence],
+            reconciliations=[],
+            dispositions=[],
+        )
+    else:
+        result = _replay(
+            occurrences=[occurrence],
+            reconciliations=[],
+            dispositions=[],
+        )
+        accounting = result["reconciliation"]["occurrence_accounting"]
+        assert len(accounting) == 1
+        assert accounting[0]["parse_status"] == status
+        assert accounting[0]["semantic_finding_id_or_null"] is None
+        assert result["reconciliation"]["accepted"] is True
 
 
-def test_occurrence_cannot_map_to_two_semantic_findings() -> None:
-    _assert_mode(
-        FailureMode.OCCURRENCE_MULTIPLY_MAPPED,
-        reconciliations=[
-            _rec(reconciliation_id="rec-1", semantic_finding_id="sf-1"),
-            _rec(reconciliation_id="rec-2", semantic_finding_id="sf-2"),
-        ],
-        dispositions=[_disp("sf-1"), _disp("sf-2", disposition_id="disp-2")],
-    )
+@pytest.mark.parametrize(
+    ("status", "expect_multiply_mapped"),
+    [
+        (status, True) for status in _REQUIRES_RECONCILIATION_STATUSES
+    ] + [
+        (status, False) for status in _NO_RECONCILIATION_REQUIRED_STATUSES
+    ],
+)
+def test_occurrence_cannot_map_to_two_semantic_findings(
+    status: str, expect_multiply_mapped: bool,
+) -> None:
+    # CL4 (Step 4): an eligible occurrence mapped to two semantic findings is
+    # an OCCURRENCE_MULTIPLY_MAPPED hard failure detected by the accounting
+    # completeness proof. Non-eligible statuses are removed from the
+    # finding_map by the eligibility filter, so two reconciliation events
+    # targeting them cannot produce a multiply-mapped accounting row — they
+    # are accounted as excluded/no-content instead.
+    occurrence = _occ_for_status(status)
+    recs = [
+        _rec(reconciliation_id="rec-1", semantic_finding_id="sf-1"),
+        _rec(reconciliation_id="rec-2", semantic_finding_id="sf-2"),
+    ]
+    if expect_multiply_mapped:
+        _assert_mode(
+            FailureMode.OCCURRENCE_MULTIPLY_MAPPED,
+            occurrences=[occurrence],
+            reconciliations=recs,
+            dispositions=[_disp("sf-1"), _disp("sf-2", disposition_id="disp-2")],
+        )
+    else:
+        result = _replay(
+            occurrences=[occurrence],
+            reconciliations=recs,
+            dispositions=[],
+        )
+        accounting = result["reconciliation"]["occurrence_accounting"]
+        assert len(accounting) == 1
+        assert accounting[0]["disposition"] != "mapped-to-finding"
+        assert accounting[0]["semantic_finding_id_or_null"] is None
 
 
 def test_every_semantic_finding_requires_disposition() -> None:
@@ -216,6 +326,55 @@ def test_resolved_closure_requires_reason_and_evidence() -> None:
     _assert_mode(
         FailureMode.CLOSURE_UNSUPPORTED,
         dispositions=[_disp(family=DispositionFamily.RESOLVED.value)],
+    )
+
+
+# ── CL4 (Plan Step 6): closure backstop covers both closure values ────
+# apply_disposition_events is the PRIMARY enforcement for the new
+# RESOLVED_VERIFIED value; replay_full's inline closure check is the
+# redundant backstop, normalized so it covers BOTH the legacy RESOLVED
+# value and the new RESOLVED_VERIFIED value equivalently.
+
+
+def test_resolved_verified_lacking_evidence_rejected_through_replay() -> None:
+    # Tracing a RESOLVED_VERIFIED disposition lacking verification evidence
+    # through replay_full raises CLOSURE_UNSUPPORTED (equivalent to legacy
+    # RESOLVED above), so the verified value cannot bypass closure.
+    _assert_mode(
+        FailureMode.CLOSURE_UNSUPPORTED,
+        dispositions=[_disp(family=DispositionFamily.RESOLVED_VERIFIED.value)],
+    )
+
+
+def test_resolved_verified_with_evidence_passes_replay() -> None:
+    # A RESOLVED_VERIFIED closure carrying verification evidence AND a
+    # reason_subcode is permitted through the full replay (both the
+    # primary enforcement and the normalized backstop accept it).
+    result = _replay(
+        dispositions=[
+            _disp(
+                family=DispositionFamily.RESOLVED_VERIFIED.value,
+                evidence_refs=("verified-against-reproducer",),
+                reason_subcode="verified",
+            )
+        ]
+    )
+    assert result["disposition"]["accepted"] is True
+
+
+def test_resolved_verified_with_evidence_but_no_reason_rejected_by_backstop() -> None:
+    # The primary enforcement only checks evidence; the redundant backstop
+    # additionally requires reason_subcode and, via normalization, applies to
+    # the new verified value too. A RESOLVED_VERIFIED with evidence but no
+    # reason is therefore caught by the inline backstop.
+    _assert_mode(
+        FailureMode.CLOSURE_UNSUPPORTED,
+        dispositions=[
+            _disp(
+                family=DispositionFamily.RESOLVED_VERIFIED.value,
+                evidence_refs=("verified-against-reproducer",),
+            )
+        ],
     )
 
 
@@ -233,6 +392,18 @@ def test_projection_mismatch_is_detected(monkeypatch: pytest.MonkeyPatch) -> Non
 
     def mismatched(*args, **kwargs):
         projection = original(*args, **kwargs)
+        # CL4 (Step 8): the enriched gate fields must round-trip through the
+        # monkeypatched projection so the fake-return shape stays consistent
+        # with the real project_gate_input contract before no_known_findings
+        # is flipped to force the deterministic mismatch assertion.
+        for _field in (
+            "accepted_ledger_revision",
+            "occurrence_coverage_proof",
+            "disposition_state",
+            "revision_actions",
+            "independent_verification",
+        ):
+            assert _field in projection, f"enriched gate field missing: {_field}"
         projection["no_known_findings"] = not projection["no_known_findings"]
         return projection
 
@@ -295,6 +466,14 @@ def test_no_additional_findings_is_explicit_success() -> None:
         reconciliations=[],
         dispositions=[],
     )
+    # CL4 (Step 4): NO_ADDITIONAL_FINDINGS is covered by exactly one
+    # accounting row that the completeness proof accepts — it is never an
+    # OCCURRENCE_UNMAPPED failure despite carrying no semantic finding.
+    accounting = result["reconciliation"]["occurrence_accounting"]
+    assert len(accounting) == 1
+    assert accounting[0]["disposition"] == "no-additional-findings"
+    assert accounting[0]["semantic_finding_id_or_null"] is None
+    assert result["reconciliation"]["accepted"] is True
     assert result["gate_projection"]["custody_valid"] is True
     assert result["gate_projection"]["no_additional_findings"] is True
     assert result["gate_projection"]["no_known_findings"] is True

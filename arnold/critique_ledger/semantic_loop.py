@@ -74,6 +74,7 @@ class FailureMode(str, Enum):
     RECONCILIATION_MISSING_ID = "RECONCILIATION_MISSING_ID"
     RECONCILIATION_INFERRED_SAMENESS = "RECONCILIATION_INFERRED_SAMENESS"
     RECONCILIATION_OUT_OF_ORDER = "RECONCILIATION_OUT_OF_ORDER"
+    RECONCILIATION_UNKNOWN_RELATIONSHIP = "RECONCILIATION_UNKNOWN_RELATIONSHIP"
 
     # Disposition failures
     DISPOSITION_ORPHAN_FINDING = "DISPOSITION_ORPHAN_FINDING"
@@ -82,6 +83,20 @@ class FailureMode(str, Enum):
     DISPOSITION_MISSING_ID = "DISPOSITION_MISSING_ID"
     DISPOSITION_INCOMPLETE = "DISPOSITION_INCOMPLETE"
     CLOSURE_UNSUPPORTED = "CLOSURE_UNSUPPORTED"
+
+    # CL4 (Plan Step 5): per-family field-presence failures. Each of the
+    # seven non-closure disposition families carries a specific required
+    # field so a finding cannot disappear behind a malformed disposition.
+    # UNKNOWN is a valid terminal judgment and carries no extra requirement,
+    # so it has no dedicated member here. The two closure families
+    # (RESOLVED_VERIFIED / legacy RESOLVED) are gated by the closure rules
+    # in Step 6, not by these field-presence checks.
+    ACTED_ON_MISSING_ACTION = "ACTED_ON_MISSING_ACTION"
+    IGNORED_MISSING_REOPEN_PREDICATE = "IGNORED_MISSING_REOPEN_PREDICATE"
+    DEFERRED_MISSING_REOPEN_PREDICATE = "DEFERRED_MISSING_REOPEN_PREDICATE"
+    ACCEPTED_RISK_MISSING_RATIONALE = "ACCEPTED_RISK_MISSING_RATIONALE"
+    REJECTED_MISSING_REASON_SUBCODE = "REJECTED_MISSING_REASON_SUBCODE"
+    DUPLICATE_MISSING_CANONICAL_REF = "DUPLICATE_MISSING_CANONICAL_REF"
 
     # Manifest failures
     MANIFEST_EMPTY_INPUT_SET = "MANIFEST_EMPTY_INPUT_SET"
@@ -128,6 +143,81 @@ class SemanticLoopError(Exception):
 
 _VALID_DISPOSITION_FAMILIES = frozenset(e.value for e in DispositionFamily)
 
+# CL4 (Plan Step 5): per-family field-presence rules. Each of the seven
+# non-closure disposition families requires at least one specific field so a
+# finding cannot be silently dropped behind a malformed disposition. UNKNOWN
+# is a valid terminal judgment with no extra requirement and is deliberately
+# absent here. The closure families (RESOLVED_VERIFIED and the legacy
+# RESOLVED) are gated by the closure-evidence rules (Step 6), not by this
+# table. Each rule maps the family value to a (FailureMode, predicate)
+# pair; the predicate inspects the disposition event for the required field.
+_DUPLICATE_CANONICAL_REF_KEYS = (
+    "canonical_finding_id",
+    "canonical_finding_ref",
+    "canonical_ref",
+)
+
+
+def _has_duplicate_canonical_ref(disp: FindingDispositionEvent) -> bool:
+    """Return True if the disposition metadata carries a canonical-finding
+    reference, used to satisfy the DUPLICATE family's field-presence rule."""
+    meta = disp.metadata or {}
+    return any(meta.get(key) for key in _DUPLICATE_CANONICAL_REF_KEYS)
+
+
+def _disposition_field_presence_failure(
+    disp: FindingDispositionEvent,
+) -> tuple[FailureMode, str] | None:
+    """Return the (FailureMode, detail) for a missing required field on the
+    disposition, or ``None`` when the disposition satisfies its family's
+    field-presence rule.
+
+    Only the seven non-closure families are checked here. The two closure
+    families and the legacy ``RESOLVED`` value are gated by the closure
+    rules and intentionally produce no field-presence failure.
+    """
+    family = disp.family
+    if family == DispositionFamily.ACTED_ON.value:
+        if not disp.action_taken or not disp.action_description:
+            return (
+                FailureMode.ACTED_ON_MISSING_ACTION,
+                "ACTED_ON disposition requires action_taken and "
+                "action_description",
+            )
+    elif family == DispositionFamily.IGNORED.value:
+        if not disp.reopen_predicate:
+            return (
+                FailureMode.IGNORED_MISSING_REOPEN_PREDICATE,
+                "IGNORED disposition requires a reopen_predicate",
+            )
+    elif family == DispositionFamily.DEFERRED.value:
+        if not disp.reopen_predicate:
+            return (
+                FailureMode.DEFERRED_MISSING_REOPEN_PREDICATE,
+                "DEFERRED disposition requires a reopen_predicate",
+            )
+    elif family == DispositionFamily.ACCEPTED_RISK.value:
+        if not disp.reopen_predicate:
+            return (
+                FailureMode.ACCEPTED_RISK_MISSING_RATIONALE,
+                "ACCEPTED_RISK disposition requires a reopen_predicate "
+                "(risk-acceptance rationale)",
+            )
+    elif family == DispositionFamily.REJECTED.value:
+        if not disp.reason_subcode:
+            return (
+                FailureMode.REJECTED_MISSING_REASON_SUBCODE,
+                "REJECTED disposition requires a reason_subcode",
+            )
+    elif family == DispositionFamily.DUPLICATE.value:
+        if not _has_duplicate_canonical_ref(disp):
+            return (
+                FailureMode.DUPLICATE_MISSING_CANONICAL_REF,
+                "DUPLICATE disposition requires a canonical-finding ref "
+                "in metadata",
+            )
+    return None
+
 # Families that count as "open" (not resolved, not blocked)
 _OPEN_FAMILIES = frozenset({
     DispositionFamily.ACTED_ON.value,
@@ -139,6 +229,102 @@ _OPEN_FAMILIES = frozenset({
 _BLOCKED_FAMILIES = frozenset({
     DispositionFamily.REJECTED.value,
 })
+
+# CL4 (Plan Steps 7-8): family sets shared by the reviser and gate
+# projections so the two projections classify dispositions identically.
+# ACTIONABLE families require reviser action/follow-up (ACTED_ON carries a
+# completed action; ADDRESSED_PENDING_VERIFICATION is an open acted-on
+# finding awaiting verification). UNCHANGED families are settled
+# (resolved-verified or accepted-risk) and remain visible without further
+# action. Legacy "resolved" is normalized to "resolved-verified" upstream
+# via _normalize_disposition_family before these sets are consulted.
+_PROJECTION_ACTIONABLE_FAMILIES = frozenset({
+    DispositionFamily.ACTED_ON.value,
+    DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value,
+})
+_PROJECTION_UNCHANGED_FAMILIES = frozenset({
+    DispositionFamily.RESOLVED_VERIFIED.value,
+    DispositionFamily.ACCEPTED_RISK.value,
+})
+
+# Whitelist of all valid serialized Relationship values (12 after CL4).
+# Reconciliation events with a relationship not in this set are rejected
+# with a typed failure rather than silently accepted.
+_VALID_RELATIONSHIPS = frozenset(e.value for e in Relationship)
+
+# Relationships that are treated as a terminal reconciliation judgment and
+# must NOT, on their own, force `accepted=False` or block completion.
+# UNCERTAIN is included here: the evaluator explicitly declined to assert
+# sameness, but that is a valid terminal judgment, not a hard failure.
+_NON_BLOCKING_RELATIONSHIPS = frozenset({
+    Relationship.UNRELATED.value,
+    Relationship.UNCERTAIN.value,
+    Relationship.NEW.value,
+    Relationship.MERGE.value,
+})
+
+# CL4 (Plan Step 4): relationships that assert an occurrence IS a member of
+# the target semantic finding (sameness/identity family). An occurrence
+# mapped to two or more DISTINCT findings exclusively via these relationships
+# is a contradictory multiply-mapping and a hard failure. When at least one
+# mapping uses a non-sameness relationship (UNRELATED/UNCERTAIN/NEW/SPLIT/
+# BLOCKS/BLOCKED_BY/REOPEN), the multiple memberships represent a legitimate
+# evaluator dispute (e.g. a disputed MERGE) and are retained rather than
+# rejected — preserving the done-criteria disputed-MERGE fixture.
+_SAMENESS_RELATIONSHIPS = frozenset({
+    Relationship.DUPLICATE.value,
+    Relationship.MERGE.value,
+    Relationship.SUPERSEDED.value,
+    Relationship.REFINEMENT.value,
+    Relationship.REGRESSION.value,
+})
+
+# CL4 (Plan Step 3): parse statuses whose occurrences are eligible to
+# contribute to the finding_map. The four terminal-failure/discard statuses
+# are accounted as ``excluded-from-finding-map`` and never become findings,
+# while NO_ADDITIONAL_FINDINGS is an explicit positive no-content assertion.
+# This is the source of truth for per-occurrence reconciliation accounting:
+# every input occurrence produces exactly one accounting row derived from its
+# parse_status, so FAILED/DROPPED are surfaced with a reason rather than
+# silently ignored or confused with NO_ADDITIONAL_FINDINGS.
+_FINDING_ELIGIBLE_STATUSES = frozenset({
+    ParseStatus.SELECTED.value,
+    ParseStatus.COMPLETED.value,
+})
+
+# Human-readable reasons for excluded-from-finding-map occurrences, keyed by
+# parse_status. These surface WHY a FAILED/DROPPED/MALFORMED/TOMBSTONED
+# occurrence did not produce a finding, so the gate can distinguish a parse
+# failure from a genuine NO_ADDITIONAL_FINDINGS assertion.
+_EXCLUDED_OCCURRENCE_REASONS = {
+    ParseStatus.FAILED.value: "parse failure; producer output could not be parsed",
+    ParseStatus.DROPPED.value: "attempt dropped before producing a finding",
+    ParseStatus.MALFORMED.value: "malformed producer output; unparseable record",
+    ParseStatus.TOMBSTONED.value: "tombstoned; occurrence revoked by tombstone",
+}
+
+
+def _normalize_disposition_family(family_value: str) -> str:
+    """Normalize a deprecated disposition family value for classification and
+    validation without mutating the stored value.
+
+    The deprecated `DispositionFamily.RESOLVED.value` ("resolved") is
+    preserved verbatim on stored dispositions and existing handoffs. This
+    helper is the single place that interprets it: legacy "resolved" maps
+    to "resolved-verified" for the purpose of build_briefing bucketing and
+    the closure check. All other values (including the new distinct
+    "resolved-verified" and "addressed-pending-verification" serialized
+    members) pass through unchanged.
+
+    Args:
+        family_value: A serialized disposition family string.
+
+    Returns:
+        The normalized family value, leaving the original input untouched.
+    """
+    if family_value == DispositionFamily.RESOLVED.value:
+        return DispositionFamily.RESOLVED_VERIFIED.value
+    return family_value
 
 _UNKNOWN_PRODUCER_PREFIXES = frozenset({"UNKNOWN_", "unknown_", "MALFORMED_", "DROPPED_"})
 
@@ -281,10 +467,33 @@ def apply_reconciliation_events(
           - total_semantic_findings: int
           - failures: list of failure dicts
           - reopen_events: list of reopen event dicts
+          - occurrence_accounting: list of per-occurrence accounting dicts,
+            exactly one row per input occurrence. Each row carries
+            ``occurrence_id``, ``parse_status``, ``disposition``
+            ("mapped-to-finding" / "excluded-from-finding-map" /
+            "no-additional-findings"), ``reason``, and
+            ``semantic_finding_id_or_null``. FAILED/DROPPED/MALFORMED/
+            TOMBSTONED are surfaced as excluded-from-finding-map with a
+            reason and never confused with NO_ADDITIONAL_FINDINGS.
+
+            Plan Step 4 enforces exactly-once accounting completeness here:
+            every input occurrence must be covered by exactly one accounting
+            row (OCCURRENCE_UNMAPPED / OCCURRENCE_MULTIPLY_MAPPED failures
+            otherwise), and every finding-eligible occurrence must map to
+            exactly one semantic finding. A contradictory double-sameness
+            mapping (e.g. two DUPLICATE assertions to distinct findings) is an
+            OCCURRENCE_MULTIPLY_MAPPED hard failure; a disputed MERGE that
+            mixes a sameness relationship with a non-sameness judgment
+            (UNRELATED/UNCERTAIN/...) is a legitimate evaluator dispute and is
+            retained, so ``accepted`` stays True.
     """
     failures: list[dict[str, Any]] = []
     reopen_events: list[dict[str, Any]] = []
     finding_map: dict[str, set[str]] = {}
+    # CL4 (Plan Step 4): track the relationship each occurrence was mapped
+    # with, so multiply-mapped occurrences can be distinguished from
+    # legitimate evaluator disputes (disputed MERGE).
+    occ_to_relationships: dict[str, set[str]] = {}
     seen_reconciliation_ids: set[str] = set()
     occurrence_id_set = {occ.occurrence_id for occ in occurrences}
 
@@ -306,6 +515,22 @@ def apply_reconciliation_events(
             })
             continue
         seen_reconciliation_ids.add(rec.reconciliation_id)
+
+        # Unknown relationship — reject unrecognized serialized values with
+        # a typed failure rather than silently accepting them. The whitelist
+        # auto-derives from the Relationship enum, so it tracks future
+        # additions automatically.
+        if rec.relationship not in _VALID_RELATIONSHIPS:
+            failures.append({
+                "mode": FailureMode.RECONCILIATION_UNKNOWN_RELATIONSHIP.value,
+                "reconciliation_id": rec.reconciliation_id,
+                "relationship": rec.relationship,
+                "detail": (
+                    f"Unknown relationship value: {rec.relationship!r}. "
+                    f"Valid relationships: {sorted(_VALID_RELATIONSHIPS)}"
+                ),
+            })
+            continue
 
         # Check for orphan occurrences
         orphans = [
@@ -337,11 +562,20 @@ def apply_reconciliation_events(
                 "reason": rec.reason,
             })
 
-        # Inferred sameness check (non-DUPLICATE relationship without reason)
+        # Inferred sameness check (non-DUPLICATE relationship asserting or
+        # implying sameness without an explicit reason). UNRELATED and
+        # UNCERTAIN are explicit *non-sameness* judgments and do not trip
+        # this check; REOPEN is handled above. MERGE/SUPERSEDED/REFINEMENT/
+        # REGRESSION/SPLIT/BLOCKS/BLOCKED_BY without a reason still warn.
+        _NON_SAMENESS_RELATIONSHIPS = frozenset({
+            Relationship.DUPLICATE.value,
+            Relationship.REOPEN.value,
+            Relationship.UNRELATED.value,
+            Relationship.UNCERTAIN.value,
+        })
         if (
-            rec.relationship != Relationship.DUPLICATE.value
+            rec.relationship not in _NON_SAMENESS_RELATIONSHIPS
             and not rec.reason
-            and rec.relationship != Relationship.REOPEN.value
         ):
             failures.append({
                 "mode": FailureMode.RECONCILIATION_INFERRED_SAMENESS.value,
@@ -360,6 +594,30 @@ def apply_reconciliation_events(
         if sf_id not in finding_map:
             finding_map[sf_id] = set()
         finding_map[sf_id].update(rec.occurrence_ids)
+        # CL4 (Plan Step 4): record the relationship used for each mapped
+        # occurrence so multiply-mapping can be distinguished from a
+        # legitimate evaluator dispute downstream.
+        for oid in rec.occurrence_ids:
+            occ_to_relationships.setdefault(oid, set()).add(rec.relationship)
+
+    # CL4 (Plan Step 3): exclude non-eligible parse statuses from the
+    # finding_map. FAILED/DROPPED/MALFORMED/TOMBSTONED never become findings;
+    # they receive explicit "excluded-from-finding-map" accounting entries so
+    # no occurrence is silently ignored. This keeps the accounting truthful:
+    # an occurrence accounted as excluded-from-finding-map is never present in
+    # finding_map. A finding left with zero eligible occurrences is dropped.
+    occ_status_by_id = {
+        occ.occurrence_id: occ.parse_status for occ in occurrences
+    }
+    for sf_id in list(finding_map.keys()):
+        eligible = {
+            oid for oid in finding_map[sf_id]
+            if occ_status_by_id.get(oid) in _FINDING_ELIGIBLE_STATUSES
+        }
+        if eligible:
+            finding_map[sf_id] = eligible
+        else:
+            del finding_map[sf_id]
 
     # Convert sets to sorted lists for deterministic output
     finding_map_lists: dict[str, list[str]] = {
@@ -367,10 +625,154 @@ def apply_reconciliation_events(
         for sf_id, oids in finding_map.items()
     }
 
-    # Check for unreconciled occurrences (those not in any finding_map)
-    all_reconciled: set[str] = set()
-    for oids in finding_map.values():
-        all_reconciled.update(oids)
+    # Reverse map: occurrence_id -> [semantic_finding_id, ...]
+    occ_to_findings: dict[str, list[str]] = {}
+    for sf_id, oids in finding_map.items():
+        for oid in oids:
+            occ_to_findings.setdefault(oid, []).append(sf_id)
+
+    # CL4 (Plan Step 3): produce exactly one accounting entry per input
+    # occurrence, derived from parse_status. SELECTED/COMPLETED are
+    # mapped-to-finding; FAILED/DROPPED/MALFORMED/TOMBSTONED are
+    # excluded-from-finding-map with an explicit reason; NO_ADDITIONAL_
+    # FINDINGS is an explicit no-additional-findings event. FAILED and
+    # DROPPED are surfaced by reason and never confused with
+    # NO_ADDITIONAL_FINDINGS.
+    #
+    # CL4 (Plan Step 4): while building the rows, also detect finding-
+    # eligible occurrences that are unmapped (zero reconciliations) or
+    # multiply-mapped (more than one). Both are recorded and surfaced as
+    # hard failures after the loop so `accepted` is False and the gate can
+    # never observe a truthful-looking but ambiguous or incomplete proof.
+    occurrence_accounting: list[dict[str, Any]] = []
+    unmapped_eligible: list[str] = []
+    multiply_mapped_eligible: list[str] = []
+    for occ in sorted(occurrences, key=lambda o: o.occurrence_id):
+        status = occ.parse_status
+        if status in _FINDING_ELIGIBLE_STATUSES:
+            mapped = sorted(occ_to_findings.get(occ.occurrence_id, []))
+            if len(mapped) == 0:
+                unmapped_eligible.append(occ.occurrence_id)
+                semantic_finding_id = None
+                reason = (
+                    f"parse_status={status}; finding-eligible occurrence "
+                    f"lacks a reconciliation mapping"
+                )
+            elif len(mapped) == 1:
+                semantic_finding_id = mapped[0]
+                reason = (
+                    f"parse_status={status}; reconciled to semantic "
+                    f"finding {semantic_finding_id}"
+                )
+            else:
+                # CL4 (Plan Step 4): the occurrence is a member of two or
+                # more distinct findings. Only an exclusive-sameness mapping
+                # (e.g. two DUPLICATE/MERGE assertions to different findings)
+                # is a contradictory multiply-mapping. When at least one
+                # relationship is a non-sameness judgment (UNRELATED/
+                # UNCERTAIN/...), the multiple memberships are a legitimate
+                # evaluator dispute and are retained rather than rejected.
+                rels = occ_to_relationships.get(occ.occurrence_id, set())
+                if rels and all(r in _SAMENESS_RELATIONSHIPS for r in rels):
+                    multiply_mapped_eligible.append(occ.occurrence_id)
+                    reason = (
+                        f"parse_status={status}; occurrence reconciled to "
+                        f"multiple semantic findings via sameness: {mapped}"
+                    )
+                else:
+                    reason = (
+                        f"parse_status={status}; occurrence retained across "
+                        f"disputed findings {mapped} (non-sameness "
+                        f"relationship present: {sorted(rels)})"
+                    )
+                semantic_finding_id = None
+            occurrence_accounting.append({
+                "occurrence_id": occ.occurrence_id,
+                "parse_status": status,
+                "disposition": "mapped-to-finding",
+                "reason": reason,
+                "semantic_finding_id_or_null": semantic_finding_id,
+            })
+        elif status == ParseStatus.NO_ADDITIONAL_FINDINGS.value:
+            occurrence_accounting.append({
+                "occurrence_id": occ.occurrence_id,
+                "parse_status": status,
+                "disposition": "no-additional-findings",
+                "reason": (
+                    "parse_status=NO_ADDITIONAL_FINDINGS: producer "
+                    "asserted no additional findings"
+                ),
+                "semantic_finding_id_or_null": None,
+            })
+        else:
+            # FAILED/DROPPED/MALFORMED/TOMBSTONED (and any defensive
+            # unknown status) are excluded-from-finding-map with a reason.
+            reason_detail = _EXCLUDED_OCCURRENCE_REASONS.get(
+                status, f"unhandled parse status {status!r}"
+            )
+            occurrence_accounting.append({
+                "occurrence_id": occ.occurrence_id,
+                "parse_status": status,
+                "disposition": "excluded-from-finding-map",
+                "reason": f"parse_status={status}: {reason_detail}",
+                "semantic_finding_id_or_null": None,
+            })
+
+    # CL4 (Plan Step 4): exact accounting completeness proof. Every input
+    # occurrence — including excluded statuses — must be covered by exactly
+    # one accounting row, and every finding-eligible occurrence must map to
+    # exactly one semantic finding. Missing or duplicate accounting rows and
+    # unmapped/multiply-mapped eligible occurrences are hard acceptance
+    # failures so the gate can never observe an incomplete proof. These
+    # failures are in addition to any reconciliation-event failures above.
+    input_occurrence_ids = [occ.occurrence_id for occ in occurrences]
+    accounting_id_counts: dict[str, int] = {}
+    for row in occurrence_accounting:
+        oid = row["occurrence_id"]
+        accounting_id_counts[oid] = accounting_id_counts.get(oid, 0) + 1
+
+    missing_accounting = sorted(
+        set(input_occurrence_ids) - set(accounting_id_counts)
+    )
+    duplicate_accounting = sorted(
+        oid for oid, count in accounting_id_counts.items() if count > 1
+    )
+    if missing_accounting:
+        failures.append({
+            "mode": FailureMode.OCCURRENCE_UNMAPPED.value,
+            "occurrence_ids": missing_accounting,
+            "detail": (
+                "Occurrence accounting completeness violated: input "
+                f"occurrences lack an accounting row: {missing_accounting}"
+            ),
+        })
+    if duplicate_accounting:
+        failures.append({
+            "mode": FailureMode.OCCURRENCE_MULTIPLY_MAPPED.value,
+            "occurrence_ids": duplicate_accounting,
+            "detail": (
+                "Occurrence accounting uniqueness violated: occurrences "
+                f"have multiple accounting rows: {duplicate_accounting}"
+            ),
+        })
+    if unmapped_eligible:
+        failures.append({
+            "mode": FailureMode.OCCURRENCE_UNMAPPED.value,
+            "occurrence_ids": sorted(unmapped_eligible),
+            "detail": (
+                "Finding-eligible occurrences lack a reconciliation "
+                f"mapping: {sorted(unmapped_eligible)}"
+            ),
+        })
+    if multiply_mapped_eligible:
+        failures.append({
+            "mode": FailureMode.OCCURRENCE_MULTIPLY_MAPPED.value,
+            "occurrence_ids": sorted(multiply_mapped_eligible),
+            "detail": (
+                "Finding-eligible occurrences map to multiple semantic "
+                f"findings: {sorted(multiply_mapped_eligible)}"
+            ),
+        })
 
     return {
         "accepted": len([f for f in failures if f["mode"] not in (
@@ -380,6 +782,7 @@ def apply_reconciliation_events(
         "total_semantic_findings": len(finding_map_lists),
         "failures": failures,
         "reopen_events": reopen_events,
+        "occurrence_accounting": occurrence_accounting,
     }
 
 
@@ -405,11 +808,42 @@ def apply_disposition_events(
           - family_counts: {family: count}
           - failures: list of failure dicts
           - disposition_map: {semantic_finding_id: disposition dict}
+
+    CL4 (Plan Step 5): per-family field-presence rules. Each of the seven
+    non-closure families requires a specific field — ACTED_ON requires
+    ``action_taken`` + ``action_description``; IGNORED, DEFERRED, and
+    ACCEPTED_RISK require ``reopen_predicate``; REJECTED requires
+    ``reason_subcode``; DUPLICATE requires a canonical-finding ref in
+    ``metadata``. A missing required field yields the typed FailureMode
+    (ACTED_ON_MISSING_ACTION, IGNORED_MISSING_REOPEN_PREDICATE, ...,
+    DUPLICATE_MISSING_CANONICAL_REF) and the disposition is neither counted
+    nor stored. UNKNOWN is a valid terminal judgment with no extra
+    requirement; the closure families (RESOLVED_VERIFIED / legacy RESOLVED)
+    are gated by the closure rules, not by these checks.
+
+    CL4 (Plan Step 6): closure-evidence enforcement and transition gating.
+    A RESOLVED_VERIFIED disposition requires a verification artifact in
+    ``evidence_refs`` (CLOSURE_UNSUPPORTED when absent); a
+    pending->verified transition (ADDRESSED_PENDING_VERIFICATION followed
+    by RESOLVED_VERIFIED) carries the same evidence requirement with a
+    transition-named detail. The legacy RESOLVED value is intentionally
+    not normalized here and keeps its existing apply-level behaviour;
+    replay_full's inline closure check is the redundant backstop covering
+    both closure values via _normalize_disposition_family. Each stored
+    disposition is also annotated with ``staleness_check_deferred`` (True
+    when a reopen_predicate is present): apply_disposition_events has no
+    input-change context, so true staleness is recorded as a structural
+    flag and the actual detection is deferred to CL5.
     """
     failures: list[dict[str, Any]] = []
     family_counts: dict[str, int] = {}
     disposition_map: dict[str, dict[str, Any]] = {}
     seen_disposition_ids: set[str] = set()
+    # CL4 (Plan Step 6.2): findings currently/ever disposed as
+    # ADDRESSED_PENDING_VERIFICATION within this event sequence. A later
+    # RESOLVED_VERIFIED for one of these findings is a pending->verified
+    # transition that must carry verification evidence (enforced below).
+    pending_verification_findings: set[str] = set()
 
     # Normalize finding_map: convert sets to sorted lists for consistent keys
     normalized_finding_map: dict[str, Any] = {}
@@ -463,6 +897,65 @@ def apply_disposition_events(
             })
             continue
 
+        # CL4 (Plan Step 5): per-family field-presence rules. Each of the
+        # seven non-closure families requires a specific field so a finding
+        # cannot disappear behind a malformed disposition. A missing required
+        # field produces the typed failure and skips this disposition (it is
+        # neither counted nor stored), mirroring the unknown-family / orphan
+        # handling. UNKNOWN is a valid terminal judgment with no extra
+        # requirement; the closure families are gated separately.
+        presence = _disposition_field_presence_failure(disp)
+        if presence is not None:
+            presence_mode, presence_detail = presence
+            failures.append({
+                "mode": presence_mode.value,
+                "disposition_id": disp.disposition_id,
+                "family": disp.family,
+                "semantic_finding_id": disp.semantic_finding_id,
+                "detail": presence_detail,
+            })
+            continue
+
+        # CL4 (Plan Step 6.1 / 6.2): closure-evidence enforcement and
+        # pending->verified transition gating. A RESOLVED_VERIFIED
+        # disposition requires a verification artifact in evidence_refs.
+        # This is the PRIMARY closure-evidence enforcement; replay_full's
+        # inline closure check is a redundant backstop that additionally
+        # requires a reason_subcode and covers both legacy RESOLVED and
+        # RESOLVED_VERIFIED via _normalize_disposition_family. The legacy
+        # RESOLVED value is intentionally NOT normalized here so existing
+        # stored/handoff dispositions keep their apply-level behaviour
+        # (legacy RESOLVED closure is enforced only by the replay backstop);
+        # only the new RESOLVED_VERIFIED value carries the apply-level
+        # evidence requirement. When the verifying disposition follows an
+        # ADDRESSED_PENDING_VERIFICATION for the same finding, the failure
+        # detail names the transition explicitly (Step 6.2).
+        is_verified_closure = (
+            disp.family == DispositionFamily.RESOLVED_VERIFIED.value
+        )
+        is_pending_transition = (
+            is_verified_closure
+            and disp.semantic_finding_id in pending_verification_findings
+        )
+        if is_verified_closure and not disp.evidence_refs:
+            failures.append({
+                "mode": FailureMode.CLOSURE_UNSUPPORTED.value,
+                "disposition_id": disp.disposition_id,
+                "family": disp.family,
+                "semantic_finding_id": disp.semantic_finding_id,
+                "detail": (
+                    "ADDRESSED_PENDING_VERIFICATION -> RESOLVED_VERIFIED "
+                    "transition requires verification evidence in "
+                    "evidence_refs"
+                    if is_pending_transition
+                    else "RESOLVED_VERIFIED closure requires verification "
+                    "evidence in evidence_refs"
+                ),
+            })
+            continue
+        if disp.family == DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value:
+            pending_verification_findings.add(disp.semantic_finding_id)
+
         # Count families
         family_counts[disp.family] = family_counts.get(disp.family, 0) + 1
 
@@ -477,6 +970,7 @@ def apply_disposition_events(
             "accountable_scope": disp.accountable_scope,
             "is_reopen": disp.is_reopen,
             "reopen_predicate": disp.reopen_predicate,
+            "staleness_check_deferred": bool(disp.reopen_predicate),
             "evidence_refs": list(disp.evidence_refs),
             "authority": disp.authority,
             "timestamp_utc": disp.timestamp_utc,
@@ -718,20 +1212,30 @@ def build_briefing(
         all_findings.append(sf_id)
         disp = disposition_map.get(sf_id, {})
         family = disp.get("family", DispositionFamily.UNKNOWN.value)
+        # Normalize legacy "resolved" → "resolved-verified" at the single
+        # classification chokepoint, leaving the stored value untouched.
+        normalized_family = _normalize_disposition_family(family)
 
-        if family == DispositionFamily.ACTED_ON.value:
+        if normalized_family == DispositionFamily.ACTED_ON.value:
             acted_on_findings.append(sf_id)
-        elif family == DispositionFamily.IGNORED.value:
+        elif normalized_family == DispositionFamily.IGNORED.value:
             ignored_findings.append(sf_id)
-        elif family == DispositionFamily.DEFERRED.value:
+        elif normalized_family == DispositionFamily.DEFERRED.value:
             deferred_findings.append(sf_id)
-        elif family in _BLOCKED_FAMILIES:
+        elif normalized_family in _BLOCKED_FAMILIES:
             blocked_findings.append(sf_id)
-        elif family == DispositionFamily.ACCEPTED_RISK.value:
+        elif normalized_family == DispositionFamily.ACCEPTED_RISK.value:
             accepted_risk_findings.append(sf_id)
-        elif family == DispositionFamily.RESOLVED.value:
+        elif normalized_family == DispositionFamily.RESOLVED_VERIFIED.value:
             resolved_findings.append(sf_id)
-        elif family == DispositionFamily.DUPLICATE.value:
+        elif (
+            normalized_family
+            == DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value
+        ):
+            # CL4: action was taken but verification is still pending, so the
+            # finding remains an open acted-on finding requiring follow-up.
+            acted_on_findings.append(sf_id)
+        elif normalized_family == DispositionFamily.DUPLICATE.value:
             duplicate_findings.append(sf_id)
         else:
             unknown_findings.append(sf_id)
@@ -987,6 +1491,20 @@ def project_reviser_input(
       - no_known_findings
       - no_adjacent_text_match
 
+    CL4 (Plan Step 7): the projection additionally carries actionable and
+    disposed history so the reviser sees every known finding and which ones
+    still require action. ``actionable_findings`` lists findings whose
+    normalized family requires reviser action/follow-up (ACTED_ON,
+    ADDRESSED_PENDING_VERIFICATION); ``disposed_history`` carries the full
+    prior-disposition record for every known finding (family, evidence,
+    reopen predicate, action state) so no known finding disappears;
+    ``unchanged_findings`` lists settled findings (resolved-verified or
+    accepted-risk) that remain visible without further action; and
+    ``revision_actions_required`` is True when an actionable finding lacks
+    action coverage (``action_taken`` False) — i.e. the reviser must act.
+    Evidence refs and reopen predicates are retained verbatim on every
+    history entry.
+
     Args:
         manifest: The accepted manifest.
         briefing: The domain briefing.
@@ -1030,6 +1548,55 @@ def project_reviser_input(
         )
     )
 
+    # CL4 (Plan Step 7): actionable / disposed / unchanged history. Iterate
+    # over the union of briefing findings and the disposition_map so no known
+    # finding disappears even when action coverage is missing (a finding with
+    # missing action coverage is still surfaced in disposed_history and, if
+    # its family is actionable, flagged via revision_actions_required).
+    all_known_findings = sorted(
+        set(briefing.findings) | set(disposition_map.keys())
+    )
+    actionable_findings: list[dict[str, Any]] = []
+    disposed_history: list[dict[str, Any]] = []
+    unchanged_findings: list[str] = []
+    revision_actions_required = False
+    for sf_id in all_known_findings:
+        disp = disposition_map.get(sf_id, {})
+        family = disp.get("family", DispositionFamily.UNKNOWN.value)
+        normalized_family = _normalize_disposition_family(family)
+        evidence_refs = list(disp.get("evidence_refs", []))
+        reopen_predicate = disp.get("reopen_predicate")
+        # Complete prior-disposition record: family/evidence/reopen retained.
+        disposed_history.append({
+            "semantic_finding_id": sf_id,
+            "family": family,
+            "normalized_family": normalized_family,
+            "reason_subcode": disp.get("reason_subcode", ""),
+            "severity": disp.get("severity", ""),
+            "action_taken": disp.get("action_taken", False),
+            "action_description": disp.get("action_description"),
+            "is_reopen": disp.get("is_reopen", False),
+            "reopen_predicate": reopen_predicate,
+            "staleness_check_deferred": disp.get("staleness_check_deferred", False),
+            "evidence_refs": evidence_refs,
+        })
+        if normalized_family in _PROJECTION_ACTIONABLE_FAMILIES:
+            actionable_findings.append({
+                "semantic_finding_id": sf_id,
+                "family": family,
+                "normalized_family": normalized_family,
+                "action_taken": disp.get("action_taken", False),
+                "action_description": disp.get("action_description"),
+            })
+            # Missing action coverage: an actionable finding whose action has
+            # not been taken. ACTED_ON carries a validated action; an
+            # ADDRESSED_PENDING_VERIFICATION finding may legitimately have
+            # action_taken False, signalling the reviser must act.
+            if not disp.get("action_taken", False):
+                revision_actions_required = True
+        if normalized_family in _PROJECTION_UNCHANGED_FAMILIES:
+            unchanged_findings.append(sf_id)
+
     return {
         "manifest_id": manifest.manifest_id,
         "input_set_hash": manifest.input_set_hash,
@@ -1039,6 +1606,12 @@ def project_reviser_input(
         "occurrence_failed_dropped_malformed": failed_dropped_malformed,
         "total_occurrences": len(occurrences),
         "total_findings": len(briefing.findings),
+        # CL4 (Plan Step 7): actionable history, disposed history, unchanged
+        # findings, and the revision-actions-required flag.
+        "actionable_findings": actionable_findings,
+        "disposed_history": disposed_history,
+        "unchanged_findings": unchanged_findings,
+        "revision_actions_required": revision_actions_required,
         # Four no-X fields
         "no_open_blocking_findings": briefing.no_open_blocking_findings,
         "no_additional_findings": briefing.no_additional_findings,
@@ -1071,6 +1644,22 @@ def project_gate_input(
       - no findings → no additional findings flag
       - custody failure → custody_valid = False
       - unavailable evidence → tracked in unavailable_evidence
+
+    CL4 (Plan Step 8): the projection additionally carries the truthful
+    ledger/accounting/disposition/revision/verification state the gate
+    must ground any acceptance claim on:
+      - accepted_ledger_revision: the accepted manifest identity (manifest
+        id, revision number, input-set hash, prior-revision hash).
+      - occurrence_coverage_proof: the exact per-occurrence reconciliation
+        accounting row count vs. input occurrence count and a completeness
+        flag derived from occurrence_accounting.
+      - disposition_state: per-finding normalized family, reopen predicate,
+        staleness flag, evidence refs, action state, plus family counts and
+        the disposition accepted flag.
+      - revision_actions: actionable findings, the revision-actions-required
+        flag, and declared revision actions from the briefing.
+      - independent_verification: verified (resolved-verified) and
+        pending-verification findings plus a has-verification-evidence flag.
 
     Args:
         manifest: The accepted manifest.
@@ -1112,9 +1701,94 @@ def project_gate_input(
                 "reopen_condition": occ.reopen_condition,
             }
 
+    # CL4 (Plan Step 8): accepted ledger revision identity.
+    accepted_ledger_revision = {
+        "manifest_id": manifest.manifest_id,
+        "revision_number": manifest.revision_number,
+        "input_set_hash": manifest.input_set_hash,
+        "prior_revision_hash": manifest.prior_revision_hash,
+    }
+
+    # CL4 (Plan Step 8): exact occurrence coverage proof grounded in the
+    # per-occurrence accounting emitted by apply_reconciliation_events.
+    occurrence_accounting = list(rec_result.get("occurrence_accounting", []))
+    occurrence_coverage_proof = {
+        "total_input_occurrences": len(occurrences),
+        "accounting_row_count": len(occurrence_accounting),
+        "complete": len(occurrence_accounting) == len(occurrences),
+        "reconciliation_accepted": rec_result.get("accepted", False),
+        "occurrence_accounting": occurrence_accounting,
+    }
+
+    # CL4 (Plan Step 8): per-finding disposition state and family counts.
+    # Iterate over the union of briefing findings and the disposition_map so
+    # no known finding disappears from the gate's view.
+    all_known_findings = sorted(
+        set(briefing.findings) | set(disposition_map.keys())
+    )
+    disposition_state_findings: dict[str, dict[str, Any]] = {}
+    actionable_findings: list[str] = []
+    verified_findings: list[str] = []
+    pending_verification_findings: list[str] = []
+    revision_actions_required = False
+    has_verification_evidence = False
+    for sf_id in all_known_findings:
+        disp = disposition_map.get(sf_id, {})
+        family = disp.get("family", DispositionFamily.UNKNOWN.value)
+        normalized_family = _normalize_disposition_family(family)
+        evidence_refs = list(disp.get("evidence_refs", []))
+        disposition_state_findings[sf_id] = {
+            "family": family,
+            "normalized_family": normalized_family,
+            "is_reopen": disp.get("is_reopen", False),
+            "reopen_predicate": disp.get("reopen_predicate"),
+            "staleness_check_deferred": disp.get("staleness_check_deferred", False),
+            "evidence_refs": evidence_refs,
+            "action_taken": disp.get("action_taken", False),
+        }
+        if normalized_family in _PROJECTION_ACTIONABLE_FAMILIES:
+            actionable_findings.append(sf_id)
+            if not disp.get("action_taken", False):
+                revision_actions_required = True
+        if normalized_family == DispositionFamily.RESOLVED_VERIFIED.value:
+            verified_findings.append(sf_id)
+            if evidence_refs:
+                has_verification_evidence = True
+        elif (
+            normalized_family
+            == DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value
+        ):
+            pending_verification_findings.append(sf_id)
+    disposition_state = {
+        "disposition_accepted": disp_result.get("accepted", False),
+        "family_counts": dict(disp_result.get("family_counts", {})),
+        "findings": disposition_state_findings,
+    }
+
+    # CL4 (Plan Step 8): revision-action coverage for the gate.
+    revision_actions = {
+        "actionable_findings": actionable_findings,
+        "revision_actions_required": revision_actions_required,
+        "declared_revision_actions": list(briefing.revision_actions),
+    }
+
+    # CL4 (Plan Step 8): independent verification state — which findings are
+    # verified vs. pending and whether verification evidence is present.
+    independent_verification = {
+        "verified_findings": verified_findings,
+        "pending_verification_findings": pending_verification_findings,
+        "has_verification_evidence": has_verification_evidence,
+    }
+
     return {
         "manifest_id": manifest.manifest_id,
         "input_set_hash": manifest.input_set_hash,
+        # CL4 (Plan Step 8): enriched truthful-claim state.
+        "accepted_ledger_revision": accepted_ledger_revision,
+        "occurrence_coverage_proof": occurrence_coverage_proof,
+        "disposition_state": disposition_state,
+        "revision_actions": revision_actions,
+        "independent_verification": independent_verification,
         # Custody signals
         "custody_valid": custody_result.get("valid", False),
         "custody_failure_count": len(custody_result.get("failures", [])),
@@ -1204,16 +1878,13 @@ def replay_full(
                 mode=FailureMode.SCHEMA_INCOMPATIBLE,
                 detail=f"Occurrence {occ.occurrence_id} uses {occ.schema_version}",
             )
-        if occ.parse_status == ParseStatus.FAILED.value:
-            raise SemanticLoopError(
-                mode=FailureMode.OCCURRENCE_PARSE_FAILED,
-                detail=f"Occurrence {occ.occurrence_id} has parse_status=FAILED",
-            )
-        if occ.parse_status == ParseStatus.DROPPED.value:
-            raise SemanticLoopError(
-                mode=FailureMode.ATTEMPT_DROPPED,
-                detail=f"Occurrence {occ.occurrence_id} was dropped",
-            )
+        # CL4 (Plan Step 3): FAILED and DROPPED no longer hard-stop replay
+        # before reconciliation. They now flow into apply_reconciliation_events
+        # and receive an explicit "excluded-from-finding-map" accounting row
+        # with a reason, so they are surfaced at the gate rather than silently
+        # ignored or raised before reconciliation runs. The typed failure modes
+        # OCCURRENCE_PARSE_FAILED / ATTEMPT_DROPPED are retained on FailureMode
+        # for legacy compatibility but are no longer raised here.
         if not occ.occurrence_id:
             raise SemanticLoopError(
                 mode=FailureMode.OCCURRENCE_MISSING_ID,
@@ -1306,28 +1977,38 @@ def replay_full(
             failures=rec_result["failures"],
         )
 
-    mapped_counts: dict[str, int] = {}
-    for mapped_ids in rec_result["finding_map"].values():
-        for occurrence_id in mapped_ids:
-            mapped_counts[occurrence_id] = mapped_counts.get(occurrence_id, 0) + 1
-    parseable_ids = {
-        occ.occurrence_id
-        for occ in occurrences
-        if occ.parse_status in {ParseStatus.SELECTED.value, ParseStatus.COMPLETED.value}
-    }
-    unmapped = sorted(parseable_ids - set(mapped_counts))
-    if unmapped:
+    # CL4 (Plan Step 4): exact accounting completeness proof. The prior
+    # parseable-ID coverage heuristic is replaced by a proof grounded in the
+    # per-occurrence accounting emitted by apply_reconciliation_events. Every
+    # input occurrence must be covered by exactly one accounting row.
+    # Finding-membership completeness (unmapped and multiply-mapped eligible
+    # occurrences, relationship-aware so disputed MERGEs are retained) is
+    # already enforced inside apply_reconciliation_events and surfaced through
+    # the hard-failure filter above; this block independently re-verifies the
+    # accounting-row invariant so a future regression that emits incomplete or
+    # duplicate accounting can never reach the gate.
+    occurrence_accounting = rec_result.get("occurrence_accounting", [])
+    accounted_ids = [row["occurrence_id"] for row in occurrence_accounting]
+    input_id_set = {occ.occurrence_id for occ in occurrences}
+    missing_rows = sorted(input_id_set - set(accounted_ids))
+    duplicate_rows = sorted(
+        {oid for oid in accounted_ids if accounted_ids.count(oid) > 1}
+    )
+    if missing_rows:
         raise SemanticLoopError(
             mode=FailureMode.OCCURRENCE_UNMAPPED,
-            detail=f"Parseable occurrences lack reconciliation: {unmapped}",
+            detail=(
+                "Accounting completeness proof failed: input occurrences "
+                f"missing an accounting row: {missing_rows}"
+            ),
         )
-    multiply_mapped = sorted(
-        occurrence_id for occurrence_id, count in mapped_counts.items() if count != 1
-    )
-    if multiply_mapped:
+    if duplicate_rows:
         raise SemanticLoopError(
             mode=FailureMode.OCCURRENCE_MULTIPLY_MAPPED,
-            detail=f"Occurrences map to multiple semantic findings: {multiply_mapped}",
+            detail=(
+                "Accounting uniqueness proof failed: occurrences have "
+                f"multiple accounting rows: {duplicate_rows}"
+            ),
         )
 
     # Phase 3: Disposition
@@ -1338,18 +2019,31 @@ def replay_full(
             detail=disp_result["failures"][0].get("detail", "Disposition failed"),
             failures=disp_result["failures"],
         )
+    # CL4 (Plan Step 6.3): redundant closure backstop. apply_disposition_events
+    # is the PRIMARY closure-evidence enforcement for the new RESOLVED_VERIFIED
+    # value (Step 6.1). This inline check is the redundant backstop: it
+    # inspects BOTH the legacy RESOLVED value and the new RESOLVED_VERIFIED
+    # value via _normalize_disposition_family so a closure disposition of
+    # either family that lacks a reason or verification evidence can never
+    # reach projection. It additionally requires reason_subcode, matching the
+    # historical closure contract for legacy RESOLVED and extending it
+    # equivalently to the new verified value.
     unsupported_closures = [
         disp.disposition_id
         for disp in dispositions
         if (
-            disp.family == DispositionFamily.RESOLVED.value
+            _normalize_disposition_family(disp.family)
+            == DispositionFamily.RESOLVED_VERIFIED.value
             and (not disp.evidence_refs or not disp.reason_subcode)
         )
     ]
     if unsupported_closures:
         raise SemanticLoopError(
             mode=FailureMode.CLOSURE_UNSUPPORTED,
-            detail=f"Resolved dispositions lack reason/evidence: {unsupported_closures}",
+            detail=(
+                "Closure dispositions lack reason/evidence: "
+                f"{unsupported_closures}"
+            ),
         )
 
     # Phase 4: Manifest

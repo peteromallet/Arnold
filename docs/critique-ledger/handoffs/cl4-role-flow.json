@@ -1,0 +1,432 @@
+{
+  "schema": "cl.handoff.v1",
+  "handoff_id": "cl4-role-flow",
+  "generated_at": "2026-08-08T07:41:07Z",
+  "generated_by": "hermes-executor: CL4 (scaffold T12; evidence T13)",
+  "target_milestone": "CL5",
+  "source_milestone": "CL4",
+  "status": "evidence_complete_bridge_mode_retained",
+  "description": "CL4 semantic reconciliation and truthful reviser/gate flow handoff. This artifact is the CL4→CL5 cutover candidate contract. It carries every required top-level key, the four settled reopen predicates, and the execution-derived evidence (accepted schema hashes, disposition/reopen and gate-compatibility matrices, reconciliation and action coverage proofs, WBC receipts, negative-authority results, M6 replay evidence, and backup/restore prerequisites) bound by T13 from the committed workspace tree (HEAD 99ca95f1ad27b0ed4522622588b6320b1053df3f). CL4 operates in BRIDGE mode: it produces artifacts and proofs but carries no positive gate/finalize authority until the carried blockers and the CL3 provenance gap are resolved downstream. Every bridge or deferral limitation below is stated as an explicit reopen predicate, never as resolved authority. No PENDING_*_EVIDENCE marker remains.",
+
+  "bridge_mode": {
+    "value": true,
+    "authority_status": "limitation_not_resolved",
+    "authority_limitation": "BRIDGE mode: CL4 does not claim canonical gate or finalize authority that the carried CL1/CL2 blockers and the missing CL3 handoff remove. CL4 produces reconciliation, disposition, reviser-projection, and gate-projection artifacts and proofs, and marks itself bridge_mode=true so downstream consumers can never mistake a BRIDGE run for canonical gate/finalize authority. A bridge_mode=true handoff must not authorize a provider effect, mutate lifecycle state, or be consumed as accepted_for_cl5=true.",
+    "propagation_target": "In-band through gate signals (adjacent_text_matches/semantic_recurrence/recurring_critiques compatibility + bridge_mode flag) and through WBC critique custody receipts (bridge_mode + carried_blockers). finalize custody must fail closed on canonical-authority use of a bridge_mode=true receipt.",
+    "reopen_predicate": "CL5 must reject this handoff for cutover authority while bridge_mode=true. Cutover authority requires bridge_mode=false AND resolution of every reopen predicate in this artifact (CL3 provenance gap, the five carried CL1/CL2 blockers, the accounting-based block interpretation, and the CL5 staleness deferral).",
+    "cl3_delta_as_reopen_predicate": "Because no accepted CL3 handoff exists, the CL3 contract assumptions recorded here are inferred from the current partial repository implementation. They are carried as a BRIDGE delta and must not be treated as CL3-vouched canonical authority. See reopen_predicates.cl3_provenance_gap.",
+    "evidence": {
+      "gate_signal_bridge_flag": {
+        "source": "arnold_pipelines/megaplan/orchestration/gate_signals.py",
+        "source_sha256": "13231b60e542ec55e1cd323fa029f16f3c75293fe31708776a5a69786b3692d8",
+        "binding": "CL4_BRIDGE_MODE (gate_signals.py) emitted in-band on every gate signal as signal[\"bridge_mode\"] alongside adjacent_text_matches, semantic_recurrence, and the deprecated recurring_critiques alias.",
+        "proof_test": "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_gate_signal_carries_bridge_mode_and_carried_blockers",
+        "status": "accepted"
+      },
+      "custody_receipt_bridge_propagation": {
+        "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
+        "source_sha256": "bef51b0af581e9b3a71d57262415455aade8bd72a65aa214c25b97764e604d08",
+        "binding": "critique_custody.CL4_BRIDGE_MODE=True and CL4_CARRIED_BLOCKERS (5 blockers) are copied into every persisted production receipt as receipt[\"bridge_mode\"] and receipt[\"carried_blockers\"], then propagated through clearance into the finalize binding.",
+        "proof_tests": [
+          "tests/orchestration/test_critique_custody.py::test_production_receipt_carries_bridge_mode_and_carried_blockers",
+          "tests/orchestration/test_critique_custody.py::test_bridge_mode_and_carried_blockers_restart_idempotently",
+          "tests/orchestration/test_critique_custody.py::test_clearance_propagates_bridge_mode_from_source_receipts"
+        ],
+        "status": "accepted"
+      },
+      "finalize_fail_closed_on_bridge_authority": {
+        "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
+        "source_sha256": "bef51b0af581e9b3a71d57262415455aade8bd72a65aa214c25b97764e604d08",
+        "binding": "finalize custody computes binding[\"canonical_gate_authority\"] = (not binding_bridge_mode); a bridge_mode=true clearance binds canonical_gate_authority=False. Validation appends an issue and fails closed when a bridge_mode=true clearance is bound with canonical_gate_authority != False, or when bridge_mode differs between clearance source receipts and the binding.",
+        "proof_tests": [
+          "tests/orchestration/test_critique_custody.py::test_finalize_custody_denies_canonical_authority_for_bridge_receipt",
+          "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receipt",
+          "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance"
+        ],
+        "status": "accepted"
+      }
+    }
+  },
+
+  "cl1_cl2_blockers_carried": {
+    "count": 5,
+    "accepted_for_cl4": false,
+    "source": "Five blockers inherited from docs/critique-ledger/handoffs/cl1-contract-oracle.json (accepted_for_cl2.blocking_reasons) and carried through docs/critique-ledger/handoffs/cl2-ledger-replay.json (accepted_for_cl2.five_blockers) into CL4.",
+    "authority_status": "limitation_not_resolved",
+    "blockers": [
+      {
+        "id": "review_status_not_present",
+        "detail": "reviewer_state.reviewed=false, no reviewer assigned",
+        "status": "carried_unresolved"
+      },
+      {
+        "id": "m6_prerequisite_incoherent",
+        "detail": "M5 final attestation missing 3 bound artifacts",
+        "status": "carried_unresolved"
+      },
+      {
+        "id": "proof_index_failed",
+        "detail": "validation_passed=false with 2 errors",
+        "status": "carried_unresolved"
+      },
+      {
+        "id": "ownership_blockers",
+        "detail": "4 blockers in ownership-decision-record; Run Authority M1-M3 completion receipts all have accepted=false",
+        "status": "carried_unresolved"
+      },
+      {
+        "id": "portfolio_gate_blocked",
+        "detail": "Portfolio gate PC-SCOPE-BLOCKER-001 requires human approval that is not recorded",
+        "status": "carried_unresolved"
+      }
+    ],
+    "reopen_predicate": "CL4 carries no positive gate/finalize authority until all five carried blockers are resolved so accepted_for_cl2 / accepted_for_cl4 becomes true. CL5 MUST verify that all five blockers are cleared before consuming CL4 output for authority; a bridge_mode=true handoff with any unresolved carried blocker cannot authorize cutover.",
+    "wbc_refs": ["CF-6258ECAAE233AA23F609", "CF-596574AFB511D5AB9A27"],
+    "code_binding": {
+      "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
+      "constant": "CL4_CARRIED_BLOCKERS",
+      "members": ["review_status_not_present", "m6_prerequisite_incoherent", "proof_index_failed", "ownership_blockers", "portfolio_gate_blocked"],
+      "proof_test": "tests/orchestration/test_critique_custody.py::test_clearance_propagates_bridge_mode_from_source_receipts",
+      "proof_assertion": "asserts clearance[\"carried_blockers\"] == list(critique_custody.CL4_CARRIED_BLOCKERS)"
+    }
+  },
+
+  "reopen_predicates": {
+    "cl3_provenance_gap": {
+      "authority_status": "limitation_not_resolved",
+      "statement": "No accepted CL3 handoff (cl3-*.json) exists in docs/critique-ledger/handoffs/. Every CL3 contract assumption consumed by CL4 is inferred from the current partial repository implementation, not vouched for by an accepted CL3 handoff.",
+      "reopen_predicate": "CL5 must reject this handoff for cutover authority until an accepted CL3 handoff is produced and consumed, OR the CL3 contract assumptions recorded here are independently verified against the canonical CL3 implementation. Inferred BRIDGE inputs must never be presented as accepted canonical authority.",
+      "wbc_refs": ["CF-FC69503BF34D4C45564E", "CF-0CCC8C16C44B44723CB0"]
+    },
+    "accounting_based_block_interpretation": {
+      "authority_status": "limitation_not_resolved",
+      "statement": "The brief's done criterion 'dropped/unmapped/duplicate/stale rows block' is satisfied by surfacing the row with an explicit reason at the gate via a per-occurrence accounting entry, NOT by halting replay with SemanticLoopError. FAILED/DROPPED/MALFORMED/TOMBSTONED occurrences receive an 'excluded-from-finding-map' accounting row (parse_status + reason), pass coverage completeness (they HAVE exactly one accounting entry), and flow through to the gate projection; they do not halt replay.",
+      "reopen_predicate": "If the brief intended literal halting (raise SemanticLoopError) for unrecoverable FAILED/DROPPED rather than gate-surfaced accounting, that interpretation must be resolved before CL4 claims gate authority. CL5 must confirm that accounting-surfacing is the intended 'block' semantics and that literal-halting ambiguity is resolved. The literal-halting interpretation is retained here as an explicit reopen predicate, not as resolved authority.",
+      "wbc_refs": ["CF-ABD9161F14719B590C30"]
+    },
+    "cl5_staleness_deferral": {
+      "authority_status": "limitation_not_resolved",
+      "statement": "apply_disposition_events receives only finding_map + dispositions and has no input-change context to detect staleness against. Reopen-predicate dispositions therefore carry staleness_check_deferred=true as a sentinel (set to bool(disp.reopen_predicate)) rather than performing actual mechanical staleness detection. Actual mechanical staleness triggering is deferred to CL5.",
+      "reopen_predicate": "CL5 must implement input-change-aware mechanical staleness detection for reopen-predicate dispositions and verify every disposition carrying staleness_check_deferred=true. Until then, staleness_check_deferred=true is a deferral marker, not a verified staleness judgment, and must not be treated as resolved closure authority.",
+      "wbc_ref_note": "See plan watch item: reopen-predicate mechanical staleness detection is not available to apply_disposition_events."
+    },
+    "recurring_critiques_alias_migration_deferral": {
+      "authority_status": "limitation_not_resolved",
+      "statement": "recurring_critiques remains a deprecated compatibility alias during CL4; migration of gate_checks.py, evaluation.py, critique_runtime.py, prompts, and adapters to adjacent_text_matches / semantic_recurrence is deferred to CL5.",
+      "reopen_predicate": "CL5 must complete the recurring_critiques -> adjacent_text_matches/semantic_recurrence migration and remove the deprecated alias. Until then, consumers continue to read recurring_critiques via compatibility aliasing and must not treat it as a semantic-recurrence authority claim.",
+      "wbc_refs": ["CF-FC5053FA993C00F3507E", "CF-44093189764E2DDCC74E"]
+    }
+  },
+
+  "schema_hashes": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "hash_basis": "Schema-class entries are canonical_hash(<default instance>) computed via schemas.canonical_hash (SHA-256 of the frozen dataclass representation); this reflects the CL4-extended class structures (Relationship=12 members, DispositionFamily=10 members, FindingDispositionEvent.evidence_limits/remaining_questions). semantic_loop_replay_hash and source_file_sha256 are SHA-256 of the raw committed file bytes from the working tree at HEAD 99ca95f1ad27b0ed4522622588b6320b1053df3f.",
+    "note": "CL4 extended (not redefined) schemas.py: Relationship gained MERGE/NEW/UNRELATED/UNCERTAIN; DispositionFamily gained RESOLVED_VERIFIED and ADDRESSED_PENDING_VERIFICATION (legacy RESOLVED preserved verbatim, normalized at the semantic_loop layer); FindingDispositionEvent gained evidence_limits and remaining_questions; DomainBriefingEnvelope gained the eight-family bucket fields.",
+    "schema_version": "cl.schema.v1",
+    "source_file": "arnold/critique_ledger/schemas.py",
+    "source_file_sha256": "fc8936d6c7f59f95625d1b060b3fea0673c254903aacc47fe10837379b2a1638",
+    "entries": {
+      "occurrence_envelope_schema": "bc356adfb390680bdbcd24d51eb76bca586bffa25ef9f7ccb12b1f8a467241d9",
+      "reconciliation_event_schema": "eb2f4e129054e61e562a52ff10af52d20c43bb4ce41869d2ab57f568f161085c",
+      "disposition_event_schema": "f09ac3ec99c1e8fd4a75865a704397b708c9dbdc391e866880894e2b4e30a47e",
+      "briefing_envelope_schema": "281febf831cc82b96c6805353b13ae08311bba765dbba22d1db16382b9786543",
+      "manifest_schema": "c5254b22c21caa702b3e9b9e1bb81dc65c74e4c03d42fa0b7a14ee9d014ee12b",
+      "semantic_loop_replay_hash": "f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb"
+    },
+    "consumed_handoff_hashes": {
+      "hash_basis": "SHA-256 of the raw committed handoff JSON file bytes.",
+      "cl1_contract_oracle": "ea55413bc05161212d1197f9d78679b89f2e0117a273f77f5880ec955fc1475d",
+      "cl2_ledger_replay": "4ccc691582cc23d65939607e6c0bbb0c9d6aa7db02bbb99d09a0a398eea6fb91"
+    }
+  },
+
+  "disposition_reopen_matrix": {
+    "status": "accepted",
+    "note": "Per-family required fields, reopen predicates, and staleness semantics. Vocabulary uses the CL4 DispositionFamily members from schemas.py; legacy 'resolved' is preserved verbatim and normalized to 'resolved-verified' only at the semantic_loop projection layer (_normalize_disposition_family).",
+    "families": {
+      "acted-on": {
+        "required_fields": ["action_taken", "action_description"],
+        "reopen_predicate": null,
+        "staleness_check_deferred": false
+      },
+      "ignored": {
+        "required_fields": ["reopen_predicate"],
+        "reopen_predicate": "required",
+        "staleness_check_deferred": true
+      },
+      "deferred": {
+        "required_fields": ["reopen_predicate"],
+        "reopen_predicate": "required",
+        "staleness_check_deferred": true
+      },
+      "rejected": {
+        "required_fields": ["reason_subcode"],
+        "reopen_predicate": null,
+        "staleness_check_deferred": false
+      },
+      "duplicate": {
+        "required_fields": ["canonical_finding_ref (in metadata)"],
+        "reopen_predicate": null,
+        "staleness_check_deferred": false
+      },
+      "accepted-risk": {
+        "required_fields": ["reopen_predicate"],
+        "reopen_predicate": "required",
+        "staleness_check_deferred": true
+      },
+      "unknown": {
+        "required_fields": [],
+        "reopen_predicate": null,
+        "staleness_check_deferred": false,
+        "note": "UNKNOWN is a valid terminal judgment with no field requirements."
+      },
+      "resolved": {
+        "status": "deprecated_preserved_verbatim",
+        "normalized_to": "resolved-verified",
+        "required_fields": ["reason_subcode", "evidence_refs"],
+        "reopen_predicate": null,
+        "note": "Legacy serialized value preserved for stored dispositions and existing handoffs. Normalized to resolved-verified at the semantic_loop validation/projection layer only; never aliased in the enum. Closure enforced by the replay_full backstop (reason_subcode + evidence via _normalize_disposition_family)."
+      },
+      "resolved-verified": {
+        "required_fields": ["evidence_refs"],
+        "evidence_requirement": "verification artifact required in evidence_refs",
+        "transition_rule": "addressed-pending-verification -> resolved-verified requires verification evidence",
+        "reopen_predicate": null,
+        "staleness_check_deferred": false
+      },
+      "addressed-pending-verification": {
+        "required_fields": [],
+        "bucket": "acted_on_findings (open, pending follow-up)",
+        "transition_rule": "cannot transition to resolved-verified without verification evidence",
+        "reopen_predicate": null,
+        "staleness_check_deferred": false
+      }
+    },
+    "family_failure_mode_map": {
+      "source": "arnold/critique_ledger/semantic_loop.py::_disposition_field_presence_failure",
+      "acted-on": {
+        "failure_mode": "ACTED_ON_MISSING_ACTION",
+        "predicate": "requires action_taken=True AND action_description"
+      },
+      "ignored": {
+        "failure_mode": "IGNORED_MISSING_REOPEN_PREDICATE",
+        "predicate": "requires reopen_predicate"
+      },
+      "deferred": {
+        "failure_mode": "DEFERRED_MISSING_REOPEN_PREDICATE",
+        "predicate": "requires reopen_predicate"
+      },
+      "accepted-risk": {
+        "failure_mode": "ACCEPTED_RISK_MISSING_RATIONALE",
+        "predicate": "requires reopen_predicate (risk-acceptance rationale)"
+      },
+      "rejected": {
+        "failure_mode": "REJECTED_MISSING_REASON_SUBCODE",
+        "predicate": "requires reason_subcode"
+      },
+      "duplicate": {
+        "failure_mode": "DUPLICATE_MISSING_CANONICAL_REF",
+        "predicate": "requires canonical_finding_id/canonical_finding_ref/canonical_ref in metadata"
+      },
+      "unknown": {
+        "failure_mode": null,
+        "predicate": "valid terminal judgment; no field-presence failure"
+      },
+      "resolved-verified": {
+        "failure_mode": "CLOSURE_UNSUPPORTED",
+        "predicate": "closure-evidence gating (Step 6), not field-presence; requires verification artifact in evidence_refs"
+      }
+    },
+    "closure_enforcement_paths": {
+      "note": "Legacy 'resolved' and 'resolved-verified' must enforce equivalent closure evidence through both apply_disposition_events and replay_full (CLOSURE_UNSUPPORTED).",
+      "wbc_refs": ["CF-664F8D07AB9536505381", "CF-3F718ABD4E101456D643", "CF-A1BBAFE01265979E8BFF"],
+      "primary_apply_level": "apply_disposition_events: RESOLVED_VERIFIED requires a verification artifact in evidence_refs (CLOSURE_UNSUPPORTED when absent); an ADDRESSED_PENDING_VERIFICATION -> RESOLVED_VERIFIED transition carries the same evidence requirement with a transition-named detail (semantic_loop.py:933-955).",
+      "replay_backstop": "replay_full inline closure check is a redundant backstop that additionally requires reason_subcode and covers BOTH legacy RESOLVED and RESOLVED_VERIFIED via _normalize_disposition_family, so the two closure values enforce equivalent evidence.",
+      "staleness_sentinel": "apply_disposition_events annotates each stored disposition with staleness_check_deferred = bool(disp.reopen_predicate) (semantic_loop.py:973); actual mechanical staleness detection is deferred to CL5 (see reopen_predicates.cl5_staleness_deferral).",
+      "verification": {
+        "status": "accepted",
+        "proof_tests": [
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_resolved_closure_requires_reason_and_evidence",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_resolved_verified_lacking_evidence_rejected_through_replay",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_resolved_verified_with_evidence_passes_replay",
+          "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_resolved_verified_with_evidence_but_no_reason_rejected_by_backstop"
+        ]
+      }
+    }
+  },
+
+  "reconciliation_coverage_proof": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "contract": "Every input occurrence produces exactly one per-occurrence accounting row in apply_reconciliation_events.occurrence_accounting, keyed by parse_status. SELECTED/COMPLETED map to a finding; FAILED/DROPPED/MALFORMED/TOMBSTONED are accounted as excluded-from-finding-map with a reason; NO_ADDITIONAL_FINDINGS is an explicit no-additional-findings event. Exactly-once accounting (not all-status finding mapping) is the completion proof: excluded statuses are accounted without being placed in finding_map.",
+    "accounting_disposition_by_parse_status": {
+      "SELECTED": "mapped-to-finding",
+      "COMPLETED": "mapped-to-finding",
+      "FAILED": "excluded-from-finding-map",
+      "DROPPED": "excluded-from-finding-map",
+      "MALFORMED": "excluded-from-finding-map",
+      "TOMBSTONED": "excluded-from-finding-map",
+      "NO_ADDITIONAL_FINDINGS": "no-additional-findings"
+    },
+    "accounting_row_shape": ["occurrence_id", "parse_status", "disposition", "reason", "semantic_finding_id_or_null"],
+    "exactly_once_proof": {
+      "source": "arnold/critique_ledger/semantic_loop.py::apply_reconciliation_events",
+      "statement": "For every input occurrence exactly one occurrence_accounting row is emitted. Eligible SELECTED/COMPLETED occurrences that map to a finding get a mapped-to-finding row (semantic_finding_id_or_null set once reconciled). Each occurrence is tracked against the relationships referencing it; OCCURRENCE_MULTIPLY_MAPPED is raised when an occurrence maps to two DISTINCT findings exclusively via sameness relationships (DUPLICATE/MERGE/SUPERSEDED/REFINEMENT/REGRESSION), while a disputed mapping involving a non-sameness relationship is retained (preserving the disputed-MERGE fixture).",
+      "proof_tests": [
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReconciliation::test_cl4_new_relationships_accepted_and_mapped_to_finding",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReconciliation::test_cl4_disputed_merge_with_evaluator_disagreement_retained",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_occurrence_cannot_map_to_two_semantic_findings"
+      ]
+    },
+    "coverage_completeness_proof": {
+      "source": "arnold/critique_ledger/semantic_loop.py (apply_reconciliation_events completeness proof + replay_full exact accounting-completeness block)",
+      "statement": "apply_reconciliation_events appends OCCURRENCE_UNMAPPED (missing row or unmapped eligible occurrence) and OCCURRENCE_MULTIPLY_MAPPED (duplicate row or contradictory double-sameness mapping) as hard acceptance failures; replay_full replaced its parseable-ID coverage block with an exact accounting-completeness proof that every input occurrence has exactly one accounting row. FAILED/DROPPED/MALFORMED are surfaced with distinct reasons and never confused with NO_ADDITIONAL_FINDINGS, and excluded occurrences never enter finding_map.",
+      "proof_tests": [
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestGateProjection::test_gate_counts_failed_dropped_malformed",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReplayFull::test_replay_fails_on_invalid_occurrence",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_every_parseable_occurrence_requires_one_reconciliation",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_dropped_attempt_is_not_treated_as_no_finding",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_no_additional_findings_is_explicit_success"
+      ]
+    },
+    "relationship_whitelist": "Relationship enum is the single source of truth (auto-derived _VALID_RELATIONSHIPS); unknown relationships are rejected with RECONCILIATION_UNKNOWN_RELATIONSHIP rather than silently accepted.",
+    "wbc_refs": ["CF-A382BC367FE012D670E5", "CF-E5AA1ECA27CD4A35ABDE", "CF-166416F061CB2C297F54", "CF-B47E042A7E92DCCFCBDD"]
+  },
+
+  "action_coverage_proof": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "contract": "The reviser projection carries actionable_findings, disposed_history, unchanged_findings, and revision_actions_required. One structured action or explicit non-action is required per requested finding; missing action coverage sets revision_actions_required=true. No known finding disappears by omission; open-minor (e.g., IGNORED with reopen_predicate) findings remain visible.",
+    "proof": {
+      "source": "arnold/critique_ledger/semantic_loop.py::project_reviser_input",
+      "statement": "ACTIONABLE families (ACTED_ON, ADDRESSED_PENDING_VERIFICATION) appear in actionable_findings; an actionable finding whose action has not been taken sets revision_actions_required=true. UNCHANGED families (resolved-verified, accepted-risk) remain visible in unchanged_findings without action. Every disposed finding appears in disposed_history with its normalized_family and reopen_predicate regardless of family, so no known finding disappears.",
+      "proof_tests": [
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReviserProjection::test_reviser_carries_actionable_disposed_unchanged_history",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReviserProjection::test_missing_action_coverage_sets_revision_actions_required",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReviserProjection::test_acted_on_actionable_finding_does_not_require_flag"
+      ]
+    }
+  },
+
+  "gate_claim_compatibility_map": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "contract": "The gate projection distinguishes no_open_blocking_findings, no_additional_findings, no_known_findings, and no_adjacent_text_match. adjacent_text_matches is the exact logical complement of no_adjacent_text_match for the same iteration (informational). semantic_recurrence is grounded in reconciliation evidence (True only when reconciliation supports it); recurring_critiques remains a deprecated compatibility alias carrying only exact-text adjacency, never a semantic-recurrence authority claim. bridge_mode travels in-band through gate signals.",
+    "complement_invariant": "adjacent_text_matches == (not no_adjacent_text_match) for the same iteration",
+    "compatibility_aliases": {
+      "recurring_critiques": "deprecated exact-text adjacency alias populated from adjacent_text_matches; NOT semantic recurrence",
+      "wbc_refs": ["CF-F9C1BD1EC0B1367D4CEA", "CF-D6BAD9434FDBACF02C4B"]
+    },
+    "proof": {
+      "source_gate_projection": "arnold/critique_ledger/semantic_loop.py::project_gate_input",
+      "source_gate_signals": "arnold_pipelines/megaplan/orchestration/gate_signals.py",
+      "statement": "gate_signals emits adjacent_text_matches, semantic_recurrence (True only when a sameness reconciliation relationship is present), recurring_critiques (alias of adjacent_text_matches), and bridge_mode. The complement invariant adjacent_text_matches == (not no_adjacent_text_match) holds including under a disputed MERGE.",
+      "proof_tests": [
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_adjacent_text_matches_is_exact_text_overlap",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_no_adjacent_text_match_is_exact_complement",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_recurring_critiques_alias_equals_adjacent_text_matches",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_semantic_recurrence_false_without_reconciliation",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_semantic_recurrence_true_with_sameness_relationship",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_semantic_recurrence_false_with_non_sameness_relationship",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_semantic_recurrence_reads_dedicated_reconciliation_artifact",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_gate_signal_carries_bridge_mode_and_carried_blockers",
+        "tests/arnold_pipelines/megaplan/test_gate_checks.py::test_adjacent_text_matches_complement_holds_with_disputed_merge",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestGateProjection::test_gate_carries_enriched_truthful_claim_fields",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestGateProjection::test_gate_surfaces_merge_relationship_coverage"
+      ]
+    }
+  },
+
+  "wbc_receipts": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "contract": "WBC critique custody receipts bind reconciliation_artifacts and disposition_artifacts with SHA-256 hashes, carry bridge_mode and carried_blockers in-band, and reject reconciliation claims outside the matrix-authorized producer scope. Receipt validation fails closed for missing, unsafe, or hash-mismatched artifacts. Authority scope is read from arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json and contract_to_producer_matrix.json (WBC owns receipt declarations/evaluation; Run Authority owns gate and finalize decisions). The two WBC matrices are consulted read-only and are NOT modified by CL4 (git diff confirms zero changes to both files).",
+    "matrix_refs": {
+      "source_to_owner_matrix": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+      "contract_to_producer_matrix": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
+      "source_to_owner_matrix_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+      "contract_to_producer_matrix_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+      "matrices_modified_by_cl4": false
+    },
+    "authorized_producer_scope": ["codex", "hermes", "shannon", "claude", "parallel_critique_reducer"],
+    "receipts": {
+      "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
+      "source_sha256": "bef51b0af581e9b3a71d57262415455aade8bd72a65aa214c25b97764e604d08",
+      "binding_contract": "Production receipts bind reconciliation_artifacts and disposition_artifacts as SHA-256 artifact bindings (path-safe, plan_dir-scoped). Validation rejects receipts binding artifacts outside the matrix-authorized producer scope (_AUTHORIZED_CRITIQUE_PRODUCERS), and fails closed for missing, unsafe (symlink/escape), or hash-mismatched artifact references. Receipts without artifact bindings remain backward compatible.",
+      "proof_tests": [
+        "tests/orchestration/test_critique_custody.py::test_production_receipt_binds_reconciliation_and_disposition_artifacts",
+        "tests/orchestration/test_critique_custody.py::test_missing_reconciliation_artifact_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_missing_disposition_artifact_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_hash_mismatched_reconciliation_artifact_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_hash_mismatched_disposition_artifact_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_symlinked_reconciliation_artifact_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_unsafe_disposition_artifact_reference_in_receipt_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_reconciliation_artifact_binding_row_without_object_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_receipt_without_artifact_bindings_is_backward_compatible",
+        "tests/orchestration/test_critique_custody.py::test_receipt_with_artifact_bindings_restarts_idempotently",
+        "tests/orchestration/test_critique_custody.py::test_declared_missing_artifact_is_omitted_not_bound"
+      ]
+    }
+  },
+
+  "negative_authority_results": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "contract": "No unauthorized producer or bridge_mode=true receipt can be accepted as canonical gate or finalize authority, even if its receipt digest is internally consistent. finalize custody must fail closed on canonical-authority use of a bridge_mode=true receipt.",
+    "results": {
+      "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
+      "source_sha256": "bef51b0af581e9b3a71d57262415455aade8bd72a65aa214c25b97764e604d08",
+      "producer_scope_rejection": "Reconciliation/disposition artifact bindings from any producer outside _AUTHORIZED_CRITIQUE_PRODUCERS {codex, hermes, shannon, claude, parallel_critique_reducer} are rejected as authority-shaped evidence; a self-consistent receipt copied/rehashed from an older iteration or pointing at the wrong critique path is rejected at the gate.",
+      "bridge_authority_denial": "finalize custody computes canonical_gate_authority = (not bridge_mode). A bridge_mode=true clearance binds canonical_gate_authority=False and finalize validation fails closed (appends an issue) when a bridge_mode=true clearance is bound with canonical_gate_authority != False, or when bridge_mode differs between clearance source receipts and the binding.",
+      "proof_tests": [
+        "tests/orchestration/test_critique_custody.py::test_gate_rejects_self_consistent_receipt_copied_from_older_iteration",
+        "tests/orchestration/test_critique_custody.py::test_gate_rejects_rehashed_receipt_pointing_at_wrong_critique_path",
+        "tests/orchestration/test_critique_custody.py::test_gate_rejects_tampered_producer_attempt_even_with_rehashed_receipt",
+        "tests/orchestration/test_critique_custody.py::test_malformed_bridge_mode_field_in_receipt_fails_closed",
+        "tests/orchestration/test_critique_custody.py::test_receipt_without_bridge_mode_is_backward_compatible",
+        "tests/orchestration/test_critique_custody.py::test_clearance_propagates_bridge_mode_from_source_receipts",
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_denies_canonical_authority_for_bridge_receipt",
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receipt",
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance"
+      ]
+    }
+  },
+
+  "m6_semantic_loop_replay": {
+    "status": "accepted",
+    "evidence_marker": "accepted",
+    "contract": "replay_full is content-deterministic and produces identical custody, reconciliation, disposition, manifest, briefing, reviser_projection, and gate_projection across retries. The four no-X projection fields agree across reviser, gate, and briefing (REPLAY_PROJECTION_MISMATCH otherwise). Coverage completeness is enforced via the occurrence_accounting proof rather than a parseable-ID-only block.",
+    "reference": {
+      "source": "arnold/critique_ledger/semantic_loop.py::replay_full",
+      "source_sha256": "f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb",
+      "determinism_guarantee": "replay_full compares reviser and gate projections for equality and raises REPLAY_PROJECTION_MISMATCH on any divergence in the four no-X fields or projected shape. The four no-X fields (no_open_blocking_findings, no_additional_findings, no_known_findings, no_adjacent_text_match) must agree across reviser, gate, and briefing.",
+      "proof_tests": [
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_retry_replay_is_content_deterministic",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_projection_mismatch_is_detected",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestReviserProjection::test_four_no_x_fields_present",
+        "tests/arnold/critique_ledger/test_semantic_loop.py::TestGateProjection::test_four_no_x_fields_present",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_resolved_verified_with_evidence_passes_replay"
+      ]
+    }
+  },
+
+  "backup_restore_prerequisites": {
+    "status": "confirmed_bridge_mode_retained",
+    "contract": "Backup and restore procedures required before CL5 consumes CL4 output for cutover. The SQLite WAL database remains the single source of truth for persisted ledger events; restore must preserve atomicity and be re-replayable. CL4 adds append-only reconciliation/disposition judgment artifacts that are rebuildable and carry no positive authority; they must be restorable alongside the ledger.",
+    "backup": [
+      "Snapshot the SQLite WAL database file together with its -wal and -shm sidecar files in a crash-consistent state (quiesce the writer, PRAGMA wal_checkpoint(FULL), or SQLite online backup API).",
+      "Persist the CL4 reconciliation/disposition event artifacts and the gate/custody projection outputs referenced by this handoff alongside the ledger snapshot."
+    ],
+    "restore": [
+      "Verify WAL checkpoint integrity on the restored database (PRAGMA wal_checkpoint(TRUNCATE) / PRAGMA integrity_check) and assert a clean result before replaying.",
+      "Reopen with SqliteAttemptLedgerStore (WAL mode + BEGIN IMMEDIATE) and run reconcile_on_restart; require no ordering_violation or sequence_gap for streams CL5 will consume.",
+      "Re-replay replay_full against the restored occurrence/reconciliation/disposition events and confirm the projection hashes recorded by T13 match."
+    ],
+    "restore_hash_verification": {
+      "status": "accepted",
+      "statement": "On restore, re-run replay_full against the restored occurrence/reconciliation/disposition events and confirm content-determinism: the semantic_loop source hash (f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb) and the recorded schema entries must still reproduce identical custody/reconciliation/disposition/manifest/briefing/reviser/gate projections across retries (test_retry_replay_is_content_deterministic). Because CL4 is bridge_mode=true, a successful restore re-replay proves determinism only — it does NOT grant canonical gate authority.",
+      "determinism_proof_test": "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_retry_replay_is_content_deterministic"
+    }
+  }
+}

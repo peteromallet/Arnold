@@ -6,7 +6,7 @@ import inspect
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import pytest
 
@@ -160,6 +160,9 @@ def _persist_critique(
     plan_dir: Path,
     state: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    reconciliation_artifacts: Sequence[Any] | None = None,
+    disposition_artifacts: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     iteration = state["iteration"]
     atomic_write_text(plan_dir / f"plan_v{iteration}.md", f"# Plan v{iteration}\n\nOversized work.\n")
@@ -172,6 +175,8 @@ def _persist_critique(
         payload,
         expected_check_ids=["scope"],
         producer_binding=_producer_binding(state["meta"]["current_invocation_id"]),
+        reconciliation_artifacts=reconciliation_artifacts,
+        disposition_artifacts=disposition_artifacts,
     )
     update_flags_after_critique(plan_dir, payload, iteration=iteration)
     return receipt
@@ -1511,3 +1516,720 @@ def test_equivalent_35_task_linear_graph_is_deterministically_rejected() -> None
     assert report["task_count"] == 35
     assert report["seriality"] == 1.0
     assert "serial_graph_unjustified" in {item["code"] for item in report["diagnostics"]}
+
+
+# --- CL4 Step 9: reconciliation/disposition artifact SHA-256 bindings ---
+
+
+def _write_semantic_loop_artifacts(
+    plan_dir: Path, *, iteration: int
+) -> tuple[str, str]:
+    """Persist representative semantic-loop artifacts and return their basenames."""
+    reconciliation_name = f"reconciliation_v{iteration}.json"
+    disposition_name = f"disposition_v{iteration}.json"
+    atomic_write_json(
+        plan_dir / reconciliation_name,
+        {"occurrence_accounting": [], "accepted": True, "occurrence_count": 0},
+    )
+    atomic_write_json(
+        plan_dir / disposition_name,
+        {"disposition_map": {}, "families": []},
+    )
+    return reconciliation_name, disposition_name
+
+
+def test_production_receipt_binds_reconciliation_and_disposition_artifacts(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+
+    receipt = _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    assert receipt["reconciliation_artifacts"] == [
+        {
+            "artifact": reconciliation_name,
+            "sha256": critique_custody.sha256_file(plan_dir / reconciliation_name),
+        }
+    ]
+    assert receipt["disposition_artifacts"] == [
+        {
+            "artifact": disposition_name,
+            "sha256": critique_custody.sha256_file(plan_dir / disposition_name),
+        }
+    ]
+    # Intact bindings survive the gate-entry custody validation path.
+    gate_input = validate_gate_input_custody(plan_dir, state)
+    assert gate_input["admitted"] is True
+
+
+def test_missing_reconciliation_artifact_fails_closed(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    (plan_dir / reconciliation_name).unlink()
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="reconciliation_artifacts artifact is missing or unsafe",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_missing_disposition_artifact_fails_closed(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    (plan_dir / disposition_name).unlink()
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="disposition_artifacts artifact is missing or unsafe",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_hash_mismatched_reconciliation_artifact_fails_closed(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    # Tamper with the bound artifact content after custody was taken.
+    atomic_write_json(plan_dir / reconciliation_name, {"mutated": True})
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="reconciliation_artifacts artifact hash mismatch",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_hash_mismatched_disposition_artifact_fails_closed(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    atomic_write_json(plan_dir / disposition_name, {"tampered": "disposition"})
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="disposition_artifacts artifact hash mismatch",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_symlinked_reconciliation_artifact_fails_closed(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    # Replace the bound artifact with a symlink; custody must reject it.
+    target = plan_dir / "outside_reconciliation_target.json"
+    atomic_write_json(target, {"outside": True})
+    bound_path = plan_dir / reconciliation_name
+    bound_path.unlink()
+    bound_path.symlink_to(target)
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="reconciliation_artifacts artifact is missing or unsafe",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_unsafe_disposition_artifact_reference_in_receipt_fails_closed(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    # Inject a path-traversal reference the producer would never have materialized.
+    receipt["disposition_artifacts"] = [
+        {"artifact": "../escape.json", "sha256": "sha256:" + "0" * 64}
+    ]
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="disposition_artifacts artifact reference is unsafe",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_reconciliation_artifact_binding_row_without_object_fails_closed(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["reconciliation_artifacts"] = ["not-an-object"]
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="reconciliation_artifacts binding row is not an object",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_receipt_without_artifact_bindings_is_backward_compatible(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+
+    # Strip the new fields entirely, simulating a pre-CL4 production receipt.
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt.pop("reconciliation_artifacts", None)
+    receipt.pop("disposition_artifacts", None)
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    gate_input = validate_gate_input_custody(plan_dir, state)
+    assert gate_input["admitted"] is True
+
+
+def test_receipt_with_artifact_bindings_restarts_idempotently(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    first = _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+    path = plan_dir / f"critique_custody_v{iteration}.json"
+    before = path.read_bytes()
+
+    restarted = write_critique_production_receipt(
+        plan_dir,
+        state,
+        payload,
+        expected_check_ids=["scope"],
+        producer_binding=_producer_binding(state["meta"]["current_invocation_id"]),
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    assert restarted == first
+    assert path.read_bytes() == before
+
+
+def test_declared_missing_artifact_is_omitted_not_bound(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    # Declare an artifact that does not exist on disk alongside a real one.
+    receipt = _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name, "absent_reconciliation.json"],
+        disposition_artifacts=[disposition_name],
+    )
+
+    # The materializer records only the safe, present artifact; the absent one
+    # is omitted so the stored binding set stays truthful.
+    assert [row["artifact"] for row in receipt["reconciliation_artifacts"]] == [
+        reconciliation_name
+    ]
+    gate_input = validate_gate_input_custody(plan_dir, state)
+    assert gate_input["admitted"] is True
+
+
+def test_artifact_bindings_propagate_through_clearance_custody(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+    # Capture the reducer-normalized canonical id *after* persistence.
+    canonical_id = payload["flags"][0]["id"]
+    atomic_write_text(plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n")
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": canonical_id,
+                "resolution": "addressed",
+                "reason": "Split into bounded tasks.",
+                "where": "Step 2",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
+    )
+    clearance = write_critique_clearance(plan_dir, state)
+    assert clearance["admitted"] is True
+
+    # Clearance re-validates the bound receipt; tampering with a bound artifact
+    # must fail closed at clearance time, not only at the gate.
+    atomic_write_json(plan_dir / disposition_name, {"mutated": True})
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="disposition_artifacts artifact hash mismatch",
+    ):
+        write_critique_clearance(plan_dir, state)
+
+
+def test_production_receipt_carries_bridge_mode_and_carried_blockers(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+
+    receipt = _persist_critique(plan_dir, state, payload)
+
+    assert receipt["bridge_mode"] is True
+    assert receipt["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
+    # The gate-entry custody path accepts the BRIDGE receipt as valid integrity
+    # evidence (it is never canonical authority, but it is a well-formed receipt).
+    gate_input = validate_gate_input_custody(plan_dir, state)
+    assert gate_input["admitted"] is True
+
+
+def test_bridge_mode_and_carried_blockers_restart_idempotently(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    first = _persist_critique(plan_dir, state, payload)
+    path = plan_dir / "critique_custody_v1.json"
+    before = path.read_bytes()
+
+    restarted = write_critique_production_receipt(
+        plan_dir,
+        state,
+        payload,
+        expected_check_ids=["scope"],
+        producer_binding=_producer_binding(state["meta"]["current_invocation_id"]),
+    )
+
+    assert restarted == first
+    assert path.read_bytes() == before
+    assert restarted["bridge_mode"] is True
+    assert restarted["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
+
+
+def test_malformed_bridge_mode_field_in_receipt_fails_closed(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _oversized_payload())
+
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["bridge_mode"] = "true"  # not a boolean
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(
+        CritiqueCustodyError, match="bridge_mode must be a boolean"
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_receipt_without_bridge_mode_is_backward_compatible(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _oversized_payload())
+
+    # Strip the CL4 BRIDGE provenance entirely, simulating a pre-CL4 receipt.
+    # The receipt_digest protects against undetected stripping in transit; a
+    # deliberately re-hashed receipt is treated as a pre-CL4 canonical receipt.
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt.pop("bridge_mode", None)
+    receipt.pop("carried_blockers", None)
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    gate_input = validate_gate_input_custody(plan_dir, state)
+    assert gate_input["admitted"] is True
+
+
+def test_reconciliation_claims_require_matrix_authorized_producer(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    iteration = state["iteration"]
+    reconciliation_name, disposition_name = _write_semantic_loop_artifacts(
+        plan_dir, iteration=iteration
+    )
+    _persist_critique(
+        plan_dir,
+        state,
+        payload,
+        reconciliation_artifacts=[reconciliation_name],
+        disposition_artifacts=[disposition_name],
+    )
+
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    # An out-of-scope producer claims reconciliation evidence; its receipt
+    # digest is internally consistent but its producer is unauthorized.
+    receipt["producer_binding"]["producer"] = "rogue-evaluator"
+    receipt["producer_binding_digest"] = critique_custody._digest(
+        receipt["producer_binding"]
+    )
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="reconciliation claims require a matrix-authorized critique producer",
+    ):
+        validate_gate_input_custody(plan_dir, state)
+
+
+def test_out_of_scope_producer_without_reconciliation_claims_is_admitted(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _oversized_payload())
+
+    receipt_path = plan_dir / "critique_custody_v1.json"
+    receipt = json.loads(receipt_path.read_text())
+    # The producer is out of scope but the receipt makes NO reconciliation
+    # claim, so the negative-authority boundary does not reject it.
+    receipt["producer_binding"]["producer"] = "rogue-evaluator"
+    receipt["producer_binding_digest"] = critique_custody._digest(
+        receipt["producer_binding"]
+    )
+    _rewrite_receipt_digest(receipt)
+    atomic_write_json(receipt_path, receipt)
+
+    gate_input = validate_gate_input_custody(plan_dir, state)
+    assert gate_input["admitted"] is True
+
+
+def test_clearance_propagates_bridge_mode_from_source_receipts(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    canonical_id = payload["flags"][0]["id"]
+    atomic_write_text(
+        plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n"
+    )
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": canonical_id,
+                "resolution": "addressed",
+                "reason": "Split into bounded tasks.",
+                "where": "Step 2",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
+    )
+
+    clearance = write_critique_clearance(plan_dir, state)
+
+    assert clearance["bridge_mode"] is True
+    assert clearance["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
+
+
+def test_finalize_custody_denies_canonical_authority_for_bridge_receipt(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    canonical_id = payload["flags"][0]["id"]
+    atomic_write_text(
+        plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n"
+    )
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": canonical_id,
+                "resolution": "addressed",
+                "reason": "Split into bounded tasks.",
+                "where": "Step 2",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
+    )
+    clearance = write_critique_clearance(plan_dir, state)
+
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": clearance["finding_ids"][0],
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 implements the bounded split from plan_v2.md Step 2.",
+        }
+    ]
+
+    binding = bind_finalize_custody(plan_dir, graph, clearance)
+
+    # A BRIDGE-mode clearance must never bind canonical gate authority.
+    assert binding["bridge_mode"] is True
+    assert binding["canonical_gate_authority"] is False
+    assert binding["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
+
+    # finalize custody accepts the bridge receipt as non-canonical integrity
+    # evidence: the returned binding explicitly denies canonical authority, so
+    # no downstream consumer can mistake it for canonical gate authority.
+    finalized = assert_finalize_custody(plan_dir, graph)
+    assert finalized["canonical_gate_authority"] is False
+
+
+def test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receipt(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    canonical_id = payload["flags"][0]["id"]
+    atomic_write_text(
+        plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n"
+    )
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": canonical_id,
+                "resolution": "addressed",
+                "reason": "Split into bounded tasks.",
+                "where": "Step 2",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
+    )
+    clearance = write_critique_clearance(plan_dir, state)
+
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": clearance["finding_ids"][0],
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 implements the bounded split from plan_v2.md Step 2.",
+        }
+    ]
+    bind_finalize_custody(plan_dir, graph, clearance)
+
+    # A malicious finalizer flips the binding to claim canonical authority for
+    # a bridge_mode=true clearance; finalize custody must fail closed.
+    graph["critique_custody"]["canonical_gate_authority"] = True
+    with pytest.raises(
+        CritiqueCustodyError, match="cannot bind canonical gate authority"
+    ):
+        assert_finalize_custody(plan_dir, graph)
+
+
+def test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    canonical_id = payload["flags"][0]["id"]
+    atomic_write_text(
+        plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n"
+    )
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": canonical_id,
+                "resolution": "addressed",
+                "reason": "Split into bounded tasks.",
+                "where": "Step 2",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
+    )
+    clearance = write_critique_clearance(plan_dir, state)
+
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": clearance["finding_ids"][0],
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 implements the bounded split from plan_v2.md Step 2.",
+        }
+    ]
+    bind_finalize_custody(plan_dir, graph, clearance)
+
+    # Tamper the binding's bridge_mode to disagree with the (bridge) clearance.
+    graph["critique_custody"]["bridge_mode"] = False
+    graph["critique_custody"]["canonical_gate_authority"] = True
+    with pytest.raises(
+        CritiqueCustodyError, match="bridge_mode differs from clearance"
+    ):
+        assert_finalize_custody(plan_dir, graph)

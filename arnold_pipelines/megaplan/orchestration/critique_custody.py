@@ -52,6 +52,35 @@ _ALLOWED_FINDING_KEYS = {
 }
 _CANONICAL_FINDING_ID = re.compile(r"^CF-[0-9A-F]{20}$")
 
+# --------------------------------------------------------------------------- #
+# CL4 BRIDGE authority provenance.
+#
+# CL4 carries five unresolved CL1/CL2 blockers and an inferred (not CL3-vouched)
+# CL3 contract, so every production receipt it emits is durable integrity
+# evidence but must NEVER be treated as canonical gate/finalize authority.
+# These values mirror ``gate_signals.CL4_BRIDGE_MODE`` /
+# ``CL4_CARRIED_BLOCKERS`` and the CL4 handoff
+# (docs/critique-ledger/handoffs/cl4-role-flow.json); they are copied into each
+# persisted receipt so an immutable receipt always carries its own BRIDGE
+# provenance rather than depending on a later live read.
+# --------------------------------------------------------------------------- #
+CL4_BRIDGE_MODE: bool = True
+CL4_CARRIED_BLOCKERS: tuple[str, ...] = (
+    "review_status_not_present",
+    "m6_prerequisite_incoherent",
+    "proof_index_failed",
+    "ownership_blockers",
+    "portfolio_gate_blocked",
+)
+
+# The matrix-authorized critique custody producer scope (WBC boundary adoption
+# matrices).  Only these producers may anchor reconciliation claims in a
+# custody receipt; any other producer is outside the authorized scope and its
+# reconciliation bindings must be rejected as authority-shaped evidence.
+_AUTHORIZED_CRITIQUE_PRODUCERS = frozenset(
+    {"codex", "hermes", "shannon", "claude", "parallel_critique_reducer"}
+)
+
 
 class CritiqueCustodyError(ValueError):
     """One or more custody invariants failed."""
@@ -73,6 +102,90 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _materialize_artifact_bindings(
+    plan_dir: Path,
+    declared: Sequence[Mapping[str, Any] | str] | None,
+) -> list[dict[str, Any]]:
+    """Materialize safe SHA-256 bindings for declared custody artifacts.
+
+    Each declared entry is either a basename string or a mapping carrying an
+    ``artifact`` basename.  A binding is recorded only for declared artifacts
+    that resolve to a non-symlink regular file inside ``plan_dir``.  Missing or
+    unsafe declarations are silently omitted so the stored binding set is always
+    a truthful subset of declared intents; ``_artifact_binding_issues``
+    re-checks every stored row against disk and fails closed on any drift.
+    """
+    if not declared:
+        return []
+    bindings: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in declared:
+        if isinstance(entry, str):
+            name: str | None = entry
+        elif isinstance(entry, Mapping):
+            value = entry.get("artifact")
+            name = value if isinstance(value, str) else None
+        else:
+            name = None
+        if not isinstance(name, str) or not name or Path(name).name != name:
+            continue
+        if name in seen:
+            continue
+        path = plan_dir / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        seen.add(name)
+        bindings.append({"artifact": name, "sha256": sha256_file(path)})
+    return bindings
+
+
+def _artifact_binding_issues(
+    artifacts: object,
+    *,
+    plan_dir: Path,
+    field: str,
+) -> list[str]:
+    """Fail closed for missing, unsafe, or hash-mismatched custody artifacts.
+
+    A receipt may legitimately predate reconciliation/disposition artifact
+    bindings; an absent (``None``) field therefore adds no issue.  Once a field
+    is present, every bound artifact must resolve to a safe regular file whose
+    recorded SHA-256 still matches the bytes on disk.
+    """
+    if artifacts is None:
+        return []
+    if not isinstance(artifacts, list):
+        return [f"receipt {field} is not an array"]
+    issues: list[str] = []
+    seen: set[str] = set()
+    for row in artifacts:
+        if not isinstance(row, Mapping):
+            issues.append(f"{field} binding row is not an object")
+            continue
+        name = row.get("artifact")
+        digest = row.get("sha256")
+        if not isinstance(name, str) or not name or Path(name).name != name:
+            issues.append(f"{field} artifact reference is unsafe: {name!r}")
+            continue
+        if name in seen:
+            issues.append(f"{field} has duplicate artifact {name!r}")
+            continue
+        seen.add(name)
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", digest) is None
+        ):
+            issues.append(f"{field} artifact {name!r} has an invalid sha256")
+            continue
+        artifact_path = plan_dir / name
+        if artifact_path.is_symlink() or not artifact_path.is_file():
+            issues.append(f"{field} artifact is missing or unsafe: {name!r}")
+            continue
+        if digest != sha256_file(artifact_path):
+            issues.append(f"{field} artifact hash mismatch for {name!r}")
+    return issues
 
 
 def _producer_binding_issues(binding: object) -> list[str]:
@@ -681,6 +794,8 @@ def write_critique_production_receipt(
     *,
     expected_check_ids: Sequence[str],
     producer_binding: Mapping[str, Any],
+    reconciliation_artifacts: Sequence[Mapping[str, Any] | str] | None = None,
+    disposition_artifacts: Sequence[Mapping[str, Any] | str] | None = None,
 ) -> dict[str, Any]:
     """Persist immutable custody evidence for one canonical critique artifact."""
     producer_issues = _producer_binding_issues(producer_binding)
@@ -697,6 +812,17 @@ def write_critique_production_receipt(
             [f"{critique_name} must be persisted before its custody receipt"],
         )
     plan_path = latest_plan_path(plan_dir, state)
+    # Bind semantic-loop reconciliation and disposition artifacts by SHA-256 so a
+    # gate/finalize consumer reading the receipt can prove the exact bytes it
+    # trusts have not drifted since custody was taken.  The bindings are pure
+    # integrity evidence: they fail closed on tamper but never positively
+    # authorize dispatch/completion (per the WBC boundary adoption matrices).
+    reconciliation_bindings = _materialize_artifact_bindings(
+        plan_dir, reconciliation_artifacts
+    )
+    disposition_bindings = _materialize_artifact_bindings(
+        plan_dir, disposition_artifacts
+    )
     findings: list[dict[str, Any]] = []
     for flag in flags:
         if not isinstance(flag, dict):
@@ -744,6 +870,17 @@ def write_critique_production_receipt(
         "producer_binding": dict(producer_binding),
         "producer_binding_digest": _digest(producer_binding),
         "raw_sources": raw_sources,
+        "reconciliation_artifacts": reconciliation_bindings,
+        "disposition_artifacts": disposition_bindings,
+        # BRIDGE authority provenance: the producing run is BRIDGE-mode and
+        # carries the unresolved CL1/CL2 blockers, so this receipt is integrity
+        # evidence, never canonical gate/finalize authority.  Per the WBC
+        # boundary adoption matrices the artifact bindings above fail closed on
+        # tamper but never positively authorize dispatch/completion; the
+        # bridge_mode flag makes that limitation in-band so a downstream
+        # consumer cannot mistake this receipt for canonical authority.
+        "bridge_mode": CL4_BRIDGE_MODE,
+        "carried_blockers": list(CL4_CARRIED_BLOCKERS),
         "expected_check_ids": list(expected_check_ids),
         "finding_count": len(findings),
         "finding_ids": [finding["finding_id"] for finding in findings],
@@ -824,6 +961,22 @@ def _validate_production_receipt(
             if receipt.get("producer_binding_digest") != _digest(producer_binding):
                 issues.append("producer binding digest mismatch")
             issues.extend(_parallel_producer_binding_issues(plan_dir, producer_binding))
+        # Reconciliation claims (reconciliation_artifacts SHA-256 bindings) may
+        # only be anchored by a matrix-authorized critique producer.  An
+        # out-of-scope producer cannot carry canonical reconciliation evidence,
+        # so its reconciliation bindings must be rejected as authority-shaped
+        # evidence even when the receipt digest is internally consistent.
+        reconciliation_artifacts = receipt.get("reconciliation_artifacts")
+        if isinstance(reconciliation_artifacts, list) and reconciliation_artifacts:
+            producer = (
+                producer_binding.get("producer")
+                if isinstance(producer_binding, Mapping)
+                else None
+            )
+            if producer not in _AUTHORIZED_CRITIQUE_PRODUCERS:
+                issues.append(
+                    "reconciliation claims require a matrix-authorized critique producer"
+                )
     for field in ("plan_artifact", "critique_artifact"):
         name = receipt.get(field)
         if not isinstance(name, str) or not name or Path(name).name != name:
@@ -908,6 +1061,34 @@ def _validate_production_receipt(
             for source in raw_sources
         ):
             issues.append("legacy receipt has no persisted producer reduction artifact")
+    issues.extend(
+        _artifact_binding_issues(
+            receipt.get("reconciliation_artifacts"),
+            plan_dir=plan_dir,
+            field="reconciliation_artifacts",
+        )
+    )
+    issues.extend(
+        _artifact_binding_issues(
+            receipt.get("disposition_artifacts"),
+            plan_dir=plan_dir,
+            field="disposition_artifacts",
+        )
+    )
+    # BRIDGE provenance: bridge_mode and carried_blockers are present on every
+    # CL4+ receipt.  An absent field is treated as a pre-CL4 receipt (the
+    # receipt_digest already protects against stripping a present field), but a
+    # present field must be well-formed so the authority limit is never silently
+    # malformed.
+    bridge_mode = receipt.get("bridge_mode")
+    if bridge_mode is not None and not isinstance(bridge_mode, bool):
+        issues.append("receipt bridge_mode must be a boolean")
+    carried_blockers = receipt.get("carried_blockers")
+    if carried_blockers is not None and (
+        not isinstance(carried_blockers, list)
+        or any(not isinstance(item, str) or not item for item in carried_blockers)
+    ):
+        issues.append("receipt carried_blockers must be an array of non-empty strings")
     findings = receipt.get("findings")
     if not isinstance(findings, list):
         issues.append("receipt findings is not an array")
@@ -1361,10 +1542,21 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
     resolutions: list[dict[str, Any]] = []
     source_receipts: list[dict[str, Any]] = []
     latest_occurrences: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
+    # Aggregate BRIDGE provenance across every joined receipt.  The clearance is
+    # BRIDGE when any bound production receipt carries bridge_mode=true, and it
+    # inherits the union of carried blockers so finalize custody can never hide
+    # a BRIDGE source receipt behind a canonical-looking clearance.
+    clearance_bridge_mode = False
+    clearance_carried_blockers: list[str] = []
     for path in receipt_paths:
         receipt = read_json(path)
         _validate_receipt_at_path(plan_dir, path, receipt)
         source_receipts.append({"artifact": path.name, "sha256": sha256_file(path)})
+        if receipt.get("bridge_mode") is True:
+            clearance_bridge_mode = True
+        for blocker in receipt.get("carried_blockers", []) or []:
+            if isinstance(blocker, str) and blocker and blocker not in clearance_carried_blockers:
+                clearance_carried_blockers.append(blocker)
         for finding in receipt.get("findings", []):
             flag_id = str(finding.get("flag_id"))
             finding_id = str(finding.get("finding_id"))
@@ -1432,6 +1624,12 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
         "finding_count": len(resolutions),
         "finding_ids": [item["finding_id"] for item in resolutions],
         "resolutions": resolutions,
+        # BRIDGE provenance aggregated from the joined source receipts.  A
+        # clearance is canonical gate authority only when no source receipt is
+        # BRIDGE-mode; carrying bridge_mode/carried_blockers in-band lets
+        # finalize custody refuse to treat a BRIDGE clearance as canonical.
+        "bridge_mode": clearance_bridge_mode,
+        "carried_blockers": clearance_carried_blockers,
         "admitted": True,
     }
     clearance["clearance_digest"] = _digest(clearance)
@@ -1449,6 +1647,13 @@ def bind_finalize_custody(
     if not clearance_path.exists():
         raise CritiqueCustodyError("critique_clearance_missing", [clearance_path.name])
     validate_finalize_resolution_coverage(payload, clearance)
+    # Propagate the clearance's BRIDGE provenance into the finalize binding.  A
+    # finalize binding grants canonical gate authority only when the clearance
+    # is not BRIDGE-mode; when bridge_mode is true the binding explicitly denies
+    # canonical authority so a downstream consumer cannot treat the bound
+    # custody as canonical gate/finalize authority.
+    binding_bridge_mode = bool(clearance.get("bridge_mode", False))
+    binding_carried_blockers = list(clearance.get("carried_blockers", []) or [])
     binding = {
         "schema_version": FINAL_BINDING_SCHEMA_VERSION,
         "clearance_artifact": clearance_path.name,
@@ -1460,6 +1665,9 @@ def bind_finalize_custody(
         "finding_ids": clearance.get("finding_ids", []),
         "task_contract_hash": task_contract_hash(payload),
         "resolution_coverage_digest": _digest(payload.get("critique_resolution_coverage", [])),
+        "bridge_mode": binding_bridge_mode,
+        "carried_blockers": binding_carried_blockers,
+        "canonical_gate_authority": not binding_bridge_mode,
         "revalidated_at": now_utc(),
     }
     payload["critique_custody"] = binding
@@ -1602,6 +1810,18 @@ def assert_finalize_custody(
                 issues.append("clearance plan artifact is missing")
             elif clearance.get("plan_sha256") != sha256_file(plan_dir / plan_name):
                 issues.append("clearance plan hash mismatch")
+            # Negative-authority boundary: finalize custody must never treat a
+            # bridge_mode=true clearance as canonical gate authority.  The
+            # binding's bridge_mode must match the clearance's aggregated bridge
+            # mode, and when the clearance is BRIDGE the binding must explicitly
+            # deny canonical gate authority.  This is what prevents a
+            # BRIDGE-mode receipt from authorizing finalize even when its receipt
+            # digest is internally consistent.
+            clearance_bridge_mode = bool(clearance.get("bridge_mode", False))
+            if binding.get("bridge_mode") != clearance_bridge_mode:
+                issues.append("finalize custody bridge_mode differs from clearance source receipts")
+            if clearance_bridge_mode and binding.get("canonical_gate_authority") is not False:
+                issues.append("bridge_mode=true clearance cannot bind canonical gate authority")
     if issues:
         raise CritiqueCustodyError("finalize_critique_custody_invalid", issues)
     return dict(binding)

@@ -93,12 +93,24 @@ def _make_disposition(
     family: str = DispositionFamily.ACCEPTED_RISK.value,
     **kwargs,
 ) -> FindingDispositionEvent:
+    # CL4 (Step 5): provide all per-family required fields by default so the
+    # helper yields a disposition valid under field-presence validation for
+    # every non-closure family. Tests exercising a specific missing-field
+    # failure override the relevant kwarg (e.g. reopen_predicate=None).
+    defaults = {
+        "reopen_predicate": "default reopen predicate",
+        "reason_subcode": "default-reason",
+        "action_taken": True,
+        "action_description": "default action taken",
+        "metadata": {"canonical_finding_id": "sf-canonical-ref"},
+    }
+    defaults.update(kwargs)
     return FindingDispositionEvent(
         disposition_id=disposition_id,
         semantic_finding_id=semantic_finding_id,
         family=family,
         authority=Authority.EVALUATOR.value,
-        **kwargs,
+        **defaults,
     )
 
 
@@ -280,6 +292,91 @@ class TestReconciliation:
         assert result["accepted"] is True
         assert result["total_semantic_findings"] == 1
         assert len(result["finding_map"]["sem-finding-scope-god-task"]) == 5
+
+    # ── CL4 new relationship members (T1) ──────────────────────────────
+
+    def test_cl4_new_relationships_accepted_and_mapped_to_finding(self) -> None:
+        """MERGE, NEW, UNRELATED, and UNCERTAIN all validate and map
+        their occurrences to the finding_map exactly once."""
+        for rel in (
+            Relationship.MERGE.value,
+            Relationship.NEW.value,
+            Relationship.UNRELATED.value,
+            Relationship.UNCERTAIN.value,
+        ):
+            occs = [_make_occurrence("occ-a"), _make_occurrence("occ-b")]
+            recs = [_make_reconciliation(
+                "rec-x", occurrence_ids=("occ-a", "occ-b"),
+                semantic_finding_id="sf-x", relationship=rel,
+                reason="explicit evaluator judgment",
+            )]
+            result = apply_reconciliation_events(occs, recs)
+            assert result["accepted"] is True, f"relationship {rel} not accepted"
+            assert result["finding_map"]["sf-x"] == ["occ-a", "occ-b"]
+            assert result["total_semantic_findings"] == 1
+
+    def test_cl4_unknown_relationship_rejected(self) -> None:
+        """An unrecognized serialized relationship is rejected with a typed
+        failure and does not contribute a finding."""
+        occs = [_make_occurrence("occ-1")]
+        recs = [_make_reconciliation(
+            "rec-bad", relationship="NONSENSE",
+            reason="should be rejected",
+        )]
+        result = apply_reconciliation_events(occs, recs)
+        assert any(
+            f["mode"] == FailureMode.RECONCILIATION_UNKNOWN_RELATIONSHIP.value
+            for f in result["failures"]
+        )
+        # Rejected event must not contribute a finding.
+        assert result["total_semantic_findings"] == 0
+
+    def test_cl4_disputed_merge_with_evaluator_disagreement_retained(self) -> None:
+        """A MERGE event is retained in finding_map even when a second
+        evaluator disputes the sameness with UNRELATED. Both mappings are
+        recorded exactly-once; neither is silently dropped."""
+        occs = [_make_occurrence("occ-1"), _make_occurrence("occ-2")]
+        recs = [
+            _make_reconciliation(
+                "rec-merge",
+                occurrence_ids=("occ-1", "occ-2"),
+                semantic_finding_id="sf-merge",
+                relationship=Relationship.MERGE.value,
+                reason="same root cause",
+            ),
+            _make_reconciliation(
+                "rec-disagree",
+                occurrence_ids=("occ-2",),
+                semantic_finding_id="sf-distinct",
+                relationship=Relationship.UNRELATED.value,
+                reason="evaluator B disagrees — different scope",
+            ),
+        ]
+        result = apply_reconciliation_events(occs, recs)
+        assert result["accepted"] is True
+        # The disputed MERGE is retained.
+        assert result["finding_map"]["sf-merge"] == ["occ-1", "occ-2"]
+        # The disagreeing UNRELATED mapping coexists.
+        assert result["finding_map"]["sf-distinct"] == ["occ-2"]
+        assert result["total_semantic_findings"] == 2
+
+    def test_cl4_uncertain_is_non_blocking(self) -> None:
+        """UNCERTAIN does not force accepted=False or add a hard failure."""
+        occs = [_make_occurrence("occ-1")]
+        recs = [_make_reconciliation(
+            "rec-uncertain", occurrence_ids=("occ-1",),
+            semantic_finding_id="sf-u",
+            relationship=Relationship.UNCERTAIN.value,
+            reason="cannot determine sameness from available evidence",
+        )]
+        result = apply_reconciliation_events(occs, recs)
+        assert result["accepted"] is True
+        assert result["total_semantic_findings"] == 1
+        # No hard (non-warning) failure for UNCERTAIN.
+        assert not any(
+            f["mode"] != FailureMode.RECONCILIATION_INFERRED_SAMENESS.value
+            for f in result["failures"]
+        )
 
 
 # ── Disposition ──────────────────────────────────────────────────────
@@ -551,6 +648,49 @@ class TestBriefing:
         assert "sf-1" in briefing.blocked_findings
         assert "sf-2" in briefing.accepted_risk_findings
         assert "sf-3" in briefing.unknown_findings
+
+    def test_cl4_three_disposition_forms_classify_into_correct_buckets(self) -> None:
+        """CL4 Step 2.3: RESOLVED_VERIFIED and legacy RESOLVED both route to
+        resolved_findings; ADDRESSED_PENDING_VERIFICATION routes to
+        acted_on_findings (still open, pending verification). Every finding
+        lands in exactly one bucket, preserving the partition invariant."""
+        occs = [_make_occurrence(f"occ-{i}") for i in range(3)]
+        recs = [
+            _make_reconciliation(f"rec-{i}", occurrence_ids=(f"occ-{i}",),
+                                 semantic_finding_id=f"sf-{i}")
+            for i in range(3)
+        ]
+        disps = [
+            _make_disposition("disp-0", "sf-0",
+                              family=DispositionFamily.RESOLVED_VERIFIED.value),
+            _make_disposition("disp-1", "sf-1",
+                              family=DispositionFamily.RESOLVED.value),  # legacy
+            _make_disposition("disp-2", "sf-2",
+                              family=DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value),
+        ]
+        rec_result = apply_reconciliation_events(occs, recs)
+        disp_result = apply_disposition_events(rec_result["finding_map"], disps)
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+            budget_level="exhaustive",
+        )
+        # RESOLVED_VERIFIED → resolved bucket.
+        assert "sf-0" in briefing.resolved_findings
+        # Legacy RESOLVED normalizes → resolved bucket, stored value intact.
+        assert "sf-1" in briefing.resolved_findings
+        assert disps[1].family == "resolved"
+        # ADDRESSED_PENDING_VERIFICATION → acted-on bucket (open follow-up).
+        assert "sf-2" in briefing.acted_on_findings
+        # Partition: every finding in exactly one bucket.
+        union = set()
+        for bucket in (
+            "acted_on_findings", "ignored_findings", "deferred_findings",
+            "blocked_findings", "accepted_risk_findings",
+            "unknown_findings", "resolved_findings", "duplicate_findings",
+        ):
+            union |= set(getattr(briefing, bucket))
+        assert union == {"sf-0", "sf-1", "sf-2"}
 
 
 # ── CL3 briefing invariants (T19) ────────────────────────────────────
@@ -839,6 +979,151 @@ class TestReviserProjection:
         assert projection["input_set_hash"] == manifest.input_set_hash
         assert len(projection["finding_summaries"]) == 1
 
+    def test_reviser_carries_actionable_disposed_unchanged_history(self) -> None:
+        # CL4 (Step 7): the reviser projection must carry actionable_findings,
+        # disposed_history, unchanged_findings, and revision_actions_required.
+        # Every known finding appears in disposed_history regardless of family.
+        occs = [_make_occurrence("occ-1")]
+        rec_result = apply_reconciliation_events(
+            occs, [_make_reconciliation()]
+        )
+        # ACCEPTED_RISK is an UNCHANGED family — remains visible, no action.
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [_make_disposition(family=DispositionFamily.ACCEPTED_RISK.value)],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        projection = project_reviser_input(
+            manifest, briefing, occs, disp_result,
+        )
+        # All four enriched fields are present.
+        assert "actionable_findings" in projection
+        assert "disposed_history" in projection
+        assert "unchanged_findings" in projection
+        assert "revision_actions_required" in projection
+        # ACCEPTED_RISK finding is unchanged (settled, visible) and not
+        # actionable, so no revision action is required.
+        assert projection["unchanged_findings"] == ["sf-1"]
+        assert projection["actionable_findings"] == []
+        assert projection["revision_actions_required"] is False
+        # disposed_history retains the complete prior-disposition record.
+        assert len(projection["disposed_history"]) == 1
+        history = projection["disposed_history"][0]
+        assert history["semantic_finding_id"] == "sf-1"
+        assert history["family"] == DispositionFamily.ACCEPTED_RISK.value
+        assert history["normalized_family"] == "accepted-risk"
+        assert history["reopen_predicate"] == "default reopen predicate"
+
+    def test_missing_action_coverage_sets_revision_actions_required(self) -> None:
+        # CL4 (Step 7): an actionable finding (ADDRESSED_PENDING_VERIFICATION)
+        # whose action has not been taken signals missing action coverage and
+        # sets revision_actions_required=True. The finding still appears in
+        # disposed_history so no known finding disappears.
+        occs = [_make_occurrence("occ-1")]
+        rec_result = apply_reconciliation_events(
+            occs, [_make_reconciliation()]
+        )
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [
+                _make_disposition(
+                    family=DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value,
+                    action_taken=False,
+                    action_description=None,
+                ),
+            ],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        projection = project_reviser_input(
+            manifest, briefing, occs, disp_result,
+        )
+        # Actionable but action coverage missing -> flag True.
+        assert projection["revision_actions_required"] is True
+        assert len(projection["actionable_findings"]) == 1
+        assert projection["actionable_findings"][0]["semantic_finding_id"] == "sf-1"
+        assert projection["actionable_findings"][0]["action_taken"] is False
+        # The finding is still surfaced in disposed_history (no disappearance).
+        assert len(projection["disposed_history"]) == 1
+        assert projection["disposed_history"][0]["semantic_finding_id"] == "sf-1"
+
+    def test_acted_on_actionable_finding_does_not_require_flag(self) -> None:
+        # CL4 (Step 7): an ACTED_ON finding carries a completed action, so it
+        # is actionable but does NOT trip revision_actions_required.
+        occs = [_make_occurrence("occ-1")]
+        rec_result = apply_reconciliation_events(
+            occs, [_make_reconciliation()]
+        )
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [
+                _make_disposition(
+                    family=DispositionFamily.ACTED_ON.value,
+                    action_taken=True,
+                    action_description="patched the offending module",
+                ),
+            ],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        projection = project_reviser_input(
+            manifest, briefing, occs, disp_result,
+        )
+        assert projection["revision_actions_required"] is False
+        assert len(projection["actionable_findings"]) == 1
+        assert projection["actionable_findings"][0]["action_taken"] is True
+
+    def test_open_minor_ignored_finding_retains_reopen_predicate(self) -> None:
+        # CL4 (Step 7): an open minor IGNORED finding carries a reopen
+        # predicate. The reviser sees it in disposed_history with its reopen
+        # predicate and evidence retained, so it remains visible (not dropped)
+        # while flagged as ignored.
+        occs = [_make_occurrence("occ-1")]
+        rec_result = apply_reconciliation_events(
+            occs, [_make_reconciliation()]
+        )
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [
+                _make_disposition(
+                    family=DispositionFamily.IGNORED.value,
+                    reopen_predicate="monitor for regression over next cycle",
+                    evidence_refs=("evidence-ignored-001",),
+                ),
+            ],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        projection = project_reviser_input(
+            manifest, briefing, occs, disp_result,
+        )
+        # IGNORED is an open (not actionable, not unchanged) minor finding.
+        assert projection["revision_actions_required"] is False
+        assert projection["actionable_findings"] == []
+        assert projection["unchanged_findings"] == []
+        # The open minor IGNORED finding is fully retained in history.
+        ignored_entries = [
+            h for h in projection["disposed_history"]
+            if h["family"] == DispositionFamily.IGNORED.value
+        ]
+        assert len(ignored_entries) == 1
+        entry = ignored_entries[0]
+        assert entry["semantic_finding_id"] == "sf-1"
+        assert entry["reopen_predicate"] == "monitor for regression over next cycle"
+        assert entry["staleness_check_deferred"] is True
+        assert entry["evidence_refs"] == ["evidence-ignored-001"]
+        # It survives as a known finding in the briefing open set.
+        assert "sf-1" in briefing.ignored_findings
+
 
 # ── Gate projection ──────────────────────────────────────────────────
 
@@ -902,9 +1187,33 @@ class TestGateProjection:
             _make_occurrence("occ-drop", parse_status=ParseStatus.DROPPED.value),
             _make_occurrence("occ-malf", parse_status=ParseStatus.MALFORMED.value),
         ]
-        # Only valid occurrence gets reconciled
+        # Only the eligible occurrence is reconciled; FAILED/DROPPED/MALFORMED
+        # are accounted as excluded-from-finding-map rather than halting.
         recs = [_make_reconciliation("rec-ok", occurrence_ids=("occ-ok",), semantic_finding_id="sf-ok")]
         rec_result = apply_reconciliation_events(occs, recs)
+        # CL4 (Step 3): every input occurrence has exactly one accounting row.
+        accounting = rec_result["occurrence_accounting"]
+        assert len(accounting) == 4
+        by_occ = {row["occurrence_id"]: row for row in accounting}
+        # The eligible SELECTED occurrence is mapped to its finding.
+        assert by_occ["occ-ok"]["disposition"] == "mapped-to-finding"
+        assert by_occ["occ-ok"]["semantic_finding_id_or_null"] == "sf-ok"
+        # FAILED/DROPPED/MALFORMED are surfaced as excluded-from-finding-map
+        # with explicit reasons — never confused with NO_ADDITIONAL_FINDINGS.
+        for oid, status in (
+            ("occ-fail", ParseStatus.FAILED.value),
+            ("occ-drop", ParseStatus.DROPPED.value),
+            ("occ-malf", ParseStatus.MALFORMED.value),
+        ):
+            assert by_occ[oid]["disposition"] == "excluded-from-finding-map", oid
+            assert by_occ[oid]["parse_status"] == status, oid
+            assert by_occ[oid]["semantic_finding_id_or_null"] is None, oid
+            assert status in by_occ[oid]["reason"], oid
+        # Excluded occurrences never enter the finding_map.
+        all_mapped: set[str] = set()
+        for _oids in rec_result["finding_map"].values():
+            all_mapped.update(_oids)
+        assert all_mapped == {"occ-ok"}
         disp_result = apply_disposition_events(
             rec_result["finding_map"], [_make_disposition("disp-ok", "sf-ok")],
         )
@@ -918,6 +1227,7 @@ class TestGateProjection:
         projection = project_gate_input(
             manifest, briefing, occs, rec_result, disp_result, custody_result,
         )
+        # No halt: the gate observes the three terminal-failure occurrences.
         assert projection["occurrence_failed_dropped_malformed"] == 3
 
     def test_unavailable_evidence_tracked(self) -> None:
@@ -939,6 +1249,193 @@ class TestGateProjection:
             manifest, briefing, occs, disp_result,
         )
         assert "occ-1" in reviser["unavailable_evidence"]
+
+    def test_gate_carries_enriched_truthful_claim_fields(self) -> None:
+        # CL4 (Step 8): the gate projection carries the enriched fields that
+        # ground any acceptance claim: accepted_ledger_revision,
+        # occurrence_coverage_proof, disposition_state, revision_actions,
+        # and independent_verification — while preserving no_adjacent_text_match.
+        occs = [_make_occurrence("occ-1")]
+        rec_result = apply_reconciliation_events(
+            occs, [_make_reconciliation()]
+        )
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [_make_disposition(family=DispositionFamily.ACCEPTED_RISK.value)],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        custody_result = validate_occurrence_custody(
+            occs, {"wbc-001": {"valid": True}},
+        )
+        projection = project_gate_input(
+            manifest, briefing, occs, rec_result, disp_result, custody_result,
+        )
+        # All five enriched fields are present.
+        assert "accepted_ledger_revision" in projection
+        assert "occurrence_coverage_proof" in projection
+        assert "disposition_state" in projection
+        assert "revision_actions" in projection
+        assert "independent_verification" in projection
+        # accepted_ledger_revision matches the manifest identity.
+        assert projection["accepted_ledger_revision"]["manifest_id"] == manifest.manifest_id
+        assert projection["accepted_ledger_revision"]["revision_number"] == manifest.revision_number
+        assert projection["accepted_ledger_revision"]["input_set_hash"] == manifest.input_set_hash
+        # occurrence_coverage_proof is exact and complete.
+        proof = projection["occurrence_coverage_proof"]
+        assert proof["total_input_occurrences"] == 1
+        assert proof["accounting_row_count"] == 1
+        assert proof["complete"] is True
+        assert proof["reconciliation_accepted"] is True
+        # disposition_state carries the normalized family and family counts.
+        assert projection["disposition_state"]["family_counts"] == {"accepted-risk": 1}
+        assert "sf-1" in projection["disposition_state"]["findings"]
+        assert (
+            projection["disposition_state"]["findings"]["sf-1"]["normalized_family"]
+            == "accepted-risk"
+        )
+        # revision_actions has no actionable findings here.
+        assert projection["revision_actions"]["actionable_findings"] == []
+        assert projection["revision_actions"]["revision_actions_required"] is False
+        # No verified/pending findings -> independent_verification reflects it.
+        assert projection["independent_verification"]["verified_findings"] == []
+        assert projection["independent_verification"]["pending_verification_findings"] == []
+        assert projection["independent_verification"]["has_verification_evidence"] is False
+        # The adjacency no-X field is preserved.
+        assert "no_adjacent_text_match" in projection
+
+    def test_gate_surfaces_open_minor_disposition(self) -> None:
+        # CL4 (Step 8): an open-minor IGNORED disposition (gate-acceptable,
+        # non-blocking) survives to the gate projection with its reopen
+        # predicate and staleness flag intact.
+        occs = [_make_occurrence("occ-1")]
+        rec_result = apply_reconciliation_events(
+            occs, [_make_reconciliation()]
+        )
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [
+                _make_disposition(
+                    family=DispositionFamily.IGNORED.value,
+                    reopen_predicate="monitor for regression",
+                ),
+            ],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        custody_result = validate_occurrence_custody(
+            occs, {"wbc-001": {"valid": True}},
+        )
+        projection = project_gate_input(
+            manifest, briefing, occs, rec_result, disp_result, custody_result,
+        )
+        # IGNORED is open but not blocking: the gate accepts it as known.
+        state = projection["disposition_state"]["findings"]["sf-1"]
+        assert state["family"] == DispositionFamily.IGNORED.value
+        assert state["reopen_predicate"] == "monitor for regression"
+        assert state["staleness_check_deferred"] is True
+        # IGNORED is not actionable nor verified.
+        assert projection["revision_actions"]["actionable_findings"] == []
+        assert projection["revision_actions"]["revision_actions_required"] is False
+        assert projection["independent_verification"]["verified_findings"] == []
+        # It still counts as an open finding at the gate.
+        assert projection["open_finding_count"] == 1
+
+    def test_gate_surfaces_merge_relationship_coverage(self) -> None:
+        # CL4 (Step 8): a MERGE reconciliation relationship surfaces in the
+        # gate projection's occurrence coverage proof and disposition state.
+        occs = [
+            _make_occurrence("occ-a"),
+            _make_occurrence("occ-b"),
+        ]
+        recs = [
+            _make_reconciliation(
+                reconciliation_id="rec-merge",
+                occurrence_ids=("occ-a", "occ-b"),
+                semantic_finding_id="sf-merge",
+                relationship=Relationship.MERGE.value,
+                reason="two occurrences describe the same merged concern",
+            ),
+        ]
+        rec_result = apply_reconciliation_events(occs, recs)
+        assert rec_result["accepted"] is True
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [_make_disposition("disp-merge", "sf-merge", family=DispositionFamily.ACCEPTED_RISK.value)],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        custody_result = validate_occurrence_custody(
+            occs, {"wbc-001": {"valid": True}},
+        )
+        projection = project_gate_input(
+            manifest, briefing, occs, rec_result, disp_result, custody_result,
+        )
+        # Both merged occurrences are accounted exactly once.
+        proof = projection["occurrence_coverage_proof"]
+        assert proof["total_input_occurrences"] == 2
+        assert proof["accounting_row_count"] == 2
+        assert proof["complete"] is True
+        accounted = {row["occurrence_id"] for row in proof["occurrence_accounting"]}
+        assert accounted == {"occ-a", "occ-b"}
+        # The merged finding is present in disposition_state.
+        assert "sf-merge" in projection["disposition_state"]["findings"]
+
+    def test_gate_propagates_reopen_as_actionable(self) -> None:
+        # CL4 (Step 8): a REOPEN reconciliation event propagates an actionable
+        # finding to the gate projection — the reopen is counted and the
+        # reopened finding's disposition (ACTED_ON with a completed action)
+        # is surfaced as actionable.
+        occs = [_make_occurrence("occ-1")]
+        recs = [
+            _make_reconciliation(
+                reconciliation_id="rec-reopen",
+                occurrence_ids=("occ-1",),
+                semantic_finding_id="sf-1",
+                relationship=Relationship.REOPEN.value,
+                reason="concern regressed; reopened for re-action",
+                is_reopen=True,
+                reopen_condition="regression observed in production",
+            ),
+        ]
+        rec_result = apply_reconciliation_events(occs, recs)
+        assert rec_result["accepted"] is True
+        assert len(rec_result["reopen_events"]) == 1
+        disp_result = apply_disposition_events(
+            rec_result["finding_map"],
+            [
+                _make_disposition(
+                    family=DispositionFamily.ACTED_ON.value,
+                    action_taken=True,
+                    action_description="hotfix applied and redeployed",
+                ),
+            ],
+        )
+        manifest = construct_manifest(occs, rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+        )
+        custody_result = validate_occurrence_custody(
+            occs, {"wbc-001": {"valid": True}},
+        )
+        projection = project_gate_input(
+            manifest, briefing, occs, rec_result, disp_result, custody_result,
+        )
+        # The reopen event is counted at the gate.
+        assert projection["reopen_event_count"] == 1
+        # The reopened finding is propagated as actionable.
+        assert projection["revision_actions"]["actionable_findings"] == ["sf-1"]
+        # ACTED_ON carries a completed action -> no missing coverage.
+        assert projection["revision_actions"]["revision_actions_required"] is False
+        state = projection["disposition_state"]["findings"]["sf-1"]
+        assert state["family"] == DispositionFamily.ACTED_ON.value
+        assert state["action_taken"] is True
 
 
 # ── Complete replay ──────────────────────────────────────────────────
@@ -962,10 +1459,26 @@ class TestReplayFull:
         assert "gate_projection" in result
 
     def test_replay_fails_on_invalid_occurrence(self) -> None:
+        # CL4 (Step 3): a FAILED occurrence no longer halts replay with
+        # OCCURRENCE_PARSE_FAILED before reconciliation. It now flows through
+        # reconciliation and receives an explicit excluded-from-finding-map
+        # accounting entry with a reason, surfaced at the gate instead of
+        # raised before reconciliation runs.
         occs = [_make_occurrence("occ-1", parse_status=ParseStatus.FAILED.value)]
-        with pytest.raises(SemanticLoopError) as exc:
-            replay_full(occs, [], [], wbc_receipt_chain={"wbc-001": {"valid": True}})
-        assert exc.value.mode == FailureMode.OCCURRENCE_PARSE_FAILED
+        result = replay_full(
+            occs, [], [], wbc_receipt_chain={"wbc-001": {"valid": True}},
+        )
+        accounting = result["reconciliation"]["occurrence_accounting"]
+        assert len(accounting) == 1
+        row = accounting[0]
+        assert row["occurrence_id"] == "occ-1"
+        assert row["parse_status"] == ParseStatus.FAILED.value
+        assert row["disposition"] == "excluded-from-finding-map"
+        assert ParseStatus.FAILED.value in row["reason"]
+        assert row["semantic_finding_id_or_null"] is None
+        # No finding was produced; the gate observes the failed occurrence.
+        assert result["gate_projection"]["occurrence_failed_dropped_malformed"] == 1
+        assert result["gate_projection"]["no_known_findings"] is True
 
     def test_replay_fails_on_custody_broken(self) -> None:
         occs = [_make_occurrence("occ-1", custody_receipt_refs=("wbc-999",))]

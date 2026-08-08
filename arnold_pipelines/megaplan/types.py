@@ -78,6 +78,13 @@ class PlanMeta(TypedDict, total=False):
     weighted_scores: list[float]
     plan_deltas: list[float | None]
     recurring_critiques: list[str]
+    # CL4 (Plan Step 8): adjacency/recurrence split declared on PlanMeta so
+    # the signal producer's emitted fields are not silently dropped by the
+    # TypedDict. adjacent_text_matches is the informational exact-text list;
+    # semantic_recurrence is the reconciliation-grounded boolean. The legacy
+    # recurring_critiques alias remains for existing consumers.
+    adjacent_text_matches: list[str]
+    semantic_recurrence: bool
     total_cost_usd: float
     overrides: list[dict[str, Any]]
     notes: list[dict[str, Any]]
