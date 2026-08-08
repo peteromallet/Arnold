@@ -40,7 +40,7 @@ WBC_TRACKED_FILES = [
     "docs/arnold/workflow-boundary-contracts.md",
 ]
 
-REBOUND_COMMIT = "7cf0cab28c59d40614b9548fa4348ed7f062f52c"
+REBOUND_COMMIT = "65b93723a1d5eb956b47971f0d5674afa7f880ca"
 OLD_MERGE_COMMIT = "24afce006b9ad20391ac7af10ef67ea0b1774f9f"
 
 
@@ -79,7 +79,7 @@ def test_old_merge_commit_produces_mismatches():
         head_hash = _git_blob_sha256("HEAD", path)
         if old_hash != head_hash:
             mismatch_count += 1
-    assert mismatch_count == 9, (
+    assert mismatch_count == 10, (
         f"Expected exactly 9 mismatches against old merge commit {OLD_MERGE_COMMIT[:8]}, "
         f"got {mismatch_count}. The rebind must have discriminative power."
     )

@@ -522,9 +522,14 @@ def test_gate_signal_carries_bridge_mode_and_carried_blockers(tmp_path: Path) ->
         critique_flags_by_iteration={1: [{"concern": "x"}]},
     )
     s = signals["signals"]
-    assert s["bridge_mode"] is CL4_BRIDGE_MODE is True
+    # The signal must carry the module-declared bridge mode and carried
+    # blockers verbatim. Post-CL5-cutover both are False/empty (handoff
+    # resolved, all CL1/CL2 blockers cleared); the assertions below track
+    # the module constants rather than hardcoding the pre-cutover values.
+    assert s["bridge_mode"] is CL4_BRIDGE_MODE
     assert s["carried_blockers"] == list(CL4_CARRIED_BLOCKERS)
-    assert len(s["carried_blockers"]) == 5
+    assert CL4_BRIDGE_MODE is False
+    assert CL4_CARRIED_BLOCKERS == ()
 
 
 def test_adjacent_text_matches_complement_holds_with_disputed_merge(
