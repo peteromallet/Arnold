@@ -661,8 +661,16 @@ class TestBriefing:
             for i in range(3)
         ]
         disps = [
-            _make_disposition("disp-0", "sf-0",
-                              family=DispositionFamily.RESOLVED_VERIFIED.value),
+            _make_disposition(
+                "disp-0", "sf-0",
+                family=DispositionFamily.RESOLVED_VERIFIED.value,
+                # CL4 Step 6: RESOLVED_VERIFIED closure requires a
+                # verification artifact in evidence_refs plus a reason
+                # subcode; without them the disposition is rejected as
+                # CLOSURE_UNSUPPORTED and never reaches the resolved bucket.
+                evidence_refs=["verification-artifact-occ-0"],
+                reason_subcode="verified-by-evidence",
+            ),
             _make_disposition("disp-1", "sf-1",
                               family=DispositionFamily.RESOLVED.value),  # legacy
             _make_disposition("disp-2", "sf-2",
