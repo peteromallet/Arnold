@@ -20,20 +20,28 @@ from typing import Any
 import pytest
 
 from arnold.critique_ledger.freshness import (
+    REASON_INPUT_HASH_DIVERGED,
     REASON_OBSERVATION_EXCEEDED_MAX_AGE,
     REASON_TOMBSTONED,
     REASON_UNAVAILABLE,
     FreshnessTracker,
     FreshnessVector,
+    InputStalenessVerdict,
+    compare_input_hashes,
+    compute_input_hash,
 )
 from arnold.critique_ledger.persistence_service import (
     LedgerEventContext,
     LedgerPersistenceService,
 )
 from arnold.critique_ledger.schemas import (
+    Authority,
     CritiqueOccurrenceEnvelope,
     EvidenceAvailability,
+    FindingDispositionEvent,
+    FindingReconciliationEvent,
     ParseStatus,
+    Relationship,
 )
 from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
 from arnold.workflow.execution_attempt_ledger import (
@@ -392,3 +400,183 @@ def test_freshness_vector_has_no_authority_field() -> None:
         "is_stale",
         "staleness_reason",
     }
+
+
+# ── input-hash staleness: canonical hashing and advisory comparison ───────
+
+
+def _occurrence(occurrence_id: str = "occ-1", finding_id: str = "f-1") -> CritiqueOccurrenceEnvelope:
+    return CritiqueOccurrenceEnvelope(
+        occurrence_id=occurrence_id,
+        attempt_id="attempt-1",
+        finding_id=finding_id,
+        semantic_finding_id=finding_id,
+        producer_id="critic-1",
+        parse_status=ParseStatus.SELECTED.value,
+        evidence_availability=EvidenceAvailability.RETAINED.value,
+    )
+
+
+def _reconciliation(reconciliation_id: str = "rec-1") -> FindingReconciliationEvent:
+    return FindingReconciliationEvent(
+        reconciliation_id=reconciliation_id,
+        canonical_finding_id="f-1",
+        semantic_finding_id="f-1",
+        occurrence_ids=("occ-1",),
+        relationship=Relationship.DUPLICATE.value,
+        authority=Authority.EVALUATOR.value,
+    )
+
+
+def _disposition(disposition_id: str = "disp-1") -> FindingDispositionEvent:
+    return FindingDispositionEvent(
+        disposition_id=disposition_id,
+        semantic_finding_id="f-1",
+        family="verified",
+        authority=Authority.EVALUATOR.value,
+    )
+
+
+def test_compute_input_hash_is_deterministic_for_equivalent_sources() -> None:
+    """The same three input sets produce the same hash regardless of order."""
+    occ = [_occurrence()]
+    rec = [_reconciliation()]
+    disp = [_disposition()]
+    h1 = compute_input_hash(occ, rec, disp)
+    h2 = compute_input_hash(list(reversed(occ)), list(reversed(rec)), list(reversed(disp)))
+    assert h1 == h2
+    assert isinstance(h1, str) and len(h1) == 64  # SHA-256 hex
+
+
+def test_compute_input_hash_changes_when_any_source_changes() -> None:
+    """Changing any of the three input sources changes the canonical hash."""
+    base = compute_input_hash([_occurrence()], [_reconciliation()], [_disposition()])
+
+    # Change occurrences
+    occ2 = compute_input_hash(
+        [_occurrence(occurrence_id="occ-2")], [_reconciliation()], [_disposition()]
+    )
+    assert occ2 != base
+
+    # Change reconciliations
+    rec2 = compute_input_hash(
+        [_occurrence()], [_reconciliation(reconciliation_id="rec-2")], [_disposition()]
+    )
+    assert rec2 != base
+
+    # Change dispositions
+    disp2 = compute_input_hash(
+        [_occurrence()], [_reconciliation()], [_disposition(disposition_id="disp-2")]
+    )
+    assert disp2 != base
+
+
+def test_compute_input_hash_accepts_dict_envelopes() -> None:
+    """Envelope dicts (as read from the ledger payload) hash stably and
+    deterministically; the same dict content produces the same hash on every
+    call.  Dataclass instances and dicts are intentionally distinct canonical
+    representations (``freeze_for_hashing`` records the dataclass type name),
+    so callers must hash consistent representations; this test asserts the
+    round-trip stability of each representation independently."""
+    occ_dc = _occurrence()
+    occ_dict = occ_dc.to_dict()
+    # Dataclass representation is stable.
+    h_dc_1 = compute_input_hash([occ_dc], [], [])
+    h_dc_2 = compute_input_hash([occ_dc], [], [])
+    assert h_dc_1 == h_dc_2
+    # Dict representation is stable and produces a valid SHA-256 hex digest.
+    h_dict_1 = compute_input_hash([occ_dict], [], [])
+    h_dict_2 = compute_input_hash([occ_dict], [], [])
+    assert h_dict_1 == h_dict_2
+    assert isinstance(h_dict_1, str) and len(h_dict_1) == 64
+    # The two representations differ by type-name wrapping — documented and
+    # expected.  Callers choose one representation and hash it consistently.
+    assert h_dc_1 != h_dict_1
+
+
+def test_compare_input_hashes_fresh_when_stored_matches_current() -> None:
+    occ, rec, disp = [_occurrence()], [_reconciliation()], [_disposition()]
+    stored = compute_input_hash(occ, rec, disp)
+    verdict = compare_input_hashes(stored, occ, rec, disp)
+    assert verdict.is_stale is False
+    assert verdict.stored_hash == stored
+    assert verdict.current_hash == stored
+    assert verdict.staleness_reason == ""
+
+
+def test_compare_input_hashes_stale_when_input_changes() -> None:
+    """Changing any canonical briefing input sets staleness while leaving the
+    advisory authority neutral (sense check SC10)."""
+    stored = compute_input_hash([_occurrence()], [_reconciliation()], [_disposition()])
+    verdict = compare_input_hashes(
+        stored,
+        [_occurrence(occurrence_id="occ-changed")],
+        [_reconciliation()],
+        [_disposition()],
+    )
+    assert verdict.is_stale is True
+    assert verdict.staleness_reason == REASON_INPUT_HASH_DIVERGED
+    assert verdict.current_hash != stored
+    assert verdict.stored_hash == stored
+
+
+def test_compare_input_hashes_treats_missing_stored_as_fresh() -> None:
+    """No stored hash → cannot assert divergence → fresh (advisory, no
+    authority granted either way)."""
+    verdict = compare_input_hashes("", [_occurrence()], [_reconciliation()], [_disposition()])
+    assert verdict.is_stale is False
+    assert verdict.staleness_reason == ""
+    verdict_none = compare_input_hashes(
+        None,  # type: ignore[arg-type]
+        [_occurrence()],
+        [_reconciliation()],
+        [_disposition()],
+    )
+    assert verdict_none.is_stale is False
+
+
+def test_input_staleness_verdict_has_no_authority_field() -> None:
+    """Static contract: InputStalenessVerdict is a pure advisory staleness
+    record.  It carries hashes and a reason only — never authority."""
+    fields = set(InputStalenessVerdict.__dataclass_fields__)
+    assert "authority" not in fields
+    assert "is_authoritative" not in fields
+    assert "accepted_for_cl2" not in fields
+    assert fields == {"is_stale", "stored_hash", "current_hash", "staleness_reason"}
+
+
+def test_input_staleness_never_grants_authority() -> None:
+    """SC10: changing any canonical briefing input sets staleness while leaving
+    positive authority unchanged.  The verdict has no authority surface at all;
+    even inputs carrying authority markers never change the staleness signal."""
+    occ_authoritative = CritiqueOccurrenceEnvelope(
+        occurrence_id="occ-auth",
+        attempt_id="attempt-1",
+        finding_id="f-1",
+        semantic_finding_id="f-1",
+        producer_id="critic-1",
+        parse_status=ParseStatus.SELECTED.value,
+        evidence_availability=EvidenceAvailability.RETAINED.value,
+    )
+    occ_authoritative2 = CritiqueOccurrenceEnvelope(
+        occurrence_id="occ-auth-2",
+        attempt_id="attempt-1",
+        finding_id="f-1",
+        semantic_finding_id="f-1",
+        producer_id="critic-1",
+        parse_status=ParseStatus.SELECTED.value,
+        evidence_availability=EvidenceAvailability.RETAINED.value,
+    )
+    disp_authoritative = FindingDispositionEvent(
+        disposition_id="disp-1",
+        semantic_finding_id="f-1",
+        family="verified",
+        authority=Authority.EVALUATOR.value,
+    )
+    stored = compute_input_hash([occ_authoritative], [], [disp_authoritative])
+    verdict = compare_input_hashes(stored, [occ_authoritative2], [], [disp_authoritative])
+    assert verdict.is_stale is True
+    # No authority field to read — staleness does not promote to admission.
+    assert not hasattr(verdict, "authority")
+    assert not hasattr(verdict, "is_authoritative")
+    assert not hasattr(verdict, "accepted_for_cl2")

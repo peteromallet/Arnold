@@ -41,7 +41,12 @@ def _render_differential_section(
     verified = [f for f in flags if f.get("status") == "verified"]
     signals = gate_signals.get("signals", {})
     unresolved = signals.get("unresolved_flags", [])
-    recurring = signals.get("recurring_critiques", [])
+    # CL5 (Plan Step 7a): read the canonical ``adjacent_text_matches`` list with
+    # ``recurring_critiques`` as the transition fallback.  The deprecated alias
+    # is retained until Step 7b confirms zero remaining consumers.
+    recurring = list(signals.get("adjacent_text_matches", []))
+    if not recurring:
+        recurring = list(signals.get("recurring_critiques", []))
     trajectory = signals.get("loop_summary", "")
     plan_delta = signals.get("plan_delta_from_previous")
     delta_str = f"{plan_delta:.1f}%" if plan_delta is not None else "n/a"

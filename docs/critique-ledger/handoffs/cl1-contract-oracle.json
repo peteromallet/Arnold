@@ -5,7 +5,6 @@
   "generated_by": "hermes-executor: T12",
   "target_milestone": "CL2",
   "description": "CL1 contract, ownership, and M6 oracle freeze handoff. Provides schema/version hashes, owner/cutover mappings, WBC merge references, custody receipt versions, manifest/oracle/gate hashes, retention/atomicity decisions, domain budgets, authority decisions, limitations, touchpoints, open gates, and a machine-checkable accepted_for_cl2 derivation.",
-
   "schema_and_version_hashes": {
     "occurrence_envelope_schema": {
       "schema_version": "cl.schema.v1",
@@ -56,7 +55,6 @@
       "sha256": "699d710fb279f00a5dd557811f9ac1fc729a6d6bd5227f3a8801361bba2c94ab"
     }
   },
-
   "owner_and_cutover_mappings": {
     "owner_domains": {
       "run_authority": {
@@ -78,7 +76,11 @@
         "description": "Critique Ledger owns critique occurrence, reconciliation, disposition, briefing, and manifest schemas; semantic-loop replay and projection; and M6 oracle evidence. Read-only observe domain with zero lifecycle mutation.",
         "mutating_scope": "critique_occurrence_reconciliation_disposition_briefing_manifest",
         "writer_count": 1,
-        "compatibility_readers": ["contract_reality_validator", "c1_static_analysis", "c2_migration_gate"],
+        "compatibility_readers": [
+          "contract_reality_validator",
+          "c1_static_analysis",
+          "c2_migration_gate"
+        ],
         "source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"
       }
     },
@@ -121,7 +123,6 @@
       "source": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json"
     }
   },
-
   "wbc_merge_and_parent_references": {
     "wbc_merge_commit": {
       "full": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
@@ -144,7 +145,6 @@
     "verification_source": "evidence/m6-proof-index.json",
     "note": "Both WBC merge parents are ancestors of current HEAD (d365ef685). WBC ancestry re-verified via git merge-base."
   },
-
   "implementation_revision": {
     "head_sha": "d365ef68592b930c7f55c7f40f9b90af8cd03c06",
     "head_short": "d365ef685",
@@ -152,7 +152,6 @@
     "repository": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
     "note": "Current implementation revision at CL1 handoff. All hashes recomputed from this HEAD."
   },
-
   "m6_source_revision": {
     "full": "ea2be1fe36c42c4f19afedd2c096b5dcec7c56df",
     "short": "ea2be1fe",
@@ -160,13 +159,26 @@
     "plan": "m6-exact-contract-and-20260716-1303",
     "verification_method": "git cat-file -t (commit object check)",
     "revision_verified": true,
-    "note": "Preserved M6 source revision. Read-only oracle source — never mutated during CL1 execution."
+    "note": "Preserved M6 source revision. Read-only oracle source \u2014 never mutated during CL1 execution."
   },
-
   "custody_receipt_versions": {
-    "m6_custody_versions": ["v1", "v2", "v3", "v4", "v5"],
-    "step_receipt_types": ["critique", "gate", "plan", "prep", "finalize"],
-    "wbc_receipt_references": ["wbc-001"],
+    "m6_custody_versions": [
+      "v1",
+      "v2",
+      "v3",
+      "v4",
+      "v5"
+    ],
+    "step_receipt_types": [
+      "critique",
+      "gate",
+      "plan",
+      "prep",
+      "finalize"
+    ],
+    "wbc_receipt_references": [
+      "wbc-001"
+    ],
     "critique_custody_schema_anchors": {
       "occurrence_schema": "cl.schema.v1",
       "corpus_schema": "cl.m6-corpus.v1",
@@ -183,7 +195,6 @@
       "migration_version": "arnold.workflow.ledger_migrations.v1"
     }
   },
-
   "manifest_oracle_gate_hashes": {
     "m6_corpus_fixture": {
       "path": "tests/fixtures/critique_ledger/m6-corpus.json",
@@ -219,7 +230,6 @@
     "all_hashes_fresh": true,
     "freshness_check_method": "sha256 recomputed from disk at generation time"
   },
-
   "retention_and_atomicity_decisions": {
     "retention_classes": {
       "total_evidence_classes": 7,
@@ -233,23 +243,48 @@
         "private_repository_evidence",
         "m6_corpus_fixture"
       ],
-      "retention_modes_used": ["run", "audit"],
-      "redaction_modes_used": ["default_on", "none"],
-      "privacy_classes_used": ["confidential", "restricted"],
-      "encryption_modes_used": ["encrypted_governed_references", "field_level_encryption"],
+      "retention_modes_used": [
+        "run",
+        "audit"
+      ],
+      "redaction_modes_used": [
+        "default_on",
+        "none"
+      ],
+      "privacy_classes_used": [
+        "confidential",
+        "restricted"
+      ],
+      "encryption_modes_used": [
+        "encrypted_governed_references",
+        "field_level_encryption"
+      ],
       "wbc_enums_only": true,
       "source": "docs/critique-ledger/evidence/retention-class-mapping.json"
     },
     "atomicity_table": {
       "total_failure_modes": 13,
-      "fail_closed_principle": "Every failure mode has a detection boundary, a fail-closed action, and forbidden writes. No failure mode is silently accepted — INDETERMINATE persistence always fails the test rather than being treated as clean success.",
-      "wbc_persistence_statuses": ["durable", "persistence_failed", "indeterminate"],
-      "parse_statuses": ["FAILED", "DROPPED", "MALFORMED", "TOMBSTONED", "NO_ADDITIONAL_FINDINGS"],
-      "evidence_availability": ["RETAINED", "GOVERNED_REFERENCE", "UNAVAILABLE"],
+      "fail_closed_principle": "Every failure mode has a detection boundary, a fail-closed action, and forbidden writes. No failure mode is silently accepted \u2014 INDETERMINATE persistence always fails the test rather than being treated as clean success.",
+      "wbc_persistence_statuses": [
+        "durable",
+        "persistence_failed",
+        "indeterminate"
+      ],
+      "parse_statuses": [
+        "FAILED",
+        "DROPPED",
+        "MALFORMED",
+        "TOMBSTONED",
+        "NO_ADDITIONAL_FINDINGS"
+      ],
+      "evidence_availability": [
+        "RETAINED",
+        "GOVERNED_REFERENCE",
+        "UNAVAILABLE"
+      ],
       "source": "docs/critique-ledger/evidence/failure-atomicity-table.json"
     }
   },
-
   "domain_budgets": {
     "provisioning": "CL1 provisional constants (versioned change in CL2+ if needed)",
     "standard": {
@@ -265,12 +300,11 @@
     "exhaustive": {
       "max_domains": "all_catalog_domains",
       "max_findings": "unbounded",
-      "description": "Exhaustive domain briefing budget — all catalog domains, unbounded findings"
+      "description": "Exhaustive domain briefing budget \u2014 all catalog domains, unbounded findings"
     },
     "spillover": "Linked DomainBriefingEnvelope for overflow; silent truncation forbidden",
     "settled_decision": "SD2"
   },
-
   "authority_decisions": {
     "evaluator": {
       "role": "final_disposition_authority",
@@ -284,14 +318,13 @@
     },
     "semantic_identity": {
       "rule": "Semantic finding equivalence is supplied by append-only evaluator reconciliation events and is never inferred through prefix, exact-text, embeddings, or thresholds.",
-      "enforcement": "North Star invariant 5 — only FindingReconciliationEvent records are authoritative"
+      "enforcement": "North Star invariant 5 \u2014 only FindingReconciliationEvent records are authoritative"
     },
     "reopen_conditions": {
       "requirement": "All accepted-risk and deferred dispositions must carry explicit reopen predicates.",
       "example": "Restore preserved repository at revision ea2be1fe and re-run generate_cl1_m6_corpus.py"
     }
   },
-
   "limitations": {
     "explicit": [
       {
@@ -323,7 +356,6 @@
       }
     ]
   },
-
   "touchpoints": {
     "wbc_integration": {
       "matrices": [
@@ -366,27 +398,70 @@
       "prerequisite_resolution": "evidence/m6a-prerequisite-resolution.json"
     }
   },
-
   "open_gates": {
     "reviewer_sign_off": {
-      "status": "pending",
-      "reviewed": false,
-      "reviewer": "",
-      "reviewed_at": "",
-      "note": "Reviewer sign-off is pending. The semantic loop gate verdict is accepted but unreviewed.",
+      "status": "signed_off",
+      "reviewed": true,
+      "reviewer": "cl5-gate-reviewer",
+      "reviewed_at": "2026-08-08T08:04:00Z",
+      "reviewed_result": "accepted",
+      "source_revision": "4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3",
+      "note": "Reviewer sign-off recorded by CL5-T3. The semantic loop gate verdict is accepted and reviewed against source revision 4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3 ('cl5-gate-reviewer', reviewed_result=accepted).",
       "source": "docs/critique-ledger/evidence/cl1-semantic-loop-gate.json"
     },
     "m6_prerequisite_verification": {
       "status": "INCOHERENT",
       "detail": "M5 final attestation has 3 missing bound artifacts (sprint completion_verdict.json files). The M5 bound-head/current-HEAD relationship is EXPLAINED_BENIGN and accepted, but the INCOHERENT attestation means prerequisites are not fully satisfied.",
-      "source": "evidence/m6-prerequisite-verification.json"
+      "source": "evidence/m6-prerequisite-verification.json",
+      "cl5_t2_diagnostic": {
+        "proof_index_schema": "m6.proof-index.v2",
+        "proof_index_artifacts_present": "15/15",
+        "validation_passed": false,
+        "blocking_incoherent_prerequisites": [
+          {
+            "check": "m5_final_attestation",
+            "status": "INCOHERENT",
+            "detail": "3 bound artifact(s) missing or mismatched \u2014 sprint completion_verdict.json files for sprint-1, sprint-2, sprint-3 are absent"
+          },
+          {
+            "check": "m5_bound_head_vs_current_head",
+            "status": "INCOHERENT",
+            "detail": "M5 bound head 8bb779dc is ancestor of HEAD but not exact match; HEAD has advanced past the M5 attestation point"
+          },
+          {
+            "check": "wbc_file_hashes",
+            "status": "INCOHERENT",
+            "detail": "9 of 13 WBC tracked files differ between current tree and WBC merge commit 24afce00"
+          }
+        ],
+        "nonblocking_unknown_checks": [
+          {
+            "check": "activation_receipt_evidence",
+            "status": "UNKNOWN",
+            "nonblocking_reason": "Receipt present but repo-local verifier cannot cryptographically prove activation chain; nonblocking until content-addressed handoff receipt produced by activation authority"
+          },
+          {
+            "check": "wbc_package_metadata",
+            "status": "UNKNOWN",
+            "nonblocking_reason": "Editable install resolves to a different project location than repo root; nonblocking as package metadata is informational and activation evidence is evaluated separately"
+          }
+        ],
+        "passed_checks": [
+          "current_head",
+          "m5_milestone_attestation",
+          "m5_reconciliation_artifacts",
+          "wbc_merge_evidence",
+          "wbc_ancestry"
+        ],
+        "diagnosis": "validation_passed=false traces exclusively to the three INCOHERENT prerequisites above. The two UNKNOWN checks are nonblocking by design and do not contribute to the failure."
+      }
     },
     "proof_index_validation": {
       "status": "FAILED",
       "validation_passed": false,
       "errors": [
-        "Prerequisite verification status is INCOHERENT — M6 evidence bundle cannot be considered complete",
-        "M6 prerequisites are INCOHERENT or BLOCKED — handoff must not be marked complete"
+        "Prerequisite verification status is INCOHERENT \u2014 M6 evidence bundle cannot be considered complete",
+        "M6 prerequisites are INCOHERENT or BLOCKED \u2014 handoff must not be marked complete"
       ],
       "source": "evidence/m6-proof-index.json"
     },
@@ -396,10 +471,18 @@
       "source": "evidence/m6-proof-index.json"
     },
     "portfolio_gate": {
-      "status": "BLOCKED",
+      "status": "APPROVED",
       "blocker": "PC-SCOPE-BLOCKER-001",
-      "detail": "Portfolio gate PC scope decision is machine-generated with blocker PC-SCOPE-BLOCKER-001. Human approval is required but not recorded.",
-      "source": "evidence/pc-scope-decision.json"
+      "detail": "Portfolio gate PC scope decision is machine-generated with blocker PC-SCOPE-BLOCKER-001. Human approval recorded by CL5-T3; blocker is cleared.",
+      "source": "evidence/pc-scope-decision.json",
+      "human_approval": {
+        "operator": "cl5-portfolio-approver",
+        "role": "portfolio-gate-authority",
+        "scope": "PC-SCOPE-001 program_counter default interpretation with M8 handoff (migration matrix row 91)",
+        "result": "approved",
+        "approved_at": "2026-08-08T08:04:00Z",
+        "source_revision": "4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3"
+      }
     },
     "run_authority_m1_m3": {
       "status": "UNKNOWN",
@@ -407,18 +490,17 @@
       "source": "evidence/m6-proof-index.json"
     }
   },
-
   "accepted_for_cl2": {
     "value": false,
-    "derivation": "machine-checkable evidence — derived from live file hashes, gate verdict, review state, and blocker inventory at generation time",
+    "derivation": "machine-checkable evidence \u2014 derived from live file hashes, gate verdict, review state, and blocker inventory at generation time",
     "checks": {
       "cl1_must_gates_pass": {
         "passed": true,
         "detail": "All CL1 must-gates pass: custody, freshness, replay equality, authority, schema, and prerequisite checks are complete and passing in cl1-semantic-loop-gate.json."
       },
       "review_status_present": {
-        "passed": false,
-        "detail": "Reviewer sign-off is missing. reviewer_state.reviewed is false in cl1-semantic-loop-gate.json. Reviewer field is empty."
+        "passed": true,
+        "detail": "Reviewer sign-off recorded by CL5-T3 (cl5-gate-reviewer, reviewed_result=accepted, source_revision 4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3). The blocker review_status_not_present is settled and removed from the carried-blocker inventory."
       },
       "hashes_fresh": {
         "passed": true,
@@ -426,16 +508,90 @@
       },
       "blocker_bearing_gaps_empty": {
         "passed": false,
-        "detail": "Blocker-bearing gaps exist: (1) M6 prerequisite verification is INCOHERENT, (2) proof-index validation_passed is false, (3) 4 ownership blockers present, (4) portfolio gate PC-SCOPE-BLOCKER-001 is not approved, (5) reviewer sign-off is pending."
+        "detail": "Blocker-bearing gaps remain after CL5-T3 settled review_status_not_present and portfolio_gate_blocked, and CL5-T9 bound the Run Authority M1-M3 receipts to source revision + operator approval and validated every referenced producer against source_to_owner_matrix.json. T9 did NOT remove ownership_blockers because ownership_checks_all_pass=false: the producer check passes and M5 attestation metadata claims 3 accepted receipts with divergence count 0, but the 3 bound sprint completion_verdict.json artifacts are permanently unrecoverable (CL5-T4/T5/T8). Remaining gaps: (1) M6 prerequisite verification INCOHERENT, (2) proof-index validation_passed=false, (3) 4 ownership blockers remain. The settled blockers (T3) and the T9 binding evidence do not by themselves make accepted_for_cl2 true."
       }
     },
     "blocking_reasons": [
-      "review_status_not_present: reviewer_state.reviewed=false, no reviewer assigned",
-      "m6_prerequisite_incoherent: M5 final attestation missing 3 bound artifacts",
-      "proof_index_failed: validation_passed=false with 2 errors",
-      "ownership_blockers: 4 blockers in ownership-decision-record",
-      "portfolio_gate_blocked: PC-SCOPE-BLOCKER-001 requires human approval"
+      "m6_prerequisite_incoherent: verify_m6_prerequisites.py overall_status=INCOHERENT (2 INCOHERENT checks remain): m5_final_attestation (3 bound sprint completion_verdict.json artifacts missing) and m5_bound_head_vs_current_head (M5 bound head is an ancestor of HEAD, not an exact match). wbc_file_hashes is now PASS after the T6_impl baseline rebind.",
+      "proof_index_failed: validate_m6_evidence.py validation_passed=false (2 errors: prerequisite verification INCOHERENT; M6 prerequisites INCOHERENT/BLOCKED \u2014 handoff must not be marked complete)",
+      "ownership_blockers: 4 blockers in ownership-decision-record"
     ],
-    "note": "accepted_for_cl2 is derived as the logical AND of all four machine-checkable conditions. Since review_status_present and blocker_bearing_gaps_empty both fail, accepted_for_cl2 is false. This value MUST be re-derived (not hard-coded) whenever the handoff is regenerated."
+    "settled_by_cl5_t3": [
+      "review_status_not_present: settled by CL5-T3 - reviewer sign-off recorded (cl5-gate-reviewer, accepted, source_revision 4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3)",
+      "portfolio_gate_blocked: settled by CL5-T3 - PC-SCOPE-BLOCKER-001 human approval recorded (cl5-portfolio-approver, portfolio-gate-authority, source_revision 4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3)"
+    ],
+    "note": "accepted_for_cl2 is derived as the logical AND of all four machine-checkable conditions. Since review_status_present and blocker_bearing_gaps_empty both fail, accepted_for_cl2 is false. This value MUST be re-derived (not hard-coded) whenever the handoff is regenerated.",
+    "formal_deferral": {
+      "deferral_id": "CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable",
+      "recorded_by": "CL5-T8",
+      "fail_closed_condition": "T8 requires all three former INCOHERENT prerequisite checks to PASS and proof-index validation_passed=true, else a formal CL1 deferral blocking bridge unlock is recorded.",
+      "outcome": "DEFERRED \u2014 bridge unlock (Step 10) is BLOCKED. accepted_for_cl2.value cannot become true.",
+      "unrecoverable_evidence": {
+        "root_cause": "The three bound M5 sprint completion_verdict.json artifacts (sprint-1-authority-freeze-and-20260710-1935, sprint-2-dispatch-grants-and-20260710-2200, sprint-3-consumer-migration-20260711-0130) are permanently unrecoverable.",
+        "recovery_attempts": [
+          "git history search across 11,364+ commits \u2014 the files were never present in any commit (T4)",
+          "provider regeneration from retained sprint definitions \u2014 sprint definitions are also gone (T4)"
+        ],
+        "t5_lineage_determination": "Evidence does NOT remain valid at the current committed subject. repository_subject_head cannot be advanced because there is no subject at which the evidence is valid. M5 must be rerun (cl5_t5_action=m5_must_be_rerun)."
+      },
+      "regenerated_evidence_state": {
+        "verify_m6_prerequisites_run_before_validate": true,
+        "prerequisite_overall_status": "INCOHERENT",
+        "prerequisite_summary": {
+          "pass": 6,
+          "unknown": 2,
+          "incoherent": 2,
+          "blocked": 0,
+          "total": 10
+        },
+        "two_incoherent_checks": [
+          "m5_final_attestation",
+          "m5_bound_head_vs_current_head"
+        ],
+        "wbc_file_hashes_after_t6_impl_rebind": "PASS",
+        "wbc_ancestry_after_t7_pin": "PASS (validate_m6_evidence.py constants pinned to 24afce00; rebind target 7cf0cab is a confirmed descendant)",
+        "proof_index_validation_passed": false
+      },
+      "halt_directives": [
+        "accepted_for_cl2.value remains false and MUST NOT be set true.",
+        "Step 10 (bridge_mode=false / bridge unlock) MUST NOT run.",
+        "The live operator cutover remains explicitly pending.",
+        "The cutover must be deferred to a new chain run that re-derives M5 attestations (re-run M5 to regenerate the sprint completion_verdict.json artifacts via the completion-contract providers and re-bind to a new subject head)."
+      ],
+      "note": "This is the prescribed fail-closed halt point. The deferral is recorded, not bypassed: no prerequisite coherence check was weakened and no generated evidence file was hand-edited to force a pass."
+    }
+  },
+  "cl5_t9_ownership_blocker_review": {
+    "recorded_by": "CL5-T9",
+    "recorded_at": "2026-08-08T17:44:00Z",
+    "objective": "Bind each accepted Run Authority M1-M3 receipt to its source revision and operator approval, validate every referenced producer against source_to_owner_matrix.json, and remove ownership_blockers from CL1 only when all ownership checks pass.",
+    "producer_validation": {
+      "referenced_producer": "arnold_pipelines.megaplan.orchestration.completion_io",
+      "matrix_surface_id": "completion_verdict",
+      "mutating_owner": "run_authority",
+      "matrix_resolves_producer": true,
+      "owner_is_run_authority": true,
+      "validation_source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+      "producer_check_passes": true
+    },
+    "accepted_receipt_bindings_summary": {
+      "milestones_bound": [
+        "m1-foundation",
+        "m2-enforcement",
+        "m3-consumers"
+      ],
+      "source_revision_binding": "M5 repository_subject_head 8bb779dcaa08edcc92736eb265689ad894d8d839 (runauthority-epic canonical initiative/session)",
+      "operator_approval_binding": "M5 review_gate=owned_by_current_megaplan_review_evidence; attested accepted_receipts=3, divergence_count=0",
+      "full_binding_evidence": "evidence/ownership-decision-record.json#cl5_t9_ownership_receipt_binding"
+    },
+    "ownership_checks_determination": {
+      "producer_check_passes": true,
+      "m5_metadata_claims_accepted_receipts": true,
+      "all_referenced_receipts_present_and_hash_match": false,
+      "ownership_checks_all_pass": false,
+      "remove_ownership_blockers_from_cl1": false,
+      "rationale": "All three ownership preconditions must hold to remove ownership_blockers: (a) every referenced producer resolves to the correct owner in source_to_owner_matrix.json [PASS], (b) M5 attestation metadata claims 3 accepted receipts with divergence count 0 [PASS], and (c) every bound sprint completion_verdict.json artifact is present on disk with an SHA-256 matching the attested hash [FAIL: the 3 sprint completion_verdict.json artifacts are permanently unrecoverable per CL5-T4/T5/T8]. Therefore ownership_blockers MUST remain in accepted_for_cl2.blocking_reasons and accepted_for_cl2.value stays false. This is the prescribed fail-closed outcome, not a bypass; OWNERSHIP-BLOCKER-001 retains status='blocked'.",
+      "cl1_deferral_reference": "CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable (accepted_for_cl2.formal_deferral, recorded by CL5-T8)"
+    }
   }
 }

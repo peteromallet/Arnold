@@ -165,6 +165,8 @@ def oneshot_context(request: AgentRequest) -> Iterator[dict[str, Any]]:
                 "weighted_scores": [],
                 "plan_deltas": [],
                 "recurring_critiques": [],
+                "adjacent_text_matches": [],
+                "semantic_recurrence": [],
                 "total_cost_usd": 0.0,
                 "overrides": [],
                 "notes": [],

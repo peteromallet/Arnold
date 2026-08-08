@@ -145,10 +145,31 @@ M6_ARTIFACTS: dict[str, dict[str, Any]] = {
     },
 }
 
-# WBC integration commit (from prerequisite verifier)
+# WBC integration commit — IMMUTABLE ANCESTRY ANCHOR (do NOT advance).
+#
+# CL5-T7 ANCESTRY PINNING NOTE:
+#   This constant and the two WBC_EXPECTED_*_PARENT constants below are pinned
+#   to the original WBC merge commit 24afce006b9ad20391ac7af10ef67ea0b1774f9f
+#   and its exact merge parents. They verify merge-commit ANCESTRY IDENTITY —
+#   a historical fact that must not move. The validator checks that the recorded
+#   merge commit still exists, is a merge commit, has exactly these two parents,
+#   and that both parents are ancestors of HEAD. Advancing these constants would
+#   silently replace an ancestry-identity check with a different lineage, breaking
+#   the historical-integration-point guarantee.
+#
+#   This is deliberately DIFFERENT from verify_m6_prerequisites.py, whose
+#   WBC_INTEGRATION_COMMIT (currently 7cf0cab28c59d40614b9548fa4348ed7f062f52c)
+#   is a file-hash regression baseline that MAY advance to an accepted
+#   intermediate consolidation commit as the tracked files evolve. The two tools
+#   use different commits for different semantics:
+#     - validate_m6_evidence.py  → ancestry identity (immutable historical fact)
+#     - verify_m6_prerequisites.py → file-content regression (may track HEAD-ward)
+#   The file-hash rebind target MUST remain a descendant of this ancestry anchor.
+#   See tests/tools/test_wbc_constants_coherence.py for the cross-tool invariant.
 WBC_INTEGRATION_COMMIT = "24afce006b9ad20391ac7af10ef67ea0b1774f9f"
 
-# WBC expected parents from merge evidence
+# WBC expected parents from merge evidence — IMMUTABLE (pinned to 24afce00's
+# exact merge parents; see the ancestry-pinning note above).
 WBC_EXPECTED_FIRST_PARENT = "7644f55dd9be75632670f990268e045d3ee1c2f7"
 WBC_EXPECTED_SECOND_PARENT = "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
 

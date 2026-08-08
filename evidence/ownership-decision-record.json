@@ -1276,8 +1276,8 @@
       "affected_owner": "Run Authority",
       "source_evidence": [
         "migration matrix row 0 (Run Authority M1-M3 completion receipts)",
-        "authority-lineage-and-gap-audit-20260711.md §2026-07-13 ownership reconciliation",
-        "unified-authority-efficiency-prevention-20260714.md §Evidence reconciled"
+        "authority-lineage-and-gap-audit-20260711.md \u00a72026-07-13 ownership reconciliation",
+        "unified-authority-efficiency-prevention-20260714.md \u00a7Evidence reconciled"
       ],
       "required_resolution": "Three content-addressed accepted receipts with canonical divergence count 0",
       "status": "blocked",
@@ -1310,7 +1310,7 @@
       "description": "M5 bound-head (8bb779d) does not match current HEAD. Prerequisite verification reports INCOHERENT for m5_bound_head_vs_current_head. Downstream M6 handoff artifacts are not marked complete until this is resolved.",
       "affected_owner": "Run Authority",
       "source_evidence": [
-        "evidence/m6-prerequisite-verification.json §check=m5_bound_head_vs_current_head → INCOHERENT"
+        "evidence/m6-prerequisite-verification.json \u00a7check=m5_bound_head_vs_current_head \u2192 INCOHERENT"
       ],
       "required_resolution": "Either rebase to M5 bound head or produce successor attestation",
       "status": "blocked",
@@ -1329,7 +1329,7 @@
       "description": "WBC file hash check reports INCOHERENT: one source file mismatch between current working tree and the WBC integration commit (24afce00). This must be resolved before WBC ownership evidence is fully coherent.",
       "affected_owner": "WBC",
       "source_evidence": [
-        "evidence/m6-prerequisite-verification.json §check=wbc_file_hashes → INCOHERENT"
+        "evidence/m6-prerequisite-verification.json \u00a7check=wbc_file_hashes \u2192 INCOHERENT"
       ],
       "required_resolution": "Reconcile diverged WBC file or accept as documented drift",
       "status": "blocked",
@@ -1338,5 +1338,99 @@
       ]
     }
   ],
+  "cl5_t9_ownership_receipt_binding": {
+    "schema": "cl5.t9.ownership_receipt_binding.v1",
+    "recorded_by": "CL5-T9",
+    "recorded_at": "2026-08-08T17:44:00Z",
+    "objective": "Bind each accepted Run Authority M1-M3 receipt to its source revision and operator approval, validate every referenced producer against source_to_owner_matrix.json, and remove ownership_blockers from CL1 only when all ownership checks pass.",
+    "producer_validation": {
+      "referenced_producer": "arnold_pipelines.megaplan.orchestration.completion_io",
+      "matrix_surface_id": "completion_verdict",
+      "matrix_evidence_ref_match": true,
+      "mutating_owner": "run_authority",
+      "category": "decision",
+      "validation_source": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+      "matrix_resolves_producer": true,
+      "owner_is_run_authority": true,
+      "producer_check_passes": true
+    },
+    "accepted_receipt_bindings": [
+      {
+        "milestone": "m1-foundation",
+        "sprint_plan": "sprint-1-authority-freeze-and-20260710-1935",
+        "sprint_verdict_path": ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+        "attested_sha256": "feb365af386661f10a0e05891d79da866c81650d45bfd7310ef183767da344b8",
+        "exists_on_disk": false,
+        "hash_matches_attestation": false,
+        "source_revision_binding": {
+          "m5_repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+          "runauthority_epic_canonical_initiative": "runauthority-epic",
+          "runauthority_epic_canonical_session": "runauthority-epic-cloud",
+          "completion_manifest_sha256": "d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55",
+          "milestone_status_in_manifest": "done"
+        },
+        "operator_approval_binding": {
+          "m5_review_gate": "owned_by_current_megaplan_review_evidence",
+          "m5_attested_accepted_receipts": 3,
+          "m5_attested_divergence_count": 0,
+          "m5_retirement_status": "completed",
+          "m5_attestation_source": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json"
+        }
+      },
+      {
+        "milestone": "m2-enforcement",
+        "sprint_plan": "sprint-2-dispatch-grants-and-20260710-2200",
+        "sprint_verdict_path": ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+        "attested_sha256": "8292b4d9d47a66871ebb2ad1dcbd2c4f607991ff18d3fbbb580a2e37bb4b710c",
+        "exists_on_disk": false,
+        "hash_matches_attestation": false,
+        "source_revision_binding": {
+          "m5_repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+          "runauthority_epic_canonical_initiative": "runauthority-epic",
+          "runauthority_epic_canonical_session": "runauthority-epic-cloud",
+          "completion_manifest_sha256": "d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55",
+          "milestone_status_in_manifest": "done"
+        },
+        "operator_approval_binding": {
+          "m5_review_gate": "owned_by_current_megaplan_review_evidence",
+          "m5_attested_accepted_receipts": 3,
+          "m5_attested_divergence_count": 0,
+          "m5_retirement_status": "completed",
+          "m5_attestation_source": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json"
+        }
+      },
+      {
+        "milestone": "m3-consumers",
+        "sprint_plan": "sprint-3-consumer-migration-20260711-0130",
+        "sprint_verdict_path": ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json",
+        "attested_sha256": "127c195b48237792516e39f8be3b2ff60facba6e248d443227159245ea0ed6bc",
+        "exists_on_disk": false,
+        "hash_matches_attestation": false,
+        "source_revision_binding": {
+          "m5_repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+          "runauthority_epic_canonical_initiative": "runauthority-epic",
+          "runauthority_epic_canonical_session": "runauthority-epic-cloud",
+          "completion_manifest_sha256": "d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55",
+          "milestone_status_in_manifest": "done"
+        },
+        "operator_approval_binding": {
+          "m5_review_gate": "owned_by_current_megaplan_review_evidence",
+          "m5_attested_accepted_receipts": 3,
+          "m5_attested_divergence_count": 0,
+          "m5_retirement_status": "completed",
+          "m5_attestation_source": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json"
+        }
+      }
+    ],
+    "ownership_checks_determination": {
+      "producer_check_passes": true,
+      "m5_metadata_claims_accepted_receipts": true,
+      "all_referenced_receipts_present_and_hash_match": false,
+      "ownership_checks_all_pass": false,
+      "remove_ownership_blockers_from_cl1": false,
+      "rationale": "ownership_blockers are removed from CL1 only when ALL ownership checks pass: (a) every referenced producer resolves to the correct owner in source_to_owner_matrix.json [PASS], (b) the M5 attestation metadata claims 3 accepted receipts with divergence count 0 [PASS], and (c) every bound sprint completion_verdict.json artifact is present on disk AND its recomputed SHA-256 matches the attested hash [FAIL]. Per CL5-T4/T5/T8, the three bound sprint completion_verdict.json artifacts are permanently unrecoverable (never present in any of 11,364+ commits; sprint definitions also gone), so condition (c) fails closed and ownership_blockers MUST remain in CL1. OWNERSHIP-BLOCKER-001 stays status='blocked'.",
+      "cl1_deferral_reference": "CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable (recorded by CL5-T8 in cl1-contract-oracle.json accepted_for_cl2.formal_deferral)"
+    }
+  },
   "composite_hash": "92353205726e83ce4d379983fdf477c664a1bf5b3594838a788395529dcb5bb4"
 }

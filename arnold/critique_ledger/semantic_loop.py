@@ -32,6 +32,7 @@ from arnold.critique_ledger.schemas import (
     SCHEMA_VERSION,
     canonical_hash,
 )
+from arnold.critique_ledger.freshness import compute_input_hash
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -790,10 +791,47 @@ def apply_reconciliation_events(
 # Phase 3: Disposition
 # ══════════════════════════════════════════════════════════════════════
 
+# Metadata key under which a disposition records the canonical briefing-input
+# hash (``compute_input_hash``) captured when it was authored.  When present,
+# it is the stored baseline the live input hash is compared against.
+_STORED_INPUT_HASH_KEY = "input_hash"
+
+
+def _disposition_staleness_deferred(
+    disp: FindingDispositionEvent,
+    input_hash: str | None,
+) -> bool:
+    """Classify the advisory staleness flag for a stored disposition.
+
+    Resolution of the CL4 ``cl5_staleness_deferral`` reopen predicate: when the
+    production caller supplies the canonical briefing-input hash (``input_hash``
+    computed over the live occurrence/reconciliation/disposition sources), a
+    disposition that recorded a stored baseline hash in its ``metadata`` is
+    compared against it mechanically.  A divergence marks the disposition
+    stale (``staleness_check_deferred = True``); a match confirms freshness
+    (``False``), overriding the structural ``reopen_predicate`` heuristic.
+
+    The flag is advisory-only and carries no authority: it never opens, admits,
+    or authorises anything (the freshness verdict has no authority field).  When
+    no live input hash is supplied, or when the disposition recorded no stored
+    baseline, the function falls back to the CL4 deferral sentinel
+    ``bool(disp.reopen_predicate)`` so direct callers, replay, and restoration
+    paths keep their existing advisory behaviour.
+    """
+    if input_hash is None:
+        return bool(disp.reopen_predicate)
+    stored = (disp.metadata or {}).get(_STORED_INPUT_HASH_KEY, "")
+    if not stored:
+        # Live context is available but this disposition recorded no stored
+        # baseline to compare against — preserve the advisory fallback.
+        return bool(disp.reopen_predicate)
+    return bool(stored and stored != input_hash)
+
 
 def apply_disposition_events(
     finding_map: dict[str, Any],
     dispositions: list[FindingDispositionEvent],
+    input_hash: str | None = None,
 ) -> dict[str, Any]:
     """Apply ordered append-only disposition events to semantic findings.
 
@@ -830,10 +868,14 @@ def apply_disposition_events(
     not normalized here and keeps its existing apply-level behaviour;
     replay_full's inline closure check is the redundant backstop covering
     both closure values via _normalize_disposition_family. Each stored
-    disposition is also annotated with ``staleness_check_deferred`` (True
-    when a reopen_predicate is present): apply_disposition_events has no
-    input-change context, so true staleness is recorded as a structural
-    flag and the actual detection is deferred to CL5.
+    disposition is also annotated with ``staleness_check_deferred``. CL5
+    resolves the ``cl5_staleness_deferral`` reopen predicate: when the
+    optional ``input_hash`` (the canonical briefing-input hash computed by
+    the production orchestrator) is supplied, a disposition that recorded a
+    stored baseline hash in its ``metadata`` is compared against it and the
+    divergence is flagged mechanically; otherwise the flag falls back to the
+    CL4 deferral sentinel ``bool(disp.reopen_predicate)``. The flag is
+    advisory-only and never grants authority.
     """
     failures: list[dict[str, Any]] = []
     family_counts: dict[str, int] = {}
@@ -970,7 +1012,7 @@ def apply_disposition_events(
             "accountable_scope": disp.accountable_scope,
             "is_reopen": disp.is_reopen,
             "reopen_predicate": disp.reopen_predicate,
-            "staleness_check_deferred": bool(disp.reopen_predicate),
+            "staleness_check_deferred": _disposition_staleness_deferred(disp, input_hash),
             "evidence_refs": list(disp.evidence_refs),
             "authority": disp.authority,
             "timestamp_utc": disp.timestamp_utc,
@@ -2012,7 +2054,17 @@ def replay_full(
         )
 
     # Phase 3: Disposition
-    disp_result = apply_disposition_events(rec_result["finding_map"], dispositions)
+    # CL5: compute the canonical briefing-input hash from the same live sources
+    # the disposition layer consumes (occurrence envelopes, reconciliation
+    # events, and the disposition events themselves) and pass it so that a
+    # disposition recording a stored baseline hash is compared against it
+    # mechanically. This resolves the cl5_staleness_deferral reopen predicate
+    # for the live production path; the detection remains advisory-only and
+    # never grants authority.
+    live_input_hash = compute_input_hash(occurrences, reconciliations, dispositions)
+    disp_result = apply_disposition_events(
+        rec_result["finding_map"], dispositions, input_hash=live_input_hash
+    )
     if not disp_result["accepted"]:
         raise SemanticLoopError(
             mode=disp_result["failures"][0]["mode"],
