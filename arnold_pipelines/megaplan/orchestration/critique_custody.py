@@ -64,14 +64,15 @@ _CANONICAL_FINDING_ID = re.compile(r"^CF-[0-9A-F]{20}$")
 # persisted receipt so an immutable receipt always carries its own BRIDGE
 # provenance rather than depending on a later live read.
 # --------------------------------------------------------------------------- #
-CL4_BRIDGE_MODE: bool = True
-CL4_CARRIED_BLOCKERS: tuple[str, ...] = (
-    "review_status_not_present",
-    "m6_prerequisite_incoherent",
-    "proof_index_failed",
-    "ownership_blockers",
-    "portfolio_gate_blocked",
-)
+#: CL4 runs in canonical (non-BRIDGE) mode after the CL5 cutover. The CL3
+#: handoff is resolved, all CL1/CL2 blockers are cleared, and the module-level
+#: BRIDGE markers are disabled. NOTE: canonical gate authority is still denied
+#: at runtime whenever any source receipt in the clearance chain carries
+#: bridge_mode=true (the clearance aggregator below reads source receipts, not
+#: this constant), so a stale pre-cutover receipt cannot slip through.
+CL4_BRIDGE_MODE: bool = False
+#: Empty after the CL5 cutover: all five carried CL1/CL2 blockers are resolved.
+CL4_CARRIED_BLOCKERS: tuple[str, ...] = ()
 
 # The matrix-authorized critique custody producer scope (WBC boundary adoption
 # matrices).  Only these producers may anchor reconciliation claims in a

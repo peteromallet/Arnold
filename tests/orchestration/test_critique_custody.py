@@ -1904,10 +1904,13 @@ def test_production_receipt_carries_bridge_mode_and_carried_blockers(
 
     receipt = _persist_critique(plan_dir, state, payload)
 
-    assert receipt["bridge_mode"] is True
+    # Post-CL5-cutover: the module-level BRIDGE markers are disabled, so a fresh
+    # production receipt carries bridge_mode=false and no carried blockers.
+    assert receipt["bridge_mode"] is False
     assert receipt["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
-    # The gate-entry custody path accepts the BRIDGE receipt as valid integrity
-    # evidence (it is never canonical authority, but it is a well-formed receipt).
+    # The gate-entry custody path accepts the receipt as valid integrity
+    # evidence (canonical authority is still denied at runtime only when a
+    # *source receipt* in the clearance chain carries bridge_mode=true).
     gate_input = validate_gate_input_custody(plan_dir, state)
     assert gate_input["admitted"] is True
 
@@ -1933,7 +1936,8 @@ def test_bridge_mode_and_carried_blockers_restart_idempotently(
 
     assert restarted == first
     assert path.read_bytes() == before
-    assert restarted["bridge_mode"] is True
+    # Post-CL5-cutover: a fresh production receipt is bridge_mode=false.
+    assert restarted["bridge_mode"] is False
     assert restarted["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
 
 
@@ -2071,8 +2075,26 @@ def test_clearance_propagates_bridge_mode_from_source_receipts(
 
     clearance = write_critique_clearance(plan_dir, state)
 
-    assert clearance["bridge_mode"] is True
+    # Post-CL5-cutover: every fresh source receipt carries bridge_mode=false, so
+    # an all-fresh clearance chain aggregates to bridge_mode=false / no blockers.
+    assert clearance["bridge_mode"] is False
     assert clearance["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
+
+    # Mixed old/new chain (Step 10.8): inject ONE stale pre-cutover source
+    # receipt (bridge_mode=true) as an older occurrence. The aggregator must
+    # fail closed — ANY bridge_mode=true source receipt flips the aggregated
+    # clearance to bridge_mode=true and inherits its carried blockers, so a
+    # stale receipt can never hide behind fresh ones.
+    stale_path = plan_dir / "critique_custody_v1.json"
+    stale = json.loads(stale_path.read_text())
+    stale["bridge_mode"] = True
+    stale["carried_blockers"] = ["stale_pre_cutover_blocker"]
+    _rewrite_receipt_digest(stale)
+    atomic_write_json(stale_path, stale)
+
+    mixed_clearance = write_critique_clearance(plan_dir, state)
+    assert mixed_clearance["bridge_mode"] is True
+    assert "stale_pre_cutover_blocker" in mixed_clearance["carried_blockers"]
 
 
 def test_finalize_custody_denies_canonical_authority_for_bridge_receipt(
@@ -2106,7 +2128,19 @@ def test_finalize_custody_denies_canonical_authority_for_bridge_receipt(
         plan_dir,
         [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
     )
+    # Mixed old/new chain (Step 10.8): inject ONE stale pre-cutover source
+    # receipt (bridge_mode=true) into the clearance chain. The fresh receipt
+    # produced above is bridge_mode=false; the stale one makes the aggregated
+    # clearance bridge_mode=true so the finalize binding must deny canonical
+    # authority even though the module-level BRIDGE markers are now disabled.
+    stale_path = plan_dir / "critique_custody_v1.json"
+    stale = json.loads(stale_path.read_text())
+    stale["bridge_mode"] = True
+    stale["carried_blockers"] = ["stale_pre_cutover_blocker"]
+    _rewrite_receipt_digest(stale)
+    atomic_write_json(stale_path, stale)
     clearance = write_critique_clearance(plan_dir, state)
+    assert clearance["bridge_mode"] is True
 
     graph = _admitted_graph()
     graph["critique_resolution_coverage"] = [
@@ -2119,16 +2153,66 @@ def test_finalize_custody_denies_canonical_authority_for_bridge_receipt(
 
     binding = bind_finalize_custody(plan_dir, graph, clearance)
 
-    # A BRIDGE-mode clearance must never bind canonical gate authority.
+    # A clearance whose chain contains any bridge_mode=true source receipt must
+    # never bind canonical gate authority (one stale receipt denies it).
     assert binding["bridge_mode"] is True
     assert binding["canonical_gate_authority"] is False
-    assert binding["carried_blockers"] == list(critique_custody.CL4_CARRIED_BLOCKERS)
+    assert "stale_pre_cutover_blocker" in binding["carried_blockers"]
 
     # finalize custody accepts the bridge receipt as non-canonical integrity
     # evidence: the returned binding explicitly denies canonical authority, so
     # no downstream consumer can mistake it for canonical gate authority.
     finalized = assert_finalize_custody(plan_dir, graph)
     assert finalized["canonical_gate_authority"] is False
+
+
+def test_all_false_clearance_chain_grants_canonical_authority(
+    tmp_path: Path,
+) -> None:
+    """CL5 (Step 10.10): contrast to the mixed chain — when EVERY source receipt
+    in the clearance chain carries bridge_mode=false (the post-cutover steady
+    state), the clearance is bridge_mode=false and the finalize binding GRANTS
+    canonical gate authority. This is the positive complement to the stale-
+    receipt denial: only a bridge_mode=true source receipt denies authority."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    canonical_id = payload["flags"][0]["id"]
+    atomic_write_text(
+        plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n"
+    )
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    update_flags_after_revise(
+        plan_dir,
+        [{"id": canonical_id, "resolution": "addressed", "reason": "Split into bounded tasks.", "where": "Step 2"}],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
+    )
+    clearance = write_critique_clearance(plan_dir, state)
+    # All-false chain: no source receipt is bridge_mode=true.
+    assert clearance["bridge_mode"] is False
+    assert clearance["carried_blockers"] == []
+
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": clearance["finding_ids"][0],
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 implements the bounded split from plan_v2.md Step 2.",
+        }
+    ]
+    binding = bind_finalize_custody(plan_dir, graph, clearance)
+    assert binding["bridge_mode"] is False
+    assert binding["canonical_gate_authority"] is True
+    finalized = assert_finalize_custody(plan_dir, graph)
+    assert finalized["canonical_gate_authority"] is True
 
 
 def test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receipt(
@@ -2162,6 +2246,15 @@ def test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receip
         plan_dir,
         [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
     )
+    # Mixed old/new chain: inject a stale bridge_mode=true source receipt so the
+    # clearance is bridge-mode (the tamper check only fires for a bridge
+    # clearance whose canonical authority a malicious finalizer could forge).
+    stale_path = plan_dir / "critique_custody_v1.json"
+    stale = json.loads(stale_path.read_text())
+    stale["bridge_mode"] = True
+    stale["carried_blockers"] = ["stale_pre_cutover_blocker"]
+    _rewrite_receipt_digest(stale)
+    atomic_write_json(stale_path, stale)
     clearance = write_critique_clearance(plan_dir, state)
 
     graph = _admitted_graph()
@@ -2214,6 +2307,14 @@ def test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance(
         plan_dir,
         [{"flag_id": canonical_id, "action": "verify_fixed", "evidence": "plan_v2.md Step 2", "rationale": ""}],
     )
+    # Mixed old/new chain: inject a stale bridge_mode=true source receipt so the
+    # clearance is bridge-mode (the mismatch check requires a bridge clearance).
+    stale_path = plan_dir / "critique_custody_v1.json"
+    stale = json.loads(stale_path.read_text())
+    stale["bridge_mode"] = True
+    stale["carried_blockers"] = ["stale_pre_cutover_blocker"]
+    _rewrite_receipt_digest(stale)
+    atomic_write_json(stale_path, stale)
     clearance = write_critique_clearance(plan_dir, state)
 
     graph = _admitted_graph()

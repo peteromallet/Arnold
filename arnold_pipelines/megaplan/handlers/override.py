@@ -575,6 +575,18 @@ def _handle_routed_override(
         )
         reconcile_canonical_source_for_replan(plan_dir, state, reason=reason)
         save_state_merge_meta(plan_dir, state)
+    if args.override_action == "cutover":
+        # CL5 Step 8c: the cutover reaches the SAME deferred cutover logic as
+        # the default-path _override_cutover handler (Step 8b). Combined
+        # authority (human-gate operator approval AND lifecycle mutation
+        # authority via repair_queue) is enforced fail-closed FIRST, then the
+        # deferred cutover orchestration runs before the control transition is
+        # constructed. The deferred import inside _invoke_cutover_orchestration
+        # keeps this special case Phase 1 safe (registration does not invoke
+        # the not-yet-built package); invocation is Phase 2+ only. Both paths
+        # therefore fail closed when either required authority is absent.
+        _enforce_cutover_combined_authority(state, args)
+        _invoke_cutover_orchestration(root, plan_dir, state, args)
     transition = ControlTransition(
         op="override",
         target_id=args.override_action,
@@ -2035,12 +2047,129 @@ def _override_resume_clarify(
     return response
 
 
+def _enforce_cutover_combined_authority(
+    state: PlanState, args: argparse.Namespace
+) -> None:
+    """Fail-closed combined-authority check for the legacy-to-canonical cutover.
+
+    The cutover (CL5) overrides the entire critique-loop architecture in one
+    all-at-once transition. Per the override matrix
+    ``workflow.route_binding`` combined-authority declaration (Step 8a) and the
+    cross-domain ownership boundary in ``source_to_owner_matrix.json``, it
+    requires BOTH owner domains to authorize dispatch before any cutover
+    orchestration runs:
+
+      * ``run_authority`` / human-gate operator approval
+        (``args.user_approved`` -- the operator explicitly approves the
+        destructive cutover), AND
+      * ``maintenance`` / ``repair_queue`` lifecycle mutation authority
+        (a validated lifecycle binding via ``args.repair_commit`` AND
+        ``args.failure_fingerprint``; ``--repair-scope`` binds the validated
+        cutover revision surface).
+
+    Missing EITHER authority fails closed with an explicit ``CliError`` so a
+    partially-authorized invocation can never reach the (not-yet-built) cutover
+    orchestration package. This check is shared by both the default dispatch
+    path (``_override_cutover``) and the control-routed special case in
+    ``_handle_routed_override`` (CL5 Step 8b/8c), so both override paths reach
+    the same authority logic.
+    """
+    if not bool(getattr(args, "user_approved", False)):
+        raise CliError(
+            "cutover_authority_missing",
+            "cutover requires combined authority: human-gate operator approval "
+            "(--user-approved) is absent; run_authority has not authorized the "
+            "legacy-to-canonical cutover.",
+        )
+    repair_commit = getattr(args, "repair_commit", None)
+    failure_fingerprint = getattr(args, "failure_fingerprint", None)
+    if not (isinstance(repair_commit, str) and repair_commit.strip()) or not (
+        isinstance(failure_fingerprint, str) and failure_fingerprint.strip()
+    ):
+        raise CliError(
+            "cutover_authority_missing",
+            "cutover requires combined authority: lifecycle mutation authority "
+            "via repair_queue (maintenance) is absent; supply --repair-commit and "
+            "--failure-fingerprint binding the validated cutover revision.",
+        )
+
+
+def _invoke_cutover_orchestration(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> dict[str, Any]:
+    """Deferred import + invocation of the legacy-to-canonical cutover.
+
+    The cutover orchestration package ``arnold.critique_ledger.cutover`` is
+    built in Steps 11-16 (Phase 2). The import is deferred to invocation time
+    (inside this function body, matching the ``_override_replan`` convention at
+    L1058/L567), so registering the handler in ``_OVERRIDE_ACTIONS`` and the
+    routed special-case branch is Phase 1 safe: the import does not execute at
+    registration time. Until the package exists, invoking this function raises
+    ``ImportError`` -- the expected Phase 1 state. The dispatch wiring is
+    verified by the Phase 3 dispatch tests (T31).
+
+    This is the single deferred cutover entry point reached by BOTH override
+    paths (CL5 Step 8b/8c): the default-path ``_override_cutover`` handler and
+    the control-routed special case in ``_handle_routed_override`` both call it
+    after the combined-authority check passes, so both paths reach the same
+    deferred cutover logic.
+    """
+    # Deferred import (Phase 2+ entry point): do NOT hoist to module scope.
+    from arnold.critique_ledger.cutover import run_cutover
+
+    return run_cutover(root=Path(root), plan_dir=plan_dir, state=state, args=args)
+
+
+def _override_cutover(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    """Default-dispatch-path cutover override handler (CL5 Step 8b).
+
+    Wires the legacy-to-canonical cutover onto the flag-off default dispatch
+    path so ``_OVERRIDE_ACTIONS.get('cutover')`` resolves to a handler instead
+    of raising ``CliError('invalid_override')``. The cutover requires COMBINED
+    authority (human-gate operator approval AND lifecycle mutation authority
+    via repair_queue), enforced fail-closed before the deferred cutover
+    orchestration runs.
+
+    See ``_enforce_cutover_combined_authority`` and
+    ``_invoke_cutover_orchestration`` for the shared deferred cutover logic
+    also reached by the control-routed special case in
+    ``_handle_routed_override`` (Step 8c).
+    """
+    _enforce_cutover_combined_authority(state, args)
+    cutover_result = _invoke_cutover_orchestration(root, plan_dir, state, args)
+    timestamp = now_utc()
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "cutover",
+            "timestamp": timestamp,
+            "reason": getattr(args, "reason", None),
+            "repair_commit": getattr(args, "repair_commit", None),
+            "user_approved": bool(getattr(args, "user_approved", False)),
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "override_action": "cutover",
+        "summary": "Legacy-to-canonical cutover executed.",
+        "state": state["current_state"],
+        "cutover_result": cutover_result,
+    }
+    return response
+
+
 _OVERRIDE_ACTIONS: dict[
     str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]
 ] = {
     "add-note": _override_add_note,
     "abort": _override_abort,
     "adopt-execution": _override_adopt_execution,
+    "cutover": _override_cutover,
     "replan": _override_replan,
     "recover-blocked": _override_recover_blocked,
     "resume-clarify": _override_resume_clarify,

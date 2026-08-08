@@ -593,5 +593,40 @@
       "rationale": "All three ownership preconditions must hold to remove ownership_blockers: (a) every referenced producer resolves to the correct owner in source_to_owner_matrix.json [PASS], (b) M5 attestation metadata claims 3 accepted receipts with divergence count 0 [PASS], and (c) every bound sprint completion_verdict.json artifact is present on disk with an SHA-256 matching the attested hash [FAIL: the 3 sprint completion_verdict.json artifacts are permanently unrecoverable per CL5-T4/T5/T8]. Therefore ownership_blockers MUST remain in accepted_for_cl2.blocking_reasons and accepted_for_cl2.value stays false. This is the prescribed fail-closed outcome, not a bypass; OWNERSHIP-BLOCKER-001 retains status='blocked'.",
       "cl1_deferral_reference": "CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable (accepted_for_cl2.formal_deferral, recorded by CL5-T8)"
     }
+  },
+  "cl5_t20_bridge_unlock_finalization": {
+    "recorded_by": "CL5-T20",
+    "recorded_at": "2026-08-08T18:40:00Z",
+    "objective": "Set accepted_for_cl2 true only after all blockers clear, remove the five CL2 blockers, mark CL4 non-bridge, cite source-receipt regeneration at quiesce and receipt generation, and require the sole active post-cutover receipt to carry bridge_mode=false.",
+    "outcome": "DEFERRED \u2014 the formal deferral CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable (recorded by CL5-T8) is active and authoritative. The three bound M5 sprint completion_verdict.json artifacts are permanently unrecoverable (CL5-T4/T5/T8), so ownership_checks_all_pass=false (CL5-T9) and three carried blockers (m6_prerequisite_incoherent, proof_index_failed, ownership_blockers) remain unresolved. accepted_for_cl2.value therefore stays false (the 'set true only after all blockers clear' condition is NOT met) and the five CL2 blockers (cl2-ledger-replay.json gate_status.five_blockers) are NOT removed. The operational bridge unlock (plan Step 10) MUST NOT run per the formal_deferral.halt_directives. This record documents the non-bridge target and the clearance-chain operating procedure WITHOUT performing the operational unlock; the live operator cutover remains explicitly pending.",
+    "non_bridge_build_state": {
+      "status": "declared_target_not_operationally_active",
+      "gate_signals_constant": "arnold_pipelines/megaplan/orchestration/gate_signals.py:74 CL4_BRIDGE_MODE = False (set by CL5-T19)",
+      "critique_custody_constant": "arnold_pipelines/megaplan/orchestration/critique_custody.py:73 CL4_BRIDGE_MODE = False (set by CL5-T19)",
+      "carried_blockers_constant": "arnold_pipelines/megaplan/orchestration/critique_custody.py:75 CL4_CARRIED_BLOCKERS = () (emptied by CL5-T19)",
+      "note": "CL5-T19 flipped both CL4_BRIDGE_MODE constants to False and emptied CL4_CARRIED_BLOCKERS, declaring the non-bridge architecture as the build TARGET (the system now emits bridge_mode=false by construction). This is verified tooling, NOT an operational authority transition: the active formal deferral keeps accepted_for_cl2=false, so CL4 carries no canonical gate/finalize authority and the operational bridge unlock remains pending."
+    },
+    "clearance_chain_operating_procedure": {
+      "sole_post_cutover_receipt_requirement": "The sole active post-cutover source receipt in the clearance chain MUST carry bridge_mode=false.",
+      "pre_cutover_receipt_exclusion": "Any pre-cutover (bridge_mode=true) source receipt denies canonical authority: the clearance aggregator at arnold_pipelines/megaplan/orchestration/critique_custody.py:1820-1824 computes clearance_bridge_mode = bool(clearance.get('bridge_mode', False)) from the aggregated source-receipt chain, so a single bridge_mode=true source receipt makes the aggregated clearance bridge_mode True and finalize custody fails closed on canonical-authority use.",
+      "proof_tests": [
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_denies_canonical_authority_for_bridge_receipt (mixed bridge_mode=true source receipt denies canonical authority)",
+        "tests/orchestration/test_critique_custody.py::test_all_false_clearance_chain_grants_canonical_authority (all-false source receipts pass)",
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance"
+      ],
+      "set_by": "CL5-T19 (constants + mixed-chain fail-closed test) + CL5-T20 (procedure record)"
+    },
+    "source_receipt_regeneration": {
+      "quiesce_step": "Plan Step 12b: the cutover quiesce atomically closes admission and begins new source receipts; pre-cutover receipts (bridge_mode=true) cease to be produced.",
+      "receipt_step": "Plan Step 16: the cutover receipt generator (arnold/critique_ledger/cutover/receipt.py) produces the new source receipt binding source/target/schema/corpus hashes with bridge_mode=false by construction, now that the CL4_BRIDGE_MODE constant is False. This is the sole source receipt in the post-cutover clearance chain.",
+      "backup_evidence_only": "Pre-cutover receipts (bridge_mode=true) are part of the content-addressed backup bundle (Plan Step 13) marked as recovery evidence only \u2014 they are NOT in the post-cutover active clearance chain and cannot be treated as live."
+    },
+    "halt_directives_preserved": [
+      "accepted_for_cl2.value remains false and MUST NOT be set true (blockers not cleared).",
+      "The five CL2 blockers (cl2-ledger-replay.json gate_status.five_blockers) remain and are NOT removed.",
+      "The operational bridge unlock (plan Step 10) MUST NOT run; CL4 bridge_mode authority_status remains limitation_not_resolved.",
+      "The live operator cutover remains explicitly pending; the cutover must be deferred to a new chain run that re-derives M5 attestations."
+    ],
+    "cross_handoff_agreement": "CL1, CL2, and CL4 agree on the non-bridge DECLARED build target (T19 constants False) and the clearance-chain operating procedure (sole post-cutover receipt bridge_mode=false; pre-cutover receipts excluded by the clearance aggregator). They also agree that the operational authority transition is BLOCKED by the active formal deferral: accepted_for_cl2=false, the five CL2 blockers remain, and CL4 carries no canonical authority until the cutover runs."
   }
 }

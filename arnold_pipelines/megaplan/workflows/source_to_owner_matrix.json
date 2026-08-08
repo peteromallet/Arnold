@@ -417,7 +417,7 @@
         "contract_reality_validator"
       ],
       "wbc_access_level": null,
-      "description": "Matrix of canonical override actions (abort, force-proceed, replan, recover-blocked, resume-clarify, adopt-execution, suspension, human-gate) with route/effect dispatch surfaces.",
+      "description": "Matrix of canonical override actions (abort, add-note, adopt-execution, cutover, force-proceed, recover-blocked, replan, resume-clarify, set-model, set-profile, set-robustness, set-vendor) with route/effect dispatch surfaces. The CL5 cutover action declares a combined run_authority (human-gate operator approval) + maintenance (repair_queue lifecycle mutation) ownership boundary: it is route-bound via workflow.route_binding and requires BOTH owner domains to authorize dispatch, enforced by the override handler.",
       "evidence_ref": "arnold_pipelines.megaplan.workflows.override_matrix"
     },
     {
