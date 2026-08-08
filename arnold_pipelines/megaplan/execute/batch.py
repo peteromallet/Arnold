@@ -2596,6 +2596,7 @@ def _count_execute_tracking(
     active_task_ids: set[str],
     active_sense_check_ids: set[str],
     completed_task_ids: set[str] | None = None,
+    plan_dir: Path | None = None,
 ) -> tuple[int, int, int, int]:
     tracked_tasks = sum(
         1
@@ -2607,11 +2608,40 @@ def _count_execute_tracking(
             else task.get("status") in TERMINAL_TASK_STATUSES
         )
     )
-    acknowledged_checks = sum(
-        1
+    acked_in_finalize = {
+        str(sense_check.get("id"))
         for sense_check in finalize_data.get("sense_checks", [])
         if sense_check.get("id") in active_sense_check_ids
         and str(sense_check.get("executor_note", "")).strip()
+    }
+    acked_in_batches: set[str] = set()
+    if plan_dir is not None:
+        from arnold_pipelines.megaplan._core import list_batch_artifacts
+
+        for batch_path in list_batch_artifacts(plan_dir):
+            try:
+                payload = json.loads(batch_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            for ack in payload.get("sense_check_acknowledgments", []) or []:
+                if not isinstance(ack, dict):
+                    continue
+                sc_id = ack.get("sense_check_id")
+                note = ack.get("executor_note")
+                if (
+                    isinstance(sc_id, str)
+                    and sc_id in active_sense_check_ids
+                    and isinstance(note, str)
+                    and note.strip()
+                ):
+                    acked_in_batches.add(sc_id)
+    acknowledged_ids = acked_in_finalize | acked_in_batches
+    acknowledged_checks = sum(
+        1
+        for sc_id in active_sense_check_ids
+        if sc_id in acknowledged_ids
     )
     return (
         tracked_tasks,
@@ -6660,6 +6690,7 @@ def handle_execute_auto_loop(
             active_task_ids=active_task_ids,
             active_sense_check_ids=active_sense_check_ids,
             completed_task_ids=completed_task_ids,
+            plan_dir=plan_dir,
         )
     )
     aggregate_pre_existing_ids = _pre_existing_task_ids(plan_dir)
