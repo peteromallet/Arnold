@@ -261,6 +261,75 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                 },
             },
+            # ── CL3 additive evaluator routing contract (all optional) ──────
+            "domain_selections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "why": {"type": "string"},
+                    },
+                    "required": ["domain", "why"],
+                    "additionalProperties": False,
+                },
+            },
+            "domain_skips": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "why": {"type": "string"},
+                    },
+                    "required": ["domain", "why"],
+                    "additionalProperties": False,
+                },
+            },
+            "critique_mode": {
+                "type": "string",
+                "enum": ["BLIND", "HISTORY_AWARE"],
+            },
+            "evidence_targets": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "budgets": {
+                "type": "object",
+                "properties": {
+                    "max_tokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                    "max_latency_seconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                    "max_findings": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "expected_revision": {"type": "string"},
+            "expected_briefing_hash": {"type": "string"},
+            "selection_reasons": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["target", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+            "input_set_hashes": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
         },
         "required": ["selections", "skipped", "evaluator_model"],
         "additionalProperties": False,

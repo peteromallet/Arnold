@@ -552,9 +552,14 @@ def construct_manifest(
     included_reasons: dict[str, str] = {}
     excluded_reasons: dict[str, str] = {}
 
+    # T4: admit NO_ADDITIONAL_FINDINGS occurrences into the manifest. They
+    # are a positive producer assertion ("nothing more to add") rather than
+    # a parse/attempt failure. FAILED/DROPPED/MALFORMED remain excluded so
+    # the manifest exclusion contract is preserved.
     valid_statuses = frozenset({
         ParseStatus.SELECTED.value,
         ParseStatus.COMPLETED.value,
+        ParseStatus.NO_ADDITIONAL_FINDINGS.value,
     })
 
     for occ in occurrences:
@@ -608,7 +613,9 @@ def construct_manifest(
         event_ids=tuple(event_ids),
         included_reasons=included_reasons,
         excluded_reasons=excluded_reasons,
-        cross_domain_refs=(),
+        cross_domain_refs=tuple(sorted(set(
+            rec_result.get("cross_domain_refs", []) or []
+        ))),
         timestamp_utc=(prior_manifest.timestamp_utc if prior_manifest else ""),
     )
 
@@ -620,12 +627,22 @@ def construct_manifest(
 # ══════════════════════════════════════════════════════════════════════
 
 
+_VALID_BRIEFING_MODES = frozenset({
+    ContextMode.BLIND.value,
+    ContextMode.HISTORY_AWARE.value,
+})
+
+
 def build_briefing(
     manifest: LedgerRevisionManifest,
     disp_result: dict[str, Any],
     finding_map: dict[str, Any],
     budget_level: str = "standard",
     domain_assignments: dict[str, str] | None = None,
+    rec_result: dict[str, Any] | None = None,
+    occurrences: list[CritiqueOccurrenceEnvelope] | None = None,
+    freshness_vectors: list[Any] | None = None,
+    mode: str = ContextMode.HISTORY_AWARE.value,
 ) -> DomainBriefingEnvelope:
     """Build a domain briefing from the accepted manifest.
 
@@ -658,6 +675,18 @@ def build_briefing(
     max_domains = budget["max_domains"]
     max_findings = budget["max_findings"]
 
+    # T11: validate the briefing mode. HISTORY_AWARE is the complete default
+    # (every projection field populated); BLIND retains identity/accounting
+    # hashes while excluding dispositions, cross-domain references, prior
+    # content, and history-derived flags. Mode participates in the briefing
+    # hash so blind/history-aware briefings are canonical-distinct.
+    if mode not in _VALID_BRIEFING_MODES:
+        raise SemanticLoopError(
+            mode=FailureMode.BRIEFING_BUDGET_EXCEEDED,
+            detail=f"Unknown briefing mode: {mode!r}",
+        )
+    is_blind = mode == ContextMode.BLIND.value
+
     if domain_assignments is None:
         domain_assignments = {}
 
@@ -671,11 +700,18 @@ def build_briefing(
         else:
             normalized_fm[sf_id] = oids
 
-    # Classify findings by disposition family
+    # Classify findings into ALL EIGHT family buckets. open_findings is
+    # derived EXACTLY from the three open sub-buckets (acted-on / ignored /
+    # deferred), never independently.
+    acted_on_findings: list[str] = []
+    ignored_findings: list[str] = []
+    deferred_findings: list[str] = []
     open_findings: list[str] = []
     blocked_findings: list[str] = []
     accepted_risk_findings: list[str] = []
     unknown_findings: list[str] = []
+    resolved_findings: list[str] = []
+    duplicate_findings: list[str] = []
     all_findings: list[str] = []
 
     for sf_id in sorted(normalized_fm.keys()):
@@ -683,21 +719,43 @@ def build_briefing(
         disp = disposition_map.get(sf_id, {})
         family = disp.get("family", DispositionFamily.UNKNOWN.value)
 
-        if family in _OPEN_FAMILIES:
-            open_findings.append(sf_id)
+        if family == DispositionFamily.ACTED_ON.value:
+            acted_on_findings.append(sf_id)
+        elif family == DispositionFamily.IGNORED.value:
+            ignored_findings.append(sf_id)
+        elif family == DispositionFamily.DEFERRED.value:
+            deferred_findings.append(sf_id)
         elif family in _BLOCKED_FAMILIES:
             blocked_findings.append(sf_id)
         elif family == DispositionFamily.ACCEPTED_RISK.value:
             accepted_risk_findings.append(sf_id)
-        elif family == DispositionFamily.UNKNOWN.value:
-            unknown_findings.append(sf_id)
-        elif family == DispositionFamily.DUPLICATE.value:
-            # Duplicates are tracked but not classified as open/blocked
-            pass
         elif family == DispositionFamily.RESOLVED.value:
-            # Resolved findings are closed
-            pass
+            resolved_findings.append(sf_id)
+        elif family == DispositionFamily.DUPLICATE.value:
+            duplicate_findings.append(sf_id)
+        else:
+            unknown_findings.append(sf_id)
 
+    # open_findings is derived EXACTLY from the three open sub-buckets.
+    open_findings = sorted(
+        acted_on_findings + ignored_findings + deferred_findings
+    )
+
+    # Assert the full pre-truncation partition: the eight named family
+    # buckets equal all findings, and open_findings equals the union of the
+    # three open sub-buckets.
+    _partition = sorted(
+        acted_on_findings + ignored_findings + deferred_findings
+        + blocked_findings + accepted_risk_findings + unknown_findings
+        + resolved_findings + duplicate_findings
+    )
+    assert _partition == sorted(all_findings), (
+        "family-bucket partition invariant violated before truncation"
+    )
+    assert sorted(open_findings) == sorted(
+        acted_on_findings + ignored_findings + deferred_findings
+    ), "open_findings must equal exactly the three open sub-buckets"
+    # Determine domains from assignments
     # Determine domains from assignments
     domains_set: set[str] = set()
     for sf_id in all_findings:
@@ -716,8 +774,12 @@ def build_briefing(
             ),
         )
 
-    # Budget enforcement: finding spillover
+    # Budget enforcement: finding spillover. Overflow findings are encoded
+    # as relationship-bearing split-parent refs (parent_finding_id,
+    # relationship) rather than flat-omitted. Retained buckets stay
+    # budget-bounded; every overflow finding remains reachable.
     spillover: list[str] = []
+    split_parent_refs: tuple[tuple[str, str], ...] = ()
     is_truncated = False
     truncation_warning: Optional[str] = None
 
@@ -725,18 +787,126 @@ def build_briefing(
         is_truncated = True
         spillover = all_findings[max_findings:]
         all_findings = all_findings[:max_findings]
-        # Filter spillover from classifications
-        spillover_set = set(spillover)
-        open_findings = [f for f in open_findings if f not in spillover_set]
-        blocked_findings = [f for f in blocked_findings if f not in spillover_set]
-        accepted_risk_findings = [f for f in accepted_risk_findings if f not in spillover_set]
-        unknown_findings = [f for f in unknown_findings if f not in spillover_set]
+        # Encode each overflow finding as a relationship-bearing split ref.
+        split_parent_refs = tuple((fid, "SPLIT") for fid in spillover)
+        # Filter every family bucket of spillover findings so retained
+        # buckets stay budget-bounded.
+        spill_set = set(spillover)
+        acted_on_findings = [f for f in acted_on_findings if f not in spill_set]
+        ignored_findings = [f for f in ignored_findings if f not in spill_set]
+        deferred_findings = [f for f in deferred_findings if f not in spill_set]
+        open_findings = [f for f in open_findings if f not in spill_set]
+        blocked_findings = [f for f in blocked_findings if f not in spill_set]
+        accepted_risk_findings = [f for f in accepted_risk_findings if f not in spill_set]
+        unknown_findings = [f for f in unknown_findings if f not in spill_set]
+        resolved_findings = [f for f in resolved_findings if f not in spill_set]
+        duplicate_findings = [f for f in duplicate_findings if f not in spill_set]
         truncation_warning = (
             f"{len(spillover)} finding(s) exceed {budget_level} budget "
-            f"({max_findings} max). Linked via spillover_findings — not "
-            f"silently discarded."
+            f"({max_findings} max). Linked via spillover_findings and "
+            f"split_parent_refs — not silently discarded."
+        )
+        # Post-truncation reachability invariant: retained bucket IDs plus
+        # split-parent IDs equal the full pre-truncation finding set, and
+        # each overflow finding is reachable through a relationship-bearing
+        # split ref.
+        _retained = set(all_findings)
+        _split_parents = {p for p, _r in split_parent_refs}
+        _pre_trunc = set(_retained | set(spillover))
+        assert (_retained | _split_parents) == _pre_trunc, (
+            "post-truncation finding reachability invariant violated: "
+            "retained bucket IDs + split-parent IDs != full finding set"
+        )
+        assert _split_parents == set(spillover), (
+            "each overflow finding must appear as a split-parent ref"
+        )
+        assert all(r for _p, r in split_parent_refs), (
+            "every split ref must be relationship-bearing (non-empty)"
         )
 
+    # Aggregate occurrence/disposition content + freshness (T3/T5).
+    evidence_unavailable: list[str] = []
+    prior_instructions: list[str] = []
+    revision_actions: list[str] = []
+    conclusions: list[str] = []
+    questions: list[str] = []
+    reopen_conditions: list[str] = []
+    evidence_refs: list[str] = []
+    cross_domain_ref_list: list[str] = []
+
+    if occurrences:
+        for _occ in occurrences:
+            if _occ.evidence_availability == EvidenceAvailability.UNAVAILABLE.value:
+                _reason = getattr(_occ, "unavailable_reason", "") or _occ.occurrence_id
+                evidence_unavailable.append(_reason)
+            _meta = getattr(_occ, "metadata", {}) or {}
+            for _key, _bucket in (
+                ("prior_instructions", prior_instructions),
+                ("instructions", prior_instructions),
+                ("revision_actions", revision_actions),
+                ("conclusions", conclusions),
+                ("questions", questions),
+            ):
+                _val = _meta.get(_key)
+                if isinstance(_val, str) and _val.strip():
+                    _bucket.append(_val.strip())
+                elif isinstance(_val, (list, tuple)):
+                    _bucket.extend(str(_x).strip() for _x in _val if str(_x).strip())
+            _rc = getattr(_occ, "reopen_condition", None)
+            if isinstance(_rc, str) and _rc.strip():
+                reopen_conditions.append(_rc.strip())
+
+    if rec_result:
+        cross_domain_ref_list = list(rec_result.get("cross_domain_refs", []) or [])
+        for _ev in rec_result.get("reopen_events", []) or []:
+            _rc = _ev.get("reopen_condition")
+            if isinstance(_rc, str) and _rc.strip():
+                reopen_conditions.append(_rc.strip())
+
+    for _sf_id in normalized_fm:
+        _disp = disposition_map.get(_sf_id, {})
+        _rp = _disp.get("reopen_predicate")
+        if isinstance(_rp, str) and _rp.strip():
+            reopen_conditions.append(_rp.strip())
+        _erefs = _disp.get("evidence_refs") or []
+        if isinstance(_erefs, (list, tuple)):
+            evidence_refs.extend(str(_r) for _r in _erefs)
+
+    # Freshness -> staleness/availability outputs (T5). Derived ONLY from
+    # availability / tombstone / configured-age signals carried on the
+    # freshness vectors; never from authority-like metadata.
+    stale_flag = False
+    rebuild_trigger: Optional[str] = None
+    if freshness_vectors:
+        _stale = [v for v in freshness_vectors if getattr(v, "is_stale", False)]
+        if _stale:
+            stale_flag = True
+            _reasons = [
+                getattr(v, "staleness_reason", "")
+                for v in _stale
+                if getattr(v, "staleness_reason", "")
+            ]
+            rebuild_trigger = _reasons[0] if _reasons else "stale"
+
+    # T4: no_additional_findings is derived from ADMITTED occurrence statuses
+    # (a producer explicitly asserted "no additional findings"); it is True
+    # whenever an admitted NO_ADDITIONAL_FINDINGS occurrence is present, even
+    # when the ledger already holds prior findings. no_known_findings is
+    # derived ONLY from the ledger finding set, independent of occurrence
+    # statuses. See SC4.
+    no_additional_flag = any(
+        occ.parse_status == ParseStatus.NO_ADDITIONAL_FINDINGS.value
+        for occ in (occurrences or [])
+    )
+    no_known_findings_flag = len(normalized_fm) == 0
+
+    # T11: BLIND projection. Identity/accounting hashes (manifest hash,
+    # input-set hash, domain set, finding IDs, budget partition) are always
+    # retained so two modes over the same accepted input share identical
+    # input identity. History/disposition/cross-domain/prior-content fields
+    # are blanked for the blind critic. Reconciliation requirements are NOT
+    # erased: the manifest reference (revision_manifest_hash) is retained,
+    # and reconciliation already ran on the manifest before this projection.
     briefing = DomainBriefingEnvelope(
         briefing_id=(
             "briefing-"
@@ -745,6 +915,8 @@ def build_briefing(
                     canonical_hash(manifest)
                     + "|"
                     + budget_level
+                    + "|"
+                    + mode
                     + "|"
                     + "|".join(all_findings)
                     + "|"
@@ -756,15 +928,36 @@ def build_briefing(
         budget_level=budget_level,
         domains=domains,
         findings=tuple(all_findings),
-        open_findings=tuple(open_findings),
-        blocked_findings=tuple(blocked_findings),
-        accepted_risk_findings=tuple(accepted_risk_findings),
-        unknown_findings=tuple(unknown_findings),
-        cross_domain_refs=(),
+        open_findings=() if is_blind else tuple(open_findings),
+        blocked_findings=() if is_blind else tuple(blocked_findings),
+        accepted_risk_findings=() if is_blind else tuple(accepted_risk_findings),
+        unknown_findings=() if is_blind else tuple(unknown_findings),
+        resolved_findings=() if is_blind else tuple(resolved_findings),
+        duplicate_findings=() if is_blind else tuple(duplicate_findings),
+        acted_on_findings=() if is_blind else tuple(acted_on_findings),
+        ignored_findings=() if is_blind else tuple(ignored_findings),
+        deferred_findings=() if is_blind else tuple(deferred_findings),
+        cross_domain_refs=() if is_blind else tuple(sorted(set(cross_domain_ref_list))),
+        prior_instructions=() if is_blind else tuple(prior_instructions),
+        revision_actions=() if is_blind else tuple(revision_actions),
+        conclusions=() if is_blind else tuple(conclusions),
+        questions=() if is_blind else tuple(questions),
+        reopen_conditions=() if is_blind else tuple(sorted(set(reopen_conditions))),
+        evidence_refs=() if is_blind else tuple(sorted(set(evidence_refs))),
+        evidence_unavailable=() if is_blind else tuple(evidence_unavailable),
+        split_parent_refs=split_parent_refs,
+        stale_flag=False if is_blind else stale_flag,
+        rebuild_trigger=None if is_blind else rebuild_trigger,
+        input_set_hash=manifest.input_set_hash,
+        included_reasons=dict(manifest.included_reasons),
+        excluded_reasons=dict(manifest.excluded_reasons),
         spillover_findings=tuple(spillover),
-        no_additional_findings=len(all_findings) == 0,
-        no_open_blocking_findings=(len(open_findings) == 0 and len(blocked_findings) == 0),
-        no_known_findings=len(all_findings) == 0,
+        no_additional_findings=no_additional_flag,
+        no_open_blocking_findings=(
+            False if is_blind
+            else (len(open_findings) == 0 and len(blocked_findings) == 0)
+        ),
+        no_known_findings=no_known_findings_flag,
         no_adjacent_text_match=False,
         is_truncated=is_truncated,
         truncation_warning=truncation_warning,
@@ -972,6 +1165,7 @@ def replay_full(
     allow_reopen: bool = True,
     prior_manifest: LedgerRevisionManifest | None = None,
     expected_prior_revision_hash: str | None = None,
+    freshness_vectors: list | None = None,
 ) -> dict[str, Any]:
     """Execute a complete semantic loop replay.
 
@@ -1171,6 +1365,9 @@ def replay_full(
         manifest, disp_result, rec_result["finding_map"],
         budget_level=budget_level,
         domain_assignments=domain_assignments,
+        rec_result=rec_result,
+        occurrences=occurrences,
+        freshness_vectors=freshness_vectors,
     )
 
     # Phase 6: Projections
