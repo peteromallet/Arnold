@@ -39,6 +39,7 @@ from arnold.critique_ledger.semantic_loop import (
     replay_full,
     validate_occurrence_custody,
 )
+from arnold.critique_ledger.freshness import compute_input_hash
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -453,6 +454,123 @@ class TestDisposition:
         result = apply_disposition_events(finding_map, disps)
         assert result["accepted"] is True
         assert len(result["family_counts"]) == 8
+
+
+# ── Input-hash staleness detection (CL5 Step 6b) ─────────────────────
+
+
+class TestInputHashStaleness:
+    """Live, input-change-aware mechanical staleness detection.
+
+    CL5 resolves the ``cl5_staleness_deferral`` reopen predicate: when the
+    production caller supplies the canonical briefing-input hash, a disposition
+    that recorded a stored baseline hash in its ``metadata`` is compared against
+    it. The flag is advisory-only and never grants authority.
+    """
+
+    def test_live_divergence_flags_stale(self) -> None:
+        finding_map = {"sf-1": {"occ-1"}}
+        disp = _make_disposition(
+            family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="monitor for regression",
+            metadata={"input_hash": "stale-baseline-hash"},
+        )
+        result = apply_disposition_events(finding_map, [disp], input_hash="live-hash")
+        assert result["accepted"] is True
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is True
+
+    def test_live_match_clears_deferral(self) -> None:
+        # A matching stored baseline confirms freshness even though the
+        # disposition carries a reopen_predicate (the CL4 heuristic would have
+        # set the flag True).
+        finding_map = {"sf-1": {"occ-1"}}
+        disp = _make_disposition(
+            family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="monitor for regression",
+            metadata={"input_hash": "same-hash"},
+        )
+        result = apply_disposition_events(finding_map, [disp], input_hash="same-hash")
+        assert result["accepted"] is True
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is False
+
+    def test_no_input_hash_falls_back_to_reopen_predicate(self) -> None:
+        # Without live input context (direct callers, replay/restoration paths)
+        # the CL4 deferral sentinel is preserved.
+        finding_map = {"sf-1": {"occ-1"}}
+        with_predicate = _make_disposition(
+            family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="monitor for regression",
+            metadata={"input_hash": "stale-baseline-hash"},
+        )
+        result = apply_disposition_events(finding_map, [with_predicate])
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is True
+
+    def test_no_stored_baseline_falls_back_to_reopen_predicate(self) -> None:
+        finding_map = {"sf-1": {"occ-1"}}
+        disp = _make_disposition(
+            family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="monitor for regression",
+        )
+        result = apply_disposition_events(finding_map, [disp], input_hash="live-hash")
+        # No stored baseline recorded -> cannot assert divergence -> advisory
+        # fallback to the structural heuristic.
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is True
+
+    def test_staleness_flag_grants_no_authority(self) -> None:
+        # The no-authority invariant: staleness is detected but admission
+        # (accepted) is unchanged and the disposition carries no
+        # staleness-derived authority.
+        finding_map = {"sf-1": {"occ-1"}}
+        stale_disp = _make_disposition(
+            family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="monitor for regression",
+            metadata={"input_hash": "stale-baseline-hash"},
+        )
+        result = apply_disposition_events(
+            finding_map, [stale_disp], input_hash="live-hash"
+        )
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is True
+        assert result["accepted"] is True
+        # No failures are introduced by staleness; authority is unchanged.
+        assert result["failures"] == []
+        stored = result["disposition_map"]["sf-1"]
+        assert "authority" in stored
+        assert stored["authority"] == stale_disp.authority
+
+    def test_production_path_detects_changed_briefing_inputs(self) -> None:
+        # The production orchestrator (replay_full) computes the canonical
+        # input hash from the live sources and passes it to
+        # apply_disposition_events. A disposition authored against a prior
+        # briefing snapshot (stored baseline hash in metadata) is compared
+        # against the live hash; a divergence sets the staleness flag via the
+        # LIVE path. reopen_predicate is None here, so the CL4 fallback
+        # (bool(reopen_predicate)) would be False — the True result proves the
+        # live input-hash detection fired, not the fallback.
+        baseline_occ = _make_occurrence("occ-1", producer_id="baseline-producer")
+        baseline_rec = _make_reconciliation()
+        baseline_disp = _make_disposition(
+            family=DispositionFamily.UNKNOWN.value, reopen_predicate=None
+        )
+        stored_hash = compute_input_hash(
+            [baseline_occ], [baseline_rec], [baseline_disp]
+        )
+        live_occ = _make_occurrence("occ-1", producer_id="live-producer")
+        result = replay_full(
+            [live_occ],
+            [_make_reconciliation()],
+            [
+                _make_disposition(
+                    family=DispositionFamily.UNKNOWN.value,
+                    reopen_predicate=None,
+                    metadata={"input_hash": stored_hash},
+                )
+            ],
+            wbc_receipt_chain={"wbc-001": {"valid": True}},
+        )
+        disp_state = result["disposition"]["disposition_map"]["sf-1"]
+        assert disp_state["staleness_check_deferred"] is True
+        # Staleness never grants admission/authority: the replay still accepts.
+        assert result["disposition"]["accepted"] is True
 
 
 # ── Manifest construction ────────────────────────────────────────────

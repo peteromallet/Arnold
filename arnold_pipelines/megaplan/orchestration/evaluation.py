@@ -17,8 +17,9 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import (
     build_gate_signals,
+    compute_adjacent_text_matches,
     compute_plan_delta_percent,
-    compute_recurring_critiques,
+    compute_semantic_recurrence,
     flag_weight,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import (

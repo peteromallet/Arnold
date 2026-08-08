@@ -448,20 +448,6 @@ def test_adjacency_empty_at_first_iteration(tmp_path: Path) -> None:
     assert s["no_adjacent_text_match"] is True
 
 
-def test_recurring_critiques_alias_equals_adjacent_text_matches(tmp_path: Path) -> None:
-    signals = _cl4_gate_signals_plan(
-        tmp_path,
-        critique_flags_by_iteration={
-            1: [{"concern": "Shared concern"}],
-            2: [{"concern": "Shared concern"}],
-        },
-    )
-    s = signals["signals"]
-    # Deprecated alias is populated from adjacent_text_matches unchanged.
-    assert s["recurring_critiques"] == s["adjacent_text_matches"]
-    assert s["recurring_critiques"] == ["shared concern"]
-
-
 def test_semantic_recurrence_false_without_reconciliation(tmp_path: Path) -> None:
     signals = _cl4_gate_signals_plan(
         tmp_path,
@@ -568,5 +554,5 @@ def test_adjacent_text_matches_complement_holds_with_disputed_merge(
     assert s["no_adjacent_text_match"] == (len(s["adjacent_text_matches"]) == 0)
     # MERGE grounds semantic recurrence despite the dispute.
     assert s["semantic_recurrence"] is True
-    # Deprecated alias still mirrors adjacency.
-    assert s["recurring_critiques"] == s["adjacent_text_matches"]
+    # Canonical adjacency list still populated.
+    assert s["adjacent_text_matches"] == ["overlapping concern"]

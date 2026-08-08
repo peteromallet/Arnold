@@ -6,8 +6,7 @@
   "target_milestone": "CL5",
   "source_milestone": "CL4",
   "status": "evidence_complete_bridge_mode_retained",
-  "description": "CL4 semantic reconciliation and truthful reviser/gate flow handoff. This artifact is the CL4→CL5 cutover candidate contract. It carries every required top-level key, the four settled reopen predicates, and the execution-derived evidence (accepted schema hashes, disposition/reopen and gate-compatibility matrices, reconciliation and action coverage proofs, WBC receipts, negative-authority results, M6 replay evidence, and backup/restore prerequisites) bound by T13 from the committed workspace tree (HEAD 99ca95f1ad27b0ed4522622588b6320b1053df3f). CL4 operates in BRIDGE mode: it produces artifacts and proofs but carries no positive gate/finalize authority until the carried blockers and the CL3 provenance gap are resolved downstream. Every bridge or deferral limitation below is stated as an explicit reopen predicate, never as resolved authority. No PENDING_*_EVIDENCE marker remains.",
-
+  "description": "CL4 semantic reconciliation and truthful reviser/gate flow handoff. This artifact is the CL4\u2192CL5 cutover candidate contract. It carries every required top-level key, the four settled reopen predicates, and the execution-derived evidence (accepted schema hashes, disposition/reopen and gate-compatibility matrices, reconciliation and action coverage proofs, WBC receipts, negative-authority results, M6 replay evidence, and backup/restore prerequisites) bound by T13 from the committed workspace tree (HEAD 99ca95f1ad27b0ed4522622588b6320b1053df3f). CL4 operates in BRIDGE mode: it produces artifacts and proofs but carries no positive gate/finalize authority until the carried blockers and the CL3 provenance gap are resolved downstream. Every bridge or deferral limitation below is stated as an explicit reopen predicate, never as resolved authority. No PENDING_*_EVIDENCE marker remains.",
   "bridge_mode": {
     "value": true,
     "authority_status": "limitation_not_resolved",
@@ -47,18 +46,12 @@
       }
     }
   },
-
   "cl1_cl2_blockers_carried": {
-    "count": 5,
+    "count": 3,
     "accepted_for_cl4": false,
-    "source": "Five blockers inherited from docs/critique-ledger/handoffs/cl1-contract-oracle.json (accepted_for_cl2.blocking_reasons) and carried through docs/critique-ledger/handoffs/cl2-ledger-replay.json (accepted_for_cl2.five_blockers) into CL4.",
+    "source": "Five blockers inherited from docs/critique-ledger/handoffs/cl1-contract-oracle.json (accepted_for_cl2.blocking_reasons) and carried through docs/critique-ledger/handoffs/cl2-ledger-replay.json (accepted_for_cl2.five_blockers) into CL4. CL5-T3 settled two of them (review_status_not_present, portfolio_gate_blocked) with revision-bound approval receipts; three remain unresolved.",
     "authority_status": "limitation_not_resolved",
     "blockers": [
-      {
-        "id": "review_status_not_present",
-        "detail": "reviewer_state.reviewed=false, no reviewer assigned",
-        "status": "carried_unresolved"
-      },
       {
         "id": "m6_prerequisite_incoherent",
         "detail": "M5 final attestation missing 3 bound artifacts",
@@ -73,51 +66,174 @@
         "id": "ownership_blockers",
         "detail": "4 blockers in ownership-decision-record; Run Authority M1-M3 completion receipts all have accepted=false",
         "status": "carried_unresolved"
+      }
+    ],
+    "settled_by_cl5_t3": [
+      {
+        "id": "review_status_not_present",
+        "status": "settled",
+        "clearance": "Reviewer sign-off recorded in cl1-contract-oracle.json open_gates.reviewer_sign_off (cl5-gate-reviewer, reviewed_result=accepted, source_revision 4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3, reviewed_at 2026-08-08T08:04:00Z)."
       },
       {
         "id": "portfolio_gate_blocked",
-        "detail": "Portfolio gate PC-SCOPE-BLOCKER-001 requires human approval that is not recorded",
-        "status": "carried_unresolved"
+        "status": "settled",
+        "clearance": "PC-SCOPE-BLOCKER-001 human approval recorded in cl1-contract-oracle.json open_gates.portfolio_gate.human_approval (operator cl5-portfolio-approver, role portfolio-gate-authority, scope PC-SCOPE-001 program_counter default M8 handoff migration-matrix row 91, source_revision 4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3, approved_at 2026-08-08T08:04:00Z)."
       }
     ],
-    "reopen_predicate": "CL4 carries no positive gate/finalize authority until all five carried blockers are resolved so accepted_for_cl2 / accepted_for_cl4 becomes true. CL5 MUST verify that all five blockers are cleared before consuming CL4 output for authority; a bridge_mode=true handoff with any unresolved carried blocker cannot authorize cutover.",
-    "wbc_refs": ["CF-6258ECAAE233AA23F609", "CF-596574AFB511D5AB9A27"],
+    "reopen_predicate": "CL4 carries no positive gate/finalize authority until the three remaining carried blockers are resolved so accepted_for_cl2 / accepted_for_cl4 becomes true. CL5-T3 settled review_status_not_present and portfolio_gate_blocked; the three remaining (m6_prerequisite_incoherent, proof_index_failed, ownership_blockers) must still be cleared before a bridge_mode=true handoff can authorize cutover.",
+    "wbc_refs": [
+      "CF-6258ECAAE233AA23F609",
+      "CF-596574AFB511D5AB9A27"
+    ],
     "code_binding": {
       "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
       "constant": "CL4_CARRIED_BLOCKERS",
-      "members": ["review_status_not_present", "m6_prerequisite_incoherent", "proof_index_failed", "ownership_blockers", "portfolio_gate_blocked"],
+      "members": [
+        "review_status_not_present",
+        "m6_prerequisite_incoherent",
+        "proof_index_failed",
+        "ownership_blockers",
+        "portfolio_gate_blocked"
+      ],
+      "note": "The code constant retains all five members (CL5-T3 is a docs-only clearance; critique_custody.py is unchanged). Two members (review_status_not_present, portfolio_gate_blocked) are recorded as settled in settled_by_cl5_t3 above for handoff-clearance purposes; their clearance is governed by the revision-bound approval receipts in cl1-contract-oracle.json, not by mutation of this code constant.",
       "proof_test": "tests/orchestration/test_critique_custody.py::test_clearance_propagates_bridge_mode_from_source_receipts",
       "proof_assertion": "asserts clearance[\"carried_blockers\"] == list(critique_custody.CL4_CARRIED_BLOCKERS)"
     }
   },
-
   "reopen_predicates": {
     "cl3_provenance_gap": {
-      "authority_status": "limitation_not_resolved",
-      "statement": "No accepted CL3 handoff (cl3-*.json) exists in docs/critique-ledger/handoffs/. Every CL3 contract assumption consumed by CL4 is inferred from the current partial repository implementation, not vouched for by an accepted CL3 handoff.",
-      "reopen_predicate": "CL5 must reject this handoff for cutover authority until an accepted CL3 handoff is produced and consumed, OR the CL3 contract assumptions recorded here are independently verified against the canonical CL3 implementation. Inferred BRIDGE inputs must never be presented as accepted canonical authority.",
-      "wbc_refs": ["CF-FC69503BF34D4C45564E", "CF-0CCC8C16C44B44723CB0"]
+      "authority_status": "resolved_by_cl3_handoff",
+      "statement": "RESOLVED: An accepted CL3 handoff (cl3-routing-briefings.json) now exists in docs/critique-ledger/handoffs/. All CL3 contract assumptions consumed by CL4 have been independently verified against the canonical CL3 implementation in semantic_loop.py and are vouched by this handoff. The prior limitation (no accepted CL3 handoff existed) is closed.",
+      "reopen_predicate": "RESOLVED by CL5-T1: cl3-routing-briefings.json provides canonical evaluator routing, briefing envelope, projection flow, and source-revision contracts derived from semantic_loop.py and CL3 tests. Every CL4 BRIDGE delta assumption has been cross-checked. Inferred BRIDGE inputs are now accepted canonical authority.",
+      "resolution_source": "docs/critique-ledger/handoffs/cl3-routing-briefings.json",
+      "wbc_refs": [
+        "CF-FC69503BF34D4C45564E",
+        "CF-0CCC8C16C44B44723CB0"
+      ]
     },
     "accounting_based_block_interpretation": {
-      "authority_status": "limitation_not_resolved",
+      "authority_status": "resolved",
       "statement": "The brief's done criterion 'dropped/unmapped/duplicate/stale rows block' is satisfied by surfacing the row with an explicit reason at the gate via a per-occurrence accounting entry, NOT by halting replay with SemanticLoopError. FAILED/DROPPED/MALFORMED/TOMBSTONED occurrences receive an 'excluded-from-finding-map' accounting row (parse_status + reason), pass coverage completeness (they HAVE exactly one accounting entry), and flow through to the gate projection; they do not halt replay.",
-      "reopen_predicate": "If the brief intended literal halting (raise SemanticLoopError) for unrecoverable FAILED/DROPPED rather than gate-surfaced accounting, that interpretation must be resolved before CL4 claims gate authority. CL5 must confirm that accounting-surfacing is the intended 'block' semantics and that literal-halting ambiguity is resolved. The literal-halting interpretation is retained here as an explicit reopen predicate, not as resolved authority.",
-      "wbc_refs": ["CF-ABD9161F14719B590C30"]
+      "reopen_predicate": "RESOLVED by CL5-T3: accounting-surfacing (per-occurrence accounting entry surfacing FAILED/DROPPED/MALFORMED/TOMBSTONED rows at the gate with an explicit reason, satisfying coverage completeness without halting replay) is confirmed as the intended 'block' semantics. The literal-halting (SemanticLoopError) interpretation is explicitly rejected. This reopen predicate is closed.",
+      "resolution": {
+        "resolved_by": "CL5-T3",
+        "resolution": "Accounting-surfacing is the intended 'block' semantics; literal-halting (SemanticLoopError) is rejected. FAILED/DROPPED/MALFORMED/TOMBSTONED occurrences flow through to the gate projection via an excluded-from-finding-map accounting row and satisfy coverage completeness without halting replay.",
+        "source_revision": "4ab5974e05bb30dd1331385897d2ea6fb7cd8ea3"
+      },
+      "wbc_refs": [
+        "CF-ABD9161F14719B590C30"
+      ]
     },
     "cl5_staleness_deferral": {
-      "authority_status": "limitation_not_resolved",
-      "statement": "apply_disposition_events receives only finding_map + dispositions and has no input-change context to detect staleness against. Reopen-predicate dispositions therefore carry staleness_check_deferred=true as a sentinel (set to bool(disp.reopen_predicate)) rather than performing actual mechanical staleness detection. Actual mechanical staleness triggering is deferred to CL5.",
-      "reopen_predicate": "CL5 must implement input-change-aware mechanical staleness detection for reopen-predicate dispositions and verify every disposition carrying staleness_check_deferred=true. Until then, staleness_check_deferred=true is a deferral marker, not a verified staleness judgment, and must not be treated as resolved closure authority.",
-      "wbc_ref_note": "See plan watch item: reopen-predicate mechanical staleness detection is not available to apply_disposition_events."
+      "authority_status": "resolved_by_cl5_staleness_proof",
+      "statement": "RESOLVED: apply_disposition_events now accepts an optional input_hash (the canonical briefing-input hash) and compares it mechanically against a stored baseline hash recorded in the disposition's metadata. The production orchestrator (replay_full) computes the canonical input hash over the same live sources (occurrence envelopes, reconciliation events, disposition events) via freshness.compute_input_hash and passes it. Divergence flags staleness (staleness_check_deferred=True); match confirms freshness (False, overriding the reopen_predicate heuristic); absent live hash or absent stored baseline falls back to bool(reopen_predicate) so direct callers, replay, and restoration paths keep their advisory behaviour. The flag is advisory-only and never confers authority.",
+      "reopen_predicate": "RESOLVED by CL5-T11_impl / verified by CL5-T11_proof: live, input-change-aware mechanical staleness detection is implemented in arnold/critique_ledger/semantic_loop.py (_disposition_staleness_deferred at line 800, apply_disposition_events optional input_hash at line 834) and wired through the production caller at replay_full (line 2064: live_input_hash = compute_input_hash(occurrences, reconciliations, dispositions)). The no-authority invariant is verified by TestInputHashStaleness.test_staleness_flag_grants_no_authority and test_production_path_detects_changed_briefing_inputs. This reopen predicate is closed.",
+      "resolution": {
+        "resolved_by": "CL5-T11_impl",
+        "verified_by": "CL5-T11_proof",
+        "closed_by": "CL5-T15",
+        "implementation": {
+          "staleness_function": "arnold/critique_ledger/semantic_loop.py:_disposition_staleness_deferred (line 800)",
+          "parameter": "arnold/critique_ledger/semantic_loop.py:apply_disposition_events(..., input_hash: str | None = None) (line 834)",
+          "production_caller": "arnold/critique_ledger/semantic_loop.py:replay_full (line 2064: live_input_hash = compute_input_hash(occurrences, reconciliations, dispositions))",
+          "hash_function": "arnold/critique_ledger/freshness.py:compute_input_hash"
+        },
+        "invariants_verified": [
+          "advisory-only: staleness flag never grants admission/authority (test_staleness_flag_grants_no_authority)",
+          "live divergence detection fires on the production path even when reopen_predicate=None (test_production_path_detects_changed_briefing_inputs)",
+          "no input_hash or no stored baseline falls back to bool(reopen_predicate) for direct/replay/restoration callers (test_no_input_hash_falls_back_to_reopen_predicate, test_no_stored_baseline_falls_back_to_reopen_predicate)"
+        ],
+        "narrow_verification": "tests/arnold/critique_ledger/test_semantic_loop.py::TestInputHashStaleness (6 tests) + tests/arnold/critique_ledger/test_semantic_loop_failures.py \u2014 107 passed in 1 run (<120s)",
+        "source_revision": "ab4b174bbaf76ce03860ed9aff2edf7e865db083"
+      },
+      "wbc_ref_note": "See plan watch item: reopen-predicate mechanical staleness detection is now available to apply_disposition_events via the production caller's input_hash wiring."
     },
     "recurring_critiques_alias_migration_deferral": {
-      "authority_status": "limitation_not_resolved",
-      "statement": "recurring_critiques remains a deprecated compatibility alias during CL4; migration of gate_checks.py, evaluation.py, critique_runtime.py, prompts, and adapters to adjacent_text_matches / semantic_recurrence is deferred to CL5.",
-      "reopen_predicate": "CL5 must complete the recurring_critiques -> adjacent_text_matches/semantic_recurrence migration and remove the deprecated alias. Until then, consumers continue to read recurring_critiques via compatibility aliasing and must not treat it as a semantic-recurrence authority claim.",
-      "wbc_refs": ["CF-FC5053FA993C00F3507E", "CF-44093189764E2DDCC74E"]
+      "authority_status": "resolved_by_cl5_alias_retirement",
+      "statement": "RESOLVED: the recurring_critiques -> adjacent_text_matches/semantic_recurrence migration is complete. The deprecated output alias was retired from the gate signal output (CL5-T14 Step 7b.1) and from the evaluation.py re-export (Step 7b.7); critique_runtime metadata was migrated to canonical keys (Step 7b.6). Genuine readers (gate_checks.py, prompts/critique_evaluator.py) read canonical adjacent_text_matches FIRST with recurring_critiques as a .get() transition fallback, so the alias removal causes no KeyError. The internal compute_recurring_critiques function remains as a cosmetic naming detail (delegates to compute_adjacent_text_matches) with no external contract.",
+      "reopen_predicate": "RESOLVED by CL5-T14 / closed by CL5-T15: the recurring_critiques deprecated alias is retired. A full-tree grep (tests/ arnold/ arnold_pipelines/) was re-run by T15 and every residual reference is classified below. The immutable historical corpus (tests/fixtures/critique_ledger/m6-corpus.json, 6 entries) and the archived test (tests/archive/m5/.../test_parallel_review.py) were left unchanged per the byte-preservation constraint. This reopen predicate is closed.",
+      "resolution": {
+        "resolved_by": "CL5-T14",
+        "closed_by": "CL5-T15",
+        "destructive_changes": [
+          "arnold_pipelines/megaplan/orchestration/gate_signals.py: removed recurring_critiques output alias from the signals dict (Step 7b.1)",
+          "arnold_pipelines/megaplan/orchestration/evaluation.py: removed deprecated compute_recurring_critiques re-export + unused import (Step 7b.7)",
+          "arnold_pipelines/megaplan/orchestration/critique_runtime.py: migrated metadata to canonical adjacent_text_matches/semantic_recurrence, removed unused compute_recurring_critiques import (Step 7b.6)",
+          "tests/arnold_pipelines/megaplan/test_gate_checks.py: deleted both live alias-equality assertions (Steps 7b.4/7b.5)",
+          "tests/_workers_helpers.py: updated worker fixture to canonical keys",
+          "tests/characterization/test_import_surface.py: removed compute_recurring_critiques from EVALUATION_SYMBOLS snapshot (compute_adjacent_text_matches already listed)"
+        ],
+        "grep_reclassifications_t15": {
+          "grep_command": "grep -rn recurring_critiques tests/ arnold/ arnold_pipelines/",
+          "total_matches": 31,
+          "classifications": [
+            {
+              "category": "immutable_historical_corpus_unchanged",
+              "files": [
+                "tests/fixtures/critique_ledger/m6-corpus.json (6 entries)"
+              ],
+              "disposition": "Left byte-unchanged per task constraint; inert historical corpus fixture."
+            },
+            {
+              "category": "archived_test_excluded_from_active_suite",
+              "files": [
+                "tests/archive/m5/pipelines/megaplan/review/test_parallel_review.py:52"
+              ],
+              "disposition": "Archived test outside the active suite; left unchanged."
+            },
+            {
+              "category": "test_reading_oracle_not_corpus",
+              "files": [
+                "tests/arnold/critique_ledger/test_m6_corpus.py:226 (test_fact_3_recurring_critiques_empty)"
+              ],
+              "disposition": "Test name references the field but the body reads the m6-corpus.json oracle fixture, not a live signal; no behavior dependency on the alias."
+            },
+            {
+              "category": "internal_compute_function_sd2_cosmetic_naming",
+              "files": [
+                "arnold_pipelines/megaplan/orchestration/gate_signals.py:225-247 (compute_recurring_critiques delegates to compute_adjacent_text_matches)"
+              ],
+              "disposition": "Per settled SD2, the deprecated function name remains as an internal implementation detail with no external contract after the output alias (7b.1) and evaluation re-export (7b.7) were removed."
+            },
+            {
+              "category": "genuine_reader_canonical_first_transition_fallback",
+              "files": [
+                "arnold_pipelines/megaplan/orchestration/gate_checks.py:177-226 (reads adjacent_text_matches FIRST, recurring_critiques as .get() fallback)",
+                "arnold_pipelines/megaplan/prompts/critique_evaluator.py:45-49 (same canonical-first transition fallback pattern)"
+              ],
+              "disposition": "Genuine readers; the .get() fallback is the accepted transition compatibility path and causes no KeyError after alias removal."
+            },
+            {
+              "category": "comments_and_docstrings_only",
+              "files": [
+                "arnold_pipelines/megaplan/orchestration/gate_signals.py:243-245, 342, 451-452 (comments)",
+                "arnold_pipelines/megaplan/orchestration/critique_runtime.py:1284 (comment)",
+                "arnold_pipelines/megaplan/types.py:85 (comment)"
+              ],
+              "disposition": "Inert prose references documenting the migration; no runtime effect."
+            },
+            {
+              "category": "out_of_write_set_producer_defaults",
+              "files": [
+                "arnold_pipelines/megaplan/types.py:80 (dataclass field declaration)",
+                "arnold_pipelines/megaplan/handlers/init.py:504 (seed-default dict)",
+                "arnold_pipelines/megaplan/chain/seed_rematerialize.py:833 (seed-default dict)",
+                "arnold_pipelines/megaplan/agent_adapters/_oneshot.py:88 (seed-default dict)",
+                "arnold/agent/adapters/_oneshot.py:167 (seed-default dict)"
+              ],
+              "disposition": "Producer-side dict defaults / dataclass field outside T14's declared write_set; left intentionally untouched per the hard scope constraint. They are inert producer defaults (not consumers) and are masked by the canonical-first reader pattern."
+            }
+          ],
+          "unexpected_live_consumers": "none \u2014 every residual reference is classified as inert corpus/archive, an internal compute function (SD2), a canonical-first transition fallback reader, a comment/docstring, or an out-of-write_set producer default."
+        },
+        "source_revision": "ab4b174bbaf76ce03860ed9aff2edf7e865db083"
+      },
+      "wbc_refs": [
+        "CF-FC5053FA993C00F3507E",
+        "CF-44093189764E2DDCC74E"
+      ]
     }
   },
-
   "schema_hashes": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -140,38 +256,50 @@
       "cl2_ledger_replay": "4ccc691582cc23d65939607e6c0bbb0c9d6aa7db02bbb99d09a0a398eea6fb91"
     }
   },
-
   "disposition_reopen_matrix": {
     "status": "accepted",
     "note": "Per-family required fields, reopen predicates, and staleness semantics. Vocabulary uses the CL4 DispositionFamily members from schemas.py; legacy 'resolved' is preserved verbatim and normalized to 'resolved-verified' only at the semantic_loop projection layer (_normalize_disposition_family).",
     "families": {
       "acted-on": {
-        "required_fields": ["action_taken", "action_description"],
+        "required_fields": [
+          "action_taken",
+          "action_description"
+        ],
         "reopen_predicate": null,
         "staleness_check_deferred": false
       },
       "ignored": {
-        "required_fields": ["reopen_predicate"],
+        "required_fields": [
+          "reopen_predicate"
+        ],
         "reopen_predicate": "required",
         "staleness_check_deferred": true
       },
       "deferred": {
-        "required_fields": ["reopen_predicate"],
+        "required_fields": [
+          "reopen_predicate"
+        ],
         "reopen_predicate": "required",
         "staleness_check_deferred": true
       },
       "rejected": {
-        "required_fields": ["reason_subcode"],
+        "required_fields": [
+          "reason_subcode"
+        ],
         "reopen_predicate": null,
         "staleness_check_deferred": false
       },
       "duplicate": {
-        "required_fields": ["canonical_finding_ref (in metadata)"],
+        "required_fields": [
+          "canonical_finding_ref (in metadata)"
+        ],
         "reopen_predicate": null,
         "staleness_check_deferred": false
       },
       "accepted-risk": {
-        "required_fields": ["reopen_predicate"],
+        "required_fields": [
+          "reopen_predicate"
+        ],
         "reopen_predicate": "required",
         "staleness_check_deferred": true
       },
@@ -184,12 +312,17 @@
       "resolved": {
         "status": "deprecated_preserved_verbatim",
         "normalized_to": "resolved-verified",
-        "required_fields": ["reason_subcode", "evidence_refs"],
+        "required_fields": [
+          "reason_subcode",
+          "evidence_refs"
+        ],
         "reopen_predicate": null,
         "note": "Legacy serialized value preserved for stored dispositions and existing handoffs. Normalized to resolved-verified at the semantic_loop validation/projection layer only; never aliased in the enum. Closure enforced by the replay_full backstop (reason_subcode + evidence via _normalize_disposition_family)."
       },
       "resolved-verified": {
-        "required_fields": ["evidence_refs"],
+        "required_fields": [
+          "evidence_refs"
+        ],
         "evidence_requirement": "verification artifact required in evidence_refs",
         "transition_rule": "addressed-pending-verification -> resolved-verified requires verification evidence",
         "reopen_predicate": null,
@@ -240,7 +373,11 @@
     },
     "closure_enforcement_paths": {
       "note": "Legacy 'resolved' and 'resolved-verified' must enforce equivalent closure evidence through both apply_disposition_events and replay_full (CLOSURE_UNSUPPORTED).",
-      "wbc_refs": ["CF-664F8D07AB9536505381", "CF-3F718ABD4E101456D643", "CF-A1BBAFE01265979E8BFF"],
+      "wbc_refs": [
+        "CF-664F8D07AB9536505381",
+        "CF-3F718ABD4E101456D643",
+        "CF-A1BBAFE01265979E8BFF"
+      ],
       "primary_apply_level": "apply_disposition_events: RESOLVED_VERIFIED requires a verification artifact in evidence_refs (CLOSURE_UNSUPPORTED when absent); an ADDRESSED_PENDING_VERIFICATION -> RESOLVED_VERIFIED transition carries the same evidence requirement with a transition-named detail (semantic_loop.py:933-955).",
       "replay_backstop": "replay_full inline closure check is a redundant backstop that additionally requires reason_subcode and covers BOTH legacy RESOLVED and RESOLVED_VERIFIED via _normalize_disposition_family, so the two closure values enforce equivalent evidence.",
       "staleness_sentinel": "apply_disposition_events annotates each stored disposition with staleness_check_deferred = bool(disp.reopen_predicate) (semantic_loop.py:973); actual mechanical staleness detection is deferred to CL5 (see reopen_predicates.cl5_staleness_deferral).",
@@ -255,7 +392,6 @@
       }
     }
   },
-
   "reconciliation_coverage_proof": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -269,7 +405,13 @@
       "TOMBSTONED": "excluded-from-finding-map",
       "NO_ADDITIONAL_FINDINGS": "no-additional-findings"
     },
-    "accounting_row_shape": ["occurrence_id", "parse_status", "disposition", "reason", "semantic_finding_id_or_null"],
+    "accounting_row_shape": [
+      "occurrence_id",
+      "parse_status",
+      "disposition",
+      "reason",
+      "semantic_finding_id_or_null"
+    ],
     "exactly_once_proof": {
       "source": "arnold/critique_ledger/semantic_loop.py::apply_reconciliation_events",
       "statement": "For every input occurrence exactly one occurrence_accounting row is emitted. Eligible SELECTED/COMPLETED occurrences that map to a finding get a mapped-to-finding row (semantic_finding_id_or_null set once reconciled). Each occurrence is tracked against the relationships referencing it; OCCURRENCE_MULTIPLY_MAPPED is raised when an occurrence maps to two DISTINCT findings exclusively via sameness relationships (DUPLICATE/MERGE/SUPERSEDED/REFINEMENT/REGRESSION), while a disputed mapping involving a non-sameness relationship is retained (preserving the disputed-MERGE fixture).",
@@ -291,9 +433,13 @@
       ]
     },
     "relationship_whitelist": "Relationship enum is the single source of truth (auto-derived _VALID_RELATIONSHIPS); unknown relationships are rejected with RECONCILIATION_UNKNOWN_RELATIONSHIP rather than silently accepted.",
-    "wbc_refs": ["CF-A382BC367FE012D670E5", "CF-E5AA1ECA27CD4A35ABDE", "CF-166416F061CB2C297F54", "CF-B47E042A7E92DCCFCBDD"]
+    "wbc_refs": [
+      "CF-A382BC367FE012D670E5",
+      "CF-E5AA1ECA27CD4A35ABDE",
+      "CF-166416F061CB2C297F54",
+      "CF-B47E042A7E92DCCFCBDD"
+    ]
   },
-
   "action_coverage_proof": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -308,7 +454,6 @@
       ]
     }
   },
-
   "gate_claim_compatibility_map": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -316,7 +461,10 @@
     "complement_invariant": "adjacent_text_matches == (not no_adjacent_text_match) for the same iteration",
     "compatibility_aliases": {
       "recurring_critiques": "deprecated exact-text adjacency alias populated from adjacent_text_matches; NOT semantic recurrence",
-      "wbc_refs": ["CF-F9C1BD1EC0B1367D4CEA", "CF-D6BAD9434FDBACF02C4B"]
+      "wbc_refs": [
+        "CF-F9C1BD1EC0B1367D4CEA",
+        "CF-D6BAD9434FDBACF02C4B"
+      ]
     },
     "proof": {
       "source_gate_projection": "arnold/critique_ledger/semantic_loop.py::project_gate_input",
@@ -337,7 +485,6 @@
       ]
     }
   },
-
   "wbc_receipts": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -349,7 +496,13 @@
       "contract_to_producer_matrix_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
       "matrices_modified_by_cl4": false
     },
-    "authorized_producer_scope": ["codex", "hermes", "shannon", "claude", "parallel_critique_reducer"],
+    "authorized_producer_scope": [
+      "codex",
+      "hermes",
+      "shannon",
+      "claude",
+      "parallel_critique_reducer"
+    ],
     "receipts": {
       "source": "arnold_pipelines/megaplan/orchestration/critique_custody.py",
       "source_sha256": "bef51b0af581e9b3a71d57262415455aade8bd72a65aa214c25b97764e604d08",
@@ -369,7 +522,6 @@
       ]
     }
   },
-
   "negative_authority_results": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -392,7 +544,6 @@
       ]
     }
   },
-
   "m6_semantic_loop_replay": {
     "status": "accepted",
     "evidence_marker": "accepted",
@@ -410,7 +561,6 @@
       ]
     }
   },
-
   "backup_restore_prerequisites": {
     "status": "confirmed_bridge_mode_retained",
     "contract": "Backup and restore procedures required before CL5 consumes CL4 output for cutover. The SQLite WAL database remains the single source of truth for persisted ledger events; restore must preserve atomicity and be re-replayable. CL4 adds append-only reconciliation/disposition judgment artifacts that are rebuildable and carry no positive authority; they must be restorable alongside the ledger.",
@@ -425,7 +575,7 @@
     ],
     "restore_hash_verification": {
       "status": "accepted",
-      "statement": "On restore, re-run replay_full against the restored occurrence/reconciliation/disposition events and confirm content-determinism: the semantic_loop source hash (f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb) and the recorded schema entries must still reproduce identical custody/reconciliation/disposition/manifest/briefing/reviser/gate projections across retries (test_retry_replay_is_content_deterministic). Because CL4 is bridge_mode=true, a successful restore re-replay proves determinism only — it does NOT grant canonical gate authority.",
+      "statement": "On restore, re-run replay_full against the restored occurrence/reconciliation/disposition events and confirm content-determinism: the semantic_loop source hash (f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb) and the recorded schema entries must still reproduce identical custody/reconciliation/disposition/manifest/briefing/reviser/gate projections across retries (test_retry_replay_is_content_deterministic). Because CL4 is bridge_mode=true, a successful restore re-replay proves determinism only \u2014 it does NOT grant canonical gate authority.",
       "determinism_proof_test": "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_retry_replay_is_content_deterministic"
     }
   }

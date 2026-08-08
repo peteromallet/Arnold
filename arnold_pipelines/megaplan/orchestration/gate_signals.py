@@ -442,15 +442,16 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
             "weighted_score": weighted_score,
             "weighted_history": weighted_history,
             "plan_delta_from_previous": plan_delta,
-            "recurring_critiques": adjacent_text_matches,
-            # CL4 (Plan Step 8): exact-text adjacency split + reconciliation-
-            # grounded recurrence + BRIDGE-mode in-band markers.
-            # ``adjacent_text_matches`` is informational (the exact-text
-            # overlap); ``no_adjacent_text_match`` is its boolean complement;
-            # ``semantic_recurrence`` is True only when reconciliation evidence
-            # (DUPLICATE/REFINEMENT/MERGE) supports it. ``recurring_critiques``
-            # above is the deprecated alias populated from
-            # adjacent_text_matches for the six legacy consumers.
+            # CL4 (Plan Step 8) / CL5 (Plan Step 7b): exact-text adjacency
+            # split + reconciliation-grounded recurrence + BRIDGE-mode in-band
+            # markers. ``adjacent_text_matches`` is informational (the exact-
+            # text overlap); ``no_adjacent_text_match`` is its boolean
+            # complement; ``semantic_recurrence`` is True only when
+            # reconciliation evidence (DUPLICATE/REFINEMENT/MERGE) supports it.
+            # The deprecated ``recurring_critiques`` output alias was retired
+            # in CL5 Step 7b; the internal ``compute_recurring_critiques``
+            # function remains as the implementation of
+            # ``compute_adjacent_text_matches`` (a cosmetic naming detail).
             "adjacent_text_matches": adjacent_text_matches,
             "no_adjacent_text_match": no_adjacent_text_match,
             "semantic_recurrence": semantic_recurrence,

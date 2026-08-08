@@ -71,6 +71,16 @@
     }
   },
   "unresolved_evidence": [],
+  "repository_subject_head_diagnostic": {
+    "cl5_t5_action": "m5_must_be_rerun",
+    "determination": "Evidence does NOT remain valid at the current committed subject. The three bound sprint completion_verdict.json artifacts (sprint-1, sprint-2, sprint-3) are unrecoverable — they were never present in any commit in the entire git history (verified across 11,364+ commits) and cannot be regenerated from retained sprint definitions. The bound_artifacts entries claim exists:true with attested SHA-256 hashes, but no matching content exists anywhere.",
+    "repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+    "is_ancestor_of_current_head": true,
+    "current_head": "a866d0e753748f64366e7bbb3a39f2fd92beec0f",
+    "lineage_assessment": "The subject head is a confirmed ancestor of current HEAD (lineage is valid), but the bound evidence at the subject head is permanently incoherent because the 3 sprint verdict files never existed at any commit. repository_subject_head cannot be advanced with an approval because there is no subject at which the evidence is valid.",
+    "verdict": "M5 must be rerun. The sprint completion_verdict.json artifacts must be regenerated through the completion-contract providers and re-bound to a new subject head before M6 prerequisites can be satisfied.",
+    "generated_prerequisite_json_not_edited": true
+  },
   "notes": [
     "Receipts were regenerated through completion-contract providers, not edited.",
     "The canonical completion manifest was generated through `megaplan chain manifest` and copied byte-semantically into this handoff.",

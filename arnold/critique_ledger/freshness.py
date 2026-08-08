@@ -26,9 +26,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
-from arnold.critique_ledger.schemas import EvidenceAvailability, ParseStatus
+from arnold.critique_ledger.schemas import (
+    CritiqueOccurrenceEnvelope,
+    EvidenceAvailability,
+    FindingDispositionEvent,
+    FindingReconciliationEvent,
+    ParseStatus,
+    canonical_hash,
+)
 from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
 from arnold.workflow.execution_attempt_ledger import AttemptEventType
 
@@ -54,6 +61,11 @@ _AUTHORITY_NEUTRAL_IGNORED_FIELDS: frozenset[str] = frozenset(
 REASON_TOMBSTONED = "tombstoned"
 REASON_UNAVAILABLE = "unavailable"
 REASON_OBSERVATION_EXCEEDED_MAX_AGE = "observation_exceeded_max_age"
+# Advisory staleness reason: the stored briefing input hash no longer matches
+# the freshly computed hash over the same input sources.  This reason is
+# advisory-only — it flags that inputs have mechanically changed but it never
+# confers, implies, or substitutes for positive admission authority.
+REASON_INPUT_HASH_DIVERGED = "input_hash_diverged"
 
 
 @dataclass(frozen=True)
@@ -131,6 +143,121 @@ def _classify_staleness(
         if age is not None and age > max_age_seconds:
             return True, REASON_OBSERVATION_EXCEEDED_MAX_AGE
     return False, ""
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Canonical input hashing — advisory staleness primitive
+# ══════════════════════════════════════════════════════════════════════════
+#
+# The functions below compute a deterministic content hash over the three
+# briefing input sources (occurrence envelopes, reconciliation events, and
+# disposition events) and compare a stored hash to a freshly computed hash to
+# classify advisory staleness.
+#
+# CRITICAL INVARIANT: input-hash staleness is strictly advisory.  It records
+# that the mechanical content of the inputs has changed since a hash was
+# captured; it NEVER confers, implies, or substitutes for positive admission
+# authority.  ``InputStalenessVerdict`` exposes no authority field and the
+# comparison functions never read authority-like markers.  This invariant is
+# guarded by ``test_input_staleness_never_grants_authority``.
+
+
+@dataclass(frozen=True)
+class InputStalenessVerdict:
+    """Advisory input-change staleness verdict — never authority.
+
+    Fields:
+        is_stale: True when the stored input hash diverges from the
+            freshly computed hash (or when a stored hash is absent while a
+            current hash is present).
+        stored_hash: the input hash captured at briefing/persistence time;
+            empty string when none was recorded.
+        current_hash: the freshly computed canonical hash over the supplied
+            input sources.
+        staleness_reason: ``REASON_INPUT_HASH_DIVERGED`` when ``is_stale``;
+            empty string when fresh.
+
+    There is deliberately no authority field.  Setting staleness here never
+    opens, admits, or authorises anything; it only flags mechanical divergence
+    for an advisory consumer.
+    """
+
+    is_stale: bool
+    stored_hash: str
+    current_hash: str
+    staleness_reason: str = ""
+
+
+def compute_input_hash(
+    occurrences: Sequence[Any],
+    reconciliations: Sequence[Any],
+    dispositions: Sequence[Any],
+) -> str:
+    """Compute the canonical briefing-input content hash.
+
+    The hash is taken over three ordered sources, each sorted by canonical hash
+    so that set-equivalent inputs (regardless of caller ordering) hash
+    identically.  The sources are:
+
+      * ``occurrences``: ``CritiqueOccurrenceEnvelope`` instances or envelope
+        dicts.
+      * ``reconciliations``: ``FindingReconciliationEvent`` instances or dicts.
+      * ``dispositions``: ``FindingDispositionEvent`` instances or dicts.
+
+    Returns the SHA-256 hex digest (``canonical_hash`` over a frozen tuple).
+    The hash is independent of any authority field carried on the inputs:
+    dataclass field order is canonicalised by ``freeze_for_hashing`` and dict
+    inputs are normalised by ``canonical_hash``.
+    """
+    return canonical_hash(
+        (
+            "briefing_input_set_v1",
+            tuple(sorted(_source_hash(o) for o in occurrences)),
+            tuple(sorted(_source_hash(r) for r in reconciliations)),
+            tuple(sorted(_source_hash(d) for d in dispositions)),
+        )
+    )
+
+
+def _source_hash(item: Any) -> str:
+    """Canonical hash for a single input source item.
+
+    Accepts the frozen dataclass instances defined in ``schemas`` or a plain
+    dict (e.g. an envelope payload read from the ledger).
+    """
+    return canonical_hash(item)
+
+
+def compare_input_hashes(
+    stored_hash: str,
+    occurrences: Sequence[Any],
+    reconciliations: Sequence[Any],
+    dispositions: Sequence[Any],
+) -> InputStalenessVerdict:
+    """Classify advisory staleness from a stored vs current input hash.
+
+    Args:
+        stored_hash: the input hash captured when the briefing/evidence was
+            built.  Empty string or ``None`` means no stored hash was recorded.
+        occurrences/reconciliations/dispositions: the current briefing input
+            sources.
+
+    Returns an ``InputStalenessVerdict``.  Staleness is flagged when the stored
+    hash is non-empty and diverges from the freshly computed hash.  This is
+    advisory-only: the verdict carries no authority and never opens or admits
+    anything by itself.
+    """
+    current = compute_input_hash(occurrences, reconciliations, dispositions)
+    stored = stored_hash or ""
+    # No stored hash → we cannot assert divergence; treat as fresh (no authority
+    # is granted either way — the verdict has no authority field).
+    diverged = bool(stored) and stored != current
+    return InputStalenessVerdict(
+        is_stale=diverged,
+        stored_hash=stored,
+        current_hash=current,
+        staleness_reason=REASON_INPUT_HASH_DIVERGED if diverged else "",
+    )
 
 
 class FreshnessTracker:
@@ -259,9 +386,13 @@ class FreshnessTracker:
 
 
 __all__ = [
+    "REASON_INPUT_HASH_DIVERGED",
     "REASON_OBSERVATION_EXCEEDED_MAX_AGE",
     "REASON_TOMBSTONED",
     "REASON_UNAVAILABLE",
     "FreshnessTracker",
     "FreshnessVector",
+    "InputStalenessVerdict",
+    "compare_input_hashes",
+    "compute_input_hash",
 ]

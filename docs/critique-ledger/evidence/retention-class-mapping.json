@@ -122,6 +122,21 @@
       "tombstone": "marker_tombstone when source repo is unavailable",
       "reopen_behavior": "Reopen requires preserved repository at exact source revision",
       "rationale": "The corpus is the frozen M6 evidence — must be retained for audit but with path redaction to prevent workspace leakage."
+    },
+    {
+      "evidence_class": "recovery_bundle",
+      "description": "Composite cutover recovery bundle aggregating the seven retained evidence classes needed to reconstruct the critique ledger state across the live operator cutover: critique_prompts_and_completions, critique_occurrence_envelopes, finding_reconciliation_events, finding_disposition_events, domain_briefing_envelopes, ledger_revision_manifests, and m6_corpus_fixture.",
+      "retention_mode": "audit",
+      "redaction_mode": "none",
+      "privacy_class": "restricted",
+      "retention_class": "audit",
+      "encryption": "field_level_encryption",
+      "access": "restricted to critique_ledger owner domain and authorized recovery operators during cutover window",
+      "availability": "RETAINED (composite of constituents per their own policies)",
+      "expiry": "audit lifetime (permanent until explicit tombstone)",
+      "tombstone": "explicit authority tombstone required",
+      "reopen_behavior": "Reopen requires re-deriving the composite bundle from the complete constituent event chain under owner-domain authority",
+      "rationale": "The recovery bundle is the single auditable object that lets a cutover operator rebuild critique ledger state from its authoritative constituents. Its lifetime is permanent until an explicit tombstone because every constituent is audit-class; field-level encryption protects sensitive rationale/prompt fields while permitting structural audit of the aggregate. Access is restricted to the owner domain and explicitly authorized recovery operators during the cutover window — the bundle is never exposed beyond that window without a fresh authority grant."
     }
   ],
   "cross_reference": {
@@ -132,6 +147,20 @@
       "DomainBriefingEnvelope",
       "LedgerRevisionManifest"
     ],
+    "composite_evidence_classes": {
+      "recovery_bundle": {
+        "description": "Composite cutover recovery bundle for critique ledger state reconstruction.",
+        "constituents": [
+          "critique_prompts_and_completions",
+          "critique_occurrence_envelopes",
+          "finding_reconciliation_events",
+          "finding_disposition_events",
+          "domain_briefing_envelopes",
+          "ledger_revision_manifests",
+          "m6_corpus_fixture"
+        ]
+      }
+    },
     "wbc_enums_used": {
       "RetentionMode": ["run", "audit"],
       "RedactionMode": ["default_on", "none"],
