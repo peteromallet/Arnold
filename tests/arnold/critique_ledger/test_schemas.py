@@ -16,12 +16,18 @@ from arnold.critique_ledger.schemas import (
     BRIEFING_BUDGETS,
     SCHEMA_VERSION,
     CritiqueOccurrenceEnvelope,
+    DispositionFamily,
     DomainBriefingEnvelope,
     FindingDispositionEvent,
     FindingReconciliationEvent,
     LedgerRevisionManifest,
+    Relationship,
     canonical_hash,
     freeze_for_hashing,
+)
+from arnold.critique_ledger.semantic_loop import (
+    FailureMode,
+    apply_disposition_events,
 )
 
 # ── Paths ──────────────────────────────────────────────────────────────
@@ -320,6 +326,83 @@ class TestSchemaStructuralIntegrity:
         with pytest.raises(ValueError, match="Unknown budget_level"):
             DomainBriefingEnvelope.validate_budget("nonexistent", 1, 1)
 
+    # ── CL4 reconciliation relationship members (T1) ───────────────────
+
+    def test_new_relationship_members_serialize_to_canonical_values(self) -> None:
+        assert Relationship.MERGE.value == "MERGE"
+        assert Relationship.NEW.value == "NEW"
+        assert Relationship.UNRELATED.value == "UNRELATED"
+        assert Relationship.UNCERTAIN.value == "UNCERTAIN"
+
+    def test_relationship_has_twelve_members_after_cl4(self) -> None:
+        # 8 original + 4 CL4 additions = 12.
+        assert len(list(Relationship)) == 12
+
+    def test_new_relationship_values_roundtrip_in_reconciliation(self) -> None:
+        for rel in (
+            Relationship.MERGE.value,
+            Relationship.NEW.value,
+            Relationship.UNRELATED.value,
+            Relationship.UNCERTAIN.value,
+        ):
+            original = FindingReconciliationEvent(
+                reconciliation_id="rec-cl4",
+                relationship=rel,
+                reason="explicit evaluator judgment",
+            )
+            restored = FindingReconciliationEvent.from_dict(original.to_dict())
+            assert restored == original
+            assert restored.relationship == rel
+
+    # ── CL4 disposition family members and fields (T2) ─────────────────
+
+    def test_new_disposition_families_are_distinct_serialized_values(self) -> None:
+        assert DispositionFamily.RESOLVED_VERIFIED.value == "resolved-verified"
+        assert (
+            DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value
+            == "addressed-pending-verification"
+        )
+        # Legacy RESOLVED preserved verbatim, not aliased to the new member.
+        assert DispositionFamily.RESOLVED.value == "resolved"
+        assert (
+            DispositionFamily.RESOLVED_VERIFIED.value
+            != DispositionFamily.RESOLVED.value
+        )
+        assert (
+            DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value
+            != DispositionFamily.RESOLVED_VERIFIED.value
+        )
+
+    def test_evidence_limits_and_remaining_questions_roundtrip(self) -> None:
+        original = FindingDispositionEvent(
+            disposition_id="disp-cl4",
+            semantic_finding_id="sf-cl4",
+            family=DispositionFamily.RESOLVED_VERIFIED.value,
+            evidence_limits=["no-reproducer", "log-rotation-pending"],
+            remaining_questions=["does the fix hold under load?"],
+        )
+        data = original.to_dict()
+        assert data["evidence_limits"] == ["no-reproducer", "log-rotation-pending"]
+        assert data["remaining_questions"] == ["does the fix hold under load?"]
+        restored = FindingDispositionEvent.from_dict(data)
+        assert restored == original
+        assert restored.evidence_limits == ["no-reproducer", "log-rotation-pending"]
+        assert restored.remaining_questions == ["does the fix hold under load?"]
+
+    def test_disposition_new_fields_default_empty_for_backward_compat(self) -> None:
+        # Existing dispositions without the new CL4 fields round-trip unchanged.
+        legacy = FindingDispositionEvent(
+            disposition_id="disp-legacy",
+            semantic_finding_id="sf-legacy",
+            family=DispositionFamily.RESOLVED.value,
+        )
+        data = legacy.to_dict()
+        assert data["evidence_limits"] == []
+        assert data["remaining_questions"] == []
+        restored = FindingDispositionEvent.from_dict(data)
+        assert restored.evidence_limits == []
+        assert restored.remaining_questions == []
+
     # ── budget constants ──────────────────────────────────────────────
 
     def test_briefing_budgets_have_all_levels(self) -> None:
@@ -334,6 +417,358 @@ class TestSchemaStructuralIntegrity:
     def test_exhaustive_budget_is_unbounded(self) -> None:
         assert BRIEFING_BUDGETS["exhaustive"]["max_domains"] is None
         assert BRIEFING_BUDGETS["exhaustive"]["max_findings"] is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CL4 (Step 5): per-family disposition field-presence validation (T5)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestDispositionFamilyFieldPresence:
+    """Each of the seven non-closure disposition families must surface a
+    specific typed FailureMode when its required field is absent, while a
+    fully-specified disposition is accepted. UNKNOWN remains a valid
+    terminal judgment with no extra requirement.
+    """
+
+    # Minimal finding_map shared by every case: one finding with one
+    # occurrence so the orphan/coverage checks never fire.
+    _FINDING_MAP = {"sf-1": ["occ-1"]}
+
+    def _modes(self, result: dict) -> set[str]:
+        return {f["mode"] for f in result["failures"]}
+
+    # ── ACTED_ON requires action_taken + action_description ───────────
+
+    def test_acted_on_valid_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.ACTED_ON.value,
+            action_taken=True, action_description="patched the gate",
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+        assert result["family_counts"][DispositionFamily.ACTED_ON.value] == 1
+
+    def test_acted_on_without_action_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.ACTED_ON.value,
+            # action_taken defaults False; action_description defaults None
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.ACTED_ON_MISSING_ACTION.value in self._modes(result)
+
+    def test_acted_on_without_description_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.ACTED_ON.value,
+            action_taken=True,  # description still missing
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.ACTED_ON_MISSING_ACTION.value in self._modes(result)
+
+    # ── IGNORED requires reopen_predicate ─────────────────────────────
+
+    def test_ignored_valid_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.IGNORED.value,
+            reopen_predicate="revisit when X lands",
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+
+    def test_ignored_without_reopen_predicate_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.IGNORED.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.IGNORED_MISSING_REOPEN_PREDICATE.value in self._modes(result)
+
+    # ── DEFERRED requires reopen_predicate ────────────────────────────
+
+    def test_deferred_valid_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.DEFERRED.value,
+            reopen_predicate="revisit after dependency ships",
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+
+    def test_deferred_without_reopen_predicate_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.DEFERRED.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.DEFERRED_MISSING_REOPEN_PREDICATE.value in self._modes(result)
+
+    # ── ACCEPTED_RISK requires reopen_predicate (rationale) ───────────
+
+    def test_accepted_risk_valid_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="revisit when reproducer available",
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+
+    def test_accepted_risk_without_rationale_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.ACCEPTED_RISK.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.ACCEPTED_RISK_MISSING_RATIONALE.value in self._modes(result)
+
+    # ── REJECTED requires reason_subcode ──────────────────────────────
+
+    def test_rejected_valid_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.REJECTED.value,
+            reason_subcode="out-of-scope",
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+
+    def test_rejected_without_reason_subcode_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.REJECTED.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.REJECTED_MISSING_REASON_SUBCODE.value in self._modes(result)
+
+    # ── DUPLICATE requires a canonical-finding ref in metadata ────────
+
+    def test_duplicate_valid_with_canonical_ref_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.DUPLICATE.value,
+            metadata={"canonical_finding_id": "sf-canonical"},
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+
+    def test_duplicate_without_canonical_ref_fails(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.DUPLICATE.value,
+            metadata={},
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.DUPLICATE_MISSING_CANONICAL_REF.value in self._modes(result)
+
+    def test_duplicate_canonical_ref_alias_keys_accepted(self) -> None:
+        # The canonical-finding ref may be supplied under any recognized key.
+        for key in ("canonical_finding_id", "canonical_finding_ref", "canonical_ref"):
+            disp = FindingDispositionEvent(
+                disposition_id=f"d-{key}", semantic_finding_id="sf-1",
+                family=DispositionFamily.DUPLICATE.value,
+                metadata={key: "sf-canonical"},
+            )
+            result = apply_disposition_events(self._FINDING_MAP, [disp])
+            assert result["accepted"] is True, key
+
+    # ── UNKNOWN is a valid terminal judgment, no extra requirement ────
+
+    def test_unknown_valid_with_no_extra_fields_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.UNKNOWN.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+        # No field-presence failure should ever surface for UNKNOWN.
+        presence_modes = {
+            FailureMode.ACTED_ON_MISSING_ACTION.value,
+            FailureMode.IGNORED_MISSING_REOPEN_PREDICATE.value,
+            FailureMode.DEFERRED_MISSING_REOPEN_PREDICATE.value,
+            FailureMode.ACCEPTED_RISK_MISSING_RATIONALE.value,
+            FailureMode.REJECTED_MISSING_REASON_SUBCODE.value,
+            FailureMode.DUPLICATE_MISSING_CANONICAL_REF.value,
+        }
+        assert presence_modes.isdisjoint(self._modes(result))
+
+    # ── every missing field yields exactly its own FailureMode ────────
+
+    @pytest.mark.parametrize(
+        ("family", "failure_mode"),
+        [
+            (DispositionFamily.ACTED_ON.value, FailureMode.ACTED_ON_MISSING_ACTION.value),
+            (DispositionFamily.IGNORED.value, FailureMode.IGNORED_MISSING_REOPEN_PREDICATE.value),
+            (DispositionFamily.DEFERRED.value, FailureMode.DEFERRED_MISSING_REOPEN_PREDICATE.value),
+            (DispositionFamily.ACCEPTED_RISK.value, FailureMode.ACCEPTED_RISK_MISSING_RATIONALE.value),
+            (DispositionFamily.REJECTED.value, FailureMode.REJECTED_MISSING_REASON_SUBCODE.value),
+            (DispositionFamily.DUPLICATE.value, FailureMode.DUPLICATE_MISSING_CANONICAL_REF.value),
+        ],
+    )
+    def test_each_family_missing_field_yields_exact_failure_mode(
+        self, family: str, failure_mode: str,
+    ) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=family,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert failure_mode in self._modes(result)
+        # No OTHER field-presence mode leaks in.
+        other_presence = {
+            FailureMode.ACTED_ON_MISSING_ACTION.value,
+            FailureMode.IGNORED_MISSING_REOPEN_PREDICATE.value,
+            FailureMode.DEFERRED_MISSING_REOPEN_PREDICATE.value,
+            FailureMode.ACCEPTED_RISK_MISSING_RATIONALE.value,
+            FailureMode.REJECTED_MISSING_REASON_SUBCODE.value,
+            FailureMode.DUPLICATE_MISSING_CANONICAL_REF.value,
+        } - {failure_mode}
+        assert other_presence.isdisjoint(self._modes(result))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CL4 (Plan Step 6): closure-evidence enforcement, transition gating, and
+# reopen-predicate staleness flag (apply_disposition_events level).
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestClosureEvidenceAndReopenStaleness:
+    """Plan Step 6: RESOLVED_VERIFIED closure requires verification evidence,
+    pending->verified transitions are gated on the same evidence, and
+    reopen-predicate dispositions carry a deferred staleness flag.
+
+    The legacy ``RESOLVED`` value is intentionally not normalized inside
+    apply_disposition_events, so it keeps its existing apply-level behaviour
+    (closure enforced only by the replay_full backstop); only the new
+    ``RESOLVED_VERIFIED`` value carries the apply-level evidence requirement.
+    """
+
+    _FINDING_MAP = {"sf-1": ["occ-1"]}
+
+    def _modes(self, result: dict) -> set[str]:
+        return {f["mode"] for f in result["failures"]}
+
+    # ── RESOLVED_VERIFIED requires verification evidence (Step 6.1) ──────
+
+    def test_resolved_verified_without_evidence_is_rejected(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.RESOLVED_VERIFIED.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is False
+        assert FailureMode.CLOSURE_UNSUPPORTED.value in self._modes(result)
+
+    def test_resolved_verified_with_evidence_is_accepted(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.RESOLVED_VERIFIED.value,
+            evidence_refs=("verified-against-reproducer",),
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+        assert result["family_counts"][DispositionFamily.RESOLVED_VERIFIED.value] == 1
+
+    def test_resolved_verified_rejection_detail_names_evidence(self) -> None:
+        # Standalone (no preceding pending) rejection must NOT be framed as a
+        # transition; the detail names the evidence requirement directly.
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.RESOLVED_VERIFIED.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        closure = next(
+            f for f in result["failures"]
+            if f["mode"] == FailureMode.CLOSURE_UNSUPPORTED.value
+        )
+        assert "transition" not in closure["detail"].lower()
+        assert "evidence" in closure["detail"].lower()
+
+    # ── pending -> verified transition gating (Step 6.2) ────────────────
+
+    def test_pending_to_verified_without_evidence_is_gated(self) -> None:
+        pending = FindingDispositionEvent(
+            disposition_id="d-pending", semantic_finding_id="sf-1",
+            family=DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value,
+        )
+        verified = FindingDispositionEvent(
+            disposition_id="d-verified", semantic_finding_id="sf-1",
+            family=DispositionFamily.RESOLVED_VERIFIED.value,
+            # evidence_refs intentionally absent
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [pending, verified])
+        assert result["accepted"] is False
+        assert FailureMode.CLOSURE_UNSUPPORTED.value in self._modes(result)
+        closure = next(
+            f for f in result["failures"]
+            if f["mode"] == FailureMode.CLOSURE_UNSUPPORTED.value
+        )
+        # The transition is named explicitly in the failure detail.
+        assert "transition" in closure["detail"].lower()
+
+    def test_pending_to_verified_with_evidence_is_accepted(self) -> None:
+        pending = FindingDispositionEvent(
+            disposition_id="d-pending", semantic_finding_id="sf-1",
+            family=DispositionFamily.ADDRESSED_PENDING_VERIFICATION.value,
+        )
+        verified = FindingDispositionEvent(
+            disposition_id="d-verified", semantic_finding_id="sf-1",
+            family=DispositionFamily.RESOLVED_VERIFIED.value,
+            evidence_refs=("verified-against-reproducer",),
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [pending, verified])
+        assert result["accepted"] is True
+        # The later RESOLVED_VERIFIED overrides the pending entry.
+        assert result["disposition_map"]["sf-1"]["family"] == (
+            DispositionFamily.RESOLVED_VERIFIED.value
+        )
+
+    # ── legacy RESOLVED keeps apply-level behaviour (Step 6.3 split) ────
+
+    def test_legacy_resolved_not_enforced_at_apply_level(self) -> None:
+        # The legacy value is not normalized inside apply_disposition_events,
+        # so a legacy RESOLVED without evidence is accepted here and is only
+        # enforced by the replay_full closure backstop.
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.RESOLVED.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+        assert result["family_counts"][DispositionFamily.RESOLVED.value] == 1
+
+    # ── reopen-predicate staleness flag (Step 6.4) ──────────────────────
+
+    def test_reopen_predicate_sets_staleness_check_deferred_true(self) -> None:
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.IGNORED.value,
+            reopen_predicate="revisit when X lands",
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is True
+
+    def test_no_reopen_predicate_sets_staleness_check_deferred_false(self) -> None:
+        # UNKNOWN is a valid terminal judgment with no reopen_predicate.
+        disp = FindingDispositionEvent(
+            disposition_id="d", semantic_finding_id="sf-1",
+            family=DispositionFamily.UNKNOWN.value,
+        )
+        result = apply_disposition_events(self._FINDING_MAP, [disp])
+        assert result["accepted"] is True
+        assert result["disposition_map"]["sf-1"]["staleness_check_deferred"] is False
 
 
 # ══════════════════════════════════════════════════════════════════════

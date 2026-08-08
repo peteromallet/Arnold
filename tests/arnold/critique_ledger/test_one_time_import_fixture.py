@@ -385,6 +385,7 @@ def test_legacy_records_excluded_from_replay(seeded: Any) -> None:
             disposition_id="disp-anchor",
             semantic_finding_id="sf-anchor",
             family=DispositionFamily.ACCEPTED_RISK.value,
+            reopen_predicate="revisit when reproducer available",
             authority=Authority.EVALUATOR.value,
         ),
         idempotency_key="disp-anchor",
