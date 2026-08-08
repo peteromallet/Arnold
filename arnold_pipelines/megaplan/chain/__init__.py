@@ -3529,6 +3529,17 @@ def _append_completed_with_guard(
         if not ok:
             state.last_state = "authority_divergence"
             writer(f"[chain] completion guard blocked {label}: {reason}\n")
+            # Same repair seam as the terminal-authority path: record a
+            # plan-level rerun cursor so recover-blocked / execute can
+            # re-dispatch the genuinely-blocked tasks whose work landed but
+            # whose execution evidence was not corroborated.
+            if record.get("plan"):
+                try:
+                    _record_chain_authority_divergence_cursor(
+                        root, str(record["plan"]), reason, writer=writer
+                    )
+                except Exception:
+                    pass
             return False, reason
         if spec_path is not None and plan_dir is not None:
             from arnold_pipelines.megaplan.chain.wbc import (
