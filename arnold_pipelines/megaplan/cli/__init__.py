@@ -282,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
             "adopt-execution",
             "force-proceed",
             "recover-blocked",
+            "reconcile-plan-ledger",
             "replan",
             "resume-clarify",
             "set-model",
@@ -290,6 +291,9 @@ def build_parser() -> argparse.ArgumentParser:
             "set-vendor",
         ],
     )
+    override_parser.add_argument("--plan-version", dest="plan_version", type=int)
+    override_parser.add_argument("--replacement-sha256", dest="replacement_sha256")
+    override_parser.add_argument("--repair-ref", dest="repair_ref")
     override_parser.add_argument("--plan", required=False)
     override_parser.add_argument("--note")
     override_parser.add_argument("--source", default="user")

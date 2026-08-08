@@ -2035,6 +2035,62 @@ def _override_resume_clarify(
     return response
 
 
+def _override_reconcile_plan_ledger(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    """Append-only ledger repair for a drifted plan version (Sol Tier 1).
+
+    Records an audited reconciliation on plan_versions for the latest
+    recorded plan artifact whose on-disk content drifted from its attestation
+    (worker in-place mutation now forbidden by prompt contract).  Preserves
+    the original attestation; appends reconciliation metadata; requires the
+    current on-disk hash to equal the supplied replacement hash.
+    """
+    from arnold_pipelines.megaplan._core.plan_integrity import (
+        reconcile_drifted_plan_version,
+    )
+
+    version = getattr(args, "plan_version", None)
+    replacement_sha = getattr(args, "replacement_sha256", None)
+    reason = args.reason or "worker in-place mutation of plan artifact (prompt-fixed)"
+    repair_ref = getattr(args, "repair_ref", "") or ""
+    if not isinstance(version, int) or version < 1:
+        raise CliError(
+            "invalid_override",
+            "reconcile-plan-ledger requires --plan-version (int)",
+            valid_next=infer_next_steps(state),
+        )
+    if not isinstance(replacement_sha, str) or not replacement_sha.strip():
+        raise CliError(
+            "invalid_override",
+            "reconcile-plan-ledger requires --replacement-sha256",
+            valid_next=infer_next_steps(state),
+        )
+    result = reconcile_drifted_plan_version(
+        plan_dir=plan_dir,
+        state=state,
+        version=version,
+        replacement_sha256=replacement_sha.strip(),
+        expected_previous_sha256="",
+        reason=reason,
+        repair_ref=repair_ref,
+    )
+    from arnold_pipelines.megaplan.handlers.shared import save_state_merge_meta
+
+    save_state_merge_meta(plan_dir, state)
+    return {
+        "success": True,
+        "step": "override",
+        "override_action": "reconcile-plan-ledger",
+        "summary": (
+            f"reconciled plan_v{version} ledger attestation to on-disk "
+            f"content (append-only repair; previous hash preserved)"
+        ),
+        "reconciled": result,
+        "route_signal": "reconcile_plan_ledger",
+    }
+
+
 _OVERRIDE_ACTIONS: dict[
     str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]
 ] = {
@@ -2048,6 +2104,7 @@ _OVERRIDE_ACTIONS: dict[
     "set-profile": _override_set_profile,
     "set-model": _override_set_model,
     "set-vendor": _override_set_vendor,
+    "reconcile-plan-ledger": _override_reconcile_plan_ledger,
 }
 
 
