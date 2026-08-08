@@ -774,6 +774,18 @@ def write_critique_production_receipt(
     return _publish_receipt_create_once(receipt_path, receipt)
 
 
+def _plan_versions_from_state(plan_dir: Path) -> list[Mapping[str, Any]]:
+    """Read the plan_versions ledger from the plan state for custody validation."""
+    try:
+        payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return []
+    records = payload.get("plan_versions") if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return []
+    return [r for r in records if isinstance(r, Mapping)]
+
+
 def _validate_production_receipt(
     plan_dir: Path,
     receipt: Mapping[str, Any],
@@ -782,6 +794,7 @@ def _validate_production_receipt(
     expected_receipt_path: Path,
     expected_plan_artifact: str,
     allow_legacy_schema: bool = False,
+    plan_versions: list[Mapping[str, Any]] | None = None,
 ) -> None:
     issues: list[str] = []
     schema_version = receipt.get("schema_version")
@@ -835,8 +848,31 @@ def _validate_production_receipt(
             issues.append(f"source plan artifact is a symlink: {plan_name}")
         elif not plan_path.exists() or not plan_path.is_file():
             issues.append(f"missing source plan artifact {plan_name}")
-        elif receipt.get("plan_sha256") != sha256_file(plan_path):
-            issues.append(f"source plan artifact hash mismatch for {plan_name}")
+        else:
+            observed = sha256_file(plan_path)
+            receipt_sha = receipt.get("plan_sha256")
+            if receipt_sha != observed:
+                # Sol Tier 1 append-only ledger repair: when the latest plan
+                # artifact drifted from its attestation due to worker in-place
+                # mutation (now prompt-forbidden), the plan_versions record
+                # carries _reconciled_from = the ORIGINAL attestation and the
+                # reconciled hash = the current file content.  A custody
+                # receipt minted against the original attestation is valid
+                # when its plan_sha256 matches the preserved original, and the
+                # current file matches the reconciled hash.
+                if plan_versions is None:
+                    plan_versions = _plan_versions_from_state(plan_dir)
+                reconciled = False
+                for version in plan_versions or []:
+                    if (
+                        version.get("file") == plan_name
+                        and version.get("hash") == observed
+                        and version.get("_reconciled_from") == receipt_sha
+                    ):
+                        reconciled = True
+                        break
+                if not reconciled:
+                    issues.append(f"source plan artifact hash mismatch for {plan_name}")
     critique_name = receipt.get("critique_artifact")
     if isinstance(critique_name, str):
         critique_path = plan_dir / critique_name
