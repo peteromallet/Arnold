@@ -100,7 +100,7 @@ def reconcile_drifted_plan_version(
             },
         )
     previous_hash = target.get("hash")
-    target["hash"] = f"sha256:{observed}"
+    target["hash"] = observed if observed.startswith("sha256:") else f"sha256:{observed}"
     target["_reconciled_at"] = __import__("datetime").datetime.now(
         __import__("datetime").timezone.utc
     ).isoformat()
