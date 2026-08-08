@@ -5265,36 +5265,37 @@ def drive(
         # terminal-exiting with uncorroborated completion.  The chain's
         # fail-closed authority gate still refuses advancement until task
         # completion is corroborated; this only re-opens the recovery loop.
-        if (
-            state == STATE_DONE
-            and isinstance(state_payload.get("resume_cursor"), dict)
-            and state_payload["resume_cursor"].get("phase") == "execute"
-            and state_payload["resume_cursor"].get("retry_strategy") == "rerun_phase"
-        ):
-            log(
-                "done plan carries execute rerun cursor — re-opening execute for "
-                "blocked-task re-dispatch"
-            )
+        if state == STATE_DONE:
+            _rerun_cursor = None
             try:
-                from arnold_pipelines.megaplan.handlers.execute import apply_state_projection
-            except Exception:
-                apply_state_projection = None
-            if apply_state_projection is not None:
+                _rerun_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+                if isinstance(_rerun_payload, dict):
+                    _rerun_cursor = _rerun_payload.get("resume_cursor")
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                _rerun_cursor = None
+            if (
+                isinstance(_rerun_cursor, dict)
+                and _rerun_cursor.get("phase") == "execute"
+                and _rerun_cursor.get("retry_strategy") == "rerun_phase"
+            ):
+                log(
+                    "done plan carries execute rerun cursor — re-opening execute for "
+                    "blocked-task re-dispatch"
+                )
                 try:
-                    apply_state_projection(state_payload, STATE_FINALIZED, route_signal="rerun-execute")
                     write_plan_state(
                         plan_dir,
                         mode="patch-many",
                         patch={
                             "current_state": STATE_FINALIZED,
-                            "resume_cursor": state_payload["resume_cursor"],
+                            "resume_cursor": _rerun_cursor,
                         },
                         validate_current_state=False,
                     )
                     log("re-opened done plan to finalized for execute re-dispatch")
                     continue
-                except Exception:
-                    pass
+                except Exception as _reopen_err:
+                    log(f"failed to re-open done plan for execute: {_reopen_err}")
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (
