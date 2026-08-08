@@ -1,0 +1,389 @@
+{
+  "schema": "cl5.cutover-completion.v1",
+  "handoff_id": "cl5-cutover-completion",
+  "target_milestone": "CL5",
+  "source_milestone": "CL4",
+  "generated_at": "2026-08-08T20:50:00Z",
+  "generated_by": "CL5-T35 (epic-completion attestation)",
+  "repository_head": "88126770a44f9c62ec5052bed5e9e53bb04ab5e1",
+  "status": "evidence_complete_live_operator_cutover_deferred",
+  "description": "CL5 epic-completion attestation. Binds every milestone, handoff, source, M6, semantic-loop, backup, restore, WBC, import, smoke, receipt, and retirement evidence produced by the plan; records the exact North Star runtime binding, the single active target architecture, the bounded whole-cutover operator recovery procedure, and the unresolved operational facts. This handoff documents VERIFIED TOOLING AND BOUNDED RECOVERY; it does NOT assert that a live operator cutover executed. The live operator cutover is explicitly DEFERRED/PENDING under the active formal deferral CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable (accepted_for_cl2=false).",
+
+  "north_star_runtime": {
+    "binding": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+    "definition": "The exact editable runtime that the stopped r5 run actually imported (NORTHSTAR.md).",
+    "source_constant": "arnold/critique_ledger/cutover/config.py:NORTH_STAR_RUNTIME_HASH",
+    "enforcement": "validate_config() requires both CutoverConfig.source_revision and CutoverConfig.north_star_runtime_binding to equal d5848010695e28ddb9d9cbee8675d7ebe725caae; any other value fails closed (CutoverConfigError). Verified live: a config with source_revision=deadbeef was rejected, and a valid config validated successfully.",
+    "binding_sites": [
+      "evidence/m6-prerequisite-verification.json (WBC lineage + proof index re-derived at this exact runtime)",
+      "arnold/critique_ledger/cutover/config.py (NORTH_STAR_RUNTIME_HASH constant + validate_config)",
+      "arnold/critique_ledger/cutover/backup.py build_manifest (manifest binds north_star_runtime_binding)",
+      "arnold/critique_ledger/cutover/receipt.py generate_cutover_receipt (receipt binds north_star_runtime_binding)",
+      "arnold/critique_ledger/cutover/retire.py generate_retirement_proof (proof binds north_star_runtime_binding)"
+    ],
+    "note": "This is the central pin of the entire epic. It is recorded here verbatim because T35 requires the exact runtime; it is the value the deferred live cutover MUST run against, and the value the cutover config cannot be set away from."
+  },
+
+  "milestone_and_source_hashes": {
+    "handoffs": {
+      "cl1_contract_oracle": "docs/critique-ledger/handoffs/cl1-contract-oracle.json",
+      "cl2_ledger_replay": "docs/critique-ledger/handoffs/cl2-ledger-replay.json",
+      "cl3_routing_briefings": "docs/critique-ledger/handoffs/cl3-routing-briefings.json",
+      "cl4_role_flow": "docs/critique-ledger/handoffs/cl4-role-flow.json"
+    },
+    "generated_evidence": {
+      "m6_prerequisite_verification": {
+        "path": "evidence/m6-prerequisite-verification.json",
+        "schema": "m6.prerequisite-verification.v1",
+        "generator": "python3 tools/verify_m6_prerequisites.py",
+        "overall_status": "INCOHERENT",
+        "summary": {"pass": 6, "unknown": 2, "incoherent": 2, "blocked": 0, "total": 10},
+        "incoherent_checks": ["m5_final_attestation", "m5_bound_head_vs_current_head"],
+        "wbc_file_hashes": "PASS (after T6_impl rebind of WBC_INTEGRATION_COMMIT to intermediate commit 7cf0cab28c59d40614b9548fa4348ed7f062f52c)"
+      },
+      "m6_proof_index": {
+        "path": "evidence/m6-proof-index.json",
+        "schema": "m6.proof-index.v2",
+        "generator": "python3 tools/validate_m6_evidence.py",
+        "validation_passed": false,
+        "artifact_count_note": "15 artifacts; proof-index aggregates per-file content hashes recomputed from disk, WBC ancestry re-verified, incomplete prerequisites recorded as blockers."
+      }
+    },
+    "wbc_lineage": {
+      "ancestry_anchor": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+      "ancestry_parents": [
+        "7644f55dd9be75632670f990268e045d3ee1c2f7",
+        "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
+      ],
+      "ancestry_tool_pin": "tools/validate_m6_evidence.py constants pinned to 24afce00 (immutable historical merge identity)",
+      "file_hash_rebind_target": "7cf0cab28c59d40614b9548fa4348ed7f062f52c",
+      "file_hash_tool": "tools/verify_m6_prerequisites.py WBC_INTEGRATION_COMMIT advanced to intermediate consolidation commit 7cf0cab (a confirmed descendant of the ancestry anchor 24afce00)",
+      "coherence": "PASS — ancestry (historical merge) and file-hash (regression vs accepted baseline) intentionally use different commits; cross-tool descendant relationship verified (T7)."
+    },
+    "m6_corpus_fixture": {
+      "path": "tests/fixtures/critique_ledger/m6-corpus.json",
+      "schema": "cl.m6-corpus.v1",
+      "source_revision": "ea2be1fe36c42c4f19afedd2c096b5dcec7c56df"
+    }
+  },
+
+  "m6_results": {
+    "status": "fail_closed_not_converged",
+    "summary": "The M6 prerequisite gate and proof index were regenerated from their sources of truth in dependency order (verify_m6_prerequisites.py run BEFORE validate_m6_evidence.py). The gate did NOT converge: 2 of the 3 former INCOHERENT checks remain INCOHERENT and proof-index validation_passed=false. wbc_file_hashes is now PASS.",
+    "former_incoherent_resolution": {
+      "wbc_file_hashes": "PASS (resolved by T6_impl baseline rebind + T7 ancestry pinning/coherence)",
+      "m5_final_attestation": "INCOHERENT — the 3 bound sprint completion_verdict.json artifacts are permanently unrecoverable",
+      "m5_bound_head_vs_current_head": "INCOHERENT — M5 bound head is an ancestor of HEAD; evidence does not remain valid at the current subject; M5 must be rerun"
+    },
+    "convergence_point": "T8 fail-closed convergence: the formal CL1 deferral CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable was recorded (not bypassed). No prerequisite coherence check was weakened and no generated evidence file was hand-edited to force a pass."
+  },
+
+  "semantic_loop_results": {
+    "status": "implemented_and_advisory_only",
+    "input_hash_staleness": {
+      "primitive": "arnold/critique_ledger/freshness.py — canonical_hash over occurrence envelopes, reconciliation events, and disposition events",
+      "wiring": "arnold/critique_ledger/semantic_loop.py apply_disposition_events(input_hash=...) and replay_full compute_input_hash(...) at the production orchestrator call",
+      "semantics": "Advisory-only: divergence flags staleness (True); match confirms freshness (False, overriding the reopen_predicate heuristic); when input_hash is None or no stored baseline exists it falls back to bool(reopen_predicate) so replay/restoration paths are unchanged. Never confers authority (no-authority invariant verified).",
+      "resolves": "cl5_staleness_deferral"
+    },
+    "recurrence_migration": {
+      "status": "completed_additive_then_destructive",
+      "canonical_evaluators": ["adjacent_text_matches", "semantic_recurrence"],
+      "retired_alias": "recurring_critiques output alias removed from gate_signals.py; deprecated compute_recurring_critiques re-export removed from evaluation.py; critique_runtime.py migrated to canonical names; deprecated internal function retained only as a private implementation delegate (SD1/SD2 accepted)",
+      "grep_completeness_gate": "Run before any test deletion (Step 7b.3) and re-run after; every match across tests/, arnold/, arnold_pipelines/ classified.",
+      "resolves": "recurring_critiques_alias_migration_deferral"
+    },
+    "replay_and_projection_determinism": {
+      "tests": [
+        "tests/arnold/critique_ledger/test_m6_corpus.py::TestM6CorpusDeterminism (five rounds, deterministic ordering, dual hashing)",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_retry_replay_is_content_deterministic",
+        "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_projection_mismatch_is_detected"
+      ],
+      "note": "These tests exist on the cutover build and codify the deterministic-replay and projection-mismatch contracts (SC31/SC32/SC33). The harness performs authoritative post-execute verification; this handoff binds the contracts and test sites, not a live cutover run."
+    }
+  },
+
+  "backup_and_restore_proof": {
+    "backup": {
+      "module": "arnold/critique_ledger/cutover/backup.py",
+      "entrypoint": "create_cutover_backup(config, store, ...)",
+      "contract": "content-addressed tarball: per-file SHA-256, deterministic bundle hash (order-independent, re-derivable from manifest pairs alone), manifest binds config + north_star_runtime_binding; engages fence, drains/checkpoints WAL before snapshot.",
+      "tests": [
+        "tests/arnold/critique_ledger/test_cutover_backup.py::TestHashingPrimitives",
+        "tests/arnold/critique_ledger/test_cutover_backup.py::TestCheckpointWal",
+        "tests/arnold/critique_ledger/test_cutover_backup.py::TestCollectSnapshot",
+        "tests/arnold/critique_ledger/test_cutover_backup.py::TestManifest (manifest_binds_config_and_north_star_runtime_binding)",
+        "tests/arnold/critique_ledger/test_cutover_backup.py::TestCreateCutoverBackup",
+        "tests/arnold/critique_ledger/test_cutover_backup.py::TestIndependentReproduction (byte-reproducible tarball; tamper/missing/unlisted-member detection)"
+      ]
+    },
+    "restore": {
+      "module": "arnold/critique_ledger/cutover/restore.py",
+      "entrypoint": "restore_backup(tarball_path, target_dir, expected_config=config, cleanup_on_failure=True)",
+      "contract": "Four fail-closed gates in order: (1) archive gate verify_tarball BEFORE extraction, (2) extraction, (3) database gate PRAGMA integrity_check, (4) projection gate replay_projections requires bundle hash == manifest.bundle_sha256. cleanup_on_failure removes partial restores.",
+      "tests": [
+        "tests/arnold/critique_ledger/test_cutover_restore.py::TestRunIntegrityCheck",
+        "tests/arnold/critique_ledger/test_cutover_restore.py::TestExtractTarball (rejects path traversal)",
+        "tests/arnold/critique_ledger/test_cutover_restore.py::TestReplayProjections (mismatch/missing/extra/per-file-hash rejection)",
+        "tests/arnold/critique_ledger/test_cutover_restore.py::TestRestoreBackup (happy path; archive/db gates reject tampered/corrupt; binds expected config North Star runtime)"
+      ]
+    },
+    "isolated_restore_proof": {
+      "module": "arnold/critique_ledger/cutover/isolated_fixture.py",
+      "entrypoint": "isolated_restore_proof(...)",
+      "contract": "Restore to a temporary directory, invoke restore verification, and guard production database/artifact paths against any write or side effect (ProductionGuard snapshot+verify_guard_unchanged).",
+      "tests": [
+        "tests/arnold/critique_ledger/test_cutover_isolated_fixture.py::TestCollectProductionFiles",
+        "tests/arnold/critique_ledger/test_cutover_isolated_fixture.py::TestSnapshotGuard",
+        "tests/arnold/critique_ledger/test_cutover_isolated_fixture.py::TestVerifyGuardUnchanged (content/mtime/delete/new-file detection)",
+        "tests/arnold/critique_ledger/test_cutover_isolated_fixture.py::TestIsolatedRestoreProof (happy path no production mutation; restore target is temp not production; corrupt backup raises and leaves production clean)"
+      ]
+    }
+  },
+
+  "wbc_receipts": {
+    "status": "contract_bound_constants_declared_off",
+    "ownership_record": "evidence/ownership-decision-record.json (Run Authority M1–M3 receipts bound by CL5-T9; ownership_checks_all_pass=false because the 3 bound sprint completion_verdict.json artifacts are permanently unrecoverable — 4 ownership blockers remain)",
+    "owner_matrix": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+    "bridge_constants": {
+      "gate_signals": "arnold_pipelines/megaplan/orchestration/gate_signals.py:74 CL4_BRIDGE_MODE = False",
+      "critique_custody": "arnold_pipelines/megaplan/orchestration/critique_custody.py:73 CL4_BRIDGE_MODE = False",
+      "carried_blockers_constant": "arnold_pipelines/megaplan/orchestration/critique_custody.py:75 CL4_CARRIED_BLOCKERS = ()",
+      "verified_live": "Both constants imported and asserted False at attestation time."
+    },
+    "note": "The code declares the non-bridge build target and production receipts carry bridge_mode=false by construction. However the active formal deferral keeps CL4 operationally in bridge/limitation mode (accepted_for_cl2=false): a non-bridge code constant does not grant canonical authority while the prerequisite blockers are unresolved."
+  },
+
+  "import_and_coverage_counts": {
+    "source_handoff": "docs/critique-ledger/handoffs/cl2-ledger-replay.json::import_map",
+    "model": "filter-and-tag (North Star immutability forbids version rewriting); legacy records are NEVER upgraded to cl.schema.v1",
+    "input": "r5 NDJSON, one JSON object per line",
+    "stable_event_id": "legacy-{epoch}-{canonical_sha256_digest(record)} (epoch-prefixed canonical SHA-256)",
+    "idempotency_key": "legacy_historical:{epoch}:{digest}",
+    "missing_evidence_labelling": "explicit legacy_unknown for semantics that cannot be reconstructed (no historical semantic invention)",
+    "replay_determinism": "canonical_hash(manifest) and canonical_hash(briefing) identical across replays (byte-equivalence)",
+    "note": "The one-time import is exercised by the cutover smoke and isolated-restore tests against a corpus-shaped store. No live production import has run (live operator cutover deferred)."
+  },
+
+  "cutover_and_smoke_receipts": {
+    "live_operator_cutover_receipt": {
+      "issued": false,
+      "status": "not_issued_deferred_pending",
+      "reason": "The operational cutover (plan Step 10 bridge unlock and the live switchover) MUST NOT run under the active formal deferral CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable. No production cutover receipt has been generated or activated."
+    },
+    "cutover_receipt_tooling": {
+      "module": "arnold/critique_ledger/cutover/receipt.py",
+      "entrypoint": "generate_cutover_receipt(...)",
+      "contract": "Binds source/target/schema/corpus/WBC/oracle/operator/backup/build hashes + North Star runtime binding + import counts + smoke results; content-addressed (content_hash covers all body keys); activation conditional on a verifying retirement proof; bridge_mode forced false on the receipt.",
+      "tests": [
+        "tests/arnold/critique_ledger/test_cutover_receipt.py::TestReceiptBinding (test_binds_every_prescribed_field_and_north_star)",
+        "tests/arnold/critique_ledger/test_cutover_receipt.py::TestBridgeModeForcedFalse",
+        "tests/arnold/critique_ledger/test_cutover_receipt.py::TestActivationConditionalOnRetirement (tampered/wrong-schema/wrong-source-revision/wrong-north-star proofs rejected)",
+        "tests/arnold/critique_ledger/test_cutover_receipt.py::TestContentHashCompleteness (any field mutation breaks content_hash; covers all body keys)"
+      ]
+    },
+    "healthy_smoke": {
+      "module_test": "tests/arnold/critique_ledger/test_cutover_smoke_healthy.py::TestHealthyCutoverSmoke",
+      "scenario": "quiesce -> backup -> import(restore)/replay -> oracle verification -> switch(override routing) -> retirement -> receipt -> custody checks -> WBC receipts -> resumed admission (against fixed corpus-shaped store, REAL cutover package, no import mocks)",
+      "tests": [
+        "test_full_healthy_lifecycle_traverses_every_stage_and_resumes_admission",
+        "test_admission_stays_closed_throughout_cutover_resumes_only_after_fence_clear",
+        "test_switch_cutover_registered_and_combined_authority_enforced",
+        "test_receipt_binds_north_star_and_wbc_and_forces_bridge_off"
+      ],
+      "deferred_orchestration_note": "The deferred run_cutover orchestration entry point is intentionally not yet built (cutover __init__ documents it as Phase 2+); the switch stage is exercised at its real wiring level (cutover action registered in _OVERRIDE_ACTIONS and control-routed in the override matrix with fail-closed combined-authority) without invoking the not-yet-built orchestration."
+    },
+    "failure_smoke": {
+      "module_test": "tests/arnold/critique_ledger/test_cutover_smoke_failure.py::TestFailClosedCutoverSmoke",
+      "scenario": "stale custody, missing/corrupt evidence, corrupt backup, projection divergence, wrong North Star binding, and missing/tampered/pending retirement proofs keep admission closed and select bounded recovery; no partial target state is activated.",
+      "tests": [
+        "test_wrong_north_star_binding_keeps_admission_closed",
+        "test_corrupt_backup_selects_bounded_restore_recovery",
+        "test_projection_divergence_selects_bounded_recovery",
+        "test_stale_custody_manifest_binding_selects_bounded_recovery",
+        "test_missing_retirement_proof_keeps_target_inactive",
+        "test_tampered_retirement_proof_keeps_target_inactive",
+        "test_pending_retirement_proof_keeps_target_inactive",
+        "test_no_failure_emits_active_target_receipt",
+        "test_corrupt_backup_via_database_gate_selects_bounded_recovery"
+      ]
+    }
+  },
+
+  "retired_path_inventory": {
+    "module": "arnold/critique_ledger/cutover/retire.py",
+    "inventory": "build_inventory() enumerates the replaced writers/readers/bridge/adapter components; the active producer target is RETAINED, the rest are hard-disabled/retired.",
+    "active_target_module": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+    "hard_disable_guard": "_verify_hard_disable() asserts CL4_BRIDGE_MODE=False in both gate_signals.py and critique_custody.py and a valid CutoverConfig before retire_legacy_path() succeeds.",
+    "tests": [
+      "tests/arnold/critique_ledger/test_cutover_retire.py::TestInventory (test_inventory_retires_bridge_and_legacy_readers; test_inventory_retains_critique_runtime_as_active_target)",
+      "tests/arnold/critique_ledger/test_cutover_retire.py::TestRetireLegacyPath (succeeds when bridge disabled + config valid; fails when either bridge constant not disabled)",
+      "tests/arnold/critique_ledger/test_cutover_retire.py::TestRetirementProof (proof structure + North Star binding; error propagation when bridge enabled)"
+    ],
+    "operational_state": "declared_target_not_operationally_active — the retirement inventory and proof are defined and tested, but the live operational retirement has NOT executed (live operator cutover deferred)."
+  },
+
+  "override_dispatch_proof": {
+    "scope": "T31 — cutover override dispatch on both feature-flag paths against the completed package",
+    "matrix": "cutover is registered in _OVERRIDE_ACTIONS and control-routed in the override matrix (12-key closed matrix) with combined run_authority + maintenance boundary (workflow.route_binding)",
+    "tests": [
+      "tests/arnold_pipelines/megaplan/test_override_matrix_cutover.py::TestCutoverRegistration (registered; control-routed)",
+      "tests/arnold_pipelines/megaplan/test_override_matrix_cutover.py::TestDefaultDispatchRoutingOff (no authority -> cutover_authority_missing, NOT invalid_override; user_approved or repair_queue alone insufficient)",
+      "tests/arnold_pipelines/megaplan/test_override_matrix_cutover.py::TestRoutedDispatchRoutingOn (identical fail-closed behavior)",
+      "tests/arnold_pipelines/megaplan/test_override_matrix_cutover.py::TestIdenticalCombinedAuthority (both paths raise same code; neither path ever raises invalid_override for cutover)",
+      "tests/arnold_pipelines/megaplan/test_override_action_matrix.py (12-key completeness; cutover is terminal route + control-routed + records combined authority)"
+    ],
+    "quiesce_drain_drain_map": {
+      "quiesce": "tests/arnold/critique_ledger/test_cutover_quiesce.py (engages fence; idempotent; rejects new admissions; preserves cutover_in_progress across store reopen/crash)",
+      "drain_map": "tests/arnold/critique_ledger/test_cutover_drain_map.py (all 11 AttemptEventType classified exactly once; category counts 3 terminal / 7 nonterminal-indeterminate / 1 PERSISTENCE_FAILED fail-closed-indeterminate; verified live)",
+      "drain": "marks remaining attempts INDETERMINATE across crash after timeout; PERSISTENCE_FAILED resolves to fail-closed-indeterminate"
+    }
+  },
+
+  "custody_and_clearance_propagation_proof": {
+    "scope": "T34 — finalize-custody bridge denial and clearance propagation",
+    "tests": [
+      "tests/orchestration/test_critique_custody.py::test_finalize_custody_denies_canonical_authority_for_bridge_receipt (bridge=true denied)",
+      "tests/orchestration/test_critique_custody.py::test_all_false_clearance_chain_grants_canonical_authority (all-false acceptance variant)",
+      "tests/orchestration/test_critique_custody.py::test_clearance_propagates_bridge_mode_from_source_receipts (bridge_mode=false at cutover; mixed stale-receipt denial)",
+      "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receipt",
+      "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance",
+      "tests/orchestration/test_critique_custody.py::test_production_receipt_carries_bridge_mode_and_carried_blockers"
+    ],
+    "scoped_negative_authority": {
+      "scope": "T32 — m9 authority files as one scoped selector, M6 corpus, and semantic-loop failure selectors for deterministic replay and projection mismatch",
+      "m9_files": [
+        "tests/m9/test_negative_authority_source.py",
+        "tests/m9/test_positive_authorization_traps.py",
+        "tests/m9/test_reader_inventory_authority.py",
+        "tests/m9/test_bypass_gating.py"
+      ],
+      "note": "Commands and outcomes recorded by T32 without changing historical fixtures. One pre-existing failure was recorded by T32 (tests/m9/test_bypass_gating.py::test_drift_related_bypass_sites_keep_drift_visible_as_typed_evidence scans cloud-wrapper shell scripts outside T32's write set) and is treated as baseline, not a regression introduced by CL5."
+    }
+  },
+
+  "single_active_target": {
+    "target": "arnold_pipelines.megaplan.orchestration.critique_runtime (the critique_ledger path is the sole supported producer target; the bridge/legacy readers path is retired in the inventory and CL4_BRIDGE_MODE=False is declared in code)",
+    "declared_build_target": "non-bridge (gate_signals.py:74 and critique_custody.py:73 CL4_BRIDGE_MODE=False; critique_custody.py:75 CL4_CARRIED_BLOCKERS=())",
+    "operational_state": "declared_target_not_operationally_active",
+    "rationale": "Single target = there is exactly one supported critique-loop architecture going forward (the critique_ledger), not a dual-bridge architecture. This is an architectural-convergence statement, NOT a claim that the live production switchover executed."
+  },
+
+  "single_target_architecture_active": {
+    "value": true,
+    "meaning": "The architecture has converged to ONE supported target (the critique_ledger / critique_runtime path); the replaced writers/readers/flags/fallbacks are retired in the retirement inventory and CL4_BRIDGE_MODE is declared false in code. This satisfies the done-criterion of architectural convergence to a single target.",
+    "scope_note": "IMPORTANT: single_target_architecture_active=true means 'one supported target architecture' (architectural convergence). It is SEPARATE from and does NOT imply that a live operator cutover ran.",
+    "live_operator_cutover": {
+      "executed": false,
+      "status": "deferred_pending",
+      "blocking_deferral": "CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable",
+      "accepted_for_cl2_value": false,
+      "statement": "The live operator cutover has NOT occurred. The operational bridge unlock (plan Step 10) MUST NOT run; accepted_for_cl2 remains false. Admission to the live target is not resumed. The cutover is deferred to a new chain run that re-derives M5 attestations."
+    }
+  },
+
+  "bounded_operator_recovery_commands": {
+    "procedure_source": "state.idea :: Bounded recovery procedure",
+    "rule": "Recovery is allowed ONLY during the cutover window and operates on the COMPLETE cutover, never on individual consumption boundaries. On any failed integrity or smoke check: stop admission; preserve the failed append-only evidence; restore the verified pre-cutover bundle and the single prior runtime/config revision; rebuild projections; verify hashes and WBC receipts; record the failed cutover. Do NOT resume on a partially mixed state or declare convergence. A second cutover requires a new reviewed receipt against a corrected revision.",
+    "commands": [
+      {
+        "step": 1,
+        "action": "Quiesce admission and mark in-flight attempts indeterminate",
+        "invoke": "PYTHONPATH=. python3 -c \"from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore; from arnold.critique_ledger.cutover.quiesce import quiesce, drain; s=SqliteAttemptLedgerStore(db_path); q=quiesce(s); drain(s, timeout=<window>)\"",
+        "invariant": "cutover_in_progress fence rejects new admissions and survives store reopen/crash"
+      },
+      {
+        "step": 2,
+        "action": "Create the content-addressed pre-cutover backup",
+        "invoke": "PYTHONPATH=. python3 -c \"from arnold.critique_ledger.cutover.backup import create_cutover_backup; create_cutover_backup(config, store, artifact_dirs=[...], output_path=<tarball>)\"",
+        "invariant": "manifest binds config + north_star_runtime_binding; bundle hash re-derivable from manifest pairs"
+      },
+      {
+        "step": 3,
+        "action": "Verify and restore to an isolated temp directory (NOT production)",
+        "invoke": "PYTHONPATH=. python3 -c \"from arnold.critique_ledger.cutover.restore import restore_backup; restore_backup(<tarball>, <temp_dir>, expected_config=config, cleanup_on_failure=True)\"",
+        "invariant": "archive gate -> extraction -> integrity_check -> projection hash == manifest.bundle_sha256; partial restore cleaned up on failure"
+      },
+      {
+        "step": 4,
+        "action": "Prove the restore touches no production state",
+        "invoke": "PYTHONPATH=. python3 -c \"from arnold.critique_ledger.cutover.isolated_fixture import isolated_restore_proof; isolated_restore_proof(<tarball>, production_db=<db>, production_artifact_dirs=[...], expected_config=config)\"",
+        "invariant": "ProductionGuard snapshot is unchanged before/after"
+      },
+      {
+        "step": 5,
+        "action": "Rebuild projections and re-verify hashes + WBC receipts",
+        "invoke": "PYTHONPATH=. python3 -c \"from arnold.critique_ledger.cutover.restore import replay_projections; replay_projections(<restored_dir>, <manifest>)\" && python3 tools/verify_m6_prerequisites.py && python3 tools/validate_m6_evidence.py",
+        "invariant": "projection bundle hash must equal manifest; prerequisite/proof-index must converge to PASS (currently INCOHERENT/false pending M5 re-run)"
+      },
+      {
+        "step": 6,
+        "action": "Record the (failed or successful) cutover receipt and retirement proof",
+        "invoke": "PYTHONPATH=. python3 -c \"from arnold.critique_ledger.cutover.receipt import generate_cutover_receipt; from arnold.critique_ledger.cutover.retire import retire_legacy_path, generate_retirement_proof\" — only after ALL gates pass and the retirement proof verifies; receipt activation requires the verifying retirement proof",
+        "invariant": "bridge_mode forced false on receipt; a failed cutover is recorded and admission stays closed"
+      }
+    ],
+    "current_state_caveat": "Because the M5 prerequisite gate has not converged (INCOHERENT) and the live cutover is deferred, steps 5–6 cannot reach PASS today. The recovery procedure above is the bounded, content-addressed path the operator follows once M5 is re-derived; it is NOT executable to convergence in the current repo state."
+  },
+
+  "unresolved_operational_facts": [
+    {
+      "fact": "M5 sprint completion_verdict.json artifacts permanently unrecoverable",
+      "detail": "The 3 bound artifacts (sprint-1-authority-freeze-and-20260710-1935, sprint-2-dispatch-grants-and-20260710-2200, sprint-3-consumer-migration-20260711-0130) were never present in any of 11,364+ commits and sprint definitions are also gone (CL5-T4).",
+      "impact": "m5_final_attestation INCOHERENT; ownership_checks_all_pass=false; accepted_for_cl2=false"
+    },
+    {
+      "fact": "M5 repository-subject head binding cannot be advanced",
+      "detail": "There is no subject at which the M5 evidence is valid; M5 must be rerun to re-bind to a new subject head (CL5-T5; cl5_t5_action=m5_must_be_rerun).",
+      "impact": "m5_bound_head_vs_current_head INCOHERENT; M5 bound head is an ancestor of HEAD"
+    },
+    {
+      "fact": "M6 prerequisite gate not converged",
+      "detail": "verify_m6_prerequisites.py overall_status=INCOHERENT (pass6/unknown2/incoherent2); validate_m6_evidence.py validation_passed=false.",
+      "impact": "proof-index validation_passed=false; M6 prerequisites INCOHERENT/BLOCKED — handoff must not be marked complete"
+    },
+    {
+      "fact": "3 carried blockers remain unresolved",
+      "detail": "m6_prerequisite_incoherent, proof_index_failed, ownership_blockers (4 ownership blockers in evidence/ownership-decision-record.json).",
+      "impact": "accepted_for_cl2=false; CL4 bridge_mode stays true operationally (limitation_not_resolved)"
+    },
+    {
+      "fact": "Live operator cutover has NOT executed",
+      "detail": "The operational bridge unlock (plan Step 10) is BLOCKED by CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable. No production cutover receipt issued; no admission resumed.",
+      "impact": "Production remains on the pre-cutover path; the single-target architecture is declared but not operationally activated"
+    },
+    {
+      "fact": "2 UNKNOWN nonblocking checks (informational)",
+      "detail": "activation_receipt_evidence and wbc_package_metadata remain UNKNOWN (nonblocking) in the prerequisite verification — recorded, not treated as success or failure evidence."
+    }
+  ],
+
+  "single_target_vs_live_cutover_statement": {
+    "what_is_true": "The CL5 plan produced the complete cutover TOOLING and EVIDENCE: a frozen content-hash-bound CutoverConfig, an exhaustive drain map, atomic quiesce/fence, content-addressed backup, four-gate restore, isolated-restore proof, content-addressed receipt, retirement inventory/proof, override dispatch on both paths, bridge-denial/clearance-propagation custody tests, the input-hash staleness wiring, and the recurrence migration. The single-target architecture is the one supported design and CL4_BRIDGE_MODE is declared false in code.",
+    "what_is_not_true": "A live operator cutover has NOT run. accepted_for_cl2 is false; the M5 prerequisite gate is INCOHERENT; the formal deferral is active; the operational bridge unlock and live switchover are deferred pending an M5 re-derivation. This handoff therefore attests lifecycle tooling/evidence completion and a bounded recovery path, NOT a live cutover result."
+  },
+
+  "done_criteria_assessment": [
+    {"criterion": "M6 reconstructs the five-occurrence semantic finding and retained replay limitation; replay/projection hashes deterministic on the cutover build", "status": "tooling_present_tests_codify", "evidence": "test_m6_corpus.py::TestM6CorpusDeterminism; test_semantic_loop_failures.py::test_retry_replay_is_content_deterministic / test_projection_mismatch_is_detected"},
+    {"criterion": "Every accepted critic attempt/occurrence has WBC evidence or explicit indeterminate/unavailable; false clean completion impossible", "status": "enforced_fail_closed", "evidence": "drain_map (11 types, PERSISTENCE_FAILED fail-closed-indeterminate); quiesce crash-preservation; failure smoke keeps admission closed"},
+    {"criterion": "One cutover receipt binds source/target/schema/corpus hashes, backup identity, import counts, smoke results, WBC receipts, operator/reviewer, timestamp", "status": "tooling_present_live_receipt_deferred", "evidence": "test_cutover_receipt.py::TestReceiptBinding; live operator receipt NOT issued (deferred)"},
+    {"criterion": "Replaced writers/readers/flags/fallbacks absent or hard-disabled; one target architecture serves all new critique loops", "status": "declared_in_inventory_not_operationally_retired", "evidence": "retire.py build_inventory + _verify_hard_disable; single_target_architecture_active.value=true (architectural convergence); operational retirement deferred"},
+    {"criterion": "Isolated restore proof succeeds; no production mixed state/canary/shadow/prolonged compatibility", "status": "tooling_present_tests_codify", "evidence": "test_cutover_isolated_fixture.py::TestIsolatedRestoreProof"}
+  ],
+
+  "limitations": [
+    "This handoff aggregates independently produced receipts; direct dependencies T18/T29/T30/T31/T32/T33/T34 are represented by bounded dependency receipts and are satisfied at the plan/DAG level, but several of their test-run outcomes were not recorded as executed runs in the prior batches. The contracts and test sites are bound here by name; the harness performs authoritative post-execute verification.",
+    "The deferred run_cutover orchestration entry point is intentionally not yet built (documented as Phase 2+); the switch stage is exercised at its real wiring level rather than via a monolithic orchestrator.",
+    "single_target_architecture_active.value=true is an architectural-convergence assertion (one supported target), explicitly distinct from any claim that a live operator cutover executed (it did not)."
+  ],
+
+  "touchpoints": [
+    "arnold/critique_ledger/cutover/{config,backup,restore,receipt,retire,quiesce,drain_map,isolated_fixture}.py",
+    "arnold/critique_ledger/{freshness,semantic_loop}.py",
+    "arnold/workflow/attempt_ledger_store.py",
+    "arnold_pipelines/megaplan/orchestration/{gate_signals,critique_custody,evaluation,critique_runtime}.py",
+    "arnold_pipelines/megaplan/workflows/override_matrix.py",
+    "tools/{verify_m6_prerequisites,validate_m6_evidence}.py",
+    "docs/critique-ledger/handoffs/{cl1-contract-oracle,cl2-ledger-replay,cl3-routing-briefings,cl4-role-flow}.json"
+  ]
+}
