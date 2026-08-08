@@ -2369,6 +2369,45 @@ def _plan_terminal_completion_is_authoritative(
     return _latest_execution_batch_all_tasks_done(plan_dir)
 
 
+def _record_chain_authority_divergence_cursor(
+    root: Path, plan_name: str, reason: str, *, writer,
+) -> None:
+    """Persist a plan-level rerun cursor for a terminal plan whose task
+    completion lacks authority, so the standard recovery loop (override
+    recover-blocked -> execute) can re-dispatch the blocked tasks.  This is
+    an append-only lifecycle record; it does not fabricate completion or
+    weaken the fail-closed authority gate."""
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        writer(f"[chain] cannot resolve plan dir for {plan_name}; skipping rerun cursor\n")
+        return
+    try:
+        payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        writer(f"[chain] cannot read plan state for {plan_name}; skipping rerun cursor\n")
+        return
+    if not isinstance(payload, dict):
+        return
+    from datetime import datetime, timezone
+    payload["latest_failure"] = {
+        "kind": "authority_divergence",
+        "message": "execute terminal success lacks corroborated task completion: " + reason,
+        "phase": "execute",
+        "state": "blocked",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "suggested_action": "Rerun execute so task completion can be corroborated.",
+    }
+    payload["resume_cursor"] = {"phase": "execute", "retry_strategy": "rerun_phase"}
+    try:
+        (plan_dir / "state.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        writer(f"[chain] recorded rerun cursor for {plan_name} (authority divergence)\n")
+    except OSError as exc:
+        writer(f"[chain] failed to write rerun cursor for {plan_name}: {exc}\n")
+
+
 def _finalized_plan_has_successful_review(plan_state: dict[str, Any]) -> bool:
     """Return true when a finalized plan has already completed review successfully."""
 
@@ -7780,6 +7819,14 @@ def run_chain(
                 writer(
                     f"[chain] milestone {milestone.label} outcome={outcome.status} "
                     f"lacks task authority; stopping: {reason}\n"
+                )
+                # Record a plan-level rerun cursor so the standard
+                # recover-blocked / resume loop can re-dispatch the genuinely
+                # blocked tasks instead of stranding the plan terminal-done
+                # with no recovery seam (shadow contract publishes done before
+                # the chain's fail-closed task-authority check runs).
+                _record_chain_authority_divergence_cursor(
+                    root, plan_name, reason, writer=writer
                 )
                 state.last_state = "authority_divergence"
                 chain_spec.save_chain_state(spec_path, state)
