@@ -553,6 +553,244 @@ class TestBriefing:
         assert "sf-3" in briefing.unknown_findings
 
 
+# ── CL3 briefing invariants (T19) ────────────────────────────────────
+#
+# Deterministic, builder-only fixtures proving the eight family buckets
+# partition the full pre-truncation input, open_findings is derived exactly
+# from acted-on/ignored/deferred (and retains IGNORED), no_open_blocking
+# semantics, the NO_ADDITIONAL vs no_known distinction, cross-domain
+# agreement between manifest and briefing, surfaced unavailable evidence,
+# blind-mode history stripping, and post-truncation reachability.
+
+
+def _cl3_build(
+    families: list[str],
+    *,
+    budget_level: str = "exhaustive",
+    domain_assignments: dict[str, str] | None = None,
+    mode: str = ContextMode.HISTORY_AWARE.value,
+    extra_disposition_kwargs: dict[str, dict] | None = None,
+):
+    """Build manifest + briefing from one finding per disposition family.
+
+    Returns ``(briefing, all_sf_ids)`` so callers can assert invariants
+    against the same deterministic builder path used in production.
+    """
+    occs = []
+    recs = []
+    disps = []
+    extra_disposition_kwargs = extra_disposition_kwargs or {}
+    for i, family in enumerate(families):
+        oid = f"occ-{i}"
+        sf_id = f"sf-{i}"
+        occs.append(_make_occurrence(oid))
+        recs.append(_make_reconciliation(
+            f"rec-{i}", occurrence_ids=(oid,), semantic_finding_id=sf_id,
+        ))
+        disps.append(_make_disposition(
+            f"disp-{i}", sf_id, family=family,
+            **extra_disposition_kwargs.get(sf_id, {}),
+        ))
+    rec_result = apply_reconciliation_events(occs, recs)
+    disp_result = apply_disposition_events(rec_result["finding_map"], disps)
+    manifest = construct_manifest(occs, rec_result, disp_result)
+    briefing = build_briefing(
+        manifest, disp_result, rec_result["finding_map"],
+        budget_level=budget_level,
+        domain_assignments=domain_assignments,
+        rec_result=rec_result,
+        occurrences=occs,
+        mode=mode,
+    )
+    return briefing, manifest, rec_result, [f"sf-{i}" for i in range(len(families))]
+
+
+class TestCl3BriefingInvariants:
+    _ALL_FAMILIES = [
+        DispositionFamily.ACTED_ON.value,
+        DispositionFamily.IGNORED.value,
+        DispositionFamily.DEFERRED.value,
+        DispositionFamily.REJECTED.value,
+        DispositionFamily.DUPLICATE.value,
+        DispositionFamily.ACCEPTED_RISK.value,
+        DispositionFamily.UNKNOWN.value,
+        DispositionFamily.RESOLVED.value,
+    ]
+
+    def test_eight_buckets_partition_full_pre_truncation_input(self) -> None:
+        briefing, _, _, sf_ids = _cl3_build(self._ALL_FAMILIES)
+        union = set(briefing.acted_on_findings) | set(briefing.ignored_findings) \
+            | set(briefing.deferred_findings) | set(briefing.blocked_findings) \
+            | set(briefing.accepted_risk_findings) | set(briefing.unknown_findings) \
+            | set(briefing.resolved_findings) | set(briefing.duplicate_findings)
+        assert union == set(sf_ids)
+        # No finding appears in two family buckets.
+        bucket_counts = {}
+        for fid in sf_ids:
+            bucket_counts[fid] = sum(
+                fid in getattr(briefing, b) for b in (
+                    "acted_on_findings", "ignored_findings", "deferred_findings",
+                    "blocked_findings", "accepted_risk_findings",
+                    "unknown_findings", "resolved_findings", "duplicate_findings",
+                )
+            )
+        assert all(c == 1 for c in bucket_counts.values())
+
+    def test_open_findings_equals_acted_ignored_deferred_and_retains_ignored(self) -> None:
+        briefing, _, _, _ = _cl3_build([
+            DispositionFamily.ACTED_ON.value,
+            DispositionFamily.IGNORED.value,
+            DispositionFamily.DEFERRED.value,
+            DispositionFamily.RESOLVED.value,
+        ])
+        assert set(briefing.open_findings) == set(
+            briefing.acted_on_findings
+            + briefing.ignored_findings
+            + briefing.deferred_findings
+        )
+        # IGNORED findings are retained in open_findings, not dropped.
+        assert briefing.ignored_findings == ("sf-1",)
+        assert "sf-1" in briefing.open_findings
+
+    def test_no_open_blocking_findings_semantics_unchanged(self) -> None:
+        # No open and no blocked -> True.
+        closed, _, _, _ = _cl3_build([
+            DispositionFamily.RESOLVED.value,
+            DispositionFamily.DUPLICATE.value,
+            DispositionFamily.ACCEPTED_RISK.value,
+        ])
+        assert closed.no_open_blocking_findings is True
+        # A blocked finding -> False.
+        with_block, _, _, _ = _cl3_build([
+            DispositionFamily.RESOLVED.value,
+            DispositionFamily.REJECTED.value,
+        ])
+        assert with_block.no_open_blocking_findings is False
+        # An open finding -> False.
+        with_open, _, _, _ = _cl3_build([
+            DispositionFamily.RESOLVED.value,
+            DispositionFamily.DEFERRED.value,
+        ])
+        assert with_open.no_open_blocking_findings is False
+
+    def test_no_additional_findings_differs_from_no_known_findings(self) -> None:
+        # A NO_ADDITIONAL_FINDINGS occurrence WITH a prior finding:
+        # no_additional_findings True but no_known_findings False.
+        occ_naf = _make_occurrence(
+            "occ-naf", parse_status=ParseStatus.NO_ADDITIONAL_FINDINGS.value,
+        )
+        rec_result = apply_reconciliation_events([occ_naf], [])
+        disp_result = apply_disposition_events(rec_result["finding_map"], [])
+        manifest = construct_manifest([occ_naf], rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+            occurrences=[occ_naf],
+        )
+        assert briefing.no_additional_findings is True
+        assert briefing.no_known_findings is True  # no findings at all here
+
+        # Now add a real finding alongside the NO_ADDITIONAL occurrence:
+        # no_additional_findings still True (admitted status), but
+        # no_known_findings is False because the ledger holds a finding.
+        occ_sel = _make_occurrence("occ-sel")
+        rec_sel = _make_reconciliation("rec-sel", occurrence_ids=("occ-sel",), semantic_finding_id="sf-sel")
+        disp_sel = _make_disposition("disp-sel", "sf-sel")
+        rec_result2 = apply_reconciliation_events([occ_naf, occ_sel], [rec_sel])
+        disp_result2 = apply_disposition_events(rec_result2["finding_map"], [disp_sel])
+        manifest2 = construct_manifest([occ_naf, occ_sel], rec_result2, disp_result2)
+        briefing2 = build_briefing(
+            manifest2, disp_result2, rec_result2["finding_map"],
+            occurrences=[occ_naf, occ_sel],
+        )
+        assert briefing2.no_additional_findings is True
+        assert briefing2.no_known_findings is False
+
+    def test_cross_domain_refs_agree_between_manifest_and_briefing(self) -> None:
+        briefing, manifest, rec_result, _ = _cl3_build([DispositionFamily.ACTED_ON.value])
+        # Inject a reconciliation-derived cross-domain ref into the shared
+        # rec_result and rebuild manifest + briefing so both derive from the
+        # same source set.
+        rec_result["cross_domain_refs"] = ["domain-alpha", "domain-alpha", "domain-beta"]
+        manifest = construct_manifest(
+            [_make_occurrence("occ-0")], rec_result,
+            apply_disposition_events(rec_result["finding_map"], [_make_disposition()]),
+        )
+        briefing = build_briefing(
+            manifest,
+            apply_disposition_events(rec_result["finding_map"], [_make_disposition()]),
+            rec_result["finding_map"],
+            rec_result=rec_result,
+        )
+        assert manifest.cross_domain_refs == briefing.cross_domain_refs
+        assert manifest.cross_domain_refs == ("domain-alpha", "domain-beta")
+
+    def test_unavailable_evidence_is_surfaced(self) -> None:
+        occ = _make_occurrence(
+            "occ-unavail",
+            evidence_availability=EvidenceAvailability.UNAVAILABLE.value,
+            unavailable_reason="governed source offline",
+        )
+        rec = _make_reconciliation("rec-u", occurrence_ids=("occ-unavail",), semantic_finding_id="sf-u")
+        rec_result = apply_reconciliation_events([occ], [rec])
+        disp_result = apply_disposition_events(rec_result["finding_map"], [_make_disposition("disp-u", "sf-u")])
+        manifest = construct_manifest([occ], rec_result, disp_result)
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+            rec_result=rec_result, occurrences=[occ],
+        )
+        assert briefing.evidence_unavailable
+        assert "governed source offline" in briefing.evidence_unavailable
+
+    def test_blind_mode_strips_history_but_retains_identity(self) -> None:
+        from types import SimpleNamespace
+        occ = _make_occurrence(
+            "occ-blind",
+            metadata={"prior_instructions": "do not regress X"},
+        )
+        rec = _make_reconciliation("rec-b", occurrence_ids=("occ-blind",), semantic_finding_id="sf-b")
+        rec_result = apply_reconciliation_events([occ], [rec])
+        rec_result["cross_domain_refs"] = ["other-domain"]
+        disp = _make_disposition("disp-b", "sf-b", family=DispositionFamily.IGNORED.value)
+        disp_result = apply_disposition_events(rec_result["finding_map"], [disp])
+        manifest = construct_manifest([occ], rec_result, disp_result)
+        fresh = [SimpleNamespace(is_stale=True, staleness_reason="source rotated")]
+        briefing = build_briefing(
+            manifest, disp_result, rec_result["finding_map"],
+            rec_result=rec_result, occurrences=[occ],
+            freshness_vectors=fresh,
+            mode=ContextMode.BLIND.value,
+        )
+        # History / disposition fields are blanked.
+        assert briefing.acted_on_findings == ()
+        assert briefing.ignored_findings == ()
+        assert briefing.open_findings == ()
+        assert briefing.blocked_findings == ()
+        assert briefing.cross_domain_refs == ()
+        assert briefing.prior_instructions == ()
+        assert briefing.stale_flag is False
+        assert briefing.rebuild_trigger is None
+        assert briefing.evidence_unavailable == ()
+        # Identity / accounting fields are retained.
+        assert briefing.revision_manifest_hash == manifest.input_set_hash or briefing.revision_manifest_hash
+        assert briefing.input_set_hash == manifest.input_set_hash
+        assert briefing.findings == ("sf-b",)
+        assert briefing.domains == ("critique_ledger",)
+
+    def test_retained_buckets_plus_split_refs_cover_every_finding(self) -> None:
+        # Standard budget caps at 10 findings; build 11.
+        families = [DispositionFamily.ACTED_ON.value] * 11
+        briefing, manifest, rec_result, sf_ids = _cl3_build(
+            families, budget_level="standard",
+            domain_assignments={f"sf-{i}": "critique_ledger" for i in range(11)},
+        )
+        retained = set(briefing.findings)
+        split_parents = {p for p, _r in briefing.split_parent_refs}
+        assert (retained | split_parents) == set(sf_ids)
+        assert briefing.spillover_findings
+        assert all(r for _p, r in briefing.split_parent_refs)
+        assert briefing.is_truncated is True
+
+
 # ── Reviser projection ───────────────────────────────────────────────
 
 

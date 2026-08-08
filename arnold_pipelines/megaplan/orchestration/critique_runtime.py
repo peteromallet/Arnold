@@ -128,6 +128,11 @@ def _recover_evaluator_payload_from_raw(
             continue
         if "selections" not in cand or "skipped" not in cand:
             continue
+        # T10: raw-candidate recovery probe. This intentionally omits
+        # accepted_context so legacy self-contained candidates (no handoff
+        # references) still validate; the validator's conditional
+        # invariants are inert when accepted_context is None. The primary
+        # call site below performs the full fail-closed custody check.
         try:
             validate_evaluator_verdict(
                 cand,
@@ -138,6 +143,106 @@ def _recover_evaluator_payload_from_raw(
             continue
         return cand
     return None
+
+
+# T10: accepted ledger custody context for the primary evaluator call.
+# Each evaluator handoff reference maps to the accepted-context key that
+# must corroborate it. When a verdict references one of these fields but the
+# runtime has no corresponding accepted value, the call fails closed rather
+# than silently accepting an unverifiable provenance claim.
+_EVALUATOR_HANDOFF_REFS: dict[str, str] = {
+    "expected_revision": "expected_revision",
+    "expected_briefing_hash": "expected_briefing_hash",
+    "domain_selections": "known_domains",
+    "domain_skips": "known_domains",
+    "evidence_targets": "known_finding_refs",
+    "budgets": "max_budget_findings",
+    "critique_mode": "allowed_critique_modes",
+    "input_set_hashes": "input_set_hash",
+}
+
+
+def _build_evaluator_accepted_context(
+    state: Any, plan_dir: Any, iteration: int,
+) -> dict[str, Any]:
+    """Assemble accepted ledger custody context for the primary evaluator call.
+
+    Carries the accepted manifest hash/revision, briefing hash, profile
+    budget caps, input-set hash, known finding refs, known domains, and
+    allowed critique modes. Every value is derived defensively from plan
+    state; an unavailable handoff datum is omitted, and
+    ``_fail_closed_on_unverifiable_evaluator_handoff`` rejects any verdict
+    that references a datum the runtime cannot corroborate.
+    """
+    config = state.get("config") or {}
+    meta = state.get("meta") or {}
+
+    # Critique modes are always fully admissible; the evaluator chooses.
+    ctx: dict[str, Any] = {
+        "allowed_critique_modes": ["BLIND", "HISTORY_AWARE"],
+    }
+
+    # Profile budget cap for findings (operator/profile knob).
+    _cap = config.get("critique_max_findings")
+    if isinstance(_cap, int) and not isinstance(_cap, bool) and _cap >= 0:
+        ctx["max_budget_findings"] = _cap
+
+    # Known finding refs: every flag id the ledger currently tracks.
+    try:
+        _reg = load_flag_registry(plan_dir)
+        _ids = sorted({
+            f.get("id") for f in (_reg.get("flags") or [])
+            if isinstance(f, dict) and f.get("id")
+        })
+    except Exception:
+        _ids = []
+    if _ids:
+        ctx["known_finding_refs"] = _ids
+
+    # Known domains: the domain set assigned to this plan, if recorded.
+    _domains = meta.get("critique_domains") or config.get("critique_domains")
+    if isinstance(_domains, (list, tuple)) and _domains:
+        ctx["known_domains"] = list(_domains)
+
+    # Accepted ledger handoff: manifest hash/revision, briefing hash, and
+    # input-set hash, written by the critique ledger when a revision
+    # manifest is accepted. Absent until a manifest is on record.
+    _handoff = meta.get("critique_ledger_handoff") or {}
+    if isinstance(_handoff, dict):
+        for _src, _dst in (
+            ("accepted_manifest_hash", "expected_manifest_hash"),
+            ("accepted_revision", "expected_revision"),
+            ("briefing_hash", "expected_briefing_hash"),
+            ("input_set_hash", "input_set_hash"),
+        ):
+            _val = _handoff.get(_src)
+            if isinstance(_val, str) and _val:
+                ctx[_dst] = _val
+    return ctx
+
+
+def _fail_closed_on_unverifiable_evaluator_handoff(
+    payload: dict[str, Any], accepted_context: dict[str, Any],
+) -> None:
+    """Reject a verdict that references handoff data the runtime lacks.
+
+    A verdict may echo an expected revision/briefing hash, name domains,
+    target finding evidence, declare a critique mode, or mirror input-set
+    hashes. Each such claim is only meaningful against accepted ledger
+    custody. When the runtime cannot supply the corroboration (the accepted
+    value is absent), the verdict references unavailable handoff data and
+    the call fails closed.
+    """
+    for _field, _ctx_key in _EVALUATOR_HANDOFF_REFS.items():
+        _ref = payload.get(_field)
+        if not _ref:
+            continue
+        if accepted_context.get(_ctx_key) is None:
+            raise ValueError(
+                f"critique_evaluator verdict references {_field!r} but the "
+                f"accepted handoff has no {_ctx_key!r} to corroborate it "
+                f"(fail-closed: unverifiable handoff reference)."
+            )
 
 
 def _prefer_nonempty_evaluator_payload(
@@ -658,10 +763,24 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                             )
                     # ────────────────────────────────────────────────────
                     _vendor = state["config"].get("vendor")
+                    # T10: thread accepted ledger custody into the primary
+                    # runtime decision boundary. Build accepted context
+                    # (manifest hash/revision, briefing hash, profile budget
+                    # caps, input_set_hash, known findings, known domains)
+                    # and fail closed when the verdict references handoff
+                    # data the runtime cannot corroborate. The raw probe
+                    # above retains default context for legacy candidates.
+                    _eval_accepted_ctx = _build_evaluator_accepted_context(
+                        state, plan_dir, iteration,
+                    )
+                    _fail_closed_on_unverifiable_evaluator_handoff(
+                        eval_worker.payload, _eval_accepted_ctx,
+                    )
                     _eval_warnings = validate_evaluator_verdict(
                         eval_worker.payload,
                         evaluator_model=evaluator_model,
                         vendor=_vendor if _vendor in ("claude", "codex") else None,
+                        accepted_context=_eval_accepted_ctx,
                     )
                     if _eval_warnings:
                         _append_to_meta(state, "critique_evaluator_warnings", {
