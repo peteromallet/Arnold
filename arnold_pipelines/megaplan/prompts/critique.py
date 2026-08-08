@@ -416,6 +416,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
         - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
         - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `north_star_actions_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - `north_star_actions_addressed` MUST be an array of objects. Every object MUST contain ALL of these fields: `action_id` (string), `action_type` (string), `plan_refs` (array of strings), `resolution` (string), and `reason` (string). Do not omit any field; do not use different names.
+        - `questions` MUST be an array of strings only; do not emit question objects. If a question needs context, put it in the string.
         - Populate `changed_surfaces` with every concrete file path your revised plan will change or create. Include both source files and test files. Use repo-relative paths. This list drives the deterministic test-selection blast radius; be complete. If your revised plan touches a file, list it.
         - Populate `test_blast_radius` with only `strategy`, `selectors`, `changed_surfaces`, `full_suite_fallback`, and `rationale`. The system merges this proposal with the deterministic floor and prior plan metadata; it derives the remaining persisted fields itself.
 
