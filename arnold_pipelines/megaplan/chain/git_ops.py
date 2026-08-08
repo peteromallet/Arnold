@@ -1198,7 +1198,16 @@ def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str
         for part in path.parts[:-1]:
             cursor = cursor / part
             if (cursor / ".git").exists():
-                rel_to_repo = Path(*path.parts[len(cursor.relative_to(root).parts):])
+                try:
+                    rel_parts = cursor.relative_to(root).parts
+                except (OSError, ValueError):
+                    _compat()._warn_chain_fallback(
+                        "M3A_WARN_NESTED_REPO_PATHS",
+                        reason="path_normalization",
+                        context={"raw_path": raw_path},
+                    )
+                    break
+                rel_to_repo = Path(*path.parts[len(rel_parts):])
                 repo_paths.setdefault(cursor, set()).add(rel_to_repo.as_posix())
                 break
     return repo_paths
