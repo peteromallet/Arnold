@@ -5258,6 +5258,44 @@ def drive(
             events.append({"msg": message, "phase": "gate", "plan": plan})
             continue
 
+        # Rerun-cursor re-open: a plan that reached done under a shadow
+        # completion contract with genuinely-blocked tasks carries a chain-
+        # recorded rerun cursor ({phase: execute, retry_strategy: rerun_phase}).
+        # Re-enter execute so the blocked tasks get re-dispatched instead of
+        # terminal-exiting with uncorroborated completion.  The chain's
+        # fail-closed authority gate still refuses advancement until task
+        # completion is corroborated; this only re-opens the recovery loop.
+        if (
+            state == STATE_DONE
+            and isinstance(state_payload.get("resume_cursor"), dict)
+            and state_payload["resume_cursor"].get("phase") == "execute"
+            and state_payload["resume_cursor"].get("retry_strategy") == "rerun_phase"
+        ):
+            log(
+                "done plan carries execute rerun cursor — re-opening execute for "
+                "blocked-task re-dispatch"
+            )
+            try:
+                from arnold_pipelines.megaplan.handlers.execute import apply_state_projection
+            except Exception:
+                apply_state_projection = None
+            if apply_state_projection is not None:
+                try:
+                    apply_state_projection(state_payload, STATE_FINALIZED, route_signal="rerun-execute")
+                    write_plan_state(
+                        plan_dir,
+                        mode="patch-many",
+                        patch={
+                            "current_state": STATE_FINALIZED,
+                            "resume_cursor": state_payload["resume_cursor"],
+                        },
+                        validate_current_state=False,
+                    )
+                    log("re-opened done plan to finalized for execute re-dispatch")
+                    continue
+                except Exception:
+                    pass
+
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (
             state == STATE_BLOCKED
