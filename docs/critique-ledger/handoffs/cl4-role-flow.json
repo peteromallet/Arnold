@@ -578,5 +578,40 @@
       "statement": "On restore, re-run replay_full against the restored occurrence/reconciliation/disposition events and confirm content-determinism: the semantic_loop source hash (f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb) and the recorded schema entries must still reproduce identical custody/reconciliation/disposition/manifest/briefing/reviser/gate projections across retries (test_retry_replay_is_content_deterministic). Because CL4 is bridge_mode=true, a successful restore re-replay proves determinism only \u2014 it does NOT grant canonical gate authority.",
       "determinism_proof_test": "tests/arnold/critique_ledger/test_semantic_loop_failures.py::test_retry_replay_is_content_deterministic"
     }
+  },
+  "cl5_t20_bridge_unlock_finalization": {
+    "recorded_by": "CL5-T20",
+    "recorded_at": "2026-08-08T18:40:00Z",
+    "objective": "Set accepted_for_cl2 true only after all blockers clear, remove the five CL2 blockers, mark CL4 non-bridge, cite source-receipt regeneration at quiesce and receipt generation, and require the sole active post-cutover receipt to carry bridge_mode=false.",
+    "outcome": "DEFERRED \u2014 the active formal deferral CL1-DEFERRAL-m5-sprint-artifacts-unrecoverable (cl1-contract-oracle.json accepted_for_cl2.formal_deferral, recorded by CL5-T8) blocks the operational bridge unlock. CL4 bridge_mode.value stays true with authority_status=limitation_not_resolved: CL4 still carries no canonical gate/finalize authority because accepted_for_cl2=false and three carried blockers remain unresolved. The operational 'mark CL4 non-bridge' authority transition (plan Step 10) MUST NOT run per the formal_deferral.halt_directives. This record documents the non-bridge DECLARED build target (set in code by CL5-T19) and the clearance-chain operating procedure WITHOUT granting operational canonical authority; the live operator cutover remains explicitly pending.",
+    "non_bridge_build_state": {
+      "status": "declared_target_not_operationally_active",
+      "gate_signals_constant": "arnold_pipelines/megaplan/orchestration/gate_signals.py:74 CL4_BRIDGE_MODE = False (set by CL5-T19; the gate signal now emits bridge_mode=false by construction)",
+      "critique_custody_constant": "arnold_pipelines/megaplan/orchestration/critique_custody.py:73 CL4_BRIDGE_MODE = False (set by CL5-T19; production receipts now carry bridge_mode=false by construction)",
+      "carried_blockers_constant": "arnold_pipelines/megaplan/orchestration/critique_custody.py:75 CL4_CARRIED_BLOCKERS = () (emptied by CL5-T19)",
+      "handoff_authority_status_preserved": "CL4 bridge_mode.value remains true / authority_status remains limitation_not_resolved. The code constants declare the non-bridge build target, but the active formal deferral (accepted_for_cl2=false) keeps CL4 operationally in bridge/limitation mode: a non-bridge constant does not grant canonical authority while the prerequisite blockers are unresolved.",
+      "code_binding_update": "cl1_cl2_blockers_carried.code_binding.members previously listed five members; CL5-T19 emptied the critique_custody.CL4_CARRIED_BLOCKERS code constant to () so production receipts now carry carried_blockers=[]. The handoff's cl1_cl2_blockers_carried.blockers inventory (3 unresolved) and settled_by_cl5_t3 records (2 settled) are retained for traceability; they document the authority-limitation history, not the current code constant."
+    },
+    "clearance_chain_operating_procedure": {
+      "sole_post_cutover_receipt_requirement": "The sole active post-cutover source receipt in the clearance chain MUST carry bridge_mode=false.",
+      "pre_cutover_receipt_exclusion": "Any pre-cutover (bridge_mode=true) source receipt denies canonical authority: the clearance aggregator at arnold_pipelines/megaplan/orchestration/critique_custody.py:1820-1824 computes clearance_bridge_mode = bool(clearance.get('bridge_mode', False)) from the aggregated source-receipt chain, so a single bridge_mode=true source receipt makes the aggregated clearance bridge_mode True and finalize custody fails closed on canonical-authority use (finalize_fail_closed_on_bridge_authority evidence above).",
+      "proof_tests": [
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_denies_canonical_authority_for_bridge_receipt (mixed bridge_mode=true source receipt denies canonical authority)",
+        "tests/orchestration/test_critique_custody.py::test_all_false_clearance_chain_grants_canonical_authority (all-false source receipts pass)",
+        "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance"
+      ],
+      "set_by": "CL5-T19 (constants + mixed-chain fail-closed test) + CL5-T20 (procedure record)"
+    },
+    "source_receipt_regeneration": {
+      "quiesce_step": "Plan Step 12b: the cutover quiesce atomically closes admission and begins new source receipts; pre-cutover receipts (bridge_mode=true) cease to be produced.",
+      "receipt_step": "Plan Step 16: the cutover receipt generator (arnold/critique_ledger/cutover/receipt.py) produces the new source receipt binding source/target/schema/corpus hashes with bridge_mode=false by construction, now that the CL4_BRIDGE_MODE constant is False. This is the sole source receipt in the post-cutover clearance chain.",
+      "backup_evidence_only": "Pre-cutover receipts (bridge_mode=true) are part of the content-addressed backup bundle (Plan Step 13) as recovery evidence only \u2014 they are NOT in the post-cutover active clearance chain and cannot be treated as live."
+    },
+    "halt_directives_preserved": [
+      "CL4 bridge_mode.value remains true (authority_status=limitation_not_resolved); the operational non-bridge authority transition MUST NOT run.",
+      "accepted_for_cl2 remains false (cl1-contract-oracle.json); the five CL2 blockers remain (cl2-ledger-replay.json gate_status.five_blockers).",
+      "The live operator cutover remains explicitly pending; the cutover must be deferred to a new chain run that re-derives M5 attestations."
+    ],
+    "cross_handoff_agreement": "CL1, CL2, and CL4 agree on the non-bridge DECLARED build target (T19 constants False) and the clearance-chain operating procedure (sole post-cutover receipt bridge_mode=false; pre-cutover receipts excluded by the clearance aggregator). They also agree the operational authority transition is BLOCKED by the active formal deferral: accepted_for_cl2=false, the five CL2 blockers remain, and CL4 carries no canonical authority until the cutover runs."
   }
 }

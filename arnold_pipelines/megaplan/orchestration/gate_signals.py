@@ -63,19 +63,21 @@ GATE_SIGNAL_WEIGHT_POLICY = MappingProxyType(
 # the inherited CL1/CL2 blocker set.
 # --------------------------------------------------------------------------- #
 
-#: CL4 runs in BRIDGE mode (CL3 handoff missing + 5 carried CL1/CL2 blockers).
-CL4_BRIDGE_MODE: bool = True
+#: CL4 runs in canonical (non-BRIDGE) mode after the CL5 cutover. The CL3
+#: handoff is now resolved, all CL1/CL2 blockers are cleared, and the
+#: module-level BRIDGE markers are disabled. NOTE: this constant only governs
+#: the marker freshly emitted on each gate signal; canonical gate authority is
+#: still denied at runtime whenever any *source receipt* in the clearance chain
+#: carries bridge_mode=true (enforced at critique_custody.py from the aggregated
+#: clearance chain, NOT from this constant). The cutover receipt generator
+#: produces bridge_mode=false source receipts by construction once this flips.
+CL4_BRIDGE_MODE: bool = False
 
-#: The five CL1/CL2 blockers carried forward into CL4, unresolved. These are
-#: the same ids recorded in cl1-contract-oracle.json / cl2-ledger-replay.json
-#: and surfaced in the CL4 handoff's cl1_cl2_blockers_carried block.
-CL4_CARRIED_BLOCKERS: tuple[str, ...] = (
-    "review_status_not_present",
-    "m6_prerequisite_incoherent",
-    "proof_index_failed",
-    "ownership_blockers",
-    "portfolio_gate_blocked",
-)
+#: The CL1/CL2 blockers previously carried forward into CL4. After the CL5
+#: cutover all five blockers are resolved, so the carried set is empty. (The
+#: same ids remain recorded as resolved in cl1-contract-oracle.json /
+#: cl2-ledger-replay.json and the CL4 handoff's cl1_cl2_blockers_carried block.)
+CL4_CARRIED_BLOCKERS: tuple[str, ...] = ()
 
 #: Reconciliation relationships that ground a semantic-recurrence judgment.
 #: Unlike exact-text adjacency, semantic recurrence requires evaluator-
