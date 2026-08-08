@@ -64,6 +64,7 @@ PROFILE_METADATA_KEYS = frozenset({
     "max_tasks_per_batch",
     "adaptive_critique",
     "critic_model",
+    "critique_routing",
 })
 
 SYSTEM_DEFAULT_PROFILE = "partnered"
