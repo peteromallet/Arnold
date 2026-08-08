@@ -85,7 +85,7 @@ def reconcile_drifted_plan_version(
             extra={"version": version, "file": filename, "reason": "artifact_hash_unreadable"},
         ) from exc
     expected = replacement_sha256.removeprefix("sha256:")
-    if observed != expected:
+    if observed != expected and f"sha256:{observed}" != replacement_sha256:
         raise CliError(
             "phase_repair_fingerprint_mismatch",
             "plan ledger repair requires the current on-disk hash to match the replacement hash",
