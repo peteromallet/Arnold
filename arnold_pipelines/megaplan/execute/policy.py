@@ -362,6 +362,7 @@ def resolve_execute_entry_route(
     current_state: str,
     *,
     allowed_entry_states: frozenset[str] | None = None,
+    rerun_execute_cursor: bool = False,
 ) -> ExecuteEntryDecision:
     """Determine the execute entry route from the plan's current state.
 
@@ -373,18 +374,32 @@ def resolve_execute_entry_route(
         The set of states that the caller considers valid entry points.
         Defaults to ``{"finalized", "blocked", "failed"}``, matching the
         historical ``require_state`` whitelist in the execute handler.
+    rerun_execute_cursor:
+        True when the plan carries an append-only lifecycle
+        ``resume_cursor`` of ``{"phase": "execute", "retry_strategy":
+        "rerun_phase"}`` recorded by the chain when a shadow-terminal plan
+        lacked corroborated task authority.  That cursor is the recovery
+        authority for re-dispatching genuinely blocked tasks; it re-opens a
+        terminal ``done`` plan into execute without fabricating completion.
 
     Returns
     -------
     ExecuteEntryDecision
         A typed decision whose ``.may_proceed`` is ``True`` only when
-        *current_state* is a recognised allowed entry state and the
-        caller should continue into batch execution.
+        *current_state* is a recognised allowed entry state (or the rerun
+        cursor re-opens a terminal plan) and the caller should continue
+        into batch execution.
     """
     if allowed_entry_states is None:
         allowed_entry_states = frozenset({"finalized", "blocked", "failed"})
 
     if current_state not in allowed_entry_states:
+        if rerun_execute_cursor and current_state == "done":
+            return ExecuteEntryDecision(
+                ExecuteEntryRoute.BLOCKED,
+                "Plan reached done without corroborated task completion; "
+                "rerun cursor re-opens execute for blocked-task re-dispatch",
+            )
         return ExecuteEntryDecision(
             ExecuteEntryRoute.INVALID,
             f"State '{current_state}' is not a valid execute entry point; "

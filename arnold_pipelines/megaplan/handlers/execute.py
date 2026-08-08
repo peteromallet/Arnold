@@ -417,8 +417,23 @@ def _enforce_entry_route(state: PlanState) -> None:
     the historical ``invalid_transition`` error only when the typed route is
     ``INVALID``.  ``PROCEED``/``BLOCKED``/``FAILED`` fall through to batch
     dispatch (mirroring ``require_state(state, "execute", ...)``).
+
+    A terminal ``done`` plan is re-opened into execute only when it carries
+    the chain-recorded rerun cursor (``{"phase": "execute",
+    "retry_strategy": "rerun_phase"}``) — the append-only recovery
+    authority for re-dispatching genuinely blocked tasks that a shadow
+    completion contract let reach done.  No other terminal state is re-opened.
     """
-    decision = resolve_execute_entry_route(state["current_state"])
+    resume_cursor = state.get("resume_cursor")
+    rerun_execute_cursor = (
+        isinstance(resume_cursor, dict)
+        and resume_cursor.get("phase") == "execute"
+        and resume_cursor.get("retry_strategy") == "rerun_phase"
+    )
+    decision = resolve_execute_entry_route(
+        state["current_state"],
+        rerun_execute_cursor=rerun_execute_cursor,
+    )
     if decision.route is ExecuteEntryRoute.INVALID:
         raise CliError(
             "invalid_transition",
