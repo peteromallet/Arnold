@@ -2762,6 +2762,75 @@ def _extract_json_from_reasoning(messages: list) -> dict | None:
     return None
 
 
+def _attribution_task_updates_from_files(
+    files_changed: set[str],
+    plan_dir: Path,
+    *,
+    mode: str,
+) -> list[dict[str, Any]]:
+    """Deterministically attribute landed file changes to finalize.json tasks.
+
+    Sol-adjudicated Tier 1 repair: when the executor produced the work via
+    tools but failed the JSON report contract, the reconstruction path may
+    populate ``task_updates`` for tasks whose claimed files are *unambiguously*
+    present in the execution's changed-file set.  This is bounded and
+    fail-closed:
+
+    * Only tasks with a non-empty ``files`` claim are considered.
+    * A task matches only when EVERY claimed file is in the changed set
+      (subset match).  Overlapping/partial claims never auto-match.
+    * Matched tasks are marked ``done`` with attribution
+      ``deterministic_reconstruction`` and an explicit executor note.  They
+      are NOT declared passed — quality validation still applies.
+    * Tasks with empty claims or no matching evidence are left untouched;
+      they remain pending and are re-dispatched.
+    """
+    if mode == "doc":
+        return []
+    import json as _json
+
+    try:
+        finalize = _json.loads((Path(plan_dir) / "finalize.json").read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError, TypeError, ValueError):
+        return []
+    tasks = finalize.get("tasks") if isinstance(finalize, dict) else None
+    if not isinstance(tasks, list):
+        return []
+    changed = {str(f).strip().lstrip("./") for f in files_changed if str(f).strip()}
+    if not changed:
+        return []
+    updates: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id") or task.get("task_id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            continue
+        claims = task.get("files") or task.get("files_changed") or task.get("targets") or []
+        if not isinstance(claims, list) or not claims:
+            continue
+        normalized = {str(c).strip().lstrip("./") for c in claims if isinstance(c, str) and c.strip()}
+        if not normalized:
+            continue
+        if not normalized.issubset(changed):
+            continue
+        updates.append({
+            "task_id": task_id,
+            "status": "done",
+            "attribution": "deterministic_reconstruction",
+            "executor_notes": (
+                "Attributed by deterministic reconstruction: every claimed "
+                "file for this task is present in the execution's changed-file "
+                "set after the model failed the JSON report contract. Pending "
+                "quality validation."
+            ),
+            "files_changed": sorted(normalized),
+            "commands_run": [],
+            "auto_attributed_files": True,
+        })
+    return updates
+
+
 def _reconstruct_execute_payload(
     messages: list,
     project_dir: Path,
@@ -2880,6 +2949,16 @@ def _reconstruct_execute_payload(
         }
 
     files_list = sorted(files_changed)
+    # Sol-adjudicated Tier 1: deterministically attribute landed files to
+    # finalize.json task claims so the quality gate sees executed tasks after
+    # a report-contract failure.  Only unambiguous subset matches are marked;
+    # everything else stays pending for re-dispatch.
+    if not task_updates:
+        task_updates = _attribution_task_updates_from_files(
+            files_changed,
+            plan_dir,
+            mode=mode,
+        )
     deviations = [
         "Execute response reconstructed from tool calls — model failed to produce JSON report."
     ]
