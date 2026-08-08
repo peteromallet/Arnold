@@ -6077,6 +6077,17 @@ def _sync_chain_last_state_from_plan(
         return state
     if plan_state == state.last_state:
         return state
+    # Preserve a recorded authority divergence: when the plan reports a
+    # terminal state but its tasks lack corroborated completion, syncing
+    # last_state to the plan's naive terminal value would erase the repair
+    # seam (the divergence + rerun cursor) that recover-blocked/execute
+    # re-dispatch depends on.  Re-verify task authority before overwriting.
+    if state.last_state == "authority_divergence" and plan_state == "done":
+        from arnold_pipelines.megaplan.chain import _plan_terminal_completion_is_authoritative
+
+        authoritative, _ = _plan_terminal_completion_is_authoritative(root, plan_name)
+        if not authoritative:
+            return state
     previous = state.last_state
     state.last_state = plan_state
     writer(
