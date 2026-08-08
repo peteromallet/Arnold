@@ -195,6 +195,38 @@ def _validate_metadata(
                     f"{[c for c in CRITIC_MODEL_CHOICES if c]}; got {value!r}",
                 )
             validated["critic_model"] = value
+        elif key == "critique_routing":
+            if not isinstance(value, dict):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"'critique_routing' must be an object, got {type(value).__name__}",
+                )
+            floor_domains = value.get("floor_domains")
+            if floor_domains is not None and not (
+                isinstance(floor_domains, list)
+                and all(isinstance(d, str) for d in floor_domains)
+            ):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    "'critique_routing.floor_domains' must be a list[str]",
+                )
+            max_blind_passes = value.get("max_blind_passes")
+            if max_blind_passes is not None and not (
+                isinstance(max_blind_passes, int)
+                and not isinstance(max_blind_passes, bool)
+                and max_blind_passes >= 0
+            ):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    "'critique_routing.max_blind_passes' must be an int >= 0",
+                )
+            validated["critique_routing"] = value
         # Future metadata keys go here.
     return validated
 
@@ -981,6 +1013,75 @@ def _resolve_tier_models_with_inheritance(
         else:
             merged[phase] = dict(tiers)
 
+    return merged
+
+
+def _resolve_critique_routing_with_inheritance(
+    profile_name: str,
+    *,
+    system_metadata: dict[str, dict[str, Any]],
+    pipeline_local_metadata: dict[str, dict[str, Any]],
+    _visited: set[str] | None = None,
+) -> dict[str, Any]:
+    """Walk the ``extends`` chain and merge ``critique_routing`` metadata.
+
+    Parent routing maps are applied first; child entries override per-key.
+    Profiles without ``critique_routing`` metadata return an empty dict.
+    Mirrors :func:`_resolve_tier_models_with_inheritance`.
+    """
+    if _visited is None:
+        _visited = set()
+
+    if profile_name in _visited:
+        raise CliError(
+            "invalid_profile",
+            f"Cycle detected in profile inheritance: "
+            f"{' -> '.join(sorted(_visited))} -> {profile_name}",
+        )
+    _visited.add(profile_name)
+
+    metadata: dict[str, Any] | None = None
+    if profile_name in pipeline_local_metadata:
+        metadata = pipeline_local_metadata.get(profile_name, {})
+    elif profile_name in system_metadata:
+        metadata = system_metadata.get(profile_name, {})
+
+    if metadata is None:
+        raise CliError(
+            "unknown_profile",
+            f"Unknown profile '{profile_name}'",
+        )
+
+    extends_ref = metadata.get("extends") if metadata else None
+    parent_routing: dict[str, Any] = {}
+    if extends_ref and isinstance(extends_ref, str):
+        if extends_ref.startswith("system:"):
+            parent_name = extends_ref[len("system:"):]
+        elif extends_ref.startswith("@"):
+            rest = extends_ref[1:]
+            if ":" in rest:
+                _pl_name, parent_name = rest.split(":", 1)
+            else:
+                parent_name = rest
+        else:
+            parent_name = None
+        if parent_name:
+            try:
+                parent_routing = _resolve_critique_routing_with_inheritance(
+                    parent_name,
+                    system_metadata=system_metadata,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                    _visited=_visited,
+                )
+            except CliError:
+                parent_routing = {}
+
+    own_routing: dict[str, Any] = metadata.get("critique_routing", {}) if metadata else {}
+    if not isinstance(own_routing, dict):
+        own_routing = {}
+
+    merged: dict[str, Any] = dict(parent_routing)
+    merged.update(own_routing)
     return merged
 
 

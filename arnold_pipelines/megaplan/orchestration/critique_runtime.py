@@ -517,6 +517,33 @@ def _apply_adaptive_critique_routing(
             )
         return _pin_agent_mode
 
+    # T12 (CL3): resolve critique_routing profile metadata (floor_domains,
+    # max_blind_passes) with inheritance and expose it on each routed check so
+    # prompt assembly can enforce blind-mode domain floors and the blind-pass
+    # budget.  Absent metadata leaves routing unchanged (backward compatible).
+    try:
+        from arnold_pipelines.megaplan.profiles import (
+            _resolve_critique_routing_with_inheritance,
+            _load_pipeline_local_metadata,
+            _load_pipeline_local_profiles,
+            _load_system_metadata,
+            _load_system_profiles,
+        )
+        _profiles = _load_pipeline_local_profiles(state.get("config", {}).get("project_dir")) if callable(_load_pipeline_local_profiles) else {}
+        _metadata = _load_pipeline_local_metadata(state.get("config", {}).get("project_dir")) if callable(_load_pipeline_local_metadata) else {}
+        _system_profiles = _load_system_profiles() if callable(_load_system_profiles) else {}
+        _system_metadata = _load_system_metadata() if callable(_load_system_metadata) else {}
+        _profile_name = (state.get("config") or {}).get("profile") or "partnered"
+        _critique_routing = _resolve_critique_routing_with_inheritance(
+            _profile_name,
+            system_metadata=_system_metadata,
+            pipeline_local_metadata=_metadata,
+        )
+    except Exception:
+        _critique_routing = {}
+    _routing_floor_domains = _critique_routing.get("floor_domains")
+    _routing_max_blind_passes = _critique_routing.get("max_blind_passes")
+
     for _check in active_checks:
         _cid = _check.get("id", "?")
         _cx = _check.get("complexity")
@@ -566,6 +593,10 @@ def _apply_adaptive_critique_routing(
         _check["_routing_selected_spec"] = _tier_spec_for(_cx) or f"critic_model:{_pin}"
         _check["_routing_tier"] = _cx
         _check["_routing_tier_active"] = True
+        if _routing_floor_domains is not None:
+            _check["_routing_floor_domains"] = _routing_floor_domains
+        if _routing_max_blind_passes is not None:
+            _check["_routing_max_blind_passes"] = _routing_max_blind_passes
 
     return None
 
