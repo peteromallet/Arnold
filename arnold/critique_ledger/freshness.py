@@ -36,7 +36,7 @@ from arnold.critique_ledger.schemas import (
     ParseStatus,
     canonical_hash,
 )
-from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+from arnold.adapters.ledger_store_adapter import SqliteAttemptLedgerStore
 from arnold.workflow.execution_attempt_ledger import AttemptEventType
 
 # Payload discriminators carried on EXTERNAL_EFFECT_OUTCOME events.

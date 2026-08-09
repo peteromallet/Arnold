@@ -16,11 +16,11 @@ from arnold.critique_ledger.schemas import (
     FindingDispositionEvent,
     FindingReconciliationEvent,
 )
+from arnold.adapters.ledger_store_adapter import SqliteAttemptLedgerStore
 from arnold.workflow.attempt_ledger_store import (
     AppendResult,
     AttemptReservation,
     GapEntry,
-    SqliteAttemptLedgerStore,
 )
 from arnold.workflow.execution_attempt_ledger import (
     AttemptEventType,

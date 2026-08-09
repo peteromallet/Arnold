@@ -34,7 +34,7 @@ from arnold.critique_ledger.cutover.drain_map import (
     classify_drain,
     indeterminate_outcome,
 )
-from arnold.workflow.attempt_ledger_store import AttemptLedgerStore
+from arnold.adapters.ledger_store_adapter import AttemptLedgerStore
 from arnold.workflow.execution_attempt_ledger import (
     AttemptEventType,
     AttemptOutcome,

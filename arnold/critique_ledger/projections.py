@@ -27,7 +27,7 @@ from arnold.critique_ledger.schemas import (
     canonical_hash,
 )
 from arnold.critique_ledger.semantic_loop import replay_full
-from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+from arnold.adapters.ledger_store_adapter import SqliteAttemptLedgerStore
 from arnold.workflow.execution_attempt_ledger import (
     AttemptEventType,
     LedgerEvent,
