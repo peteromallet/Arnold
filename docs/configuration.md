@@ -6,10 +6,10 @@ Where megaplan reads its settings and secrets.
 
 | What | Path | Managed By |
 |---|---|---|
-| User config | `~/.config/megaplan/config.json` | `megaplan config set|show|reset` (CLI) |
+| User config | `~/.config/megaplan/config.json` | Hand-edited JSON (no `config` subcommand exists) |
 | User overrides (optional) | `~/.config/megaplan/config.toml` | Hand-edited; user-level defaults (vendor, prep_clarify) — *not* part of effective-config precedence |
 | Project config (new) | `<project>/.megaplan/config.toml` | Hand-edited; project-scoped effective-config layer — highest precedence when `project_dir` is supplied |
-| Project profiles | `.megaplan/profiles.toml` | Hand-edited or `megaplan config profiles` |
+| Project profiles | `.megaplan/profiles.toml` | Hand-edited |
 | Project state | `.megaplan/state.json` | Megaplan runtime |
 
 ## Project-Scoped Config Layer (`.megaplan/config.toml`)
@@ -27,8 +27,8 @@ in `megaplan init`), the resolution order is:
     DEFAULTS < ~/.config/megaplan/config.json < <project>/.megaplan/config.toml
 
 1. **`DEFAULTS`** (lowest) — built-in compiled defaults in `megaplan.types`.
-2. **Global JSON** — `~/.config/megaplan/config.json`, managed by
-   `megaplan config set|show|reset`.
+2. **Global JSON** — `~/.config/megaplan/config.json`, hand-edited (no
+   `megaplan config` subcommand exists).
 3. **Project TOML** (highest) — `<project>/.megaplan/config.toml`.
 
 When `project_dir` is **omitted** (the default for every call site except
