@@ -71,6 +71,45 @@ def _tail(text: str, *, max_lines: int = 20) -> str:
 def _command_text(command: list[str]) -> str:
     return " ".join(command)
 
+_REDACTED_REMOTE = "<redacted>"
+
+# Credential patterns in remote git output/URLs.  Unconditional redaction —
+# never env-gated — so a token-bearing push URL or stderr line can never be
+# echoed by a caller (review finding #5).
+_REMOTE_URL_USERINFO_RE = re.compile(r"(https?://)([^/@\s]+)@", re.IGNORECASE)
+_REMOTE_CRED_ASSIGN_RE = re.compile(
+    r"(?P<name>\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|API[_-]?KEY)[A-Z0-9_]*\b)"
+    r"\s*=\s*(?P<value>[^\s'\"]+)",
+    re.IGNORECASE,
+)
+_REMOTE_CRED_TOKEN_RE = re.compile(
+    r"(?:\bBearer\s+[A-Za-z0-9_~+/=\-.]{8,}|\bsk-[A-Za-z0-9_-]{10,}|\bghp_[A-Za-z0-9]{10,})",
+    re.IGNORECASE,
+)
+
+
+def _redact_remote_output(text: str) -> str:
+    """Mask credential-bearing content from remote git output.
+
+    Covers ``https://user:TOKEN@host`` URL userinfo (masked to
+    ``https://***@host``), ``NAME=value`` assignments whose name is key-like
+    (KEY/TOKEN/SECRET/PASSWORD/api[_-]?key), ``Bearer <token>`` headers, and
+    well-known token prefixes (``sk-``, ``ghp_``).  The returned text never
+    contains the raw credential.
+    """
+    redacted = _REMOTE_URL_USERINFO_RE.sub(r"\1***@", text)
+    redacted = _REMOTE_CRED_ASSIGN_RE.sub(
+        lambda match: f"{match.group('name')}={_REDACTED_REMOTE}",
+        redacted,
+    )
+    redacted = _REMOTE_CRED_TOKEN_RE.sub(_REDACTED_REMOTE, redacted)
+    return redacted
+
+
+def _redact_remote_command(command: list[str]) -> list[str]:
+    """Return *command* with credential-bearing URL/args masked."""
+    return [_redact_remote_output(part) for part in command]
+
 
 def sync_policy_gate(policy: Mapping[str, Any] | None) -> tuple[bool, str]:
     """Decide whether sync is allowed under the manifest's ``sync_policy``.
@@ -113,15 +152,20 @@ def push_base_to_origin(
     """
     repo = Path(repo_root)
     command = ["git", "-C", str(repo), "push", origin_url, branch]
+    # Never return credential-bearing remote URLs/commands raw (review
+    # finding #5): userinfo is masked and key-like assignments/tokens in the
+    # command text are redacted before they can be echoed by a caller.
+    redacted_origin_url = _redact_remote_output(origin_url)
+    redacted_command = _redact_remote_command(command)
     if dry_run:
         return {
             "status": "would_push",
             "dry_run": True,
             "branch": branch,
-            "origin_url": origin_url,
+            "origin_url": redacted_origin_url,
             "commit_message": commit_message,
-            "command": command,
-            "command_text": _command_text(command),
+            "command": redacted_command,
+            "command_text": _command_text(redacted_command),
         }
 
     repo_check = _git_run(repo, "rev-parse", "--is-inside-work-tree")
@@ -130,7 +174,7 @@ def push_base_to_origin(
             "status": "error",
             "reason": "not_a_git_repo",
             "branch": branch,
-            "origin_url": origin_url,
+            "origin_url": redacted_origin_url,
         }
 
     branch_proc = _git_run(repo, "rev-parse", "--verify", f"refs/heads/{branch}")
@@ -139,7 +183,7 @@ def push_base_to_origin(
             "status": "error",
             "reason": "branch_missing",
             "branch": branch,
-            "origin_url": origin_url,
+            "origin_url": redacted_origin_url,
         }
     from_sha = (branch_proc.stdout or "").strip() or None
 
@@ -149,18 +193,18 @@ def push_base_to_origin(
             "status": "rejected",
             "reason": "non_fast_forward",
             "branch": branch,
-            "origin_url": origin_url,
-            "stderr_tail": _tail(push_proc.stderr or ""),
+            "origin_url": redacted_origin_url,
+            "stderr_tail": _redact_remote_output(_tail(push_proc.stderr or "")),
         }
 
     return {
         "status": "pushed",
         "branch": branch,
-        "origin_url": origin_url,
+        "origin_url": redacted_origin_url,
         "commit_message": commit_message,
         "from_sha": from_sha,
         "to_sha": from_sha,
-        "command_text": _command_text(command),
+        "command_text": _command_text(redacted_command),
         "dry_run": False,
     }
 
