@@ -54,6 +54,27 @@ with the whole process streamlined at 10+ concurrent epics.
 | `tests/cloud/test_watchdog_wrappers.py` | 3 new tests: manifest branch resolution in all fixer wrappers, supervisor-lib helpers, shim behavioral gate (refuses `push origin main`, allows manifest branch, legacy when unset) |
 | `tests/.../test_chain_execution_binding.py` | cloud default + explicit-override test |
 
+## Codex review outcome (2026-08-09)
+
+GPT-5 codex reviewed the end state vs the first implementation: **MISS** with
+five defect classes. Its top fixes are landed in commit `d62ceef2e8`:
+
+1. **Delivery broker** — the PATH shim bakes the real git path (no env leak),
+   refuses `--all`/`--mirror`/force/URL-remote/multi-refspec/non-`origin`
+   pushes, and the repair-loop verifies **post-dispatch** that only the
+   manifest-declared epic branch moved on the remote (ls-remote before/after
+   in the supervisor context — the verifiable control; the shim is a
+   deterrent).
+2. **Fail-closed manifest authority** — a present manifest without
+   `epic.branch` exits 78 in repair-loop/kimi/meta instead of silently
+   falling back to the shared branch.
+3. **Single-writer create lock** — `arnold-runtime-create` flocks (mkdir
+   fallback on macOS) so 10+ concurrent creations cannot race the pointer.
+
+Remaining (documented, not yet implemented): launch routing through
+`arnold-runtime-create` (preflight manifest requirement), the frozen-venv
+model implementation, and generation-level CAS/fencing for promotion.
+
 ## Already present (prior work, verified)
 
 - `arnold-runtime-create` / `arnold-promote` / `arnold-close` /
