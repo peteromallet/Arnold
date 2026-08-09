@@ -84,6 +84,15 @@ def test_status_all_in_container_builds_locally_without_ssh(
     monkeypatch.setattr(
         status_snapshot, "DEFAULT_SNAPSHOT_PATH", tmp_path / "absent-cloud-status.json"
     )
+    # The classifier treats activity sidecars as display context, never
+    # liveness authority; a session without a live runner lease/tmux/process
+    # is attention, not running. Report the live tmux session a real box
+    # would have so the fixture session classifies as running.
+    monkeypatch.setattr(
+        status_snapshot,
+        "default_liveness_probe",
+        lambda marker: {"tmux": True, "process": False},
+    )
     provider = _RecordingProvider()
 
     rc = cli_module._run_status_all(spec=None, provider=provider, args=_args())
