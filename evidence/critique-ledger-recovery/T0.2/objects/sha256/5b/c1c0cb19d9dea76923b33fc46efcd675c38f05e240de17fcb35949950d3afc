@@ -1,0 +1,22 @@
+{
+  "schema": "megaplan.event_journal_resequence_recovery.v1",
+  "recorded_at": "2026-07-31T18:03:41.153463+00:00",
+  "reason": "single sequence epoch reset after runtime cutover made canonical introspection fail; preserve event order and payload content while assigning monotonic sequence numbers",
+  "source_sha256": "e290d37eb6ecaf12e556ff8872060ea83bcb8edfb571872e3bf89af9da686c69",
+  "result_sha256": "40239b6851a19a211fb33567a84fb17effb8422fd15d468ee8b2428daa251e4d",
+  "source_line_count": 1188,
+  "result_line_count": 1188,
+  "result_last_seq": 1187,
+  "rewrite_count": 60,
+  "first_rewrite": {
+    "line": 1129,
+    "old_seq": 0,
+    "new_seq": 1128
+  },
+  "last_rewrite": {
+    "line": 1188,
+    "old_seq": 61,
+    "new_seq": 1187
+  },
+  "archive_path": ".megaplan/plans/cl2-wbc-backed-ledger-20260731-1411/recovery_archives/event-sequence-epoch-20260731T180321Z"
+}

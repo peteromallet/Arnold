@@ -1,0 +1,56 @@
+{
+  "selections": [
+    {
+      "check_id": "correctness",
+      "complexity": 7,
+      "complexity_justification": "The hardest realistic check names a test-evading cascade: a superseded reconciliation event leaking into must_act/context_only because the projection resolves latest-by-event-id rather than latest-by-supersession-chain — a test asserting only 'both original and superseding events are retained' (Step 9) would pass while gate-visible state is wrong. The lens must reason across atomicity, idempotency dedup-with-quarantine ordering, supersession retention, partial-occurrence cannot carry semantic_finding_id, byte-equivalent golden round-trips, and strictly read-only deterministic replay simultaneously. Tier 7 (DEMANDING): both difficulty and consequence (data integrity, North Star custody invariants #1-16) are elevated; not 8 because each invariant maps to a structured test that bounds the validation surface.",
+      "why": "The plan encodes high-stakes data-integrity invariants: SQLite BEGIN IMMEDIATE atomicity across occurrence+manifest+outbox (Step 5), WAL single-writer under concurrency (Step 13), idempotency-key dedup with divergent-quarantine where dedup-wins-over-rejection, partial-publication-blocking in finalize_revision, supersession that appends-never-rewrites while the active projection derives latest valid decision and superseded decisions cannot support a clean gate projection (Steps 3/7/9), partial occurrences that cannot author semantic_finding_id or close a finding (Step 3), and read-only deterministic replay (Step 6). A logic error in any silently corrupts gate-visible state."
+    },
+    {
+      "check_id": "scope",
+      "complexity": 6,
+      "complexity_justification": "Identifying every god-task across 14 steps and proposing correct natural splits is a large check crossing the whole plan with real risk of missing an oversized step — Step 5's transaction-mirror (_append_domain_tx) plus six typed append methods plus record_attempt_start plus finalize_revision plus a full test_store_append.py is the canonical god-task. Tier 6 (HEAVY): large surface and meaningful execution risk, but the per-step judgment (count substeps, assess single-turn feasibility) is more mechanical than architecturally subtle, so it sits below 7.",
+      "why": "Several steps bundle multiple concerns into one ~15-min worker turn. Step 5 (Large) implements _append_domain_tx mirroring _append_tx AND 6 typed append methods AND record_attempt_start AND finalize_revision AND test_store_append.py. Step 10 (Large) implements LegacyImporter AND 10 fixture types. Step 2 (Medium) adds 3 new frozen event dataclasses (FindingResponseEvent, OutcomeVerificationEvent, AuditEvent) + version constants + semantic_finding_id deprecation logic + ParseStatus.PARTIAL_RECOVERED + v2 golden tests. The lens guidance explicitly warns raising complexity buys a stronger model, not more time, so these Large steps are at high risk of running out of time mid-implementation."
+    },
+    {
+      "check_id": "prerequisite_ordering",
+      "complexity": 6,
+      "complexity_justification": "Real partial-precondition cascades across an explicit 14-step dependency graph with a defining tension: the unaccepted-CL1-handoff precondition only partially holds (technical must-gates pass, 5 procedural blockers remain) yet downstream artifacts assume full acceptance-encoding — the exact 'graceful-fallback-vs-absolute-completion' contradiction the lens targets. Cross-phase assumptions (importer/freshness claimed independent of Phase 3; Step 12 audit is a prerequisite for referencing cancelled code but sequenced in Phase 5) add subtle failure modes. Tier 6 (HEAVY): subtle and boundary-crossing; below 7 because the dependency chain is explicitly published in the plan's Execution Order.",
+      "why": "The plan has hard dependency chains (schemas 1-3 -> migrations 4 -> store 5 -> replay 6 -> projections 7-8 -> v2 tests 9) and claims importer(10)/freshness(11) are 'independent of each other and of Phase 3.' The load-bearing partial-precondition is proceeding against the unaccepted CL1 handoff while downstream artifacts (store metadata, importer output, CL3 handoff) assume acceptance-encoding works. Step 9's v2-event tests depend on BOTH v2 event types (Step 2) AND replay/projection (Steps 6-8) landing completely. Step 12 (cancelled-archive audit) is declared a prerequisite for referencing any cancelled code but sequenced last."
+    },
+    {
+      "check_id": "verification",
+      "complexity": 6,
+      "complexity_justification": "Genuinely hard because the source fixtures themselves are unverified: prep research A1/A2/A3 (CL1 schemas/handoff, cancelled-archive inventory, v1->v2 delta) all ERRORED on a divergent idempotency key, yet the plan asserts specific behavior over them. Tracing a test's execution path through the patch therefore requires reasoning about inputs that do not yet exist — multiple interacting unknowns. Tier 6 (HEAVY): the uncharacterized-fixture and degraded-selector angles elevate this well above routine test-coverage review.",
+      "why": "The plan's verification claims rest on inputs that were never characterized: prep research A1, A2, A3 all ERRORED, yet Steps 6/8 assert the M6 blocked-handoff family 'reconstructs as one finding with five retained occurrences' and Step 10 enumerates 10 import fixtures whose legacy source shape is unverified. Additionally, declared test selectors point to nonexistent paths (tests/arnold_pipelines/megaplan/custody/test_projections.py, tests/arnold/kernel/test_replay.py), full_suite_fallback=true with confidence low, and several must-criteria are compound (importer bundles 5 sub-claims; fixtures bundle 10). This lens checks whether planned tests can actually trace every claimed branch."
+    },
+    {
+      "check_id": "all_locations",
+      "complexity": 5,
+      "complexity_justification": "Multiple files/components with non-obvious registration seams: migration registry composition via default_combined_migrations(), the __init__ export surface for all new v2 types, 6 indexes across 4 domain tables, and reuse-not-reimplement boundaries across payload_policy.py/durable_refs.py/ledger_outbox.py/attempt_ledger_store.py. Each is locatable by targeted grep but easy to miss (an unexported type or unregistered migration silently breaks the whole module). Tier 5 (MEANINGFUL): real risk of a missed glue point, but the surface is enumerable rather than architecturally deep.",
+      "why": "The plan requires integration glue beyond core logic: exporting all new v2 types from arnold/critique_ledger/__init__.py, registering CL2 migrations in default_combined_migrations() (versions 5+ appended; ledger_migrations.py explicitly unedited), creating 6 indexes across 4 domain tables (round_label+sequence, semantic_finding_id, attempt_id+occurrence_id, canonical_finding_id, region_anchor+finding_id), wiring the outbox and shared SQLite connection, and reusing rather than reimplementing WBC payload_policy/durable_refs contracts. Missing any glue point causes test failures even when core logic is correct."
+    },
+    {
+      "check_id": "issue_hints",
+      "complexity": 5,
+      "complexity_justification": "Cross-referencing 16 North Star invariants, 8 brief locked decisions, and explicit anti-scope against 14 steps for silent contradiction is meaningful but bounded work (read brief + plan, diff). Tier 5 (MEANINGFUL): the difficulty is real because the extensive anti-scope language invites silent widening and the plan already proceeds against a hard brief constraint by assumption, but each check is a focused read rather than deep architectural reasoning, so it sits below 6.",
+      "why": "The brief's locked decisions ('Consume only an accepted CL1 handoff,' 'Occurrences are never merged away,' 'Corrections append superseding decisions,' 'Similarity triggers re-review, never merge/closure,' 'Projections carry no positive authority,' 'WBC rules reused not reimplemented') and explicit anti-scope (no parallel authority, no DROP, no semantic auto-merge, no hard-coded similarity threshold as authority) must be transcribed faithfully into the 14 steps without silent contradiction. The defining tension — proceeding against the unaccepted CL1 handoff while the brief demands an accepted one — is the single highest-risk item and must be encoded durably in every artifact (assumption #1, success-criterion, Steps 12/14)."
+    }
+  ],
+  "skipped": [
+    {
+      "check_id": "callers",
+      "why": "The changed surfaces are a brand-new module: arnold/critique_ledger/ does not exist in the workspace, import_graph shows 0 dependent_tests and lists every surface as unresolved, and the plan reuses (does not modify) the existing WBC substrate functions (attempt_ledger_store, ledger_outbox, ledger_migrations) by calling them alongside. There are therefore no existing callers to break and no caller-argument edge cases (None/empty/composite) to verify. The only callers are the new module's own tests, and the shared-SQLite-connection interaction is a correctness concern, not a callers concern."
+    },
+    {
+      "check_id": "conventions",
+      "why": "The plan deliberately mirrors the codebase's existing patterns by name: _append_domain_tx mirrors _append_tx, default_combined_migrations() composes default_m6a_migrations() + cl2_domain_migrations(), new dataclasses reuse the existing frozen + strict/preserve from_dict pattern, and migrations reuse the Migration(version, name, statements) dataclass without editing ledger_migrations.py. Conventions adherence is asserted at the spec level, and the load-bearing reuse-not-reimplement invariant is better caught by all_locations (greps for duplicated payload_policy/ledger_outbox logic) and correctness (checks contract fidelity). A standalone conventions check would mostly re-confirm patterns the plan already cites verbatim."
+    },
+    {
+      "check_id": "criteria_quality",
+      "why": "The criteria are well-prioritized: every must criterion maps to run_tests/parse_diff/read_files (objective pass/fail), and the genuinely subjective items ('~500 lines per file,' 'encodes the unaccepted-CL1-handoff assumption explicitly') are correctly downgraded to should. The compound musts (importer = 5 sub-claims; import fixtures = 10 types; active-projection = 4 sub-claims) do not create ambiguous yes/no answers because each is test-backed — the suite either passes every fixture case or fails. The branch-coverage weakness of those compound criteria is owned by the verification lens."
+    }
+  ],
+  "evaluator_model": "glm-5.2",
+  "flag_verifications": []
+}

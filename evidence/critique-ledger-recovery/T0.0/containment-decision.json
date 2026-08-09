@@ -1,0 +1,26 @@
+{
+  "schema": "t0.0.containment-decision.v1",
+  "status": "blocked",
+  "decision_recorded": false,
+  "interface": "arnold_pipelines.run_authority.current_source.evaluate_current_source",
+  "owner": "Run Authority owner",
+  "missing_capability": "No installed owner-operated RA-CONTAIN append/supersede/quarantine/revoke API or command that can issue a durable containment receipt.",
+  "incident": {
+    "selection_session": "critique-ledger-accountability-v2-20260728",
+    "spec": ".megaplan/initiatives/critique-ledger/chain.yaml",
+    "workspace": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+    "plan": "cl2-wbc-backed-ledger-20260731-1411",
+    "branch": "megaplan/critique-ledger-accountability-v2-20260728",
+    "profile": "partnered-5-glm",
+    "runtime": "not present in the authoritative P0 evidence available locally; must be bound by the owner receipt, not inferred"
+  },
+  "required_effect_policy": ["resume", "repair", "execute", "publish", "notify"],
+  "strongest_evidence": [
+    "current_source.py is a read-only current-source checker",
+    "reducer.py is a pure projection over supplied records",
+    "writer_map.py declares M7 production gates and mutating effects disabled",
+    "18 Run Authority contract/reducer tests passed; no writer capability was exposed"
+  ],
+  "captured_at": "2026-08-02T12:55:01Z",
+  "clock_basis": "local UTC wall clock"
+}

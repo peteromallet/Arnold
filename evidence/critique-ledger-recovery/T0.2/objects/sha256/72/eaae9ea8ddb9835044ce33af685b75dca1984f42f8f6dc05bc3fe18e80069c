@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request_decision",
+  "decision_id": "56908bfe411f8bff43b6a52a88748ad480cdf7d6e891e78d4b5a4f53c76091fa",
+  "request_id": "a91d6266e8097d713e55172f03e81c09416e7b7f2ef9fb457a768e912b386e84",
+  "decision": "accepted",
+  "reason": "queued",
+  "related_request_id": "",
+  "created_at": "2026-07-31T15:21:37Z"
+}

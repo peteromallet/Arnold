@@ -1,0 +1,16 @@
+{
+  "claims_with_objects": 230,
+  "clock_basis": "local UTC wall clock",
+  "failures": [],
+  "formal_t02_completion_criterion": true,
+  "manifest_byte_size": 996189,
+  "manifest_sha256": "c45030bd29c57d1eb0d1694c705aebb3dd55ca04fa3b612ad0d287e32e4dc791",
+  "object_bytes_counted_with_duplicate_references": 110539127,
+  "objects_verified": 319,
+  "result": "PASS",
+  "schema": "t0.2.verification-receipt.v1",
+  "unexpected_objects": [],
+  "verified_at": "2026-08-02T14:32:07Z",
+  "verifier": "verify_manifest.py",
+  "verifier_path": "/Users/peteromalley/Documents/Arnold/evidence/critique-ledger-recovery/T0.2/verify_manifest.py"
+}

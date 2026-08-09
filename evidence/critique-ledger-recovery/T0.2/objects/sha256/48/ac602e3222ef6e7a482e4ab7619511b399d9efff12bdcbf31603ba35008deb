@@ -1,0 +1,20 @@
+The evaluation output is written and valid. Here's a summary of my critique-evaluator decisions:
+
+## Selections (6 lenses — lean set covering the real risk)
+
+| Lens | Tier | Why it fires |
+|------|------|--------------|
+| **correctness** | 7 (DEMANDING) | Data-integrity invariants across atomicity, idempotency dedup-with-quarantine, supersession-vs-gate-projection, partial-occurrence constraints, byte-equivalence, read-only replay. Named a test-evading cascade (superseded decision leaking via id-vs-supersession-chain resolution). Floor honored (≥4). |
+| **scope** | 6 (HEAVY) | God-tasks: Steps 2, 5, 6, 10 each bundle multiple concerns into one ~15-min turn. Raising complexity buys a stronger model, not more time. |
+| **prerequisite_ordering** | 6 (HEAVY) | Hard dependency chains + the defining partial-precondition: proceeding on the unaccepted CL1 handoff (brief says "consume only an accepted handoff"). Floor honored (≥4). |
+| **verification** | 6 (HEAVY) | Prep research A1/A2/A3 all **errored**, yet the plan asserts specific M6-family and 10-fixture behavior over uncharacterized inputs; selectors point to nonexistent paths. |
+| **all_locations** | 5 (MEANINGFUL) | Glue/registration: `__init__` exports, `default_combined_migrations()` registration, 6 indexes across 4 tables, reuse-not-reimplement boundaries. |
+| **issue_hints** | 5 (MEANINGFUL) | Faithful transcription of 16 North Star invariants + 8 locked decisions + anti-scope into 14 steps, with the unaccepted-handoff tension being the single highest-risk item. |
+
+## Skipped (3 lenses — each with a concrete, plan-specific reason)
+
+- **callers** — brand-new module, 0 dependent tests, no existing callers to break; substrate functions are reused, not modified.
+- **conventions** — plan mirrors existing patterns by name; reuse-not-reimplement better caught by all_locations + correctness.
+- **criteria_quality** — well-prioritized (all `must` → objective test pass/fail; subjective items correctly `should`); compound-musts don't create ambiguity; branch-coverage owned by verification.
+
+The union covers all 9 lens IDs with no overlap or omission, floor tiers are honored, and no check IDs were invented.

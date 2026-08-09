@@ -1,0 +1,59 @@
+{
+  "receipt_id": "536be5d6-810e-4d9e-87d6-1be3faec3a16",
+  "plan_id": "cl2-wbc-backed-ledger-20260731-1411",
+  "phase": "critique",
+  "iteration": 1,
+  "attempt": 1,
+  "timestamp_utc": "2026-07-31T15:51:39.528768+00:00",
+  "profile_name": "partnered-5-glm",
+  "agent": "hermes",
+  "agent_mode": "persistent",
+  "model_configured": "hermes:deepseek:deepseek-v4-pro",
+  "model_actual": null,
+  "configured_specs": [
+    "hermes:deepseek:deepseek-v4-pro"
+  ],
+  "attempted_specs": [
+    "hermes:deepseek:deepseek-v4-pro"
+  ],
+  "selected_spec_index": 0,
+  "selected_spec_total": 1,
+  "fallback_trigger": null,
+  "failed_attempt_reasons": [],
+  "session_id": null,
+  "megaplan_version": "unknown",
+  "schema_version": 1,
+  "prompt_hash_raw": null,
+  "prompt_hash_canonical": null,
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922"
+  ],
+  "cost_usd": 0.0,
+  "cost_pricing": null,
+  "duration_ms": 404006,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "findings_per_check": {
+      "issue_hints": 1,
+      "correctness": 1,
+      "scope": 1,
+      "all_locations": 1,
+      "verification": 1,
+      "prerequisite_ordering": 1
+    },
+    "severity_distribution": {
+      "unknown": 6
+    },
+    "clean_checks_count": 0,
+    "flagged_checks_count": 6,
+    "rubber_stamp_ratio": 0.0
+  },
+  "scope_drift_severity": null,
+  "shannon_plan": null,
+  "worker_channel": null,
+  "auth_channel": null,
+  "auth_metadata": null
+}

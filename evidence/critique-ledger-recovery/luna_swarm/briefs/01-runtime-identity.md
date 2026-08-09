@@ -1,0 +1,3 @@
+# Luna audit 01 — hermetic runtime and CLI identity
+
+Context: Read `evidence/critique-ledger-recovery/sol-broader-review-compact-brief-20260804.md` and Sol's verdict. Audit only runtime/entrypoint identity. Inspect `arnold_pipelines/megaplan/cloud/providers/ssh.py`, `arnold_pipelines/megaplan/cloud/cli.py` cloud resume/chain command builders, `pyproject.toml`, `arnold/cli`, and relevant cloud tests. Do not edit files. Find every bare executable/PATH lookup or mixed import path that can select the wrong Arnold CLI. Return observed evidence with file:line citations, concrete patch boundary, and 3–6 acceptance tests. Distinguish immediate tactical bypass from shared fix. Under 900 words.

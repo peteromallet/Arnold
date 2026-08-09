@@ -1,0 +1,33 @@
+{
+  "bound": {
+    "errors": [],
+    "exists": true,
+    "file_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+    "git_blob": "a8e4ceae1c44d85cfd2a0801ebc1bbb718b2ea50",
+    "git_path": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+    "git_revision": "bf25a699f85315e1a282df55502ba275253411f9",
+    "project_relative_path": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+    "schema": "arnold.megaplan.canonical_source_binding.v1",
+    "semantic_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+    "source_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md"
+  },
+  "changed_fields": [],
+  "checked_at": "2026-07-31T18:04:20Z",
+  "current": {
+    "errors": [],
+    "exists": true,
+    "file_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+    "git_blob": "a8e4ceae1c44d85cfd2a0801ebc1bbb718b2ea50",
+    "git_path": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+    "git_revision": "bf25a699f85315e1a282df55502ba275253411f9",
+    "project_relative_path": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+    "schema": "arnold.megaplan.canonical_source_binding.v1",
+    "semantic_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+    "source_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md"
+  },
+  "operation": "auto",
+  "outcome": "admitted",
+  "reason": "",
+  "schema": "arnold.megaplan.canonical_source_check.v1",
+  "status": "match"
+}

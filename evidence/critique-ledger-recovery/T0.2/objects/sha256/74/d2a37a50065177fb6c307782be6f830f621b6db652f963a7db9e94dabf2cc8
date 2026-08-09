@@ -1,0 +1,74 @@
+{
+  "receipt_id": "ba36f4ec-a777-40f7-a30e-1074c938064a",
+  "plan_id": "cl2-wbc-backed-ledger-20260731-1411",
+  "phase": "gate",
+  "iteration": 1,
+  "attempt": 1,
+  "timestamp_utc": "2026-07-31T15:54:23.077593+00:00",
+  "profile_name": "partnered-5-glm",
+  "agent": "hermes",
+  "agent_mode": "persistent",
+  "model_configured": "hermes:deepseek:deepseek-v4-pro",
+  "model_actual": "deepseek-v4-pro",
+  "configured_specs": [
+    "hermes:deepseek:deepseek-v4-pro"
+  ],
+  "attempted_specs": [
+    "hermes:deepseek:deepseek-v4-pro"
+  ],
+  "selected_spec_index": 0,
+  "selected_spec_total": 1,
+  "fallback_trigger": null,
+  "failed_attempt_reasons": [],
+  "session_id": "31a45c19-3501-44fe-94f7-76953e472eb8",
+  "megaplan_version": "unknown",
+  "schema_version": 1,
+  "prompt_hash_raw": "801e28f020dac831dd4d5d63e6f0b9598abb44beac27be0a9edf214216e63f83",
+  "prompt_hash_canonical": "70e32967a43d0effd8897403c7c08bb6dee9ead37ede3292095e3b10a97a7694",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8"
+  ],
+  "cost_usd": 0.023798763,
+  "cost_pricing": null,
+  "duration_ms": 154349,
+  "prompt_tokens": 407201,
+  "completion_tokens": 5396,
+  "verdict": null,
+  "metrics": {
+    "recommendation": "PROCEED",
+    "blocking_flags_resolved": 0,
+    "blocking_flags_remaining": 0,
+    "override_forced": false
+  },
+  "scope_drift_severity": null,
+  "shannon_plan": null,
+  "worker_channel": "hermes",
+  "auth_channel": "deepseek-v4-pro",
+  "auth_metadata": {
+    "worker_channel": "hermes",
+    "auth_channel": "deepseek-v4-pro",
+    "provider": "deepseek-v4-pro",
+    "resolved_model": "deepseek-v4-pro",
+    "wbc_dispatch": {
+      "attempt_id": "e9dee7b9-f9a2-578e-89c1-15dae3625835",
+      "writer_id": "megaplan.worker_dispatch.direct",
+      "surface_name": "megaplan.worker_dispatch.direct",
+      "expected_source_version": "gate:1291cb2974c74079:direct:gate:hermes:deepseek:deepseek-v4-pro:0",
+      "start_source_lookup_key": "gate:gate:direct:0:start",
+      "terminal_source_lookup_key": "gate:gate:direct:0:complete",
+      "start_event_sequence": 1,
+      "terminal_event_sequence": 2,
+      "promotion_mode": "action_off",
+      "route_kind": "direct",
+      "selected_spec": "hermes:deepseek:deepseek-v4-pro",
+      "attempt_index": 0,
+      "configured_specs": [],
+      "attempted_specs": [],
+      "failed_attempt_reasons": [],
+      "fallback_trigger": null,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek-v4-pro"
+    }
+  }
+}

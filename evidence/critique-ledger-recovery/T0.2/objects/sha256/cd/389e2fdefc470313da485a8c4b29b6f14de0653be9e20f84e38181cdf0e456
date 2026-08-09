@@ -1,0 +1,45 @@
+{
+  "checks": [
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "The plan's central migration assumption states CL2 migrations are \"appended to the M6A registry via `default_combined_migrations()`\" (Overview + assumptions). I verified arnold/workflow/ledger_migrations.py and the only default-registry factory is `default_m6a_migrations()` at line 468 (also referenced at line 766 as the migrator's default). A repo-wide content search for `default_combined_migrations` / `combined` returns zero matches. An executor that imports `default_combined_migrations` will hit ImportError at runtime. The correct symbol is `default_m6a_migrations()`; the migrator constructor (SqliteLedgerMigrator.__init__, lines 758-767) does accept an optional `migrations: Optional[Sequence[Migration]]` registry, so the design of concatenating `default_m6a_migrations() + cl2_migrations` and passing it in is sound \u2014 only the function name in the plan is wrong.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the WBC substrate claims the plan builds on, all accurate against the repo: arnold/critique_ledger/ does NOT exist (so this is genuinely net-new work); SqliteAttemptLedgerStore in arnold/workflow/attempt_ledger_store.py enforces WAL + BEGIN IMMEDIATE per append + exactly-one-terminal-event (PostTerminalAppendError); SqliteLedgerOutbox.append_event_with_outbox exists on both the abstract (line 186) and Sqlite (line 339) classes and is the atomic event+outbox write the domain append layer intends to reuse; SqliteLedgerMigrator(store, migrations) accepts a custom registry; the M6A default registry currently occupies versions 1-4 (m6a_substrate_baseline, m6a_forward_fix_policy_anchor, m10_global_effect_identity_snapshot, m10_global_effect_outcome_cas), so CL2 appending versions 5+ is consistent; and _validate_registry (lines 432-462) requires a contiguous run starting at version 1 with no gaps, so a concatenated default_m6a_migrations()+CL2 registry will pass validation while a CL2-only registry starting at 5 would correctly be rejected. The regression-safety-net tests named in test_blast_radius (tests/arnold/workflow/test_attempt_ledger_store.py, test_ledger_outbox.py, test_ledger_migrations.py, test_ledger_payload_enforcement.py, test_payload_policy.py, test_execution_attempt_ledger.py) all exist.",
+          "flagged": false
+        },
+        {
+          "detail": "Step 1 (\"Port CL1 critique_ledger module verbatim from archive\") depends on /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ which is OUTSIDE the project root (/workspace/critique-ledger-accountability-v2-20260728/Arnold). A files search for 'paused-epics' under /workspace returns nothing, so the archive is not reachable from this critique sandbox and I cannot confirm the CL1 schemas.py (731 lines), semantic_loop.py (1206 lines), or __init__.py exist there or are byte-portable. This is a hard external dependency for the entire plan's first step and the golden round-trip success criterion; if the executor's environment also lacks the archive, Step 1 and every downstream step that ports/extends those schemas cannot proceed.",
+          "flagged": true
+        },
+        {
+          "detail": "Confirmed the test_blast_radius selector tests/arnold_pipelines/megaplan/custody/test_projections.py (a bounded basename match for the new projections.py) does NOT exist in the repo (0 file matches), and the plan metadata already acknowledges dropping nonexistent pytest paths and falls back to full_suite_fallback. This is consistent and not itself a correctness defect, but it means the plan's 'scoped' confidence is effectively 'low' and relies on the full-suite fallback; the metadata self-reports confidence as low, which is honest.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-CORRECTNESS-MIGRATION-FN-NAME",
+      "concern": "Plan references a nonexistent symbol default_combined_migrations(); the real factory is default_m6a_migrations() in arnold/workflow/ledger_migrations.py. Following the plan literally yields ImportError. The migrator's custom-registry constructor and the 'append versions 5+' strategy are otherwise correct.",
+      "category": "correctness",
+      "severity_hint": "high",
+      "evidence": "arnold/workflow/ledger_migrations.py:468 (def default_m6a_migrations), :766 (migrator default), :758-767 (constructor signature); repo-wide search for default_combined_migrations returns 0 matches."
+    },
+    {
+      "id": "FLAG-COMPLETENESS-EXTERNAL-ARCHIVE",
+      "concern": "Step 1 depends on an external paused-epics archive outside the project root that is not verifiable from the critique sandbox. The plan's correctness rests entirely on a verbatim port from a source whose existence/contents cannot be confirmed here.",
+      "category": "completeness",
+      "severity_hint": "medium",
+      "evidence": "No 'paused-epics' path under /workspace; plan Overview references /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

@@ -1,0 +1,591 @@
+{
+  "name": "cl2-wbc-backed-ledger-20260731-1411",
+  "idea": "# CL2 \u2014 WBC-backed ledger persistence, import, and replay\n\n## Outcome\n\nImplement the CL1 record contract through existing WBC/plan-local persistence\nseams, with atomic append, idempotent retry, rebuildable projections, read-only\nreplay, and one-time import from retained legacy artifacts. Leave CL3 one stable\ntarget API and fixtures.\n\n## In scope\n\n- Persist critic start/result and immutable occurrence envelopes with WBC\n  attempt/payload references and current raw/custody artifacts.\n- Additively version the CL1 schema so new raw occurrences cannot author\n  `semantic_finding_id`; retain the old field only for explicit legacy reads.\n- Append reconciliation/disposition events and publish a ledger revision only\n  after complete occurrence accounting validates.\n- Persist reconciliation corrections/supersession, independent audit events,\n  plan-region/dependency anchors, and deterministic tripwire state.\n- Persist structured revision-response and independent outcome-verification\n  events in the same finding history; do not create a separate revision ledger.\n- Build cumulative/domain projections and deterministic read-only replay.\n- Build a separate rebuildable active-action projection so closed history does\n  not create a monotonically growing reviser workload.\n- Project explicit `accepted|review_required|disputed|superseded` decision state\n  and `must_act|must_revalidate|context_only` work queues.\n- Build a per-round accountability projection from attempts through occurrences,\n  logical findings, responses, verified outcomes, and reopen conditions.\n- Add current-source import, target-only, future-version, corrupt, redacted,\n  unavailable, duplicate, out-of-order, concurrent, and crash fixtures.\n- Add the target schema reader and explicit `legacy_unknown` import behavior;\n  retain current flag/gate/finalize inputs only until the coordinated cutover.\n- Implement freshness vectors and governed tombstone/unavailable handling.\n\n## Out of scope\n\nEvaluator selection, critic prompt changes, semantic auto-merge policy, reviser\nor gate consumption, live cutover, old artifact deletion, or production\nbackfill of historical semantic relationships.\n\n## Locked decisions\n\n- Start persistence precedes critic dispatch; terminal persistence failure is\n  visible `persistence_failed|indeterminate`, never clean success.\n- Occurrences are never merged away. Semantic identity and occurrence identity\n  remain distinct.\n- Reconciliation decisions are immutable evidence, not unquestionable truth;\n  corrections append a superseding decision and replay retains both.\n- Semantic finding identity is assigned only by reconciliation events, never by\n  a new raw occurrence.\n- Similarity and region/dependency changes may trigger re-review but never\n  perform semantic merge, closure, or suppression.\n- Projections are rebuildable and carry no positive authority.\n- Historical gaps stay explicit; migration never invents duplicate, resolution,\n  evidence, or reopen relationships.\n- WBC inline/reference, retention, redaction, ordering, and effect rules are\n  reused, not reimplemented.\n\n## Open questions\n\n- Which landed backend satisfies one transaction, and where is durable\n  prepare/outbox reconciliation required?\n- What plan-local compatibility files remain necessary for old readers?\n- How are partially parseable failed attempts admitted without promoting an\n  invalid whole payload?\n- What indexes are necessary within the two-week scope for domain/round replay?\n\n## Constraints\n\nConsume only an accepted CL1 handoff. Do not widen schema or ownership without a\nnew reviewed CL1 decision. All writes are idempotent, content-safe, access-\ncontrolled, and fault-tested. Replay issues no model call or external effect.\n\n## Done criteria\n\n- Schema/golden, property, concurrency, crash/fault, compatibility, privacy,\n  WBC ledger/evidence, and existing critique-custody suites pass.\n- Every accepted producer occurrence appears once; duplicate replay is a no-op;\n  partial publication cannot expose an accepted incomplete ledger revision.\n- Projections rebuild byte-equivalently from retained inputs and surface\n  missing/redacted evidence as unknown.\n- Region-anchor changes stale only the affected scoped findings; unknown or\n  cross-cutting scope safely defaults to whole-plan freshness.\n- Correction, audit-disagreement, tripwire, and bounded active-projection\n  fixtures replay deterministically.\n- Round receipts account for every occurrence and active finding; reviser\n  `addressed` claims remain distinct from independently verified\n  `dealt_with|partially_dealt_with|not_dealt_with|unknown` outcomes.\n- The one-time importer preserves all available legacy evidence, marks semantic\n  gaps unknown, and rejects unsupported target versions without partial publish.\n- Negative tests prove ledger/replay cannot mutate plan, gate, lifecycle, queue,\n  Git/provider, delivery, or external-effect state.\n\n## Touchpoints\n\n`arnold/workflow/execution_attempt_ledger.py`, `payload_policy.py`, boundary\nevidence/compatibility/conformance; Megaplan critique custody/runtime, schemas,\nartifact writers, flag registry readers, and focused WBC/critique tests.\n\n## Anti-scope\n\nNo new database service, event bus, authority plane, generalized knowledge\nstore, embeddings, broad historical backfill, dual-write window, or old-reader\nretirement before CL5.\n\n## Written handoff to CL3\n\nWrite and review `docs/critique-ledger/handoffs/cl2-ledger-replay.json` with API/\nschema hashes, backend/atomicity decision, one-time import map, replay hashes,\nfixture index, region/freshness and tripwire rules, audit/correction event rules,\nresponse/outcome event rules, active-projection bounds, round-receipt hashes,\nfault results, backup/restore prerequisites, and unresolved limits. CL3 must\nvalidate the handoff and replay fixtures before constructing a briefing.",
+  "idea_snapshot_path": "idea_snapshot.md",
+  "current_state": "gated",
+  "iteration": 1,
+  "created_at": "2026-07-31T14:11:51Z",
+  "config": {
+    "project_dir": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+    "auto_approve": true,
+    "adaptive_critique": true,
+    "strict_adaptive_critique": false,
+    "critic_model": "",
+    "critic_model_explicit": false,
+    "robustness": "thorough",
+    "mode": "code",
+    "strict_notes": false,
+    "max_tasks_per_batch": 5,
+    "agent": "",
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "test_command": null,
+    "test_baseline_timeout": 900,
+    "profile": "partnered-5-glm",
+    "depth": "high",
+    "deepseek_provider": "direct",
+    "with_prep": true,
+    "prep_direction": "Consume the landed CL1 contract/oracle and the reviewed 2026-07-28 safety amendment. Additively correct the occurrence/reconciliation contract, then implement append/replay, outcome history, active projections, region freshness, and the one-time migration reader. Preserve and audit the cancelled CL2 archive; never adopt its uncommitted work implicitly.",
+    "phase_model": [
+      "plan=hermes:zhipu:glm-5.2",
+      "prep=hermes:deepseek:deepseek-v4-pro",
+      "critique=hermes:deepseek:deepseek-v4-pro",
+      "critique_evaluator=hermes:zhipu:glm-5.2",
+      "revise=hermes:zhipu:glm-5.2",
+      "gate=hermes:deepseek:deepseek-v4-pro",
+      "finalize=codex:gpt-5.6-sol:high",
+      "execute=hermes:zhipu:glm-5.2",
+      "feedback=hermes:zhipu:glm-5.2",
+      "loop_plan=hermes:zhipu:glm-5.2",
+      "loop_execute=hermes:zhipu:glm-5.2",
+      "review=hermes:zhipu:glm-5.2",
+      "tiebreaker_researcher=hermes:zhipu:glm-5.2",
+      "tiebreaker_challenger=hermes:zhipu:glm-5.2"
+    ],
+    "tier_models": {
+      "execute": {
+        "1": "hermes:deepseek:deepseek-v4-flash",
+        "2": "hermes:deepseek:deepseek-v4-flash",
+        "3": "hermes:deepseek:deepseek-v4-pro",
+        "4": "hermes:deepseek:deepseek-v4-pro",
+        "5": "hermes:deepseek:deepseek-v4-pro",
+        "6": "hermes:deepseek:deepseek-v4-pro",
+        "7": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "8": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "9": "hermes:zhipu:glm-5.2",
+        "10": "hermes:zhipu:glm-5.2"
+      },
+      "critique": {
+        "1": "hermes:deepseek:deepseek-v4-flash",
+        "2": "hermes:deepseek:deepseek-v4-pro",
+        "3": "hermes:deepseek:deepseek-v4-pro",
+        "4": [
+          "hermes:zhipu:glm-5.2",
+          "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+          "hermes:zhipu:glm-5.2"
+        ],
+        "5": "hermes:zhipu:glm-5.2"
+      }
+    },
+    "prep_models": {
+      "triage": "hermes:deepseek:deepseek-v4-pro",
+      "fanout": "hermes:deepseek:deepseek-v4-pro",
+      "distill": "hermes:deepseek:deepseek-v4-pro"
+    },
+    "prep_model_resolver_trace": {
+      "flat_prep_input": "hermes:deepseek:deepseek-v4-pro",
+      "explicit_prep_models": {},
+      "resolved_stage_models": {
+        "triage": "hermes:deepseek:deepseek-v4-pro",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "hermes:deepseek:deepseek-v4-pro"
+      },
+      "canonical_fallback_used": {
+        "triage": true,
+        "fanout": true,
+        "distill": true
+      }
+    }
+  },
+  "sessions": {
+    "hermes_prep-triage_5ef643cf": {
+      "id": "28fe74db-ab7f-4be0-8383-0c2dad8190a3",
+      "mode": "ephemeral",
+      "created_at": "2026-07-31T14:15:33Z",
+      "last_used_at": "2026-07-31T14:15:33Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-pro",
+        "provider": "deepseek-v4-pro",
+        "resolved_model": "deepseek-v4-pro"
+      }
+    },
+    "hermes_prep-distill_5ef643cf": {
+      "id": "b1b9ca8b-d1f4-4cb3-a622-38db26221c57",
+      "mode": "ephemeral",
+      "created_at": "2026-07-31T14:21:51Z",
+      "last_used_at": "2026-07-31T14:21:51Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-pro",
+        "provider": "deepseek-v4-pro",
+        "resolved_model": "deepseek-v4-pro"
+      }
+    },
+    "hermes_prep": {
+      "id": "b1b9ca8b-d1f4-4cb3-a622-38db26221c57",
+      "mode": "ephemeral",
+      "created_at": "2026-07-31T14:21:52Z",
+      "last_used_at": "2026-07-31T14:21:52Z",
+      "refreshed": true
+    },
+    "hermes_planner": {
+      "id": "2bbe408b-16ee-42f7-a1fb-202b6f5d5b5b",
+      "mode": "persistent",
+      "created_at": "2026-07-31T15:41:14Z",
+      "last_used_at": "2026-07-31T15:41:14Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "glm_5.2",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "glm-5.2",
+        "provider": "glm-5.2",
+        "resolved_model": "glm-5.2",
+        "wbc_dispatch": {
+          "attempt_id": "f38cef32-50db-5954-a37b-c2444286967b",
+          "writer_id": "megaplan.worker_dispatch.direct",
+          "surface_name": "megaplan.worker_dispatch.direct",
+          "expected_source_version": "plan:2b26ff0ee97f4533:direct:plan:hermes:zhipu:glm-5.2:0",
+          "start_source_lookup_key": "plan:plan:direct:0:start",
+          "terminal_source_lookup_key": "plan:plan:direct:0:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": "direct",
+          "selected_spec": "hermes:zhipu:glm-5.2",
+          "attempt_index": 0,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "glm-5.2"
+        }
+      }
+    },
+    "hermes_gatekeeper": {
+      "id": "31a45c19-3501-44fe-94f7-76953e472eb8",
+      "mode": "persistent",
+      "created_at": "2026-07-31T15:54:23Z",
+      "last_used_at": "2026-07-31T15:54:23Z",
+      "refreshed": true,
+      "worker_channel": "hermes",
+      "auth_channel": "deepseek_v4_pro",
+      "auth_metadata": {
+        "worker_channel": "hermes",
+        "auth_channel": "deepseek-v4-pro",
+        "provider": "deepseek-v4-pro",
+        "resolved_model": "deepseek-v4-pro",
+        "wbc_dispatch": {
+          "attempt_id": "e9dee7b9-f9a2-578e-89c1-15dae3625835",
+          "writer_id": "megaplan.worker_dispatch.direct",
+          "surface_name": "megaplan.worker_dispatch.direct",
+          "expected_source_version": "gate:1291cb2974c74079:direct:gate:hermes:deepseek:deepseek-v4-pro:0",
+          "start_source_lookup_key": "gate:gate:direct:0:start",
+          "terminal_source_lookup_key": "gate:gate:direct:0:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": "direct",
+          "selected_spec": "hermes:deepseek:deepseek-v4-pro",
+          "attempt_index": 0,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "hermes",
+          "auth_channel": "deepseek-v4-pro"
+        }
+      }
+    },
+    "codex_finalizer_419255f2": {
+      "id": "019fb919-9641-7a30-9f23-927e9d76452a",
+      "sandbox_fingerprint": "9eeec86c63cb0e19",
+      "last_total_tokens": {
+        "input_tokens": 339860,
+        "cached_input_tokens": 277760,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 22894,
+        "reasoning_output_tokens": 6343,
+        "total_tokens": 362754
+      }
+    },
+    "codex_finalizer": {
+      "id": "019fb919-9641-7a30-9f23-927e9d76452a",
+      "mode": "persistent",
+      "created_at": "2026-07-31T16:54:38Z",
+      "last_used_at": "2026-07-31T17:02:04Z",
+      "refreshed": true,
+      "worker_channel": "codex_cli",
+      "auth_metadata": {
+        "wbc_dispatch": {
+          "attempt_id": "e93007aa-ec62-52c5-bb74-62e78122515f",
+          "writer_id": "megaplan.worker_dispatch.direct",
+          "surface_name": "megaplan.worker_dispatch.direct",
+          "expected_source_version": "finalize:0eeaa76546e842af:direct:finalize:codex:gpt-5.6-sol:high:0",
+          "start_source_lookup_key": "finalize:finalize:direct:0:start",
+          "terminal_source_lookup_key": "finalize:finalize:direct:0:complete",
+          "start_event_sequence": 1,
+          "terminal_event_sequence": 2,
+          "promotion_mode": "action_off",
+          "route_kind": "direct",
+          "selected_spec": "codex:gpt-5.6-sol:high",
+          "attempt_index": 0,
+          "configured_specs": [],
+          "attempted_specs": [],
+          "failed_attempt_reasons": [],
+          "fallback_trigger": null,
+          "worker_channel": "codex_cli",
+          "auth_channel": null
+        }
+      }
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922",
+      "timestamp": "2026-07-31T15:41:14Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-07-31T14:11:51Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "prep",
+      "timestamp": "2026-07-31T14:21:52Z",
+      "duration_ms": 600152,
+      "cost_usd": 0.104863884,
+      "result": "success",
+      "prompt_tokens": 1424500,
+      "completion_tokens": 29368,
+      "total_tokens": 1453868,
+      "session_mode": "ephemeral",
+      "session_id": "b1b9ca8b-d1f4-4cb3-a622-38db26221c57",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "prep.json",
+      "artifact_hash": "sha256:940e9d4da3cf458d49b9814cf0df9ff5be16ba328fe71077c070604283deb426"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T14:29:26Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /test_blast_radius/always_run: missing required property 'always_run'; missing_required at /test_blast_radius/changed_surfaces: missing required property 'changed_surfaces'; missing_required at /test_blast_radius/confidence: missing required property 'confidence'; missing_required at /test_blast_radius/import_graph: missing required property 'import_graph'"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T14:36:28Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /changed_surfaces: missing required property 'changed_surfaces'; missing_required at /test_blast_radius: missing required property 'test_blast_radius'"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T14:43:18Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: type_mismatch at /changed_surfaces: value does not match declared type(s) ['array']; missing_required at /test_blast_radius/always_run: missing required property 'always_run'; missing_required at /test_blast_radius/changed_surfaces: missing required property 'changed_surfaces'; missing_required at /test_blast_radius/confidence: missing required property 'confidence'; missing_required at /test_blast_radius/import_graph: missing required property 'import_graph'"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:02:47Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=a7565c2e883f44c6a8a906fbb95059fddf68d5da; installed_package_path: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/runtime-candidates/arnold-a75; runtime_revision: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=a7565c2e883f44c6a8a906fbb95059fddf68d5da; runtime_root: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/runtime-candidates/arnold-a75"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:02:55Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=a7565c2e883f44c6a8a906fbb95059fddf68d5da; installed_package_path: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/runtime-candidates/arnold-a75; runtime_revision: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=a7565c2e883f44c6a8a906fbb95059fddf68d5da; runtime_root: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/runtime-candidates/arnold-a75"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:03:03Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=a7565c2e883f44c6a8a906fbb95059fddf68d5da; installed_package_path: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/runtime-candidates/arnold-a75; runtime_revision: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=a7565c2e883f44c6a8a906fbb95059fddf68d5da; runtime_root: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/runtime-candidates/arnold-a75"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:21:20Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=bf25a699f85315e1a282df55502ba275253411f9; installed_package_path: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/critique-ledger-accountabilit; runtime_revision: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=bf25a699f85315e1a282df55502ba275253411f9; runtime_root: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/critique-ledger-accountabilit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:21:28Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=bf25a699f85315e1a282df55502ba275253411f9; installed_package_path: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/critique-ledger-accountabilit; runtime_revision: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=bf25a699f85315e1a282df55502ba275253411f9; runtime_root: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/critique-ledger-accountabilit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:21:37Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Worker launch preflight mismatch: source_ref: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=bf25a699f85315e1a282df55502ba275253411f9; installed_package_path: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/critique-ledger-accountabilit; runtime_revision: expected=c7bcb06af536acfe759c1b31a785afc19afe92d4 actual=bf25a699f85315e1a282df55502ba275253411f9; runtime_root: expected=/workspace/runtime-candidates/arnold-c7b actual=/workspace/critique-ledger-accountabilit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:27:58Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: missing_required at /changed_surfaces: missing required property 'changed_surfaces'; missing_required at /test_blast_radius: missing required property 'test_blast_radius'"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:34:00Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: Plan must include at least one step section (`## Step N:` or `### Step N:` under a phase)."
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-07-31T15:41:14Z",
+      "duration_ms": 410810,
+      "cost_usd": 0.30664307199999996,
+      "result": "success",
+      "prompt_tokens": 700738,
+      "completion_tokens": 21033,
+      "total_tokens": 721771,
+      "session_mode": "persistent",
+      "session_id": "2bbe408b-16ee-42f7-a1fb-202b6f5d5b5b",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:zhipu:glm-5.2"
+      ],
+      "attempted_specs": [
+        "hermes:zhipu:glm-5.2"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-07-31T15:51:39Z",
+      "duration_ms": 404006,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": null,
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes"
+      ],
+      "attempted_specs": [
+        "hermes"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8",
+      "flags_count": 0
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-07-31T15:54:23Z",
+      "duration_ms": 154349,
+      "cost_usd": 0.023798763,
+      "result": "success",
+      "prompt_tokens": 407201,
+      "completion_tokens": 5396,
+      "total_tokens": 412597,
+      "session_mode": "persistent",
+      "session_id": "31a45c19-3501-44fe-94f7-76953e472eb8",
+      "agent": "hermes",
+      "configured_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "attempted_specs": [
+        "hermes:deepseek:deepseek-v4-pro"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:445c3202e52cca855de912a424aba842723b5369822e048b967d87fb1b01bdda",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-07-31T16:07:23Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: additional_property at /task_contract_version: unexpected property 'task_contract_version'; additional_property at /validation_jobs: unexpected property 'validation_jobs'; missing_required at /sense_checks/0/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/1/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/2/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/3/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/4/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/5/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/6/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/7/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/8/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/9/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/10/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/11/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/12/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/13/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/14/executor_note: missing required property 'executor_note'; missing_required at /sense_checks/15/executor_note: missing required property 'executor_note'; missing_required at /tasks/0/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/0/commands_run: missing required property 'commands_run'; missing_required at /tasks/0/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/0/files_changed: missing required property 'files_changed'; missing_required at /tasks/0/stance: missing required property 'stance'; missing_required at /tasks/0/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/0/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/0/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/0/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/0/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/0/objective: unexpected property 'objective'; additional_property at /tasks/0/routing_group: unexpected property 'routing_group'; additional_property at /tasks/0/write_set: unexpected property 'write_set'; missing_required at /tasks/1/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/1/commands_run: missing required property 'commands_run'; missing_required at /tasks/1/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/1/files_changed: missing required property 'files_changed'; missing_required at /tasks/1/stance: missing required property 'stance'; missing_required at /tasks/1/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/1/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/1/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/1/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/1/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/1/objective: unexpected property 'objective'; additional_property at /tasks/1/routing_group: unexpected property 'routing_group'; additional_property at /tasks/1/write_set: unexpected property 'write_set'; missing_required at /tasks/2/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/2/commands_run: missing required property 'commands_run'; missing_required at /tasks/2/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/2/files_changed: missing required property 'files_changed'; missing_required at /tasks/2/stance: missing required property 'stance'; missing_required at /tasks/2/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/2/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/2/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/2/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/2/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/2/objective: unexpected property 'objective'; additional_property at /tasks/2/routing_group: unexpected property 'routing_group'; additional_property at /tasks/2/write_set: unexpected property 'write_set'; missing_required at /tasks/3/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/3/commands_run: missing required property 'commands_run'; missing_required at /tasks/3/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/3/files_changed: missing required property 'files_changed'; missing_required at /tasks/3/stance: missing required property 'stance'; missing_required at /tasks/3/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/3/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/3/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/3/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/3/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/3/objective: unexpected property 'objective'; additional_property at /tasks/3/routing_group: unexpected property 'routing_group'; additional_property at /tasks/3/write_set: unexpected property 'write_set'; missing_required at /tasks/4/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/4/commands_run: missing required property 'commands_run'; missing_required at /tasks/4/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/4/files_changed: missing required property 'files_changed'; missing_required at /tasks/4/stance: missing required property 'stance'; missing_required at /tasks/4/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/4/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/4/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/4/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/4/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/4/objective: unexpected property 'objective'; additional_property at /tasks/4/routing_group: unexpected property 'routing_group'; additional_property at /tasks/4/write_set: unexpected property 'write_set'; missing_required at /tasks/5/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/5/commands_run: missing required property 'commands_run'; missing_required at /tasks/5/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/5/files_changed: missing required property 'files_changed'; missing_required at /tasks/5/stance: missing required property 'stance'; missing_required at /tasks/5/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/5/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/5/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/5/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/5/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/5/objective: unexpected property 'objective'; additional_property at /tasks/5/routing_group: unexpected property 'routing_group'; additional_property at /tasks/5/write_set: unexpected property 'write_set'; missing_required at /tasks/6/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/6/commands_run: missing required property 'commands_run'; missing_required at /tasks/6/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/6/files_changed: missing required property 'files_changed'; missing_required at /tasks/6/stance: missing required property 'stance'; missing_required at /tasks/6/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/6/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/6/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/6/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/6/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/6/objective: unexpected property 'objective'; additional_property at /tasks/6/routing_group: unexpected property 'routing_group'; additional_property at /tasks/6/write_set: unexpected property 'write_set'; missing_required at /tasks/7/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/7/commands_run: missing required property 'commands_run'; missing_required at /tasks/7/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/7/files_changed: missing required property 'files_changed'; missing_required at /tasks/7/stance: missing required property 'stance'; missing_required at /tasks/7/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/7/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/7/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/7/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/7/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/7/objective: unexpected property 'objective'; additional_property at /tasks/7/routing_group: unexpected property 'routing_group'; additional_property at /tasks/7/write_set: unexpected property 'write_set'; missing_required at /tasks/8/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/8/commands_run: missing required property 'commands_run'; missing_required at /tasks/8/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/8/files_changed: missing required property 'files_changed'; missing_required at /tasks/8/stance: missing required property 'stance'; missing_required at /tasks/8/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/8/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/8/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/8/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/8/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/8/objective: unexpected property 'objective'; additional_property at /tasks/8/routing_group: unexpected property 'routing_group'; additional_property at /tasks/8/write_set: unexpected property 'write_set'; missing_required at /tasks/9/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/9/commands_run: missing required property 'commands_run'; missing_required at /tasks/9/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/9/files_changed: missing required property 'files_changed'; missing_required at /tasks/9/stance: missing required property 'stance'; missing_required at /tasks/9/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/9/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/9/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/9/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/9/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/9/objective: unexpected property 'objective'; additional_property at /tasks/9/routing_group: unexpected property 'routing_group'; additional_property at /tasks/9/write_set: unexpected property 'write_set'; missing_required at /tasks/10/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/10/commands_run: missing required property 'commands_run'; missing_required at /tasks/10/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/10/files_changed: missing required property 'files_changed'; missing_required at /tasks/10/stance: missing required property 'stance'; missing_required at /tasks/10/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/10/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/10/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/10/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/10/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/10/objective: unexpected property 'objective'; additional_property at /tasks/10/routing_group: unexpected property 'routing_group'; additional_property at /tasks/10/write_set: unexpected property 'write_set'; missing_required at /tasks/11/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/11/commands_run: missing required property 'commands_run'; missing_required at /tasks/11/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/11/files_changed: missing required property 'files_changed'; missing_required at /tasks/11/stance: missing required property 'stance'; missing_required at /tasks/11/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/11/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/11/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/11/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/11/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/11/objective: unexpected property 'objective'; additional_property at /tasks/11/routing_group: unexpected property 'routing_group'; additional_property at /tasks/11/write_set: unexpected property 'write_set'; missing_required at /tasks/12/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/12/commands_run: missing required property 'commands_run'; missing_required at /tasks/12/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/12/files_changed: missing required property 'files_changed'; missing_required at /tasks/12/stance: missing required property 'stance'; missing_required at /tasks/12/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/12/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/12/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/12/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/12/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/12/objective: unexpected property 'objective'; additional_property at /tasks/12/routing_group: unexpected property 'routing_group'; additional_property at /tasks/12/write_set: unexpected property 'write_set'; missing_required at /tasks/13/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/13/commands_run: missing required property 'commands_run'; missing_required at /tasks/13/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/13/files_changed: missing required property 'files_changed'; missing_required at /tasks/13/stance: missing required property 'stance'; missing_required at /tasks/13/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/13/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/13/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/13/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/13/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/13/objective: unexpected property 'objective'; additional_property at /tasks/13/routing_group: unexpected property 'routing_group'; additional_property at /tasks/13/write_set: unexpected property 'write_set'; missing_required at /tasks/14/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/14/commands_run: missing required property 'commands_run'; missing_required at /tasks/14/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/14/files_changed: missing required property 'files_changed'; missing_required at /tasks/14/stance: missing required property 'stance'; missing_required at /tasks/14/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/14/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/14/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/14/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/14/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/14/objective: unexpected property 'objective'; additional_property at /tasks/14/routing_group: unexpected property 'routing_group'; additional_property at /tasks/14/write_set: unexpected property 'write_set'; missing_required at /tasks/15/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/15/commands_run: missing required property 'commands_run'; missing_required at /tasks/15/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/15/files_changed: missing required property 'files_changed'; missing_required at /tasks/15/stance: missing required property 'stance'; missing_required at /tasks/15/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/15/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/15/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/15/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/15/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/15/objective: unexpected property 'objective'; additional_property at /tasks/15/routing_group: unexpected property 'routing_group'; additional_property at /tasks/15/write_set: unexpected property 'write_set'"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-07-31T16:26:08Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: additional_property at /task_contract_version: unexpected property 'task_contract_version'; additional_property at /validation_jobs: unexpected property 'validation_jobs'; additional_property at /tasks/0/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/0/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/0/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/0/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/0/objective: unexpected property 'objective'; additional_property at /tasks/0/routing_group: unexpected property 'routing_group'; additional_property at /tasks/0/write_set: unexpected property 'write_set'; additional_property at /tasks/1/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/1/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/1/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/1/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/1/objective: unexpected property 'objective'; additional_property at /tasks/1/routing_group: unexpected property 'routing_group'; additional_property at /tasks/1/write_set: unexpected property 'write_set'; additional_property at /tasks/2/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/2/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/2/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/2/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/2/objective: unexpected property 'objective'; additional_property at /tasks/2/routing_group: unexpected property 'routing_group'; additional_property at /tasks/2/write_set: unexpected property 'write_set'; additional_property at /tasks/3/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/3/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/3/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/3/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/3/objective: unexpected property 'objective'; additional_property at /tasks/3/routing_group: unexpected property 'routing_group'; additional_property at /tasks/3/write_set: unexpected property 'write_set'; additional_property at /tasks/4/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/4/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/4/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/4/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/4/objective: unexpected property 'objective'; additional_property at /tasks/4/routing_group: unexpected property 'routing_group'; additional_property at /tasks/4/write_set: unexpected property 'write_set'; additional_property at /tasks/5/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/5/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/5/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/5/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/5/objective: unexpected property 'objective'; additional_property at /tasks/5/routing_group: unexpected property 'routing_group'; additional_property at /tasks/5/write_set: unexpected property 'write_set'; additional_property at /tasks/6/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/6/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/6/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/6/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/6/objective: unexpected property 'objective'; additional_property at /tasks/6/routing_group: unexpected property 'routing_group'; additional_property at /tasks/6/write_set: unexpected property 'write_set'; additional_property at /tasks/7/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/7/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/7/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/7/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/7/objective: unexpected property 'objective'; additional_property at /tasks/7/routing_group: unexpected property 'routing_group'; additional_property at /tasks/7/write_set: unexpected property 'write_set'; additional_property at /tasks/8/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/8/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/8/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/8/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/8/objective: unexpected property 'objective'; additional_property at /tasks/8/routing_group: unexpected property 'routing_group'; additional_property at /tasks/8/write_set: unexpected property 'write_set'; additional_property at /tasks/9/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/9/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/9/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/9/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/9/objective: unexpected property 'objective'; additional_property at /tasks/9/routing_group: unexpected property 'routing_group'; additional_property at /tasks/9/write_set: unexpected property 'write_set'; additional_property at /tasks/10/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/10/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/10/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/10/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/10/objective: unexpected property 'objective'; additional_property at /tasks/10/routing_group: unexpected property 'routing_group'; additional_property at /tasks/10/write_set: unexpected property 'write_set'; additional_property at /tasks/11/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/11/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/11/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/11/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/11/objective: unexpected property 'objective'; additional_property at /tasks/11/routing_group: unexpected property 'routing_group'; additional_property at /tasks/11/write_set: unexpected property 'write_set'; additional_property at /tasks/12/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/12/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/12/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/12/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/12/objective: unexpected property 'objective'; additional_property at /tasks/12/routing_group: unexpected property 'routing_group'; additional_property at /tasks/12/write_set: unexpected property 'write_set'; additional_property at /tasks/13/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/13/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/13/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/13/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/13/objective: unexpected property 'objective'; additional_property at /tasks/13/routing_group: unexpected property 'routing_group'; additional_property at /tasks/13/write_set: unexpected property 'write_set'; additional_property at /tasks/14/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/14/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/14/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/14/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/14/objective: unexpected property 'objective'; additional_property at /tasks/14/routing_group: unexpected property 'routing_group'; additional_property at /tasks/14/write_set: unexpected property 'write_set'"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-07-31T16:45:37Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v1_raw.txt",
+      "message": "worker_structural_audit_failed: model output structural audit failed: additional_property at /task_contract_version: unexpected property 'task_contract_version'; additional_property at /validation_jobs: unexpected property 'validation_jobs'; missing_required at /tasks/0/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/0/commands_run: missing required property 'commands_run'; missing_required at /tasks/0/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/0/files_changed: missing required property 'files_changed'; missing_required at /tasks/0/stance: missing required property 'stance'; missing_required at /tasks/0/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/0/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/0/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/0/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/0/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/0/objective: unexpected property 'objective'; additional_property at /tasks/0/routing_group: unexpected property 'routing_group'; additional_property at /tasks/0/write_set: unexpected property 'write_set'; missing_required at /tasks/1/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/1/commands_run: missing required property 'commands_run'; missing_required at /tasks/1/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/1/files_changed: missing required property 'files_changed'; missing_required at /tasks/1/stance: missing required property 'stance'; missing_required at /tasks/1/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/1/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/1/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/1/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/1/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/1/objective: unexpected property 'objective'; additional_property at /tasks/1/routing_group: unexpected property 'routing_group'; additional_property at /tasks/1/write_set: unexpected property 'write_set'; missing_required at /tasks/2/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/2/commands_run: missing required property 'commands_run'; missing_required at /tasks/2/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/2/files_changed: missing required property 'files_changed'; missing_required at /tasks/2/stance: missing required property 'stance'; missing_required at /tasks/2/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/2/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/2/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/2/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/2/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/2/objective: unexpected property 'objective'; additional_property at /tasks/2/routing_group: unexpected property 'routing_group'; additional_property at /tasks/2/write_set: unexpected property 'write_set'; missing_required at /tasks/3/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/3/commands_run: missing required property 'commands_run'; missing_required at /tasks/3/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/3/files_changed: missing required property 'files_changed'; missing_required at /tasks/3/stance: missing required property 'stance'; missing_required at /tasks/3/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/3/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/3/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/3/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/3/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/3/objective: unexpected property 'objective'; additional_property at /tasks/3/routing_group: unexpected property 'routing_group'; additional_property at /tasks/3/write_set: unexpected property 'write_set'; missing_required at /tasks/4/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/4/commands_run: missing required property 'commands_run'; missing_required at /tasks/4/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/4/files_changed: missing required property 'files_changed'; missing_required at /tasks/4/stance: missing required property 'stance'; missing_required at /tasks/4/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/4/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/4/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/4/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/4/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/4/objective: unexpected property 'objective'; additional_property at /tasks/4/routing_group: unexpected property 'routing_group'; additional_property at /tasks/4/write_set: unexpected property 'write_set'; missing_required at /tasks/5/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/5/commands_run: missing required property 'commands_run'; missing_required at /tasks/5/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/5/files_changed: missing required property 'files_changed'; missing_required at /tasks/5/stance: missing required property 'stance'; missing_required at /tasks/5/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/5/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/5/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/5/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/5/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/5/objective: unexpected property 'objective'; additional_property at /tasks/5/routing_group: unexpected property 'routing_group'; additional_property at /tasks/5/write_set: unexpected property 'write_set'; missing_required at /tasks/6/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/6/commands_run: missing required property 'commands_run'; missing_required at /tasks/6/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/6/files_changed: missing required property 'files_changed'; missing_required at /tasks/6/stance: missing required property 'stance'; missing_required at /tasks/6/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/6/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/6/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/6/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/6/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/6/objective: unexpected property 'objective'; additional_property at /tasks/6/routing_group: unexpected property 'routing_group'; additional_property at /tasks/6/write_set: unexpected property 'write_set'; missing_required at /tasks/7/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/7/commands_run: missing required property 'commands_run'; missing_required at /tasks/7/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/7/files_changed: missing required property 'files_changed'; missing_required at /tasks/7/stance: missing required property 'stance'; missing_required at /tasks/7/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/7/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/7/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/7/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/7/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/7/objective: unexpected property 'objective'; additional_property at /tasks/7/routing_group: unexpected property 'routing_group'; additional_property at /tasks/7/write_set: unexpected property 'write_set'; missing_required at /tasks/8/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/8/commands_run: missing required property 'commands_run'; missing_required at /tasks/8/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/8/files_changed: missing required property 'files_changed'; missing_required at /tasks/8/stance: missing required property 'stance'; missing_required at /tasks/8/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/8/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/8/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/8/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/8/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/8/objective: unexpected property 'objective'; additional_property at /tasks/8/routing_group: unexpected property 'routing_group'; additional_property at /tasks/8/write_set: unexpected property 'write_set'; missing_required at /tasks/9/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/9/commands_run: missing required property 'commands_run'; missing_required at /tasks/9/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/9/files_changed: missing required property 'files_changed'; missing_required at /tasks/9/stance: missing required property 'stance'; missing_required at /tasks/9/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/9/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/9/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/9/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/9/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/9/objective: unexpected property 'objective'; additional_property at /tasks/9/routing_group: unexpected property 'routing_group'; additional_property at /tasks/9/write_set: unexpected property 'write_set'; missing_required at /tasks/10/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/10/commands_run: missing required property 'commands_run'; missing_required at /tasks/10/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/10/files_changed: missing required property 'files_changed'; missing_required at /tasks/10/stance: missing required property 'stance'; missing_required at /tasks/10/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/10/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/10/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/10/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/10/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/10/objective: unexpected property 'objective'; additional_property at /tasks/10/routing_group: unexpected property 'routing_group'; additional_property at /tasks/10/write_set: unexpected property 'write_set'; missing_required at /tasks/11/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/11/commands_run: missing required property 'commands_run'; missing_required at /tasks/11/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/11/files_changed: missing required property 'files_changed'; missing_required at /tasks/11/stance: missing required property 'stance'; missing_required at /tasks/11/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/11/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/11/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/11/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/11/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/11/objective: unexpected property 'objective'; additional_property at /tasks/11/routing_group: unexpected property 'routing_group'; additional_property at /tasks/11/write_set: unexpected property 'write_set'; missing_required at /tasks/12/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/12/commands_run: missing required property 'commands_run'; missing_required at /tasks/12/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/12/files_changed: missing required property 'files_changed'; missing_required at /tasks/12/stance: missing required property 'stance'; missing_required at /tasks/12/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/12/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/12/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/12/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/12/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/12/objective: unexpected property 'objective'; additional_property at /tasks/12/routing_group: unexpected property 'routing_group'; additional_property at /tasks/12/write_set: unexpected property 'write_set'; missing_required at /tasks/13/auto_attributed_files: missing required property 'auto_attributed_files'; missing_required at /tasks/13/commands_run: missing required property 'commands_run'; missing_required at /tasks/13/evidence_files: missing required property 'evidence_files'; missing_required at /tasks/13/files_changed: missing required property 'files_changed'; missing_required at /tasks/13/stance: missing required property 'stance'; missing_required at /tasks/13/stop_signal: missing required property 'stop_signal'; additional_property at /tasks/13/checkpoint: unexpected property 'checkpoint'; additional_property at /tasks/13/dependency_reasons: unexpected property 'dependency_reasons'; additional_property at /tasks/13/estimated_minutes: unexpected property 'estimated_minutes'; additional_property at /tasks/13/narrow_tests: unexpected property 'narrow_tests'; additional_property at /tasks/13/objective: unexpected property 'objective'; additional_property at /tasks/13/routing_group: unexpected property 'routing_group'; additional_property at /tasks/13/write_set: unexpected property 'write_set'"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-07-31T16:54:38Z",
+      "duration_ms": 410944,
+      "cost_usd": 0.0,
+      "result": "planner_repair_required",
+      "prompt_tokens": 295890,
+      "completion_tokens": 26244,
+      "total_tokens": 322134,
+      "session_mode": "persistent",
+      "session_id": "019fb913-2697-7b41-b81b-ecf40814471b",
+      "agent": "codex",
+      "cost_pricing": "unpriced",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:high"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:high"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "finalize_revise_feedback.json",
+      "artifact_hash": "sha256:a33cb4bb41a2932a458e6be7ac6563055e5eb92d48ec9c74a4e4d985a8d96d0f"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-07-31T16:54:38Z",
+      "duration_ms": 410944,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v1_raw.txt",
+      "message": "Finalize rejected a candidate task graph before publication (write_overlap_unordered, critical_path_infeasible, dispatch_budget_infeasible). The last admitted graph and accepted task authority remain unchanged; repair only the candidate graph."
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-07-31T17:02:04Z",
+      "duration_ms": 434517,
+      "cost_usd": 0.0,
+      "result": "planner_repair_required",
+      "prompt_tokens": 339860,
+      "completion_tokens": 29237,
+      "total_tokens": 369097,
+      "session_mode": "persistent",
+      "session_id": "019fb919-9641-7a30-9f23-927e9d76452a",
+      "agent": "codex",
+      "cost_pricing": "unpriced",
+      "configured_specs": [
+        "codex:gpt-5.6-sol:high"
+      ],
+      "attempted_specs": [
+        "codex:gpt-5.6-sol:high"
+      ],
+      "selected_spec_index": 0,
+      "selected_spec_total": 1,
+      "fallback_trigger": null,
+      "failed_attempt_reasons": [],
+      "output_file": "finalize_revise_feedback.json",
+      "artifact_hash": "sha256:391a09c8d1c52dad92d29b26cac2f46f8a81f36a9d678d0d33b7ba33774ebbe3"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      0
+    ],
+    "weighted_scores": [
+      0
+    ],
+    "plan_deltas": [],
+    "recurring_critiques": [
+      []
+    ],
+    "total_cost_usd": 0.435306,
+    "overrides": [
+      {
+        "action": "auto-resume-clarify",
+        "timestamp": "2026-07-31T14:22:00Z",
+        "reason": "auto_approve prep clarification",
+        "question_count": 1
+      },
+      {
+        "action": "recover-blocked",
+        "timestamp": "2026-07-31T14:58:14Z",
+        "reason": "Planner proposal/persisted test-contract seam fixed at a7565c2e883f; live failed output now validates after deterministic normalization",
+        "from_state": "blocked",
+        "to_state": "initialized",
+        "resume_cursor": {
+          "phase": "plan",
+          "retry_strategy": "repair_phase_contract"
+        },
+        "blocker_ids": [],
+        "archived_phase_result": "phase_result.recovered-20260731T145814Z.json"
+      },
+      {
+        "action": "recover-blocked",
+        "timestamp": "2026-07-31T15:19:52Z",
+      

@@ -1,0 +1,243 @@
+{
+  "boundary_id": "override_force_proceed_authority",
+  "workflow_id": "megaplan-review",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s6.override.force_proceed.1",
+  "invocation_id": "6bb68be461d44eb3",
+  "artifact_refs": [
+    "state.json",
+    "gate.json",
+    "phase_result.json"
+  ],
+  "state_observation": {
+    "current_state": "gated",
+    "override_action": "force-proceed",
+    "route_signal": null
+  },
+  "outcome": "complete",
+  "authority_records": [
+    {
+      "actor": "operator",
+      "role": "human.override",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "force-proceed",
+      "scope": "override.force_proceed",
+      "evidence_refs": [
+        "state.json",
+        "gate.json",
+        "phase_result.json"
+      ],
+      "details": {
+        "authority_transition": "force-proceed",
+        "contract_ref": "override_force_proceed_authority",
+        "required_evidence_refs": [
+          "state.json"
+        ],
+        "optional_evidence_refs": [
+          "gate.json",
+          "review.json",
+          "phase_result.json"
+        ],
+        "evidence_hashes": {
+          "state.json": "4799cd401cc411d0c826a0f405f8687d76b8e6f3892100bf436fedb8e9b3b5fd",
+          "gate.json": "c90d9c4b6684ec2a9e039d8af159c21b85b44a5a9c468cec4311393bb8b80810",
+          "phase_result.json": "979ad3730d851da3373473e54becce202e4da2962d28714118c06c0c87f413b3"
+        },
+        "freshness_token": "6bb68be461d44eb3",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "wbc_transition_evidence": {
+          "schema": "arnold.megaplan.override_wbc_transition_evidence.v1",
+          "writer_id": "megaplan.override.wbc.force_proceed",
+          "surface_name": "megaplan.override.wbc.force_proceed",
+          "transition": "force-proceed",
+          "subject": "cl2-wbc-backed-ledger-20260731-1411",
+          "source_record": {
+            "schema": "arnold.megaplan.canonical_source_binding.v1",
+            "source_path": "/workspace/runtime-candidates/arnold-70cae1d6ad/arnold_pipelines/megaplan/handlers/override.py",
+            "project_relative_path": "",
+            "exists": true,
+            "semantic_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+            "file_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+            "git_revision": "70cae1d6add797334000a31785e3660a3a0b9bd1",
+            "git_blob": "361de0439990fc85815b9cf42aaadb93cf6405be",
+            "git_path": "arnold_pipelines/megaplan/handlers/override.py",
+            "errors": []
+          },
+          "rules": [],
+          "fixture_safety": {
+            "authorized": false,
+            "reason": ""
+          },
+          "action_boundary": {
+            "gate_result": "authorized",
+            "action_type": "completion",
+            "target_digest": "37bb1cf2301b56bcd5f78efe5d4e35153c2e2a9357098d031e19bb0c7b11179c",
+            "checks": [
+              {
+                "source": "run_authority_grant",
+                "outcome": "satisfied",
+                "detail": "grant 'force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3:grant' is current",
+                "observed_at": "2026-07-31T16:47:18Z",
+                "observed_value": {
+                  "grant_id": "force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3:grant"
+                },
+                "identity": "grant_id"
+              },
+              {
+                "source": "run_authority_fence",
+                "outcome": "satisfied",
+                "detail": "coordinator fence 2863154172 is current",
+                "observed_at": "2026-07-31T16:47:18Z",
+                "observed_value": {
+                  "fence_token": 2863154172
+                },
+                "identity": "fence_token"
+              },
+              {
+                "source": "custody_lease",
+                "outcome": "satisfied",
+                "detail": "lease 'lease:force-proceed:cl2-wbc-backed-ledger-20260731-1411' is active (epoch=1)",
+                "observed_at": "2026-07-31T16:47:18Z",
+                "observed_value": {
+                  "lease_id": "lease:force-proceed:cl2-wbc-backed-ledger-20260731-1411",
+                  "custody_epoch": 1,
+                  "acquired_at": "2026-07-20T00:00:00+00:00",
+                  "expires_at": "2999-01-01T00:00:00+00:00",
+                  "owner_host": "override-wbc",
+                  "owner_pid": "0",
+                  "status": "active"
+                },
+                "identity": "custody_epoch"
+              },
+              {
+                "source": "wbc_attempt",
+                "outcome": "satisfied",
+                "detail": "WBC attempt 'override:force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3' has consistent status 'pending'",
+                "observed_at": "2026-07-31T16:47:18Z",
+                "observed_value": {
+                  "wbc_attempt_reference": "override:force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3",
+                  "matching_record_count": 1,
+                  "status": "unknown"
+                },
+                "identity": ""
+              }
+            ],
+            "enforcement_enabled": true,
+            "validated_at": "2026-07-31T16:47:18Z",
+            "diagnostics": {
+              "m7_schema_version": 1,
+              "shadow_enforcement": false,
+              "enforcement_env_var": "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT",
+              "action_boundary": "completion",
+              "checks_summary": {
+                "run_authority_grant": "satisfied",
+                "run_authority_fence": "satisfied",
+                "custody_lease": "satisfied",
+                "wbc_attempt": "satisfied"
+              }
+            }
+          },
+          "required_capability": "override.force_proceed"
+        }
+      }
+    }
+  ],
+  "details": {
+    "dispatch_surface": "workflow.native_policy",
+    "wbc_transition_evidence": {
+      "schema": "arnold.megaplan.override_wbc_transition_evidence.v1",
+      "writer_id": "megaplan.override.wbc.force_proceed",
+      "surface_name": "megaplan.override.wbc.force_proceed",
+      "transition": "force-proceed",
+      "subject": "cl2-wbc-backed-ledger-20260731-1411",
+      "source_record": {
+        "schema": "arnold.megaplan.canonical_source_binding.v1",
+        "source_path": "/workspace/runtime-candidates/arnold-70cae1d6ad/arnold_pipelines/megaplan/handlers/override.py",
+        "project_relative_path": "",
+        "exists": true,
+        "semantic_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+        "file_sha256": "0377e92601cb68111fe00263f5d9c0032134a6b7ab16aa44ed50a0326f601b33",
+        "git_revision": "70cae1d6add797334000a31785e3660a3a0b9bd1",
+        "git_blob": "361de0439990fc85815b9cf42aaadb93cf6405be",
+        "git_path": "arnold_pipelines/megaplan/handlers/override.py",
+        "errors": []
+      },
+      "rules": [],
+      "fixture_safety": {
+        "authorized": false,
+        "reason": ""
+      },
+      "action_boundary": {
+        "gate_result": "authorized",
+        "action_type": "completion",
+        "target_digest": "37bb1cf2301b56bcd5f78efe5d4e35153c2e2a9357098d031e19bb0c7b11179c",
+        "checks": [
+          {
+            "source": "run_authority_grant",
+            "outcome": "satisfied",
+            "detail": "grant 'force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3:grant' is current",
+            "observed_at": "2026-07-31T16:47:18Z",
+            "observed_value": {
+              "grant_id": "force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3:grant"
+            },
+            "identity": "grant_id"
+          },
+          {
+            "source": "run_authority_fence",
+            "outcome": "satisfied",
+            "detail": "coordinator fence 2863154172 is current",
+            "observed_at": "2026-07-31T16:47:18Z",
+            "observed_value": {
+              "fence_token": 2863154172
+            },
+            "identity": "fence_token"
+          },
+          {
+            "source": "custody_lease",
+            "outcome": "satisfied",
+            "detail": "lease 'lease:force-proceed:cl2-wbc-backed-ledger-20260731-1411' is active (epoch=1)",
+            "observed_at": "2026-07-31T16:47:18Z",
+            "observed_value": {
+              "lease_id": "lease:force-proceed:cl2-wbc-backed-ledger-20260731-1411",
+              "custody_epoch": 1,
+              "acquired_at": "2026-07-20T00:00:00+00:00",
+              "expires_at": "2999-01-01T00:00:00+00:00",
+              "owner_host": "override-wbc",
+              "owner_pid": "0",
+              "status": "active"
+            },
+            "identity": "custody_epoch"
+          },
+          {
+            "source": "wbc_attempt",
+            "outcome": "satisfied",
+            "detail": "WBC attempt 'override:force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3' has consistent status 'pending'",
+            "observed_at": "2026-07-31T16:47:18Z",
+            "observed_value": {
+              "wbc_attempt_reference": "override:force-proceed:cl2-wbc-backed-ledger-20260731-1411:6bb68be461d44eb3",
+              "matching_record_count": 1,
+              "status": "unknown"
+            },
+            "identity": ""
+          }
+        ],
+        "enforcement_enabled": true,
+        "validated_at": "2026-07-31T16:47:18Z",
+        "diagnostics": {
+          "m7_schema_version": 1,
+          "shadow_enforcement": false,
+          "enforcement_env_var": "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT",
+          "action_boundary": "completion",
+          "checks_summary": {
+            "run_authority_grant": "satisfied",
+            "run_authority_fence": "satisfied",
+            "custody_lease": "satisfied",
+            "wbc_attempt": "satisfied"
+          }
+        }
+      },
+      "required_capability": "override.force_proceed"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+# CL2 — WBC-backed Critique-Ledger Persistence, Import, and Replay
+
+## Overview
+
+arnold/critique_ledger/ does not exist in the current workspace. The CL1 schemas (schemas.py, 731 lines), pure semantic_loop.py (1206 lines), and __init__.py exist only in the paused-epic archive at /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/. The WBC persistence substrate is landed and proven: attempt_ledger_store.py (SqliteAttemptLedgerStore, WAL + isolation_level=None + BEGIN IMMEDIATE busy-retry + idempotency-key dedup + single-terminal enforcement in _append_tx), ledger_outbox.py (SqliteLedgerOutbox.append_event_with_outbox — atomic event+outbox write on the shared connection), ledger_migrations.py (SqliteLedgerMigrator — versioned, checksum-validated, forward-fix-only migrations; constructor accepts a custom registry so CL2 migrations can be appended as versions 5+ without editing the existing module). Workflow tests live in tests/arnold/workflow/. The new arnold/critique_ledger/ module will get tests under tests/arnold/critique_ledger/.
+
+### Step 1: Port CL1 critique_ledger module verbatim from archive
+
+### Step 2: Additive v2 schema versioning
+
+### Step 3: Make the semantic loop v2-aware
+
+### Step 4: Define CL2 domain DDL migrations
+
+### Step 5: Build the domain append layer with outbox integration
+
+### Step 6: Build cumulative/domain projection + read-only replay
+
+### Step 7: Build the active-action projection
+
+### Step 8: Build the per-round accountability projection
+
+### Step 9: Correction, audit-disagreement, and tripwire replay tests
+
+### Step 10: One-time legacy importer
+
+### Step 11: Region-freshness vectors and governed tombstone handling
+
+### Step 12: Audit the cancelled CL2 archive
+
+### Step 13: Negative-mutation, concurrency/crash, and compatibility/privacy tests
+
+### Step 14: Write and review the CL3 handoff

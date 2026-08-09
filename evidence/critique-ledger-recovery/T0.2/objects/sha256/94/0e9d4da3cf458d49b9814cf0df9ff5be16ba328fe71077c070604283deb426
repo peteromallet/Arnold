@@ -1,0 +1,284 @@
+{
+  "skip": false,
+  "task_summary": "Implement WBC-backed critique-ledger persistence, import, and replay atop the existing SqliteAttemptLedgerStore/SqliteLedgerOutbox substrate by (a) porting the CL1 domain schemas from the archived paused epic, (b) additively versioning them per the 2026-07-28 safety amendment, (c) extending the SQLite store with domain tables, indexes, and append methods, (d) building rebuildable projections (cumulative/domain, active-action, per-round accountability), (e) implementing a one-time legacy importer, and (f) wiring region-freshness vectors and governed tombstone/unavailable handling. The cancelled CL2 archive must be audited but never implicitly adopted. The CL1 handoff is technically coherent (all CL1 must-gates pass) but procedurally unaccepted (5 blockers: missing review sign-off, M6 prerequisite incoherence, proof-index failure, ownership blockers, portfolio gate blocker).",
+  "key_evidence": [
+    {
+      "point": "CL1 domain schemas (CritiqueOccurrenceEnvelope, FindingReconciliationEvent, FindingDispositionEvent, DomainBriefingEnvelope, LedgerRevisionManifest) and semantic_loop.py exist only in the paused epic archive at /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/, not in the current workspace. The current workspace has no arnold/critique_ledger/ directory at all.",
+      "source": "search_files: arnold/critique_ledger/ in current workspace returned zero files; archive contains schemas.py (731 lines), semantic_loop.py, __init__.py, plus 5 cancelled CL2 artifacts",
+      "relevance": "high"
+    },
+    {
+      "point": "The CL1 handoff (cl1-contract-oracle.json) has accepted_for_cl2: false with five blocking reasons: (1) review_status_not_present \u2014 no reviewer assigned, (2) m6_prerequisite_incoherent \u2014 M5 final attestation missing 3 bound artifacts, (3) proof_index_failed \u2014 validation_passed=false, (4) ownership_blockers \u2014 4 blockers in ownership-decision-record, (5) portfolio_gate_blocked \u2014 PC-SCOPE-BLOCKER-001 requires human approval. All CL1 must-gates pass (custody, freshness, replay equality, authority, schema, prerequisite checks). The blockers are procedural, not technical schema defects. The constraint 'consume only an accepted CL1 handoff' creates a genuine blocking ambiguity for CL2 start.",
+      "source": "cl1-contract-oracle.json:411-440 (accepted_for_cl2 derivation and blocking_reasons)",
+      "relevance": "high"
+    },
+    {
+      "point": "The 2026-07-28 safety amendment adds 8 locked changes to the CL1 contract that the archived schemas do not reflect: (1) reconciliation decisions are correctable evidence with supersedes_event_id, (2) semantic_finding_id deprecated on occurrences \u2014 only reconciliation events assign it, (3) deterministic tripwires trigger re-review never semantic closure, (4) independent audit is risk-based and non-zero, (5) blind discovery is mandatory, (6) active-action projection is bounded and separate from cumulative ledger, (7) non-action is structured and audited, (8) findings carry region-level freshness anchors. The amendment explicitly states CL2 must be replanned from the amended, reviewed handoff.",
+      "source": "reconciliation-safety-amendment-20260728.md:22-188 (locked amendments 1-8), line 228-230 (CL2 replanning requirement)",
+      "relevance": "high"
+    },
+    {
+      "point": "SqliteAttemptLedgerStore (attempt_ledger_store.py:1117-1157) with SQLite WAL mode, isolation_level=None for explicit BEGIN IMMEDIATE control, and busy-retry with exponential backoff (30 attempts, 10ms base) satisfies the 'one transaction' requirement. Multi-table atomic writes are proven: reserve_global_effect (lines 1386-1514) atomically writes to attempt_reservations AND global_effect_reservations in one BEGIN IMMEDIATE. append_event_with_outbox (ledger_outbox.py:339-545) atomically writes events + outbox records.",
+      "source": "A4 findings: attempt_ledger_store.py:1117-1157, 1386-1514, 1882-1903, 1905-2094; ledger_outbox.py:339-545",
+      "relevance": "high"
+    },
+    {
+      "point": "SqliteLedgerOutbox (ledger_outbox.py:299-861) satisfies durable prepare/outbox reconciliation: atomic event+outbox write, get_stale_pending() for crash recovery, retry_failed() with MAX_RETRY_COUNT=10, full status lifecycle PENDING\u2192DISPATCHED/DELIVERED/FAILED/TOMBSTONED. The outbox shares the same SQLite database and connection for zero-network-cost atomic transactions.",
+      "source": "A4 findings: ledger_outbox.py:299-861",
+      "relevance": "high"
+    },
+    {
+      "point": "New domain tables are needed because the existing attempt_events schema has no columns for occurrence_id, finding_id, semantic_finding_id, round_label, disposition families, supersedes_event_id, region_anchors, tripwire_state, or revision manifests. Six new indexes are needed within two-week scope: (round_label, sequence) for round replay, (semantic_finding_id) on reconciliation and disposition events for finding history, (attempt_id, occurrence_id) for lookup, (canonical_finding_id) for reconciliation join, (region_anchor, finding_id) for scoped freshness. None exist in current schema.",
+      "source": "A4 findings: INDEX GAP analysis with 6 specific index recommendations",
+      "relevance": "high"
+    },
+    {
+      "point": "The cancelled CL2 run (cl2-wbc-backed-ledger-20260724-0351, blocked at iteration 7) left 5 uncommitted artifacts in the archive: cl2_migrations.py, m6_importer.py, ledger_writer.py, wbc_bridge.py, manifest_store.py. These were written against the pre-amendment CL2 scope and lack support for corrections/supersession, independent audit events, plan-region/dependency anchors, tripwire state, response/outcome events, active-action projection, and per-round accountability projection. The user direction and replacement-lineage note both require explicit audit with no implicit adoption.",
+      "source": "archive file listing (8 .py files, 5 are cancelled CL2 artifacts), replacement-lineage-20260728.md:14-17, cancelled CL2 state.json:5-6 (blocked at iteration 7)",
+      "relevance": "high"
+    },
+    {
+      "point": "The existing SqliteLedgerMigrator (ledger_migrations.py:748-1000) provides a versioned, checksum-validated, forward-fix-only migration framework with BEGIN IMMEDIATE atomicity per migration. Domain tables and indexes for CL2 must be registered as additive migrations in this framework, following the pattern of IF NOT EXISTS DDL and ALTER TABLE ADD COLUMN only \u2014 never DROP.",
+      "source": "ledger_migrations.py:748-827 (SqliteLedgerMigrator class with _ensure_migration_tables and _begin_immediate_retry)",
+      "relevance": "high"
+    },
+    {
+      "point": "The archived CL1 CritiqueOccurrenceEnvelope (schemas.py:182-312) carries semantic_finding_id as a first-class field with default empty string. The from_dict method supports strict/preserve modes: strict rejects unknown fields, preserve stores them in _extra. This pattern supports additive versioning: new v2 occurrences reject semantic_finding_id in strict mode; legacy v1 reads use preserve mode to retain the field. SUPPORTED_VERSIONS currently only contains 'cl.schema.v1'.",
+      "source": "schemas.py:182-312 (CritiqueOccurrenceEnvelope class, to_dict/from_dict with strict/preserve modes), SCHEMA_VERSION constant",
+      "relevance": "medium"
+    },
+    {
+      "point": "The replacement-lineage note confirms the current workspace is staged-only with no runtime effect authorized. The cancelled predecessor is preserved as a read-only source/audit archive. The base is 'landed CL1 implementation' but the CL1 files have not been ported to the new workspace.",
+      "source": "replacement-lineage-20260728.md:19-30",
+      "relevance": "medium"
+    }
+  ],
+  "relevant_code": [
+    {
+      "file_path": "arnold/workflow/attempt_ledger_store.py",
+      "why": "Landed WBC persistence substrate: SQLite WAL, BEGIN IMMEDIATE atomic multi-table writes, idempotency dedup, monotonic sequence, busy-retry. Must be extended with domain tables and append methods for critique-ledger records.",
+      "functions": [
+        "SqliteAttemptLedgerStore.__init__ (line 1127) \u2014 WAL mode, isolation_level=None",
+        "SqliteAttemptLedgerStore._append_tx (line 1905) \u2014 atomic append with invariants",
+        "SqliteAttemptLedgerStore._begin_immediate_retry (line 1882) \u2014 busy-retry",
+        "SqliteAttemptLedgerStore.reserve_global_effect (line 1386) \u2014 multi-table atomicity pattern to replicate"
+      ]
+    },
+    {
+      "file_path": "arnold/workflow/ledger_outbox.py",
+      "why": "Durable prepare/outbox reconciliation: atomic event+outbox writes, crash recovery, retry with MAX_RETRY_COUNT=10. CL2 domain events must use this outbox pattern.",
+      "functions": [
+        "SqliteLedgerOutbox.append_event_with_outbox (line 339) \u2014 atomic event+outbox write",
+        "SqliteLedgerOutbox.get_stale_pending (line 700) \u2014 crash recovery",
+        "SqliteLedgerOutbox.retry_failed (line 586) \u2014 retry with guard"
+      ]
+    },
+    {
+      "file_path": "arnold/workflow/ledger_migrations.py",
+      "why": "Versioned, checksum-validated, forward-fix-only migration framework. CL2 domain tables and indexes must be registered as additive migrations in this system.",
+      "functions": [
+        "SqliteLedgerMigrator.__init__ (line 758) \u2014 migration registration",
+        "SqliteLedgerMigrator._ensure_migration_tables (line 772) \u2014 idempotent bootstrap",
+        "SqliteLedgerMigrator._begin_immediate_retry (line 812) \u2014 atomic migration pattern"
+      ]
+    },
+    {
+      "file_path": "arnold/workflow/payload_policy.py",
+      "why": "WBC inline/reference, retention, redaction policy contracts to be reused per locked decision 'WBC inline/reference, retention, redaction, ordering, and effect rules are reused, not reimplemented.'",
+      "functions": [
+        "InlinePayloadPolicy (line 157) \u2014 inline payload schema contract",
+        "RetentionPayloadPolicy (line ~280) \u2014 retention policy schema contract"
+      ]
+    },
+    {
+      "file_path": "arnold/workflow/execution_attempt_ledger.py",
+      "why": "Existing attempt-level LedgerEvent schema and ExecutionAttemptLedger type. The store is coupled to this schema; CL2 domain extensions must define parallel domain event types.",
+      "functions": [
+        "LedgerEvent \u2014 attempt-level event dataclass",
+        "ExecutionAttemptLedger \u2014 attempt-scoped ledger interface"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+      "why": "CL1 domain dataclasses that must be ported and additively versioned: CritiqueOccurrenceEnvelope (deprecate semantic_finding_id for new writes), FindingReconciliationEvent (add supersedes_event_id), FindingDispositionEvent, DomainBriefingEnvelope, LedgerRevisionManifest. 731 lines, frozen dataclasses with strict/preserve serialization.",
+      "functions": [
+        "CritiqueOccurrenceEnvelope (line 182) \u2014 v1 with semantic_finding_id field",
+        "FindingReconciliationEvent (line 315) \u2014 v1 with canonical_finding_id, semantic_finding_id",
+        "FindingDispositionEvent (line 401) \u2014 v1 with 8 disposition families",
+        "SCHEMA_VERSION = 'cl.schema.v1' (line ~50)",
+        "ContextMode, ParseStatus, EvidenceAvailability enums"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/semantic_loop.py",
+      "why": "CL1 pure semantic loop that must be ported as the reference implementation for deterministic replay. Replay issues no model call or external effect per CL2 constraints.",
+      "functions": [
+        "SemanticLoop \u2014 pure reconciliation/oracle logic, no persistence"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/__init__.py",
+      "why": "CL1 module init with public API exports. Must be ported and updated for v2 schema exports.",
+      "functions": [
+        "Module-level exports for CL1 domain types"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/cl2_migrations.py",
+      "why": "Cancelled CL2 artifact \u2014 pre-amendment DDL. Must be audited for reusable migration structure but the DDL itself lacks v2 columns (supersedes_event_id, region_anchors, tripwire_state, response/outcome fields). Do not adopt implicitly.",
+      "functions": [
+        "Cancelled CL2 migration definitions \u2014 audit only"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/m6_importer.py",
+      "why": "Cancelled CL2 artifact \u2014 pre-amendment import logic. Must be audited for legacy field mapping patterns but lacks amendment-mandated behavior (legacy_unknown for semantic gaps, unsupported version rejection without partial publish). Do not adopt implicitly.",
+      "functions": [
+        "Cancelled CL2 import logic \u2014 audit only"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ledger_writer.py",
+      "why": "Cancelled CL2 artifact \u2014 pre-amendment append logic. Lacks corrections/supersession, response/outcome events, audit events, tripwire state. Do not adopt implicitly.",
+      "functions": [
+        "Cancelled CL2 write logic \u2014 audit only"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/wbc_bridge.py",
+      "why": "Cancelled CL2 artifact \u2014 pre-amendment bridge between domain types and WBC store. May contain reusable BEGIN IMMEDIATE/store-wiring patterns but the domain contract it bridges is pre-amendment. Do not adopt implicitly.",
+      "functions": [
+        "Cancelled CL2 bridge logic \u2014 audit only"
+      ]
+    },
+    {
+      "file_path": "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/manifest_store.py",
+      "why": "Cancelled CL2 artifact \u2014 pre-amendment manifest handling. Lacks amendment-mandated revision manifest fields. Do not adopt implicitly.",
+      "functions": [
+        "Cancelled CL2 manifest logic \u2014 audit only"
+      ]
+    }
+  ],
+  "test_expectations": [
+    {
+      "test_id": "schema_golden",
+      "what_it_checks": "CL1 v1 schemas serialize/deserialize byte-equivalently; v2 additive changes (deprecated semantic_finding_id on new occurrences, added supersedes_event_id, region_anchors, tripwire_state) serialize correctly and reject semantic_finding_id on new v2 writes in strict mode",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "append_atomicity",
+      "what_it_checks": "Occurrence INSERT + revision manifest INSERT + projection UPSERT execute in one BEGIN IMMEDIATE; crash mid-transaction leaves no partial state; idempotency-key dedup prevents double-insert; partial publication cannot expose incomplete revision",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "replay_determinism",
+      "what_it_checks": "Deterministic read-only replay over all stored events produces byte-equivalent cumulative, active-action, and round-accountability projections; replay issues no model call, external effect, or mutation",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "active_projection_bounds",
+      "what_it_checks": "Active-action projection exposes must_act|must_revalidate|context_only queues; closed history does not grow the active set; closed/superseded findings appear in context_only not must_act; batch actions enumerate every finding ID",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "correction_supersession_replay",
+      "what_it_checks": "Correction appends superseding decision; replay derives latest valid decision state (accepted|review_required|disputed|superseded) while retaining both original and superseding events; superseded decisions do not support clean gate projection",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "region_freshness",
+      "what_it_checks": "Region-anchor change stales only affected scoped findings; unchanged regions do not trigger re-reconciliation; unknown or cross-cutting scope defaults to whole-plan freshness; region movement/split/merge becomes unresolved mapping",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "audit_disagreement",
+      "what_it_checks": "Independent audit disagreement event is appended; audit failure cannot silently preserve closure; disputed status is visible and actionable",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "tripwire_determinism",
+      "what_it_checks": "Deterministic tripwire fires when plan region changes, evidence/dependency changes, near-match occurs, audit disagrees, or model/schema revision is stale; tripwire triggers needs_reconciliation, never semantic merge/closure/suppression",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "round_accountability",
+      "what_it_checks": "Per-round receipt maps critic attempt \u2192 occurrence \u2192 logical finding/reconciliation \u2192 response/non-action \u2192 verified outcome \u2192 reopen condition; accounts for every parseable occurrence and active finding; reviser addressed claim is distinct from independently verified dealt_with|partially_dealt_with|not_dealt_with|unknown",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "one_time_import",
+      "what_it_checks": "Importer preserves all available legacy evidence; marks semantic gaps unknown; rejects unsupported target versions without partial publish; does not invent duplicate/resolution/evidence/reopen relationships; legacy semantic_finding_id is read compatibly but new imports cannot author it",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "import_fixtures",
+      "what_it_checks": "Current-source, target-only, future-version, corrupt, redacted, unavailable, duplicate, out-of-order, concurrent, and crash fixtures all handled correctly; partially-parseable attempts admitted with ParseStatus indicating what was recovered without promoting invalid whole payload",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "freshness_vectors_tombstone",
+      "what_it_checks": "Freshness vectors correctly compute staleness per region anchor; governed tombstone/unavailable handling surfaces missing/redacted evidence as unknown without crashing replay; tombstone state is visible and does not silently suppress",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "negative_mutation",
+      "what_it_checks": "Ledger/replay cannot mutate plan, gate, lifecycle, queue, Git/provider, delivery, or external-effect state; projections carry no positive authority; replay is strictly read-only",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "concurrency_crash",
+      "what_it_checks": "Concurrent writers respect WAL single-writer constraint; crash mid-append leaves database consistent; outbox recovery retries stale pending records; idempotency dedup survives crash-restart; duplicate replay is a no-op",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "compatibility_privacy",
+      "what_it_checks": "Existing critique-custody suites pass; WBC ledger/evidence suites pass; redacted evidence is surfaced as unknown not leaked; plan-local compatibility files remain readable by old readers until coordinated cutover",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "wbc_reuse",
+      "what_it_checks": "WBC inline/reference, retention, redaction, ordering, and effect rules are reused from payload_policy.py/durable_refs.py, not reimplemented; CL2 adds domain tables and event types without modifying WBC substrate contracts",
+      "status": "fail_to_pass"
+    }
+  ],
+  "constraints": [
+    "Consume only CL1 handoff \u2014 the schemas and semantic loop from the archived paused epic are the technical baseline even though the handoff is procedurally unaccepted (5 blocking reasons are procedural: review sign-off, M6 prerequisite attestation chain, proof-index validation, ownership decision record, portfolio gate human approval). All CL1 must-gates pass. CL2 implementation of schema versioning and persistence can proceed against the archived schema contracts while blockers are addressed in parallel.",
+    "Additive schema versioning only \u2014 never DROP columns; v1\u2192v2 adds columns via ALTER TABLE ADD COLUMN within the SqliteLedgerMigrator framework. semantic_finding_id on occurrences becomes legacy-read-only; new v2 writes reject it in strict mode.",
+    "All writes are idempotent, content-safe, access-controlled, and fault-tested \u2014 reuse the existing BEGIN IMMEDIATE + idempotency-key dedup + exactly-one-terminal + post-terminal-rejection invariants from SqliteAttemptLedgerStore._append_tx.",
+    "Replay issues no model call or external effect \u2014 the ported semantic_loop.py provides pure reconciliation logic; CL2 replay wraps it in read-only store scans.",
+    "Start persistence precedes critic dispatch; terminal persistence failure is visible persistence_failed|indeterminate, never clean success.",
+    "Occurrences are never merged away; semantic identity and occurrence identity remain distinct.",
+    "Reconciliation decisions are immutable evidence \u2014 corrections append superseding decisions, replay retains both.",
+    "Semantic finding identity is assigned only by reconciliation events, never by a new raw occurrence.",
+    "Projections are rebuildable and carry no positive authority.",
+    "Historical gaps stay explicit; migration never invents duplicate, resolution, evidence, or reopen relationships.",
+    "WBC inline/reference, retention, redaction, ordering, and effect rules are reused from payload_policy.py and durable_refs.py, not reimplemented.",
+    "Do not widen schema or ownership without a new reviewed CL1 decision.",
+    "Preserve and audit the cancelled CL2 archive; never adopt its uncommitted work implicitly. All 5 cancelled artifacts (cl2_migrations.py, m6_importer.py, ledger_writer.py, wbc_bridge.py, manifest_store.py) are pre-amendment and lack corrections/supersession, independent audit events, plan-region/dependency anchors, tripwire state, response/outcome events, active-action projection, and per-round accountability projection.",
+    "No new database service, event bus, authority plane, generalized knowledge store, embeddings, broad historical backfill, dual-write window, or old-reader retirement before CL5."
+  ],
+  "primary_criterion": "Schema/golden, property, concurrency, crash/fault, compatibility, privacy, WBC ledger/evidence, and existing critique-custody suites pass with deterministic replay producing byte-equivalent projections from retained inputs.",
+  "suggested_approach": "Phase 1 \u2014 Port and version: Copy arnold/critique_ledger/{__init__.py,schemas.py,semantic_loop.py} from the paused epic archive to the current workspace. Add cl.schema.v2 to SUPPORTED_VERSIONS. Additively define v2 CritiqueOccurrenceEnvelope that rejects semantic_finding_id in strict mode (new occurrences cannot author it) but reads v1 records in preserve mode. Extend FindingReconciliationEvent with supersedes_event_id, region_anchors, tripwire_state fields. Define new event types: FindingResponseEvent (response_declared), OutcomeVerificationEvent (outcome_verified), AuditEvent (audit_recorded). Keep the v1 dataclasses intact for legacy reads. Phase 2 \u2014 Domain tables and migrations: Define additive DDL migrations in the SqliteLedgerMigrator framework for domain tables: critique_occurrences, reconciliation_events, disposition_events, response_events, outcome_verification_events, audit_events, ledger_revision_manifests, region_freshness_state. Add 6 indexes: (round_label, sequence), (semantic_finding_id) on reconciliation and disposition, (attempt_id, occurrence_id), (canonical_finding_id), (region_anchor, finding_id). Use BEGIN IMMEDIATE per migration. Phase 3 \u2014 Append and outbox: Build domain append methods that mirror _append_tx's BEGIN IMMEDIATE pattern: validate invariants, insert domain event, update revision manifest, and write outbox record atomically. Use the existing SqliteLedgerOutbox for crash recovery. Wire start-persistence-before-dispatch: terminal failure produces persistence_failed|indeterminate, never clean success. Phase 4 \u2014 Projections and replay: Build three read-only projections over stored domain events: cumulative/domain (all events), active-action (must_act|must_revalidate|context_only queues), per-round accountability (attempt\u2192occurrence\u2192finding\u2192response\u2192outcome\u2192reopen). Replay scans event tables ordered by sequence, applies pure reconciliation logic from semantic_loop.py, and writes nothing. Projections rebuild byte-equivalently. Phase 5 \u2014 One-time import: Build importer that reads retained legacy M6 artifacts (v1-v5 rounds), maps to v1 schemas via preserve mode, classifies semantic_finding_id as legacy, marks gaps unknown, and rejects unsupported target versions. Partially parseable attempts are admitted with ParseStatus indicating what was recovered; the invalid portion is not promoted. Legacy records with unknown semantic identity get legacy_unknown classification. Phase 6 \u2014 Freshness and tombstone: Implement region-anchor freshness tracking: each finding declares stable section identity + content hashes. Region change detection marks affected findings stale without full-ledger re-adjudication. Unknown/cross-cutting scope defaults to whole-plan freshness. Governed tombstone/unavailable handling surfaces missing/redacted evidence as unknown in projections. Phase 7 \u2014 Audit cancelled CL2: Inventory all 5 cancelled artifacts with SHA-256 hashes. Per-artifact assessment against amended contract. Document explicit boundary of what to not adopt. Extract reusable patterns (BEGIN IMMEDIATE wiring, store adapter structure) only where they satisfy the amended contract.",
+  "open_questions": [
+    {
+      "severity": "blocking",
+      "question": "Can CL2 implementation proceed against the archived CL1 contract whose handoff has accepted_for_cl2: false, or must the 5 procedural blockers (review sign-off, M6 prerequisite incoherence, proof-index failure, 4 ownership blockers, portfolio gate human approval) be resolved before any CL2 work begins? The safety amendment states 'CL2 must be replanned from the amended, reviewed handoff before execution resumes' (line 228-230) but the amendment is itself a CL1 contract amendment, not yet folded into an accepted handoff.",
+      "assumption": "Assume the CL1 schema contracts (schemas.py, semantic_loop.py) are technically correct and can be consumed as the CL2 baseline because all CL1 must-gates pass. The procedural blockers affect the handoff acceptance ceremony, not schema correctness. However, this assumption must be confirmed by a CL1 amendment review before CL2 execution gates can pass. The CL2 implementation can begin against the archived schemas with the understanding that a formal handoff re-acceptance is a CL2 gate prerequisite."
+    },
+    {
+      "severity": "assume_and_proceed",
+      "question": "What plan-local compatibility files remain necessary for old readers until the coordinated cutover? The task open question and cancelled prep_triage A3 area both identified this gap but the current exploration (A3) errored with no findings. The cancelled prep listed faults.json, state.json, contract.json, phase_result.json, critique_v{N}.json, evaluator_verdict_v{N}.json, gate_signals_v{N}.json, critique_custody_v{N}.json, step_receipt_*.json as candidates.",
+      "assumption": "Assume all existing plan-local artifact paths remain writable during CL2 and become read-only projections after coordinated cutover in CL5. CL2 adds new domain tables and ledger artifacts without removing or breaking existing reader paths. The full inventory and per-file compatibility assessment is deferred to a focused exploration task. The current approach writes new domain events to SQLite tables, not to plan-local JSON files, so the compatibility risk is low."
+    },
+    {
+      "severity": "assume_and_proceed",
+      "question": "How are partially parseable failed attempts admitted without promoting an invalid whole payload? The existing ParseStatus enum has FAILED, DROPPED, MALFORMED, TOMBSTONED variants, and the migration classification system has UNKNOWN/UNRECONSTRUCTABLE classifications. The precise contract for partial admission (what fields are recovered, what is marked unknown, how the partial status propagates into projections) is not defined.",
+      "assumption": "Assume partially parseable attempts are admitted with ParseStatus indicating the recovery level (e.g., PARTIAL_RECOVERED) and an evidence_ref pointing to the recovered subset. Fields that cannot be parsed are stored as empty/null with explicit unavailable_reason. The invalid/unparseable portion is never promoted or synthesized. Projections surface partial occurrences with an explicit partial_parse flag and treat missing fields as unknown. Downstream reconciliation treats partial occurrences as evidence-only (cannot carry semantic_finding_id, cannot close a finding). This follows the existing ParseStatus + ClassificationEvidence pattern from ledger_migrations.py."
+    },
+    {
+      "severity": "assume_and_proceed",
+      "question": "What are the exact SHA-256 hashes and per-artifact assessment of the 5 cancelled CL2 artifacts (cl2_migrations.py, m6_importer.py, ledger_writer.py, wbc_bridge.py, manifest_store.py)? The A2 exploration errored and could not produce the inventory.",
+      "assumption": "Assume all 5 cancelled CL2 artifacts are pre-amendment and none can be ported as-is. The m6_importer.py and wbc_bridge.py may contain reusable structural patterns (BEGIN IMMEDIATE wiring, store adapter interfaces) but their domain logic implements the pre-amendment contract. A formal audit producing SHA-256 hashes, per-artifact compliance against the amended contract, and an explicit boundary list is a required CL2 task artifact before any cancelled code is referenced. The current approach treats the archive as read-only reference material that must never be implicitly adopted."
+    }
+  ]
+}

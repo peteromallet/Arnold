@@ -1,0 +1,26 @@
+{
+  "failures": [],
+  "inventory_byte_size": 1182613,
+  "inventory_sha256": "2984a983ae7a307d02b6d36cb53ab42122e5d9ad63d5d5eb0ff8d0c89ff5bff8",
+  "receipt_id": "t04-receipt-2984a983ae7a307d02b6d36c",
+  "result": "PASS",
+  "row_count": 342,
+  "schema": "t0.4.verification-receipt.v1",
+  "source_objects_verified": 389,
+  "source_refs_checked": 389,
+  "t04_completion_criterion": true,
+  "t4_tasks_with_exact_targets": [
+    "T4.1",
+    "T4.2",
+    "T4.3",
+    "T4.4",
+    "T4.5",
+    "T4.6"
+  ],
+  "unique_record_ids": 342,
+  "unique_target_ids": 342,
+  "unresolved_row_count": 14,
+  "verified_at": "2026-08-02T14:52:30Z",
+  "verifier": "verify_inventory.py",
+  "verifier_path": "/Users/peteromalley/Documents/Arnold/evidence/critique-ledger-recovery/T0.4/verify_inventory.py"
+}

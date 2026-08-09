@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request_decision",
+  "decision_id": "f28dce6f5ccd83879060e38866c1218809099d38ec4f2eec00000a20045a1a56",
+  "request_id": "85ae3e659f777116530b360f0fea6a4b2846698dd49507a868e620c4fc79412a",
+  "decision": "coalesced",
+  "reason": "request marker already exists",
+  "related_request_id": "85ae3e659f777116530b360f0fea6a4b2846698dd49507a868e620c4fc79412a",
+  "created_at": "2026-07-13T15:57:31Z",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-1c787f6a511f7bd61c881409",
+    "custody_id": "discord-custody-1c787f6a511f7bd61c881409",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_e1077ab8b985",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1526226857782018098",
+    "reply_to_message_id": "1526226857782018098",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_74851203a73e",
+    "root_run_id": "subagent-20260713-140203-ba91f563",
+    "source_kind": "discord_inbound_message"
+  }
+}

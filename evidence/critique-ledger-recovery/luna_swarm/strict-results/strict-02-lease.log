@@ -1,0 +1,719 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.6
+--------
+workdir: /Users/peteromalley/Documents/Arnold
+model: gpt-5.6-luna
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 019fcd9f-672d-7c92-9230-a94818a44e8c
+--------
+user
+You are a bounded Luna code auditor. Read the compact evidence brief and Sol verdict in `evidence/critique-ledger-recovery/`. Do NOT use rg, find, git, recursive listing, or any subagent. Use at most five `sed`/`nl` reads, only these paths: `arnold_pipelines/megaplan/cloud/cli.py` (lines 3200-3405), `arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog` (only first 260 lines), `arnold_pipelines/megaplan/watchdog/processes.py` (lines 250-290 and 390-450), and `tests/cloud/test_watchdog_wrappers.py` (only lease/liveness test names). Return under 700 words: where lease failure can be swallowed, required fail-closed boundary, and four acceptance tests. Do not edit.
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+I’ll inspect the requested evidence brief and verdict, then the four narrowly scoped code/test regions, staying within the five-read cap and making no edits.
+exec
+/bin/zsh -lc 'ls -1 evidence/critique-ledger-recovery' in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+T0.0
+T0.2
+T0.4
+luna_swarm
+sol-broader-review-20260804.md
+sol-broader-review-brief-20260804.md
+sol-broader-review-compact-brief-20260804.md
+sol-review-r5-20260804.md
+
+exec
+/bin/zsh -lc "sed -n '1,240p' evidence/critique-ledger-recovery/sol-broader-review-compact-brief-20260804.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+# Sol judgement request (compact evidence-only brief)
+
+Take a firm architectural position from the evidence below. Do not inspect the repository or delegate. Return under 1200 words with: (a) root-cause tree, (b) whether the current fixes are root-level or local mitigation, (c) ranked independent Luna audit directions, (d) shortest safe immediate recovery, and (e) shared-system hardening plus acceptance tests.
+
+## Observed facts
+
+1. The cloud session `critique-ledger-accountability-v3-r5-20260803`, plan `cl2-wbc-backed-ledger-20260803-1357`, failed at VJ8 before worker dispatch. State recorded `pre_dispatch_validation_failed`, `phase=execute`, `worker_dispatched=false`, `exit_code=1`, occurrence `validation-8a0d0d672f63643cc82e`, fingerprint `8a0d0d672f63643cc82ef81841ab9493b87bfe69671c5da9d961dc60c878c4d3`.
+2. The VJ8 suite initially had 126 tests, 122 pass and 4 failures. All four were stale expectations around divergent same-idempotency-key ledger events and exact retry canonicalization. After repairing the implementation/tests, the exact suite is 130 passed.
+3. Recovery was made occurrence-bound: a receipt binds the failure fingerprint, occurrence, job, source revision, passing test result, and runtime code hash. Recovery now rejects stale/mismatched evidence and does not clear real U1/quality blockers. Status now exposes latest_failure and projects `finalized` to execute because finalized is an execute-entry state.
+4. The same plan is now `state=finalized`, `execution_state=ready`, `next_step=execute`, with U1/quality blockers still unresolved and authoritative.
+5. The canonical local `cloud resume` wrapper failed before dispatch. Its SSH provider runs `cd <workspace> && arnold status --plan <plan>`. On the container, `arnold` resolves to `/root/.pyenv/shims/arnold`, whose installed `arnold.cli` exposes a different legacy interface and requires `--artifact-root`. The intended megaplan CLI works only when invoked through `/workspace/runtime-venvs/arnold-wbc-full-20260804/bin/python -m arnold_pipelines.megaplan ...`.
+6. Earlier evidence showed: managed runner lease startup errors were swallowed; marker “launch success” could mean only tmux/state was observed; stale phase_result.json could outrank newer state.latest_failure; resident and chain code used different dirty/pinned runtime lineages; watchdog snapshots could be stale or unreadable; `/whats-cooking` could time out while collecting a snapshot.
+7. Luna audits already found: no remote provider-key preflight; alias/auth allowlists are not one source of truth; resident may import dirty `/workspace/arnold` while the chain uses pinned c116; liveness must be lease/process identity, not tmux; observer responses need bounded work and stale-data labeling.
+
+## Constraints
+
+Do not fabricate CL1/U1 handoffs, resolve quality blockers to force progress, create a new chain, or claim liveness without a fresh lease-bound process identity. The fix must generalize to every cloud megaplan pipeline.
+
+exec
+/bin/zsh -lc "sed -n '1,280p' evidence/critique-ledger-recovery/sol-broader-review-20260804.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+## Architectural position
+
+This was not fundamentally a VJ8 test failure. The systemic root cause is an unversioned, non-hermetic cloud control plane: orchestration can invoke the wrong CLI/runtime, suppress launch failures, and then report ambiguous or stale evidence as current truth. VJ8 correctly prevented dispatch, but exposed the broader identity and observability failure.
+
+### (a) Root-cause tree
+
+```text
+Cloud megaplan cannot safely progress
+├─ Immediate gate failure: VJ8 rejected execution
+│  └─ Four stale expectations around ledger divergence/retry canonicalization
+│     └─ Resolved: exact suite now passes 130/130
+│
+├─ Current recovery failure: wrong executable on remote PATH
+│  ├─ Wrapper invokes bare `arnold status`
+│  ├─ pyenv shim resolves to an incompatible legacy arnold.cli
+│  └─ Intended CLI exists only through an explicit pinned venv/module invocation
+│
+└─ Shared architectural failure: orchestration lacks authoritative identities
+   ├─ Runtime identity
+   │  ├─ Bare command names and mutable PATH
+   │  └─ Resident and chain may use different dirty/pinned code lineages
+   ├─ Process identity
+   │  ├─ Lease startup errors can be swallowed
+   │  └─ tmux/state presence can be misreported as successful launch
+   ├─ Evidence identity
+   │  ├─ Stale phase_result can outrank newer latest_failure
+   │  ├─ Watchdog snapshots may be stale/unreadable
+   │  └─ Prior recovery evidence was insufficiently occurrence-bound
+   ├─ Configuration identity
+   │  ├─ No remote provider-key preflight
+   │  └─ Alias/auth allowlists have multiple authorities
+   └─ Observation safety
+      └─ Status endpoints perform unbounded work and may time out
+```
+
+### (b) Root-level fixes versus local mitigation
+
+The ledger implementation/test repair is root-level for the specific VJ8 semantic defect: the passing 130-test suite shows the contract and expectations now agree.
+
+Occurrence-bound recovery is also a genuine root-level design improvement within validation recovery. Binding fingerprint, occurrence, job, source revision, test result, and runtime hash prevents evidence replay and cross-runtime recovery. Preserving U1/quality blockers is correct fail-closed behavior. Projecting `finalized` into execute is a valid state-model correction.
+
+However, these do not repair the shared cloud execution architecture. They secure the validation gate while the dispatch path still resolves an uncontrolled executable. Invoking the explicit venv manually would be a safe tactical bypass, not the general fix. Until every remote operation is bound to one verified runtime, revision, lease, and evidence authority, the system remains vulnerable to equivalent failures elsewhere.
+
+### (c) Ranked independent Luna audit directions
+
+1. **Hermetic runtime and CLI identity**  
+   Audit every cloud entry point—resume, status, resident, chain, watchdog, repair—for bare executables, PATH lookup, dirty imports, and revision drift. Require one immutable runtime descriptor containing interpreter path, module, source revision, environment hash, and CLI contract version.
+
+2. **Lease-bound dispatch and liveness**  
+   Trace startup errors end to end. Dispatch success must require a fresh lease plus matching live process identity and command/runtime hash. tmux sessions, marker files, or state transitions are never sufficient.
+
+3. **Authoritative state/evidence ordering**  
+   Define a single monotonic precedence model across `latest_failure`, phase results, receipts, watchdog snapshots, and terminal state. Audit timestamps, occurrence IDs, atomic publication, corruption behavior, and stale-data labeling.
+
+4. **Resident/chain lineage equivalence**  
+   Prove resident orchestration and chain execution import the same immutable source. Treat dirty workspace imports or mismatched revisions as pre-dispatch failures.
+
+5. **Provider configuration authority**  
+   Consolidate provider aliases, authentication requirements, and allowlists. Preflight the selected provider key remotely before acquiring a worker lease.
+
+6. **Bounded observer behavior**  
+   Make status and `/whats-cooking` read bounded snapshots. Expensive refresh must be asynchronous, deadline-controlled, and incapable of hiding the last known state.
+
+### (d) Shortest safe immediate recovery
+
+Do not create a new chain and do not dispatch while U1/quality blockers remain.
+
+The shortest safe path is:
+
+1. Perform the real work needed to resolve the authoritative U1/quality blockers; record their normal evidence.
+2. On the existing session and plan, run status using the explicit intended interpreter/module, never bare `arnold`.
+3. Verify the returned plan, source revision, runtime hash, latest failure occurrence, and readiness projection.
+4. Resume the same plan through that same explicit interpreter/module.
+5. Accept dispatch only after observing a newly issued lease and a live process whose identity is bound to that lease and runtime.
+
+If the explicit runtime cannot prove those identities, stop at `ready`; do not infer launch from tmux or markers.
+
+### (e) Shared-system hardening and acceptance tests
+
+Adopt one immutable `ExecutionEnvelope` for every cloud megaplan operation:
+
+- plan/session/job and failure occurrence;
+- pinned source revision and runtime/code hash;
+- absolute interpreter plus module entry point;
+- provider identity and successful credential preflight;
+- lease ID, process identity, and launch timestamp;
+- monotonic state/evidence generation.
+
+All control-plane components must validate the envelope and fail closed on mismatch.
+
+Required acceptance tests:
+
+1. A hostile PATH containing an incompatible `arnold` cannot affect status, resume, resident, or watchdog behavior.
+2. Resident and chain with different revisions or code hashes fail before dispatch.
+3. Missing/invalid provider credentials fail preflight before lease acquisition.
+4. A swallowed launcher exception produces explicit dispatch failure, never launch success.
+5. tmux/state/marker presence without a matching fresh lease-bound process reports “not live.”
+6. Stale phase results and snapshots cannot outrank a newer `latest_failure`.
+7. Recovery receipts fail under any fingerprint, occurrence, job, revision, test-result, or runtime-hash mismatch.
+8. Successful recovery removes only its matching validation blocker; U1 and quality blockers remain authoritative.
+9. Corrupt or timed-out snapshots return bounded responses labeled stale/unavailable.
+10. The same conformance suite passes for every cloud megaplan pipeline and provider, not merely this plan.
+
+exec
+/bin/zsh -lc "sed -n '3200,3405p' arnold_pipelines/megaplan/cloud/cli.py
+sed -n '1,260p' arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+        "north_star_findings": north_star_findings,
+        "errors": errors,
+    }
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0 if not errors else 1
+
+
+def _chain_launch_verification_command(
+    *,
+    workspace: str,
+    session_name: str,
+    state_path: str,
+    log_path: str,
+    attempts: int = _CHAIN_VERIFY_ATTEMPTS,
+    sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
+) -> str:
+    script = f"""
+	import json, pathlib, re, subprocess, time
+workspace = pathlib.Path({workspace!r})
+session = {session_name!r}
+state_path = pathlib.Path({state_path!r})
+log_path = pathlib.Path({log_path!r})
+attempts = {int(attempts)!r}
+sleep_seconds = {int(sleep_seconds)!r}
+last_state = None
+advanced = False
+for idx in range(max(1, attempts)):
+    alive = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    log_size = log_path.stat().st_size if log_path.exists() else 0
+    state = None
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+        except Exception as exc:
+            state = {{"error": str(exc)}}
+    plan_dirs = []
+    plans_root = workspace / ".megaplan" / "plans"
+    if plans_root.exists():
+        plan_dirs = sorted(p.name for p in plans_root.iterdir() if p.is_dir() and p.name != ".chains")
+    advanced = bool(
+        state
+        and (
+            state.get("current_plan_name")
+            or state.get("completed")
+            or int(state.get("current_milestone_index", -1)) >= 0
+        )
+    ) or bool(plan_dirs)
+    last_state = {{
+        "session_alive": alive,
+        "chain_log": str(log_path),
+        "chain_log_size": log_size,
+        "state_path": str(state_path),
+        "state_present": state_path.exists(),
+        "advanced_past_init": advanced,
+        "plan_dirs": plan_dirs[:5],
+        "attempts": idx + 1,
+    }}
+    if alive and advanced:
+        break
+    if idx + 1 < attempts:
+        time.sleep(sleep_seconds)
+likely = None
+failure_code = None
+log_tail = []
+if log_path.exists():
+    try:
+        log_tail = log_path.read_text(errors="replace").splitlines()[-80:]
+    except Exception as exc:
+        log_tail = [f"<unable to read chain log: {{exc}}>"]
+tail_text = "\\n".join(log_tail)
+if not last_state["session_alive"]:
+    likely = "driver exited; inspect chain log for missing megaplan or dependency failures"
+elif not last_state["advanced_past_init"]:
+    likely = "driver stayed at init; inspect chain log for stale state, git refresh conflict, or missing megaplan"
+if "[megaplan-refresh] refusing editable install refresh" in tail_text:
+    likely = "editable install refresh failed before chain start"
+    if "tracked changes in source checkout" in tail_text:
+        failure_code = "editable_install_refresh_dirty"
+    elif "local commits not contained" in tail_text:
+        failure_code = "editable_install_refresh_diverged"
+    else:
+        failure_code = "editable_install_refresh_failed"
+last_state["likely_cause"] = likely
+last_state["failure_code"] = failure_code
+last_state["log_tail"] = log_tail
+print(json.dumps(last_state, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_VERIFY'\n{script.strip()}\nMEGAPLAN_VERIFY"
+
+
+def _run_chain_launch_verification(provider, ctx: ChainLaunchContext) -> dict[str, Any]:
+    result = provider.ssh_exec(
+        _chain_launch_verification_command(
+            workspace=ctx.workspace,
+            session_name=ctx.session_name,
+            state_path=ctx.state_path,
+            log_path=ctx.log_path,
+        )
+    )
+    raw = (result.stdout or "").strip().splitlines()
+    if result.returncode != 0:
+        return {
+            "session_alive": False,
+            "advanced_past_init": False,
+            "chain_log": ctx.log_path,
+            "status": "verification_failed",
+            "likely_cause": (result.stderr or result.stdout or "verification command failed").strip(),
+        }
+    try:
+        payload = json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "session_alive": None,
+            "advanced_past_init": None,
+            "chain_log": ctx.log_path,
+            "status": "verification_unparseable",
+            "likely_cause": f"verification output was not JSON: {exc}",
+            "raw": result.stdout,
+        }
+    payload["status"] = "ok" if payload.get("session_alive") and payload.get("advanced_past_init") else "warning"
+    return payload
+
+
+def _watchdog_tracking_verification_command(ctx: ChainLaunchContext) -> str:
+    script = f"""
+import json, pathlib, sys
+marker_path = pathlib.Path({ctx.marker_path!r})
+workspace = pathlib.Path({ctx.workspace!r})
+remote_spec = pathlib.Path({ctx.remote_spec_path!r})
+session = {ctx.session_name!r}
+identity_digest = {ctx.digest!r}
+checks = {{
+    "marker_path": str(marker_path),
+    "workspace": str(workspace),
+    "remote_spec": str(remote_spec),
+    "session": session,
+    "marker_present": marker_path.is_file(),
+    "workspace_present": workspace.is_dir(),
+    "spec_present": remote_spec.is_file(),
+    "tracked": False,
+    "errors": [],
+}}
+payload = {{}}
+if not checks["marker_present"]:
+    checks["errors"].append("marker missing")
+else:
+    try:
+        payload = json.loads(marker_path.read_text())
+    except Exception as exc:
+        checks["errors"].append(f"marker unreadable: {{exc}}")
+if payload:
+    for key, expected in {{
+        "session": session,
+        "workspace": str(workspace),
+        "remote_spec": str(remote_spec),
+        "identity_digest": identity_digest,
+    }}.items():
+        if payload.get(key) != expected:
+            checks["errors"].append(f"marker {{key}}={{payload.get(key)!r}} expected {{expected!r}}")
+if not checks["workspace_present"]:
+    checks["errors"].append("workspace missing")
+if not checks["spec_present"]:
+    checks["errors"].append("remote_spec missing")
+checks["tracked"] = not checks["errors"]
+print(json.dumps(checks, sort_keys=True))
+sys.exit(0 if checks["tracked"] else 1)
+"""
+    return f"python3 - <<'MEGAPLAN_WATCHDOG_TRACKING'\n{script.strip()}\nMEGAPLAN_WATCHDOG_TRACKING"
+
+
+def _run_watchdog_tracking_verification(provider, ctx: ChainLaunchContext) -> dict[str, Any]:
+    result = provider.ssh_exec(_watchdog_tracking_verification_command(ctx))
+    raw = (result.stdout or "").strip().splitlines()
+    try:
+        payload = json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        payload = {
+            "tracked": False,
+            "errors": [f"tracking verification output was not JSON: {exc}"],
+            "raw": result.stdout,
+        }
+    if result.returncode != 0:
+        payload.setdefault("tracked", False)
+        if result.stderr:
+            payload.setdefault("errors", []).append(result.stderr.strip())
+    payload["status"] = "tracked" if payload.get("tracked") else "not_tracked"
+    return payload
+
+
+def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    from arnold_pipelines.megaplan import chain as chain_module
+    from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
+
+    generated_canonical_files = [
+        Path(path)
+        for path in getattr(args, "_generated_canonical_files", []) or []
+    ]
+    if not bool(getattr(args, "_canonicalized_epic", False)):
+        materialized = _materialize_canonical_epic_input(
+            root=root,
+            spec=spec,
+            spec_or_dir=args.spec,
+        )
+        generated_canonical_files = [Path(path) for path in materialized.created_files]
+        sys.stderr.write(
+            "cloud chain canonicalized: "
+#!/usr/bin/env bash
+set -uo pipefail
+
+if [[ -f /workspace/.cloud-hot-env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /workspace/.cloud-hot-env
+  set +a
+fi
+
+WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+
+SELF_PATH="${BASH_SOURCE[0]:-$0}"
+if command -v readlink >/dev/null 2>&1; then
+  SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
+fi
+WATCHDOG_ARGS=("$@")
+WATCHDOG_STARTED_AT="$(date +%s)"
+LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"
+LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"
+if [[ "$LOCK_HELD" != "1" ]] && command -v flock >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  # Legacy lock shape kept visible for wrapper compatibility tests:
+  # exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+  python3 - "$LOCK_FILE" "$SELF_PATH" "${WATCHDOG_ARGS[@]}" <<'PY'
+import fcntl
+import os
+import subprocess
+import sys
+
+lock_file = sys.argv[1]
+self_path = sys.argv[2]
+watchdog_args = sys.argv[3:]
+
+fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit(1)
+
+env = os.environ.copy()
+env["CLOUD_WATCHDOG_LOCK_HELD"] = "1"
+proc = subprocess.Popen(
+    ["bash", self_path, *watchdog_args],
+    env=env,
+    close_fds=True,
+)
+raise SystemExit(proc.wait())
+PY
+  exit $?
+fi
+
+LOG="${CLOUD_WATCHDOG_LOG:-/workspace/watchdog.log}"
+REPORT_PATH="${CLOUD_WATCHDOG_REPORT_PATH:-/workspace/watchdog-report.json}"
+REPORT_ARCHIVE_DIR="${CLOUD_WATCHDOG_REPORT_ARCHIVE_DIR:-/workspace/watchdog-reports}"
+REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
+INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
+MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
+REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
+PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"
+CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
+REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
+REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
+REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
+REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
+REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
+ENV_GONE_STRIKES="${CLOUD_WATCHDOG_ENV_GONE_STRIKES:-3}"
+SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
+SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
+SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
+# Bounded timeouts so a hung git sync / pip refresh can't freeze a sweep before
+# the snapshot is written (watchdog-snapshot-staleness-fix.md P2). Do NOT reuse
+# CODEX_TIMEOUT (7200s) for these network/install steps.
+SYNC_TIMEOUT_SECS="${CLOUD_WATCHDOG_SYNC_TIMEOUT_SECS:-120}"
+INSTALL_REFRESH_TIMEOUT_SECS="${CLOUD_WATCHDOG_INSTALL_REFRESH_TIMEOUT_SECS:-300}"
+# Consecutive snapshot-write failures before we drop a visible write-error sidecar.
+SNAPSHOT_FAILURE_THRESHOLD="${CLOUD_WATCHDOG_SNAPSHOT_FAILURE_THRESHOLD:-3}"
+EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
+KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
+REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
+KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
+PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
+PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
+if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
+  PRIMARY_REPAIR_BIN="$PRIMARY_REPAIR_FALLBACK_BIN"
+fi
+META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"
+META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
+if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
+  META_REPAIR_BIN="$META_REPAIR_FALLBACK_BIN"
+fi
+REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
+DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
+ONCE="${1:-}"
+PRIMARY_REPAIR_BASENAME="$(basename "$PRIMARY_REPAIR_BIN")"
+REPAIR_DISPATCH_RESULT=
+
+mkdir -p "$(dirname "$LOG")"
+
+log() {
+  local message
+  message="$(redact_inline_text "$*")"
+  echo "[watchdog $(date -Iseconds)] $message" | tee -a "$LOG"
+}
+
+redact_inline_text() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$1" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+print(redact_text(sys.argv[1]), end="")
+PY
+}
+
+redact_file_in_place() {
+  local path="${1:-}"
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    return 0
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+path = Path(sys.argv[1])
+path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
+PY
+}
+
+maybe_reexec_updated_watchdog() {
+  local wrapper_path wrapper_mtime
+  local source_wrapper source_mtime
+  local reexec_path reexec_reason
+
+  wrapper_path="$SELF_PATH"
+  wrapper_mtime="$(stat -c %Y "$wrapper_path" 2>/dev/null || stat -f %m "$wrapper_path" 2>/dev/null || echo 0)"
+  [[ "$wrapper_mtime" =~ ^[0-9]+$ ]] || wrapper_mtime=0
+
+  source_wrapper="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/$(basename "$SELF_PATH")"
+  source_mtime=0
+  if [[ -f "$source_wrapper" ]]; then
+    source_mtime="$(stat -c %Y "$source_wrapper" 2>/dev/null || stat -f %m "$source_wrapper" 2>/dev/null || echo 0)"
+    [[ "$source_mtime" =~ ^[0-9]+$ ]] || source_mtime=0
+  fi
+
+  reexec_path=""
+  reexec_reason=""
+  if (( source_mtime > WATCHDOG_STARTED_AT && source_mtime >= wrapper_mtime )); then
+    reexec_path="$source_wrapper"
+    reexec_reason="editable source wrapper"
+  elif (( wrapper_mtime > WATCHDOG_STARTED_AT )); then
+    reexec_path="$wrapper_path"
+    reexec_reason="current script"
+  fi
+
+  if [[ -n "$reexec_path" ]]; then
+    log "watchdog wrapper updated on disk; re-execing $reexec_reason"
+    exec bash "$reexec_path" "${WATCHDOG_ARGS[@]}"
+  fi
+}
+
+json_field() {
+  local marker="$1"
+  local field="$2"
+  python3 - "$marker" "$field" <<'PY'
+import json
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+value = payload.get(field)
+if not isinstance(value, str) or not value:
+    sys.exit(1)
+print(value)
+PY
+}
+
+safe_name() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+repair_pidfile_path() {
+  printf '%s/%s.repair-loop.pid' "$MARKER_DIR" "$(safe_name "$1")"
+}
+
+repair_loop_pid_matches_session() {
+  local pid="$1"
+  local session="${2:-}"
+  local repair_basename="${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"
+  python3 - "$pid" "$session" "$repair_basename" <<'PY'
+import os
+import pathlib
+import shlex
+import subprocess
+import sys
+
+pid_text, session, repair_basename = sys.argv[1:]
+try:
+    pid = int(pid_text)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if pid <= 0:
+    raise SystemExit(1)
+
+def parse_args() -> list[str]:
+    cmdline_path = pathlib.Path(f"/proc/{pid}/cmdline")
+    if cmdline_path.exists():
+        raw = cmdline_path.read_bytes()
+        return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+    proc = subprocess.run(
+        ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    text = proc.stdout.strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
+
+args = parse_args()
+if not args:
+    raise SystemExit(1)
+
+def match_at(idx: int) -> bool:
+    if idx >= len(args):
+        return False
+    base = os.path.basename(args[idx])
+    if base not in {"arnold-repair-loop", repair_basename}:
+        return False
+    if not session:
+        return True
+    return idx + 1 < len(args) and args[idx + 1] == session
+
+for idx in range(len(args)):
+    if match_at(idx):
+        raise SystemExit(0)
+    base = os.path.basename(args[idx])
+    if base in {"bash", "sh"} and match_at(idx + 1):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+
+exec
+/bin/zsh -lc "sed -n '250,290p' arnold_pipelines/megaplan/watchdog/processes.py
+sed -n '390,450p' arnold_pipelines/megaplan/watchdog/processes.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+exec
+/bin/zsh -lc "sed -n '/lease/Ip;/liveness/Ip' tests/cloud/test_watchdog_wrappers.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
+def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
+        repair_lock.release_repair_lock(lock_dir, expected_pid=holder.pid)
+def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
+    assert "from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock" in text
+    assert 'repair_data_set_outcome "partial_liveness"' in text
+    partial_liveness_ticks: int = 0,
+    if partial_liveness_ticks:
+                "outcome": "partial_liveness",
+            for i in range(partial_liveness_ticks)
+            _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
+                _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
+def test_compute_meta_repair_trigger_triggers_on_stale_launch_failure_after_partial_liveness(
+                "outcome": "partial_liveness",
+    # partial_liveness is non-success, so stale launch failure still triggers
+def test_launch_chain_tick_dispatches_meta_repair_on_partial_liveness_trigger(tmp_path: Path) -> None:
+        partial_liveness_ticks=2,
+    assert "trigger=partial_liveness_recurrence" in paths["log_path"].read_text(encoding="utf-8")
+                    _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
+    assert not events_path.exists(), "alive-path meta dispatch should short-circuit before writing partial liveness"
+def test_compute_meta_repair_trigger_skips_partial_liveness_when_session_alive(
+                    "outcome": "partial_liveness",
+    assert finding["active_step_liveness"]["worker_pid"] == "99999999"
+    assert finding["active_step_liveness"]["worker_pid_alive"] is False
+    assert "release_repair_lock" not in program
+    assert 'partial_liveness' in text
+@pytest.mark.parametrize("outcome", ["partial_liveness", "repairing"])
+                "trigger": "partial_liveness_recurrence",
+    # Partial-liveness tick tracking
+    assert "write_partial_liveness_tick() {" in watchdog_text
+        repair_lock.release_repair_lock(lock_dir, owner=lock.owner)
+def test_partial_liveness_tick_writes_sidecar_record(tmp_path: Path) -> None:
+    """write_partial_liveness_tick appends a correctly-shaped JSONL record."""
+    # Extract write_partial_liveness_tick via _extract_wrapper_function_until
+        "write_partial_liveness_tick", "clear_session_tracking_artifacts"
+            "write_partial_liveness_tick demo-session /tmp/ws /tmp/ws/spec.yaml chain demo-plan alive",
+    assert record["outcome"] == "partial_liveness"
+def test_partial_liveness_tick_bounded_history(tmp_path: Path) -> None:
+    """write_partial_liveness_tick keeps at most 20 records per sidecar."""
+            "outcome": "partial_liveness",
+        "write_partial_liveness_tick", "clear_session_tracking_artifacts"
+            "write_partial_liveness_tick demo-session /tmp/ws /tmp/ws/spec.yaml chain demo-plan alive",
+def test_partial_liveness_isolated_does_not_trigger_condition_5() -> None:
+    """Isolated partial liveness (1 tick) does NOT trigger condition 5."""
+        partial_liveness_ticks=1,
+        "Isolated partial liveness (1 tick) should NOT trigger condition 5"
+def test_partial_liveness_repeated_triggers_condition_5() -> None:
+    """Repeated partial liveness (2 ticks) DOES trigger condition 5."""
+        partial_liveness_ticks=2,
+        "Repeated partial liveness (2 ticks) SHOULD trigger condition 5"
+    assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
+def test_partial_liveness_three_ticks_triggers_condition_5() -> None:
+    """Three partial liveness ticks also trigger condition 5 (>=2 threshold)."""
+        partial_liveness_ticks=3,
+    assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
+
+codex
+Lease failure can be swallowed at the cloud launch-verification boundary:
+
+- `_run_chain_launch_verification` treats tmux-session presence plus state/plan advancement as evidence of launch. Neither proves lease acquisition or a live, correctly identified worker.
+- `_run_watchdog_tracking_verification` reports `"tracked"` from marker, workspace, and remote-spec checks בלבד; marker metadata is not lease/process liveness.
+- Therefore a launcher exception, failed lease startup, stale marker, or dead process can still appear as launch success or tracked execution.
+
+The required fail-closed boundary is immediately after lease acquisition and before any dispatch-success state, marker, or recovery transition is published. Require all of:
+
+1. A newly issued lease ID.
+2. A live process whose PID/start identity matches that lease.
+3. Matching command, pinned runtime/source revision, and job/session identity.
+4. Successful, parseable verification within a deadline.
+
+Any launcher exception, lease error, timeout, unreadable result, stale marker, tmux-only signal, or identity mismatch must produce explicit `dispatch_failed` / `not_live`, and must not advance the plan.
+
+Four acceptance tests:
+
+1. **Swallowed launcher failure:** force lease startup to raise or return failure; assert dispatch fails explicitly and no launch-success marker/state is emitted.
+
+2. **Marker/tmux false positive:** provide a valid marker and live tmux session but no fresh lease-bound process; assert liveness is unhealthy/not live.
+
+3. **Identity mismatch:** launch a process with the wrong PID, command, runtime hash, revision, or session; assert verification fails closed before dispatch.
+
+4. **Fresh success path:** issue a fresh lease and matching process identity, then assert—and only then—that dispatch is reported successful and watchdog liveness becomes healthy.
+
+These should extend the existing liveness coverage, especially `test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness`, `test_watchdog_liveness_is_scoped_to_marked_chain_spec`, and `test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy`.
+tokens used
+23,107

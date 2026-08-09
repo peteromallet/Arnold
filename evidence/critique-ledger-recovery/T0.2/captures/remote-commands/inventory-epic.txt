@@ -1,0 +1,4 @@
+110592	1785517212.4117377360	f	/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/epics/cl2-wbc-backed-ledger-20260731-1411/_journal/tmp72gpxzg1
+25770140	1785523377.8135967120	f	/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/epics/cl2-wbc-backed-ledger-20260731-1411/events.jsonl
+69632	1785517272.9195600540	f	/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/epics/cl2-wbc-backed-ledger-20260731-1411/_journal/tmpnw7rvoy2
+98304	1785517345.7191425580	f	/opt/megaplan-cloud/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/epics/cl2-wbc-backed-ledger-20260731-1411/_journal/tmpfxak2cc9

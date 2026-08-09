@@ -1,0 +1,34 @@
+{
+  "schema": "t0.0.completion-manifest.v1",
+  "verdict": "blocked",
+  "owner": "Incident commander + Run Authority owner",
+  "interface": "RA-CONTAIN: missing; read-only evaluate_current_source is insufficient",
+  "authority_receipt": null,
+  "required_claims": {
+    "exact_tuple_bound": true,
+    "canonical_owner_interface_proven": false,
+    "containment_decision_recorded": false,
+    "ttl_termination_revoke_audit_path": false,
+    "reads_preserved_effects_denied": false
+  },
+  "artifacts": [
+    "authority-interface.md",
+    "containment-decision.json",
+    "source-manifest.json",
+    "handoff.md"
+  ],
+  "artifact_hashes": {
+    "authority-interface.md": "b246e17bd496e232dd2ae5a6b847796dfdfbd3f069594768515cdf65ba3bc464",
+    "containment-decision.json": "2f18d760bd6937f2e680aa5f0c85b2a40aadb93f6f062b003ac3219000325686",
+    "source-manifest.json": "ad8d21eb9d95b41bfd1ce007acca26390fca71d25bc139fcea0122748af82841",
+    "handoff.md": "1c36695fe2d968e2f1d8f057217d3c23f0658249286d69832d1830bf09939539"
+  },
+  "commands": [
+    {"command": "git -C /private/tmp/arnold-post-c7-release-recovery rev-parse HEAD", "exit_code": 0},
+    {"command": "rg interface symbols in run_authority and custody sources", "exit_code": 0},
+    {"command": "python -m pytest -q tests/arnold_pipelines/run_authority/test_contracts.py tests/arnold_pipelines/run_authority/test_reducer.py", "exit_code": 0, "result": "18 passed in 0.07s"}
+  ],
+  "captured_at": "2026-08-02T12:55:01Z",
+  "clock_basis": "local UTC wall clock",
+  "truthful_next_action": "Install/accept the smallest Run Authority owner RA-CONTAIN writer in an isolated worktree, then obtain an owner-issued receipt before T0.1."
+}
