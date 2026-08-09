@@ -508,23 +508,17 @@ def _apply_adaptive_critique_routing(
             )
         )
 
+    def _resolved_routing_tier(complexity: int) -> int:
+        # Historical 1..5 tier tables project a 1..10 evaluator complexity
+        # onto the 1..5 range arithmetically ((c + 1) // 2); a 1..10 table
+        # uses the complexity directly as the tier.
+        if _legacy_critique_tiers:
+            return (complexity + 1) // 2
+        return complexity
+
     def _tier_spec_for(complexity: int) -> str | None:
-        _raw = _tier_value_for(complexity)
-        selected_tier = complexity
-        # Profiles that predate the 1..10 evaluator scale legitimately expose
-        # only 1..5 critique tiers.  A high valid selection maps to their
-        # strongest configured critic; do not use this as a general sparse-map
-        # fallback, because a missing tier inside the configured range remains
-        # a routing-contract error.
-        if _raw is None:
-            tiers = _configured_tiers()
-            if (
-                tiers
-                and tiers == tuple(range(1, tiers[-1] + 1))
-                and complexity > tiers[-1]
-            ):
-                selected_tier = tiers[-1]
-                _raw = _tier_value_for(selected_tier)
+        selected_tier = _resolved_routing_tier(complexity)
+        _raw = _tier_value_for(selected_tier)
         if isinstance(_raw, str):
             return _raw or None
         if isinstance(_raw, list):
@@ -624,10 +618,38 @@ def _apply_adaptive_critique_routing(
                         effort=None,
                         resolved_model=_t_model,
                     )
+        _routing_tier = _resolved_routing_tier(_cx)
+        if _cx not in _complexity_cache:
+            _spec = _tier_spec_for(_cx)
+            if not _spec:
+                if _pin:
+                    _complexity_cache[_cx] = _resolved_pin_agent_mode()
+                else:
+                    raise CliError(
+                        "critique_tier_missing",
+                        f"No tier spec for complexity {_cx} "
+                        f"(resolved critique tier {_routing_tier}) "
+                        f"in tier_models.critique; cannot "
+                        f"route check '{_cid}'.",
+                    )
+            else:
+                _resolved_tier = _resolve_tier_spec(args, _spec, phase="critique")
+                if isinstance(_resolved_tier, _TierAgentMode):
+                    _complexity_cache[_cx] = _resolved_tier
+                else:  # compatibility for test and legacy resolver shims
+                    _t_agent, _t_mode, _t_model = _resolved_tier
+                    _complexity_cache[_cx] = _TierAgentMode(
+                        agent=_t_agent,
+                        mode=_t_mode,
+                        refreshed=False,
+                        model=_t_model,
+                        effort=None,
+                        resolved_model=_t_model,
+                    )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
         _check["_routing_selected_spec"] = _tier_spec_for(_cx) or f"critic_model:{_pin}"
         _check["_routing_evaluator_complexity"] = _cx
-        _check["_routing_tier"] = _cx
+        _check["_routing_tier"] = _routing_tier
         _check["_routing_tier_active"] = True
         if _routing_floor_domains is not None:
             _check["_routing_floor_domains"] = _routing_floor_domains
