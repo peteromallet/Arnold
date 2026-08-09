@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextvars
 import asyncio
 import json
 from pathlib import Path
@@ -29,11 +30,34 @@ from arnold_pipelines.megaplan.resident.agent_loop import (
     AgentResponse,
     FakeAgentRunner,
     FakeAgentStep,
+    ToolRuntimeContext,
+    _TOOL_RUNTIME_CONTEXT,
 )
 from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ConfirmationManager, ResidentAuthorizer
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.runtime import InboundEvent, OutboundMessage, ResidentRuntime
 from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
+
+
+def _set_runtime_subject(subject: object) -> contextvars.Token:
+    """Set the resident tool runtime context so tools see an authorized subject.
+
+    The real agent loop wraps each tool handler in ``_run_tool_handler`` which
+    sets ``_TOOL_RUNTIME_CONTEXT``; FakeAgentRunner does not, so subagent tools
+    that read ``current_tool_runtime_context()`` would see no subject and
+    return ``runtime_subject_required``. The caller keeps the returned token
+    alive for the duration of the run and resets it after.
+    """
+    return _TOOL_RUNTIME_CONTEXT.set(
+        ToolRuntimeContext(
+            conversation_id="conversation-1",
+            subject=subject,
+            launch_origin=None,
+            tool_call_id="tool-call-1",
+        )
+    )
+
+
 
 
 def test_agentbox_operator_profile_registers_exact_v0_tool_catalog(
@@ -1593,8 +1617,11 @@ def test_agentbox_subagent_returns_inline_result_on_configured_model(
     runner = FakeAgentRunner(
         [FakeAgentStep.call("subagent", {"prompt": "find stale chains"}), FakeAgentStep.final("summarized")]
     )
-
-    response = asyncio.run(
+    _ctx_token = _set_runtime_subject(
+        AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1")
+    )
+    try:
+        response = asyncio.run(
         runner.run(
             AgentRequest(
                 conversation_id="conversation-1",
@@ -1605,6 +1632,8 @@ def test_agentbox_subagent_returns_inline_result_on_configured_model(
             profile.tools(),
         )
     )
+    finally:
+        _TOOL_RUNTIME_CONTEXT.reset(_ctx_token)
 
     result = response.tool_calls[0].result
     assert result["ok"] is True
@@ -1643,7 +1672,11 @@ def test_agentbox_subagent_allows_allowlisted_model_override(tmp_path: Path) -> 
         [FakeAgentStep.call("subagent", {"prompt": "x", "model": "kimi:kimi-k2"}), FakeAgentStep.final("done")]
     )
 
-    response = asyncio.run(
+    _ctx_token = _set_runtime_subject(
+        AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1")
+    )
+    try:
+        response = asyncio.run(
         runner.run(
             AgentRequest(
                 conversation_id="conversation-1",
@@ -1654,6 +1687,8 @@ def test_agentbox_subagent_allows_allowlisted_model_override(tmp_path: Path) -> 
             profile.tools(),
         )
     )
+    finally:
+        _TOOL_RUNTIME_CONTEXT.reset(_ctx_token)
 
     result = response.tool_calls[0].result
     assert result["ok"] is True

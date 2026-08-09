@@ -734,7 +734,8 @@ class AgentBoxOperatorProfile:
             system_prompt=SUBAGENT_SYSTEM_PROMPT,
             subject=subject,
         )
-        timeout = self.config.model_timeout_s * (max_calls + 1)
+        _per_call_timeout = self.config.model_timeout_s or 120.0
+        timeout = _per_call_timeout * (max_calls + 1)
         try:
             response = await asyncio.wait_for(runner.run(request, sub_registry), timeout=timeout)
         except asyncio.TimeoutError:
