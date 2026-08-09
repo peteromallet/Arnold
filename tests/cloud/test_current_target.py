@@ -1151,7 +1151,9 @@ def test_resolve_current_target_active_step_heartbeat_default_probe(
         encoding="utf-8",
     )
 
-    record = resolve_current_target("demo", marker_dir=marker_dir)
+    record = resolve_current_target(
+        "demo", marker_dir=marker_dir, pid_is_live=lambda pid: True
+    )
 
     hb = record["active_step_heartbeat"]
     assert hb["active"] is True
@@ -1195,7 +1197,9 @@ def test_resolve_current_target_unprobeable_worker_is_not_stale(
         encoding="utf-8",
     )
 
-    record = resolve_current_target("demo", marker_dir=marker_dir)
+    record = resolve_current_target(
+        "demo", marker_dir=marker_dir, pid_is_live=lambda pid: None
+    )
 
     hb = record["active_step_heartbeat"]
     assert hb["active"] is False

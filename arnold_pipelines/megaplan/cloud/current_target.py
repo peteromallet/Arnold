@@ -1126,7 +1126,21 @@ def _pid_is_live_probe(pid: int) -> bool | None:
         observer_ns = os.readlink("/proc/self/ns/pid")
         worker_ns = os.readlink(f"/proc/{pid}/ns/pid")
     except OSError:
-        return None
+        # No /proc (e.g. macOS, or a stripped container): namespace
+        # discrimination is unavailable.  Fall back to a plain kill(pid, 0)
+        # probe so a live worker in this process namespace is still
+        # recognized as live rather than mislabelled dead/stale.  A missing
+        # pid still reports False (dead) and an unprobeable pid reports None
+        # (unknown) only when /proc exists but the read fails.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
     if not observer_ns or observer_ns != worker_ns:
         return None
     try:
