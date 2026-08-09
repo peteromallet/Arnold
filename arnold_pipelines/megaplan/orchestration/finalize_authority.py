@@ -81,6 +81,14 @@ _EXECUTE_TASK_MUTABLE = frozenset(
         "sections_written",
         "stance",
         "stop_signal",
+        # Soft stance-validation metadata the execute seam computes and merges
+        # onto task records (merge.py: validate_stance stamps
+        # stance_violations; merge_fields includes it in creative mode, and
+        # test_merge_scope asserts it lands on the row).  The execute owner
+        # must be able to publish it, or any creative batch whose stance fails
+        # soft validation aborts with FinalizeFieldOwnershipError — reached by
+        # reconcile-latest-execution-batch and by normal creative executes.
+        "stance_violations",
         # Evidence-context fields the execute seam stamps/merges onto task
         # records (batch.py:_stamp_head_sha_on_task_records and
         # merge.py evidence_context_fields).  The M2 authority reader treats

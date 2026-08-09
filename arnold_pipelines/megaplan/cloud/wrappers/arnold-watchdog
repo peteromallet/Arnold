@@ -5503,7 +5503,22 @@ result = repair_requests.claim_active_repair_request(
 )
 # A stale owner is evidence, never authority for this watchdog to delete a
 # claim and seize it.  Explicit simple_fixer recovery owns any retirement and
-# reacquisition after revalidating the exact occurrence.
+# reacquisition after revalidating the exact occurrence.  Fail closed at the
+# point of claim evaluation: namespace-bound incarnation evidence
+# (owner_pid_not_live / owner_process_mismatch) never admits dispatch, and a
+# stale projection is never reaped here.
+if result.status == "stale":
+    evidence = result.evidence if isinstance(result.evidence, dict) else {}
+    stale_evidence = evidence.get("stale_evidence")
+    stale_reasons = stale_evidence.get("reasons") if isinstance(stale_evidence, dict) else None
+    stale_reasons = stale_reasons or []
+    # Namespace-bound incarnation evidence (owner_pid_not_live /
+    # owner_process_mismatch) proves the claim owner pid is not live or is not
+    # the expected repair loop: refuse dispatch, never reap the projection.
+    if "owner_pid_not_live" in stale_reasons or "owner_process_mismatch" in stale_reasons:
+        print(f"stale repair claim refused: namespace-bound evidence reasons={stale_reasons!r}", file=sys.stderr)
+    print("stale")
+    raise SystemExit(0)
 print(result.status)
 PY
 }

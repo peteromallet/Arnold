@@ -119,6 +119,15 @@ WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/../../../.." &&
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
 
+# Declared defaults of the reactive legacy model surface, byte-identical to
+# the pre-unification wrapper (RT1).  The Phase 3A policy layer below re-binds
+# these variables at dispatch from the canonical policy table, and hot-env
+# *_MODEL overrides are ignored (credentials-only hot-env, design line 147) —
+# so these declarations document the default values, not an override channel.
+REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
+REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek:deepseek-v4-pro}"
+REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
+
 # --- Phase 3A mode policy (design section 3) --------------------------------
 # Reactive is exactly today's flow.  Proactive reuses the same
 # investigate->mutate->redrive pipeline with a longer budget and a Flash-first
