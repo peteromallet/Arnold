@@ -23,15 +23,26 @@
 #   4. compare-and-swap push of the candidate onto refs/heads/<base-branch> —
 #      a plain push, NEVER a force push; a rejected (non-fast-forward) push
 #      exits 3 with a message
-#   5. promotion journal append (runtime_manifest CLI preferred; append-only
-#      JSONL fallback: {slug, from_sha, to_sha, at, result})
-#   6. advance the active-generation pointer via the runtime_manifest CLI, else
-#      print the manual step; the canary-verification warning is always printed
+#   5. promotion journal: append_promotion via the runtime_manifest CLI (exit 4
+#      if the subcommand is missing/fails — the journal must never silently
+#      not-happen) + an append-only JSONL journal line
+#   6. CANARY GATE (design rule 5: a push is NOT a safe cutover): without
+#      ARNOLD_PROMOTE_SKIP_CANARY the script prints the required canary steps
+#      and EXITS 0 WITHOUT advancing the active-generation pointer. Setting
+#      ARNOLD_PROMOTE_SKIP_CANARY=1 is the operator's explicit, post-canary
+#      step that advances the pointer via the runtime_manifest CLI
+#      advance_generation (atomic switch, previous generation retained at
+#      <pointer>.previous-<N>.json for rollback). A missing/failing
+#      advance_generation subcommand exits 4 — NEVER a silent "NOT advanced".
 #
 # Environment overrides (all optional):
 #   ARNOLD_ORIGIN_URL         fetch/push target (URL or remote name) (default: origin)
 #   ARNOLD_BASE_BRANCH        base branch promoted onto              (default: base/editable-install)
 #   ARNOLD_PROMOTION_JOURNAL  promotion journal path (JSONL)         (default: <manifest-dir>/promotion-journal.jsonl)
+#   ARNOLD_RUNTIME_MANIFEST   active-pointer path                    (default: <manifest-dir>/runtime-manifest.json)
+#   ARNOLD_PROMOTE_SKIP_CANARY set to any non-empty value to advance the
+#                              active-generation pointer (operator's explicit
+#                              post-canary step)
 #
 set -euo pipefail
 
@@ -96,6 +107,9 @@ REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
 BASE_BRANCH="${ARNOLD_BASE_BRANCH:-base/editable-install}"
 MANIFEST_DIR="$(dirname "$MANIFEST")"
 JOURNAL="${ARNOLD_PROMOTION_JOURNAL:-$MANIFEST_DIR/promotion-journal.jsonl}"
+# The active pointer follows the manifest dir by default (the file AT the
+# stable path IS the active generation); an operator may override.
+export ARNOLD_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-$MANIFEST_DIR/runtime-manifest.json}"
 
 # (a) Verify the epic worktree's origin branch exists and is fully pushed.
 if ! LOCAL_SHA="$(git -C "$WORKTREE" rev-parse --verify "refs/heads/$BRANCH" 2>/dev/null)"; then
@@ -143,53 +157,54 @@ if ! PUSH_OUT="$(git -C "$WORKTREE" push "$REMOTE" "$TMP_REF:refs/heads/$BASE_BR
   exit 3
 fi
 
-# (e) Promotion journal — runtime_manifest CLI preferred, JSONL fallback.
+# (e) Promotion journal — append_promotion via the runtime_manifest CLI (exit 4
+# if the subcommand is missing or fails: the journal must never silently not
+# happen) + an append-only JSONL journal line for reconcilability.
 AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-if python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest append_promotion \
-    --epic-id "$SLUG" --from-sha "$FROM_SHA" --to-sha "$TO_SHA" --result pushed --at "$AT" >/dev/null 2>&1; then
-  : # CLI recorded the promotion
-else
-  echo "arnold-promote: runtime_manifest CLI unavailable/failed; appending to promotion journal '$JOURNAL' and manifest promotions[] (fallback)" >&2
-  mkdir -p "$MANIFEST_DIR"
-  python3 - "$SLUG" "$FROM_SHA" "$TO_SHA" "$AT" <<'PY' >> "$JOURNAL"
+RECORD_TMP="$(mktemp "${TMPDIR:-/tmp}/arnold-promote-record.XXXXXX")"
+python3 - "$RECORD_TMP" "$SLUG" "$FROM_SHA" "$TO_SHA" "$AT" <<'PY' >/dev/null
 import json, sys
-slug, from_sha, to_sha, at = sys.argv[1:5]
-print(json.dumps({"slug": slug, "from_sha": from_sha, "to_sha": to_sha, "at": at, "result": "pushed"}))
+path, slug, from_sha, to_sha, at = sys.argv[1:6]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump({"slug": slug, "from_sha": from_sha, "to_sha": to_sha, "at": at, "result": "pushed"}, fh)
 PY
-  python3 - "$MANIFEST" "$FROM_SHA" "$TO_SHA" "$AT" <<'PY'
-import json, os, sys, tempfile
-from datetime import datetime, timezone
+if ! python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest append_promotion \
+    "$MANIFEST" "@$RECORD_TMP" >/dev/null 2>&1; then
+  rm -f "$RECORD_TMP"
+  echo "arnold-promote: FAILED — runtime_manifest append_promotion subcommand missing/failed; the promotion journal was NOT recorded (nothing authoritative is journaled silently). Reconcile before proceeding." >&2
+  exit 4
+fi
+rm -f "$RECORD_TMP"
+mkdir -p "$MANIFEST_DIR"
+python3 - "$JOURNAL" "$SLUG" "$FROM_SHA" "$TO_SHA" "$AT" <<'PY'
+import json, sys
+journal, slug, from_sha, to_sha, at = sys.argv[1:6]
+with open(journal, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"slug": slug, "from_sha": from_sha, "to_sha": to_sha, "at": at, "result": "pushed"}) + "\n")
+PY
 
-path, from_sha, to_sha, at = sys.argv[1:5]
-with open(path) as fh:
-    m = json.load(fh)
-m.setdefault("promotions", []).append(
-    {"from_sha": from_sha, "to_sha": to_sha, "at": at, "result": "pushed"}
-)
-m.setdefault("timestamps", {})["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".runtime-manifest-", suffix=".tmp")
-try:
-    with os.fdopen(fd, "w") as fh:
-        json.dump(m, fh, indent=2, sort_keys=True)
-        fh.write("\n")
-    os.replace(tmp, path)
-finally:
-    if os.path.exists(tmp):
-        os.unlink(tmp)
-PY
+# (f) CANARY GATE (design rule 5): a successful push is NOT a safe cutover.
+# Without ARNOLD_PROMOTE_SKIP_CANARY the pointer is NOT advanced — the canary
+# steps are printed and the script exits 0 (the push + journal are durable).
+# Setting ARNOLD_PROMOTE_SKIP_CANARY is the operator's explicit post-canary
+# step that advances the active-generation pointer.
+if [[ -z "${ARNOLD_PROMOTE_SKIP_CANARY:-}" ]]; then
+  echo "arnold-promote: candidate pushed to '$BASE_BRANCH' and journaled — a successful push is NOT a safe cutover (design rule 5)."
+  echo "arnold-promote: REQUIRED canary verification BEFORE the active-generation pointer may advance:"
+  echo "  1. Build a canary generation from $TO_SHA and verify it in a SEPARATE namespace (fresh-interpreter import smoke test of every runtime package)."
+  echo "  2. Observe the canary healthy for the observation window (design gate 2.6)."
+  echo "arnold-promote: active-generation pointer NOT advanced. After canary verification, re-run with ARNOLD_PROMOTE_SKIP_CANARY=1 to switch the pointer (the previous generation is retained for rollback)."
+  echo "arnold-promote: promoted $SLUG -> $BASE_BRANCH ($FROM_SHA -> $TO_SHA); journal: $JOURNAL"
+  exit 0
 fi
 
-# (f) Advance the active-generation pointer (retain the previous generation).
-if python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest advance_generation \
-    --epic-id "$SLUG" --to-sha "$TO_SHA" >/dev/null 2>&1; then
-  echo "arnold-promote: active-generation pointer advanced to $TO_SHA via runtime_manifest CLI"
-else
-  echo "arnold-promote: NOTE — active-generation pointer NOT advanced (runtime_manifest CLI has no advance_generation subcommand). Manual step required after canary verification (below)." >&2
+# (g) Advance the active-generation pointer (atomic switch + previous retained).
+echo "arnold-promote: ARNOLD_PROMOTE_SKIP_CANARY set — operator attests canary health; advancing the active-generation pointer to $TO_SHA (previous generation retained for rollback)."
+if ! python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest advance_generation \
+    "$MANIFEST" "$TO_SHA" \
+    --reason "promote $SLUG onto $BASE_BRANCH ($FROM_SHA -> $TO_SHA)" >/dev/null 2>&1; then
+  echo "arnold-promote: FAILED — runtime_manifest advance_generation subcommand missing/failed; '$BASE_BRANCH' was pushed but the active-generation pointer was NOT switched. Fix and re-run with ARNOLD_PROMOTE_SKIP_CANARY=1 (idempotent: re-running lands on the same generation + commit)." >&2
+  exit 4
 fi
-
-echo "arnold-promote: A successful push is NOT a safe cutover (design rule 5)."
-echo "arnold-promote: REQUIRED NEXT ACTIONS before $BASE_BRANCH may be treated as the live generation:"
-echo "  1. Build a canary generation from the promoted SHA $TO_SHA and verify it in a SEPARATE namespace (fresh-interpreter import smoke test of every runtime package)."
-echo "  2. Observe the canary healthy for the observation window (design gate 2.6)."
-echo "  3. Only then switch the active-generation pointer — retaining the previous generation for rollback."
+echo "arnold-promote: active-generation pointer advanced to $TO_SHA (generation $(_json_get "$ARNOLD_RUNTIME_MANIFEST" generation)); previous generation retained for rollback."
 echo "arnold-promote: promoted $SLUG -> $BASE_BRANCH ($FROM_SHA -> $TO_SHA); journal: $JOURNAL"

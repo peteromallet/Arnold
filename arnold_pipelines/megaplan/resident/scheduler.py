@@ -27,7 +27,10 @@ from uuid import uuid4
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from .timezone import TimezoneService, localize_text_timestamps
-from arnold_pipelines.megaplan.cloud.runtime_manifest import ManifestError, load_manifest
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    ManifestError,
+    bootstrap_manifest,
+)
 from arnold_pipelines.megaplan.store import ProgressEventInput, ScheduledJobInput, Store, deterministic_idempotency_key
 
 from .auth import AuthorizationSubject, ConfirmationManager
@@ -86,6 +89,24 @@ def _git_tree_dirty(root: Path) -> bool:
     return bool(proc.stdout.strip())
 
 
+def _load_manifest_fail_closed(manifest_path: Path) -> Any | None:
+    """Load and validate the manifest, or return ``None`` only when absent.
+
+    Fail-closed manifest authority (design: the manifest is THE post-bootstrap
+    resolver).  When ``ARNOLD_RUNTIME_MANIFEST`` is set OR the bootstrap path
+    exists, the manifest MUST load and validate: any corrupt / schema-
+    mismatched / unreadable manifest raises :class:`ManifestError` so callers
+    fail closed instead of silently treating the runtime as unpinned.  Only a
+    genuinely absent manifest (no env, no file at the bootstrap path) returns
+    ``None`` — backward compat with today's unpinned scheduling.
+    """
+    env_set = bool(os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip())
+    path = Path(manifest_path)
+    if not env_set and not path.exists():
+        return None
+    return bootstrap_manifest(path)
+
+
 def runtime_pin_ok(
     *,
     manifest_path: Path | None = None,
@@ -100,16 +121,19 @@ def runtime_pin_ok(
     The check is read-only: ``git -C <runtime_root> rev-parse HEAD`` must equal
     the expected head and the tree must be clean
     (``git status --porcelain --untracked-files=no`` empty).  Returns
-    ``(True, "ok")`` on success or ``(False, reason)``; with neither a
-    loadable manifest nor explicit pin values it returns
-    ``(True, "no_pin_configured")`` — an absent pin never fails (backward
-    compatible with today's unpinned scheduling).
+    ``(True, "ok")`` on success or ``(False, reason)``.
+
+    Fail-closed manifest authority: a PRESENT-but-invalid manifest (corrupt /
+    schema-mismatch / unreadable) returns ``(False, "manifest_invalid: ...")``
+    — never the ``no_pin_configured`` pass.  ``(True, "no_pin_configured")``
+    is returned only when the manifest is genuinely ABSENT (no env, no file
+    at the bootstrap path) and no explicit pin values were supplied.
     """
     if manifest_path is not None:
         try:
-            manifest = load_manifest(manifest_path)
-        except (ManifestError, OSError, ValueError, TypeError):
-            manifest = None
+            manifest = _load_manifest_fail_closed(manifest_path)
+        except ManifestError as exc:
+            return False, f"manifest_invalid: {exc}"
         if manifest is not None:
             expected_head = str(manifest.epic.get("expected_head") or "")
             runtime_root_value = manifest.epic.get("runtime_root")
@@ -141,6 +165,32 @@ def _runtime_manifest_path() -> Path:
     return Path("/workspace/.megaplan/runtime-manifest.json")
 
 
+def _repair_loop_wrapper(manifest_path: Path | None) -> tuple[Path, str]:
+    """Resolve the repair-loop wrapper: manifest ``epic.repair_bin``, else __file__.
+
+    Fail-closed manifest authority (design line 191 kills ``__file__``-relative
+    wrapper resolution): when a manifest is present, its ``epic.repair_bin``
+    names the executable that must run.  The ``__file__``-relative path is
+    ONLY the absent-manifest fallback (bootstrap-only backward compat).  A
+    present-but-invalid manifest cannot supply a repair bin — the pin check
+    (``runtime_pin_ok``) has already failed closed, so this falls back to the
+    local wrapper without ever becoming authority to dispatch.  Returns the
+    wrapper path plus a ``"manifest"`` / ``"absent_manifest_fallback"``
+    provenance label.
+    """
+    if manifest_path is not None:
+        try:
+            manifest = _load_manifest_fail_closed(manifest_path)
+        except ManifestError:
+            manifest = None
+        if manifest is not None:
+            repair_bin = manifest.epic.get("repair_bin")
+            if repair_bin:
+                return Path(str(repair_bin)), "manifest"
+    fallback = Path(__file__).resolve().parents[1] / "cloud" / "wrappers" / "arnold-repair-loop"
+    return fallback, "absent_manifest_fallback"
+
+
 def proactive_seam_dispatch(
     *,
     session: str,
@@ -153,18 +203,16 @@ def proactive_seam_dispatch(
 
     Returns a dispatch record naming the seam invocation — the
     ``arnold-repair-loop`` wrapper in ``--mode=proactive`` (fixer-unification
-    Phase 3A) — together with the manifest pin status.  This is a
-    dispatch-PLANNING hook: it never launches a process itself.  Actual
-    process launch stays with the existing ``subagent_worker --run-managed``
-    machinery, which the caller wires to this record's ``command``.
+    Phase 3A) — together with the manifest pin status.  The wrapper comes from
+    the manifest's ``epic.repair_bin`` when a manifest is present; the
+    ``__file__``-relative path is used ONLY when no manifest exists (design
+    line 191).  This is a dispatch-PLANNING hook: it never launches a process
+    itself.  Actual process launch stays with the existing
+    ``subagent_worker --run-managed`` machinery, which the caller wires to
+    this record's ``command``.
     """
     pin_ok, pin_reason = runtime_pin_ok(manifest_path=manifest_path)
-    wrapper = (
-        Path(__file__).resolve().parents[1]
-        / "cloud"
-        / "wrappers"
-        / "arnold-repair-loop"
-    )
+    wrapper, repair_bin_source = _repair_loop_wrapper(manifest_path)
     command = [
         str(wrapper),
         "--mode=proactive",
@@ -179,7 +227,10 @@ def proactive_seam_dispatch(
         "dry_run": dry_run,
         "pin_ok": pin_ok,
         "pin_reason": pin_reason,
+        "repair_bin_source": repair_bin_source,
     }
+
+
 
 
 @dataclass(frozen=True)
@@ -413,12 +464,16 @@ class ResidentJobHandlers:
         """Plan the proactive superfixer dispatch for this scheduled occurrence.
 
         Runs the manifest pin check (manifest from ``ARNOLD_RUNTIME_MANIFEST``
-        or the ``/workspace/.megaplan`` default), then records the seam
-        dispatch plan on the job payload.  A pin failure fails the occurrence
-        through the worker's existing ``mark_failed`` path (raised here, like
-        the other handlers); the actual process launch stays with the
-        ``subagent_worker --run-managed`` machinery, which consumes this
-        record's ``command``.
+        or the ``/workspace/.megaplan`` default), then persists the seam
+        dispatch plan on the job payload and re-arms a pending follow-up
+        occurrence (mirroring how ``handle_cloud_check`` reports non-terminal
+        state via ``_reschedule_cloud_check``).  A pin failure fails the
+        occurrence through the worker's existing ``mark_failed`` path (raised
+        here, like the other handlers).  PLANNING ALONE IS NEVER A TERMINAL
+        SUCCESS: the occurrence is recorded as ``planned`` and stays pending
+        in the schedule store until the actual launch is performed by the
+        ``subagent_worker --run-managed`` machinery consuming this record's
+        ``command`` — only that launch records the occurrence as fired.
         """
         job = _job_from_payload(job_payload)
         manifest_path = _runtime_manifest_path()
@@ -441,6 +496,7 @@ class ResidentJobHandlers:
         )
         payload = dict(job.payload)
         payload["seam_dispatch_plan"] = dispatch
+        payload["superfixer_occurrence_state"] = "planned"
         self.store.update_scheduled_job(
             job.id,
             payload=payload,
@@ -448,14 +504,62 @@ class ResidentJobHandlers:
                 "resident-superfixer-proactive-plan", job.id, job.attempt_count
             ),
         )
+        self._reschedule_superfixer_proactive(job, dispatch)
         self._emit_sink().log_system_event(
             level="info",
             category="system",
             event_type="resident_superfixer_proactive",
-            message="superfixer proactive seam dispatch planned",
-            details={"job_id": job.id, **dispatch},
+            message="superfixer proactive seam dispatch planned; occurrence pending until launch",
+            details={
+                "job_id": job.id,
+                "superfixer_occurrence_state": "planned",
+                **dispatch,
+            },
             idempotency_key=deterministic_idempotency_key(
                 "resident-superfixer-proactive-fire", job.id, job.attempt_count
+            ),
+        )
+
+    def _reschedule_superfixer_proactive(
+        self, job: ScheduledJob, dispatch: Mapping[str, Any]
+    ) -> None:
+        """Re-arm the superfixer_proactive occurrence as a pending follow-up.
+
+        Mirror of ``_reschedule_cloud_check`` for the non-terminal "planned"
+        state: a planning-only pass is never the terminal record of a
+        superfixer occurrence.  The follow-up job stays pending (carrying the
+        dispatch plan) until the launch machinery performs and records the
+        actual dispatch.
+        """
+        pending = self.store.list_scheduled_jobs(
+            conversation_id=job.conversation_id,
+            status="pending",
+            job_type="superfixer_proactive",
+            limit=1,
+        )
+        if pending:
+            return
+        interval = int(
+            job.payload.get("interval_s")
+            or self.reschedule_interval_s
+            or getattr(self.config, "scheduler_poll_interval_s", None)
+            or 3600
+        )
+        payload = dict(job.payload)
+        payload["seam_dispatch_plan"] = dict(dispatch)
+        payload["superfixer_occurrence_state"] = "planned"
+        self.store.create_scheduled_job(
+            ScheduledJobInput(
+                job_type="superfixer_proactive",
+                conversation_id=job.conversation_id,
+                payload=payload,
+                scheduled_for=utc_now() + timedelta(seconds=max(1, interval)),
+                max_attempts=job.max_attempts,
+            ),
+            idempotency_key=deterministic_idempotency_key(
+                "resident-superfixer-proactive-reschedule",
+                job.id,
+                job.attempt_count,
             ),
         )
 

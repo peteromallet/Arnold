@@ -178,7 +178,11 @@ def test_collect_process_resolves_tree_and_module(tmp_path: Path) -> None:
     assert "sekrit" not in " ".join(proc.environ)
 
 
-def test_collect_process_include_values_keeps_values_for_debugging(tmp_path: Path) -> None:
+def test_collect_process_include_values_masks_keylike_keeps_innocuous(
+    tmp_path: Path,
+) -> None:
+    """include_values reveals values ONLY for non-key-like names: raw API keys
+    are ALWAYS masked (finding #5), while innocuous values stay visible."""
     tree = (tmp_path / "candidates" / "tree").resolve()
     _make_git_repo(tree, {"README.md": "seed\n"})
     pid_dir = _make_fake_proc_dir(tmp_path / "proc", 7, tree)
@@ -186,8 +190,27 @@ def test_collect_process_include_values_keeps_values_for_debugging(tmp_path: Pat
     proc = _collect_process(pid_dir, include_values=True)
     assert proc is not None
     entries = dict(entry.split("=", 1) for entry in proc.environ)
-    assert entries["ARNOLD_API_KEY"] == "sekrit"
+    assert entries["ARNOLD_API_KEY"] == "<redacted>"
+    assert "sekrit" not in " ".join(proc.environ)
     assert entries["MEGAPLAN_RUNTIME_SRC"] == str(tree)
+
+
+def test_collect_process_include_values_masks_model_overrides(
+    tmp_path: Path,
+) -> None:
+    """Model-routing overrides (MODEL names) are key-like: masked always."""
+    tree = (tmp_path / "candidates" / "tree").resolve()
+    _make_git_repo(tree, {"README.md": "seed\n"})
+    pid_dir = _make_fake_proc_dir(tmp_path / "proc", 8, tree)
+    (pid_dir / "environ").write_bytes(
+        f"MEGAPLAN_RUNTIME_SRC={tree}\0CLOUD_WATCHDOG_REPAIR_OWNER_MODEL=glm-x\0".encode()
+    )
+
+    proc = _collect_process(pid_dir, include_values=True)
+    assert proc is not None
+    entries = dict(entry.split("=", 1) for entry in proc.environ)
+    assert entries["CLOUD_WATCHDOG_REPAIR_OWNER_MODEL"] == "<redacted>"
+    assert "glm-x" not in " ".join(proc.environ)
 
 
 # ── masking ─────────────────────────────────────────────────────────────────

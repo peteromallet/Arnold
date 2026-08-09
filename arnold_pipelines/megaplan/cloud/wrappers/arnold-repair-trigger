@@ -185,30 +185,55 @@ def _runtime_manifest_path() -> Path:
 
 
 def _bootstrap_runtime_manifest() -> Any | None:
-    """Bootstrap the per-runtime manifest, or None when unavailable.
+    """Bootstrap the per-runtime manifest, or None only when genuinely absent.
 
-    Phase 2: the runtime manifest is the single post-bootstrap runtime
-    resolver.  Absence of the module or of a readable manifest degrades to
-    None so callers keep the legacy env/with_name fallback chain unchanged.
+    Fail-closed manifest authority (design: the manifest is THE post-bootstrap
+    resolver).  When ``ARNOLD_RUNTIME_MANIFEST`` is set OR the default
+    bootstrap path exists, the manifest MUST load and validate: a corrupt,
+    schema-mismatched, or unreadable manifest raises :class:`ManifestError`
+    (the caller exits non-zero with a typed ``manifest_invalid`` error BEFORE
+    any dispatch).  Only when the manifest is genuinely ABSENT (no env, no
+    file at the bootstrap path) does this return ``None``, keeping the legacy
+    env -> with_name fallback — today's box state, documented as
+    bootstrap-only backward compat.
+    """
+
+    env_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+    bootstrap_path = Path(env_path) if env_path else Path(RUNTIME_MANIFEST_DEFAULT_PATH)
+    if not env_path and not bootstrap_path.exists():
+        return None
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+            ManifestError,
+            bootstrap_manifest,
+        )
+    except ImportError as exc:
+        raise ManifestError(
+            f"runtime_manifest module unavailable while a manifest is present: {exc}"
+        ) from exc
+    try:
+        return bootstrap_manifest(bootstrap_path)
+    except ManifestError:
+        raise
+    except Exception as exc:
+        raise ManifestError(f"manifest bootstrap failed: {exc}") from exc
+
+
+def _enforce_manifest_authority() -> None:
+    """Fail closed on a present-but-invalid runtime manifest (design §6).
+
+    A manifest present at ``ARNOLD_RUNTIME_MANIFEST`` or the default bootstrap
+    path is THE resolver: when it cannot load and validate, exit non-zero with
+    a typed ``manifest_invalid`` error before any dispatch or fallback.  Only
+    a genuinely absent manifest keeps the env -> with_name fallback chain.
     """
 
     try:
-        from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
-    except ImportError:
-        return None
-    try:
-        return bootstrap_manifest(_runtime_manifest_path())
-    except Exception:
-        return None
-
-
-def _manifest_epic() -> dict[str, Any] | None:
-    manifest = _bootstrap_runtime_manifest()
-    if manifest is None:
-        return None
-    epic = getattr(manifest, "epic", None)
-    return epic if isinstance(epic, dict) else None
-
+        _bootstrap_runtime_manifest()
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        print(f"manifest_invalid: {reason}", file=sys.stderr)
+        raise SystemExit(78) from exc
 
 def _manifest_repair_bin() -> str | None:
     epic = _manifest_epic()
@@ -258,6 +283,9 @@ def _default_meta_repair_bin() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     _load_hot_env()
+    # Fail closed BEFORE any dispatch or fallback resolution: a present-but-
+    # invalid runtime manifest refuses with a typed manifest_invalid error.
+    _enforce_manifest_authority()
     _reject_legacy_repair_bin_overrides(argv)
     args = _parse_args(argv)
     marker_dir = Path(args.marker_dir)

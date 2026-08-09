@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 from arnold_pipelines.megaplan.cloud import shadow_attestation
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    MANIFEST_FILENAME,
     MANIFEST_SCHEMA_VERSION,
     ManifestError,
     RuntimeManifest,
+    active_manifest_path,
     advance_generation,
     append_promotion,
     attest_runtime,
@@ -22,6 +27,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     load_manifest_by_epic,
     main,
     set_state,
+    write_active_pointer,
     write_manifest,
 )
 
@@ -418,3 +424,191 @@ def test_main_read_rejects_invalid_manifest(tmp_path: Path) -> None:
     path = tmp_path / "bad.json"
     _write_json(path, _make_manifest(schema="0"))
     assert main(["read", str(path)]) == 2
+
+
+# ── active-generation pointer ───────────────────────────────────────────────
+
+
+def test_active_manifest_path_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    assert active_manifest_path() == Path("/workspace/.megaplan") / MANIFEST_FILENAME
+    pointer = tmp_path / "custom" / "pointer.json"
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    assert active_manifest_path() == pointer
+
+
+def test_write_active_pointer_first_write_and_retention(tmp_path: Path) -> None:
+    pointer = tmp_path / "pointer.json"
+    assert write_active_pointer(_make_manifest_obj(generation=1), pointer) == pointer
+    assert load_manifest(pointer).generation == 1
+    assert not list(tmp_path.glob("pointer.json.previous-*"))
+    # same-generation rewrite (e.g. set_state): no retention
+    write_active_pointer(_make_manifest_obj(generation=1, state="closed"), pointer)
+    assert not list(tmp_path.glob("pointer.json.previous-*"))
+    # strict generation bump: previous generation retained for rollback
+    write_active_pointer(_make_manifest_obj(generation=2), pointer)
+    assert load_manifest(pointer).generation == 2
+    retained = tmp_path / "pointer.json.previous-1.json"
+    assert retained.exists()
+    assert load_manifest(retained).generation == 1
+
+
+def test_write_active_pointer_refuses_invalid_existing_pointer(tmp_path: Path) -> None:
+    pointer = tmp_path / "pointer.json"
+    pointer.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ManifestError, match="fail-closed"):
+        write_active_pointer(_make_manifest_obj(), pointer)
+    assert pointer.read_text() == "{not json"  # untouched
+
+
+def test_bootstrap_manifest_resolves_through_active_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pointer = tmp_path / "pointer.json"
+    manifest = _make_manifest_obj(runtime_id="ptr-booted")
+    write_active_pointer(manifest, pointer)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    # the pointer IS the active generation: bootstrap resolves it directly
+    assert bootstrap_manifest(active_manifest_path()) == manifest
+
+
+# ── CLI subcommands (subprocess round trips) ────────────────────────────────
+
+
+def _cli_env(
+    tmp_path: Path, extra_env: dict[str, str] | None = None
+) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env["ARNOLD_RUNTIME_MANIFEST"] = str(tmp_path / "runtime-manifest.json")
+    if extra_env:
+        env.update(extra_env)
+    return env
+
+
+def _run_cli(
+    env: dict[str, str], *args: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "arnold_pipelines.megaplan.cloud.runtime_manifest",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_cli_set_state_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    env = _cli_env(tmp_path)
+    proc = _run_cli(env, "set_state", str(path), "closed")
+    assert proc.returncode == 0, proc.stderr
+    closed = load_manifest(path)
+    assert closed.state == "closed"
+    assert closed.timestamps["closed"]
+    # the manifest survives a re-read round trip
+    assert _run_cli(env, "read", str(path)).returncode == 0
+
+
+def test_cli_set_state_rejects_unknown_state(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    proc = _run_cli(_cli_env(tmp_path), "set_state", str(path), "destroyed")
+    assert proc.returncode == 2
+    assert load_manifest(path).state == "active"  # unchanged
+
+
+def test_cli_append_promotion_inline_and_file(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    env = _cli_env(tmp_path)
+    record = '{"from_sha": "abc123", "to_sha": "def456", "result": "pushed"}'
+    proc = _run_cli(env, "append_promotion", str(path), record)
+    assert proc.returncode == 0, proc.stderr
+    record_file = tmp_path / "record.json"
+    record_file.write_text(record, encoding="utf-8")
+    proc_file = _run_cli(env, "append_promotion", str(path), f"@{record_file}")
+    assert proc_file.returncode == 0, proc_file.stderr
+    manifest = load_manifest(path)
+    assert [p["to_sha"] for p in manifest.promotions] == ["def456", "def456"]
+
+
+def test_cli_append_promotion_rejects_bad_record(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    env = _cli_env(tmp_path)
+    assert _run_cli(env, "append_promotion", str(path), "not-json").returncode == 2
+    assert _run_cli(env, "append_promotion", str(path), "[1, 2]").returncode == 2
+    assert _run_cli(
+        env, "append_promotion", str(path), f"@{tmp_path / 'missing.json'}"
+    ).returncode == 2
+    assert load_manifest(path).promotions == []
+
+
+def test_cli_advance_generation_switches_pointer_and_retains_previous(
+    tmp_path: Path,
+) -> None:
+    pointer = tmp_path / "runtime-manifest.json"
+    path = tmp_path / "m.json"
+    manifest = _make_manifest_obj(generation=1, epic={"expected_head": "abc123def"})
+    write_manifest(manifest, path)
+    # pointer already holds gen 1 (as runtime-create writes it at creation)
+    write_active_pointer(manifest, pointer)
+    env = _cli_env(tmp_path)
+    proc = _run_cli(
+        env, "advance_generation", str(path), "newsha001", "--reason", "cli test"
+    )
+    assert proc.returncode == 0, proc.stderr
+    advanced = load_manifest(path)
+    assert advanced.generation == 2
+    assert advanced.epic["expected_head"] == "newsha001"
+    # pointer switched to the new generation
+    pointer_manifest = load_manifest(pointer)
+    assert pointer_manifest.generation == 2
+    assert pointer_manifest.epic["expected_head"] == "newsha001"
+    # previous generation retained for rollback
+    retention = tmp_path / "runtime-manifest.json.previous-1.json"
+    assert retention.exists()
+    assert load_manifest(retention).generation == 1
+    assert load_manifest(retention).epic["expected_head"] == "abc123def"
+    # bootstrap resolves through the pointer to the ACTIVE generation
+    assert bootstrap_manifest(pointer) == advanced
+
+
+def test_cli_advance_generation_creates_pointer_when_absent(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    env = _cli_env(tmp_path)
+    proc = _run_cli(
+        env, "advance_generation", str(path), "newsha002", "--reason", "first promotion"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / "runtime-manifest.json").exists()
+    assert not list(tmp_path.glob("runtime-manifest.json.previous-*"))
+    assert load_manifest(path).generation == 4  # default fixture generation is 3
+
+
+def test_cli_advance_generation_requires_reason(tmp_path: Path) -> None:
+    path = tmp_path / "m.json"
+    write_manifest(_make_manifest_obj(), path)
+    proc = _run_cli(_cli_env(tmp_path), "advance_generation", str(path), "newsha003")
+    assert proc.returncode == 2  # argparse usage error
+
+
+def test_cli_advance_generation_exits_2_on_missing_manifest(tmp_path: Path) -> None:
+    proc = _run_cli(
+        _cli_env(tmp_path),
+        "advance_generation",
+        str(tmp_path / "missing.json"),
+        "newsha004",
+        "--reason",
+        "r",
+    )
+    assert proc.returncode == 2

@@ -6,7 +6,8 @@
 #   design: docs/runtime-and-fixer-unification-design-20260807.md
 #     - §4 Phase 4 (per-epic runtimes light form) + §6 file-changes row 12
 #     - §2 design rule 2 (worktree, not clone — shared objects)
-#     - §2 design rule 3 (runtime-manifest.json is the post-bootstrap resolver)
+#     - §2 design rule 3 (runtime-manifest.json is the ONLY post-bootstrap
+#       resolver: one stable bootstrap path, one authoritative writer)
 #     - §2 design rule 4 (push the epic branch to origin at creation; fail loudly)
 #   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
 #
@@ -16,16 +17,26 @@
 #      off <base-ref> HEAD (shared objects — same pattern the orchestrator used)
 #   2. git push origin fixer/<slug>-<YYYYMMDD> at creation — FAILS LOUDLY on
 #      push failure (design rule 4: a box-only branch is a failure)
-#   3. write the epic runtime manifest (state=active) atomically via the
-#      runtime_manifest CLI, falling back to direct JSON when the CLI is absent
-#   4. print the manifest path + runtime_id
+#   3. write the epic runtime manifest (state=active, full field set: venv,
+#      repair bin, deps lockfile, content attestation, policy SHAs) atomically
+#      via the runtime_manifest CLI, falling back to direct JSON when the CLI
+#      is absent
+#   4. write the ACTIVE POINTER <manifest-dir>/runtime-manifest.json via
+#      write_active_pointer (the file AT the stable path IS the active
+#      generation — launchers bootstrap from it). SINGLE-WRITER RULE: one
+#      active pointer, one authoritative writer; this creation is the moment a
+#      slug BECOMES the active epic (arnold-promote switches the pointer on
+#      advancement, arnold-close on closing). The pointer write is verified
+#      end-to-end with bootstrap_manifest(pointer).
+#   5. print the manifest path + runtime_id
 #
 # Environment overrides (all optional; tests redirect the sandbox with these):
 #   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
 #   ARNOLD_BASE_REPO            git repo the worktree is created from (default: $ARNOLD_BASE_DIR/arnold)
 #   ARNOLD_ORIGIN_URL           push target — URL or remote name      (default: origin)
 #   ARNOLD_WORKSPACE_MARKERS    marker/lock state root                (default: $ARNOLD_BASE_DIR/markers)
-#   ARNOLD_RUNTIME_MANIFEST_DIR dir of per-epic runtime manifests     (default: $ARNOLD_WORKSPACE_MARKERS/runtime-manifests)
+#   ARNOLD_RUNTIME_MANIFEST_DIR dir of per-epic runtime manifests     (default: $ARNOLD_BASE_DIR/.megaplan)
+#   ARNOLD_RUNTIME_MANIFEST     active-pointer path (bootstrap root)  (default: $ARNOLD_RUNTIME_MANIFEST_DIR/runtime-manifest.json)
 #
 set -euo pipefail
 
@@ -40,8 +51,13 @@ BASE_REF="$2"
 BASE_DIR="${ARNOLD_BASE_DIR:-/workspace}"
 BASE_REPO="${ARNOLD_BASE_REPO:-$BASE_DIR/arnold}"
 MARKERS="${ARNOLD_WORKSPACE_MARKERS:-$BASE_DIR/markers}"
-MANIFEST_DIR="${ARNOLD_RUNTIME_MANIFEST_DIR:-$MARKERS/runtime-manifests}"
+MANIFEST_DIR="${ARNOLD_RUNTIME_MANIFEST_DIR:-$BASE_DIR/.megaplan}"
 REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
+# The active pointer: the manifest file AT this stable path IS the active
+# generation (launchers bootstrap from it). Export it so the runtime_manifest
+# module's active_manifest_path() agrees with the wrapper.
+export ARNOLD_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-$MANIFEST_DIR/runtime-manifest.json}"
+POINTER="$ARNOLD_RUNTIME_MANIFEST"
 
 CANDIDATES_DIR="$BASE_DIR/runtime-candidates"
 RUNTIME_DIR="$CANDIDATES_DIR/$SLUG"
@@ -76,9 +92,10 @@ if ! git -C "$RUNTIME_DIR" push "$REMOTE" "HEAD:refs/heads/$BRANCH"; then
 fi
 
 # (c) Write the epic manifest atomically. Build the full payload first (the
-# complete mandatory field set per the runtime_manifest contract — schema "1"),
-# hand it to the authoritative writer (runtime_manifest CLI: `write <path>
-# --from <file>`) when available, else fall back to a direct atomic write.
+# complete mandatory field set per the runtime_manifest contract — schema "1",
+# with the venv/repair-bin/lockfile/attestation/policy fields FILLED, not
+# empty), hand it to the authoritative writer (runtime_manifest CLI: `write
+# <path> --from <file>`) when available, else fall back to a direct atomic write.
 _json_get() {
   python3 -c '
 import json, sys
@@ -102,7 +119,7 @@ manifest_valid() {
 }
 
 mkdir -p "$MANIFEST_DIR"
-MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX.json")"
+MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX")"
 python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" <<'PY'
 import json, os, sys
 from datetime import datetime, timezone
@@ -110,6 +127,24 @@ from datetime import datetime, timezone
 path, slug, branch, runtime_root, head, base_ref, stamp = sys.argv[1:8]
 owner = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# Policy SHAs from the canonical policy modules — import-guarded, best-effort:
+# if a module cannot be imported the SHA stays "" and a note is printed (the
+# manifest is still schema-valid; a consumer that requires the SHA will refuse).
+policy_sha = ""
+model_policy_sha = ""
+missing_notes = []
+try:
+    from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import policy_sha as _prompt_sha
+    policy_sha = _prompt_sha()
+except Exception as exc:  # noqa: BLE001 - guarded best-effort import
+    missing_notes.append(f"fixer_prompt_policy import failed ({exc}); policy_sha left empty")
+try:
+    from arnold_pipelines.megaplan.cloud.fixer_model_policy import model_policy_sha as _model_sha
+    model_policy_sha = _model_sha()
+except Exception as exc:  # noqa: BLE001 - guarded best-effort import
+    missing_notes.append(f"fixer_model_policy import failed ({exc}); model_policy_sha left empty")
+
 manifest = {
     "runtime_id": f"{slug}-{stamp}",
     "schema": "1",
@@ -117,31 +152,48 @@ manifest = {
     "epic_id": slug,
     "state": "active",
     "owner": owner,
-    "base": {"ref": base_ref, "commit": head, "editable_install_path": "", "venv_path": ""},
+    "base": {
+        "ref": base_ref,
+        "commit": head,
+        "editable_install_path": "",
+        "venv_path": f"{runtime_root}/.venv",
+    },
     "epic": {
         "branch": branch,
         "worktree_path": runtime_root,
-        "venv_path": "",
+        "venv_path": f"{runtime_root}/.venv",
         "runtime_root": runtime_root,
         "expected_head": head,
-        "repair_bin": "",
-        "deps_lockfile": "",
+        "repair_bin": f"{runtime_root}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop",
+        "deps_lockfile": f"{runtime_root}/pyproject.toml",
     },
     "indirection": {
-        "host_path": "",
+        "host_path": runtime_root,
         "container_path": "",
         "mount_table": [],
         "execution_namespace": "",
-        "verified_head": None,
-        "last_verified_at": None,
-        "attestation": {"module_file": None, "module_digest": None, "mount_id": None},
+        "verified_head": head,
+        "last_verified_at": now,
+        "attestation": {"module_file": "", "module_digest": "", "mount_id": ""},
     },
-    "policy": {"policy_sha": "", "model_policy_sha": "", "sync_policy": {}},
+    "policy": {"policy_sha": policy_sha, "model_policy_sha": model_policy_sha, "sync_policy": {}},
     "promotions": [],
     "timestamps": {"created": now, "updated": now, "closed": None},
     "gc_policy": {"closed_only": True, "restore_proven_required": True},
     "commands": [],
 }
+
+# Content attestation of the runtime tree (best-effort; attest_runtime NEVER
+# raises — probe failures land in the returned errors list).
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import RuntimeManifest, attest_runtime
+    manifest["indirection"]["attestation"] = attest_runtime(RuntimeManifest.from_dict(manifest))
+except Exception as exc:  # noqa: BLE001 - guarded best-effort import
+    missing_notes.append(f"runtime_manifest attest_runtime unavailable ({exc}); attestation left empty")
+
+for note in missing_notes:
+    print(f"arnold-runtime-create: note — {note}", file=sys.stderr)
+
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2, sort_keys=True)
     fh.write("\n")
@@ -176,10 +228,43 @@ manifest_valid "$MANIFEST_PATH" "$SLUG" || {
   exit 1
 }
 
-# (d) Report the manifest path + runtime_id.
+# (d) Write the ACTIVE POINTER (bootstrap contract, design rule 3). The file
+# AT the stable path IS the active generation. Single-writer rule: one active
+# pointer, one authoritative writer — this creation makes the slug the active
+# epic; arnold-promote/arnold-close switch it later. Warn when the pointer
+# currently names a DIFFERENT epic (operator should reconcile — only one epic
+# may hold the active generation).
+if [[ -f "$POINTER" ]]; then
+  POINTER_EPIC="$(_json_get "$POINTER" epic_id)"
+  if [[ -n "$POINTER_EPIC" && "$POINTER_EPIC" != "$SLUG" ]]; then
+    echo "arnold-runtime-create: note — active pointer '$POINTER' currently held by epic '$POINTER_EPIC'; single-writer rule: this creation makes '$SLUG' the active epic" >&2
+  fi
+fi
+if ! python3 -c '
+import sys
+from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest, write_active_pointer
+write_active_pointer(load_manifest(sys.argv[1]))
+' "$MANIFEST_PATH" 2>/dev/null; then
+  echo "arnold-runtime-create: FAILED to write the active pointer '$POINTER' — launchers would bootstrap a missing manifest. The per-slug manifest exists; do NOT treat this runtime as live until the pointer resolves." >&2
+  exit 1
+fi
+# Verify the bootstrap contract end-to-end: bootstrap_manifest(pointer) must
+# resolve to THIS epic (the same entry point every launcher uses).
+POINTER_EPIC_AFTER="$(python3 -c '
+import sys
+from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
+print(bootstrap_manifest(sys.argv[1]).epic_id)
+' "$POINTER" 2>/dev/null || true)"
+if [[ "$POINTER_EPIC_AFTER" != "$SLUG" ]]; then
+  echo "arnold-runtime-create: pointer verification FAILED — bootstrap_manifest('$POINTER') resolved to '${POINTER_EPIC_AFTER:-<nothing>}', expected '$SLUG'" >&2
+  exit 1
+fi
+
+# (e) Report the manifest path + runtime_id.
 RUNTIME_ID="$(_json_get "$MANIFEST_PATH" runtime_id)"
 [[ -n "$RUNTIME_ID" ]] || RUNTIME_ID="$SLUG-$STAMP"
 echo "arnold-runtime-create: runtime '$SLUG' created (runtime_id=$RUNTIME_ID)"
 echo "  branch:   $BRANCH (pushed to $REMOTE)"
 echo "  runtime:  $RUNTIME_DIR"
 echo "  manifest: $MANIFEST_PATH"
+echo "  pointer:  $POINTER (active generation; launchers bootstrap from it)"

@@ -4,9 +4,11 @@ Everything here is deterministic: given session traces (see
 ``replay_fixtures``) it computes per-session scores, aggregate rates, the
 pass/fail verdict against the predeclared thresholds, and the
 baseline-vs-proposed non-inferiority comparison that gates the Flash default.
-No model calls, no I/O, no wall clock -- the live-replay gate is the single
-exception (``require_live_replay``), and even that only reads an env flag and
-raises a skip.
+No model calls, no wall clock -- ``require_live_replay`` is the single
+exception to "no model calls" (it reads an env flag and raises a skip), and
+``approve_replay`` is the single deliberate I/O: it materializes a passing
+verdict as the ``FIXER_REPLAY_APPROVED=1`` env flag plus a readable evidence
+file, which the production fixer model-policy gate consumes.
 
 Threshold semantics (see ``replay_fixtures.NON_INFERIORITY_THRESHOLDS``):
 
@@ -191,3 +193,60 @@ def require_live_replay() -> None:
         "live replay is opt-in: set FIXER_REPLAY_LIVE=1 to run real model "
         "calls against the baseline and proposed topologies"
     )
+
+FIXER_REPLAY_APPROVED_ENV: str = "FIXER_REPLAY_APPROVED"
+"""Env flag set to ``"1"`` when a replay run clears the predeclared bar."""
+
+FIXER_REPLAY_EVIDENCE_PATH_ENV: str = "FIXER_REPLAY_EVIDENCE_PATH"
+"""Env override for the approval evidence file location."""
+
+DEFAULT_REPLAY_EVIDENCE_PATH: str = "/workspace/.megaplan/replay-approval.json"
+"""Default location of the readable approval evidence file."""
+
+
+def approve_replay(
+    aggregate: Mapping[str, float],
+    thresholds: Mapping[str, float] = NON_INFERIORITY_THRESHOLDS,
+    evidence_path: str | None = None,
+) -> dict[str, Any]:
+    """Land a passing replay as the production approval.
+
+    Contract (coordinated with the fixer model-policy gate): when the replay
+    aggregate clears ``thresholds`` this (a) sets env ``FIXER_REPLAY_APPROVED=1``
+    and (b) writes a readable JSON evidence file to ``evidence_path``, or
+    ``$FIXER_REPLAY_EVIDENCE_PATH``, or ``DEFAULT_REPLAY_EVIDENCE_PATH``.
+    Fails closed: when the bar is NOT met neither the env flag nor the file
+    is produced -- callers and the policy gate must treat absence as "not
+    approved".
+
+    Returns the evidence payload in both cases (``approved: false`` plus the
+    per-metric detail on failure) so the reason stays inspectable.
+    """
+    import datetime as _dt
+    import json as _json
+    import pathlib as _pathlib
+
+    passed, per_metric = passes_thresholds(aggregate, thresholds)
+    evidence: dict[str, Any] = {
+        "schema_version": 1,
+        "approved": bool(passed),
+        "generated_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "thresholds": dict(thresholds),
+        "aggregate": dict(aggregate),
+        "per_metric": per_metric,
+    }
+    if not passed:
+        return evidence
+    os.environ[FIXER_REPLAY_APPROVED_ENV] = "1"
+    path = (
+        evidence_path
+        or os.environ.get(FIXER_REPLAY_EVIDENCE_PATH_ENV)
+        or DEFAULT_REPLAY_EVIDENCE_PATH
+    )
+    target = _pathlib.Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        _json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return evidence

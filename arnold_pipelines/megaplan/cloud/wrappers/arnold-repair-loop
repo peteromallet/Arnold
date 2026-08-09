@@ -122,38 +122,125 @@ MARKER_PATH="$MARKER_DIR/$SESSION.json"
 # --- Phase 3A mode policy (design section 3) --------------------------------
 # Reactive is exactly today's flow.  Proactive reuses the same
 # investigate->mutate->redrive pipeline with a longer budget and a Flash-first
-# model set.  Constants and selectors live here, before any mutation, so the
-# --dry-run path can project the exact live configuration from pure reads.
-PROACTIVE_MODEL="${CLOUD_WATCHDOG_PROACTIVE_MODEL:-deepseek:deepseek-v4-flash}"
+# model set.  Model routing is NOT operator-configurable here: the canonical
+# policy table (arnold_pipelines.megaplan.cloud.fixer_model_policy) is the
+# single source of truth, and .cloud-hot-env is credentials-only — no
+# *_MODEL overrides (design line 147).  Gated DeepSeek Flash rows require
+# replay-suite approval read from durable evidence (FIXER_REPLAY_APPROVED=1
+# plus a readable evidence file written by tests/fixer_replay/); until then
+# reactive keeps today's defaults with a loud warning, while proactive — the
+# NEW path — fails closed with a typed error.
 PROACTIVE_BUDGET_MULTIPLIER=3
+FIXER_REPLAY_APPROVED="${FIXER_REPLAY_APPROVED:-0}"
+FIXER_REPLAY_EVIDENCE_PATH="${FIXER_REPLAY_EVIDENCE_PATH:-/workspace/.megaplan/replay-approval.json}"
+# Legacy reactive defaults, byte-identical to today's flow, used only while a
+# gated Flash row has no replay approval (the box runs reactive repair today
+# and must not break while Flash is still earning the default).
+REACTIVE_LEGACY_INVESTIGATOR_MODEL="gpt-5.6-sol"
+REACTIVE_LEGACY_BROKERED_INVESTIGATOR_MODEL="deepseek:deepseek-v4-pro"
+REACTIVE_LEGACY_OWNER_MODEL="gpt-5.6-sol"
+
+resolve_policy_model() {
+  # Print the canonical model for one mode/rung from the fixer model policy
+  # table, or exit non-zero with a typed error when a gated row lacks durable
+  # replay approval evidence.  Import is guarded: without the module the call
+  # fails closed (a policy error, never a silent default).
+  local mode_rung="$1"
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:${ARNOLD_SRC:-}:${PYTHONPATH:-}" python3 -P - \
+    "$mode_rung" "$FIXER_REPLAY_APPROVED" "$FIXER_REPLAY_EVIDENCE_PATH" <<'PY'
+import sys
+
+mode_rung, approved, evidence_path = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    from arnold_pipelines.megaplan.cloud.fixer_model_policy import (
+        resolve_model_policy,
+    )
+except Exception as exc:
+    print(f"model_policy_unresolvable: fixer_model_policy unavailable: {exc}")
+    raise SystemExit(69)
+try:
+    row = resolve_model_policy(
+        mode_rung,
+        replay_approved=(approved == "1"),
+        replay_evidence_path=evidence_path or None,
+    )
+except Exception as exc:
+    print(f"model_policy_unresolvable: {exc}")
+    raise SystemExit(69)
+print(row.model)
+PY
+}
+
+validate_hot_env_model_overrides() {
+  # .cloud-hot-env is credentials-only (design line 147): any MODEL / *_MODEL
+  # variable is a policy-routing override.  Reactive warns loudly and
+  # continues (the box currently carries legacy overrides); proactive — the
+  # new path — fails closed with a typed error.
+  local violations
+  violations="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:${ARNOLD_SRC:-}:${PYTHONPATH:-}" python3 -P - <<'PY' 2>/dev/null || true
+import os
+try:
+    from arnold_pipelines.megaplan.cloud.fixer_model_policy import (
+        validate_hot_env_credentials_only,
+    )
+except Exception:
+    raise SystemExit(0)
+violations = validate_hot_env_credentials_only(os.environ)
+if violations:
+    print("\n".join(violations))
+PY
+)"
+  if [[ -z "$violations" ]]; then
+    return 0
+  fi
+  local joined
+  joined="$(printf '%s' "$violations" | tr '\n' ' ')"
+  if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
+    echo "arnold-repair-loop: model_policy_invalid: *_MODEL overrides are forbidden on the proactive path (credentials-only hot-env): $joined" >&2
+    return 69
+  fi
+  echo "arnold-repair-loop: model policy violation: *_MODEL overrides present in the environment ($joined); ignoring them (reactive backward compat, credentials-only hot-env)" >&2
+  return 0
+}
 
 select_mode_models() {
   local mode="$1"
+  local resolved=""
   if [[ "$mode" == "proactive" ]]; then
     # Proactive policy (design section 3 model table): Flash for the whole
-    # flow by default.  Explicit CLOUD_WATCHDOG_REPAIR_*_MODEL operator
-    # overrides (e.g. .cloud-hot-env) still win over the Flash default.
-    if [[ -n "${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-}" ]]; then
-      REPAIR_INVESTIGATOR_MODEL="$CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL"
-    else
-      REPAIR_INVESTIGATOR_MODEL="$PROACTIVE_MODEL"
+    # flow.  The row is gated: without durable replay approval evidence the
+    # new path fails closed with a typed error instead of silently routing
+    # around the policy.
+    if ! resolved="$(resolve_policy_model proactive)"; then
+      echo "arnold-repair-loop: ${resolved:-model policy resolution failed}" >&2
+      return 69
     fi
-    if [[ -n "${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-}" ]]; then
-      REPAIR_BROKERED_INVESTIGATOR_MODEL="$CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL"
-    else
-      REPAIR_BROKERED_INVESTIGATOR_MODEL="$PROACTIVE_MODEL"
-    fi
-    if [[ -n "${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-}" ]]; then
-      REPAIR_OWNER_MODEL="$CLOUD_WATCHDOG_REPAIR_OWNER_MODEL"
-    else
-      REPAIR_OWNER_MODEL="$PROACTIVE_MODEL"
-    fi
+    REPAIR_INVESTIGATOR_MODEL="$resolved"
+    REPAIR_BROKERED_INVESTIGATOR_MODEL="$resolved"
+    REPAIR_OWNER_MODEL="$resolved"
     return 0
   fi
-  # Reactive policy: exactly today's defaults; operator env overrides apply.
-  REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
-  REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek:deepseek-v4-pro}"
-  REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
+  # Reactive policy: gated Flash rows need replay approval; until then keep
+  # today's defaults byte-identical with a loud warning so the running box is
+  # never broken while Flash is still earning the default.
+  REPAIR_INVESTIGATOR_MODEL="$REACTIVE_LEGACY_INVESTIGATOR_MODEL"
+  REPAIR_BROKERED_INVESTIGATOR_MODEL="$REACTIVE_LEGACY_BROKERED_INVESTIGATOR_MODEL"
+  REPAIR_OWNER_MODEL="$REACTIVE_LEGACY_OWNER_MODEL"
+  local gated_warned=0
+  if resolved="$(resolve_policy_model reactive_investigator)"; then
+    REPAIR_INVESTIGATOR_MODEL="$resolved"
+  else
+    gated_warned=1
+  fi
+  if resolved="$(resolve_policy_model reactive_mutator)"; then
+    REPAIR_BROKERED_INVESTIGATOR_MODEL="$resolved"
+    REPAIR_OWNER_MODEL="$resolved"
+  else
+    gated_warned=1
+  fi
+  if [[ "$gated_warned" == "1" ]]; then
+    echo "arnold-repair-loop: model policy gated: using legacy reactive models until replay approves Flash" >&2
+  fi
 }
 
 # Pure-read NO-OP classification shared by the proactive NO-OP guard and the
@@ -262,8 +349,11 @@ PY
 if [[ "$REPAIR_LOOP_DRY_RUN" == "1" ]]; then
   # Dry-run: report exactly what a live invocation would do, then exit 0
   # WITHOUT acquiring locks, mutating markers, spawning agents, or running git
-  # commands.  Pure read of inputs; safe to run concurrently.
-  select_mode_models "$REPAIR_LOOP_MODE"
+  # commands.  Pure read of inputs; safe to run concurrently.  Model policy is
+  # resolved the same way a live run resolves it, so a gated proactive row
+  # without replay approval fails closed here too.
+  select_mode_models "$REPAIR_LOOP_MODE" || exit $?
+  validate_hot_env_model_overrides || exit $?
   dry_run_budget="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
   if ! [[ "$dry_run_budget" =~ ^[0-9]+$ ]] || (( dry_run_budget <= 0 )); then
     dry_run_budget=7200
@@ -355,7 +445,8 @@ REPAIR_RECURRENCE_MIN_DISPATCHES="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_MIN_DISPATC
 REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-21600}"
 REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
 REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"
-select_mode_models "$REPAIR_LOOP_MODE"
+select_mode_models "$REPAIR_LOOP_MODE" || exit $?
+validate_hot_env_model_overrides || exit $?
 COMMIT_REPAIRS="${CLOUD_WATCHDOG_COMMIT_REPAIRS:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 REPAIR_GOAL_POLL_SECS="${CLOUD_WATCHDOG_REPAIR_GOAL_POLL_SECS:-30}"

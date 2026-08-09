@@ -45,13 +45,37 @@ def test_gated_rows_raise_policy_error_without_replay_approval(mode_rung: str) -
 
 
 @pytest.mark.parametrize("mode_rung", GATED_FLASH_MODE_RUNGS)
-def test_replay_approved_returns_flash_row(mode_rung: str) -> None:
-    row = resolve_model_policy(mode_rung, replay_approved=True)
+def test_replay_approved_with_evidence_returns_flash_row(
+    mode_rung: str, tmp_path: Path
+) -> None:
+    evidence = tmp_path / "replay-approval.json"
+    evidence.write_text("{}", encoding="utf-8")
+    row = resolve_model_policy(
+        mode_rung,
+        replay_approved=True,
+        replay_evidence_path=str(evidence),
+    )
     assert isinstance(row, PolicyRow)
     assert row.mode_rung == mode_rung
     assert row.model == "deepseek:deepseek-v4-flash"
     assert row.agent_backend == "deepseek"
     assert row.provider_spec == "deepseek"
+
+
+@pytest.mark.parametrize("mode_rung", GATED_FLASH_MODE_RUNGS)
+def test_replay_approved_without_evidence_file_fails_closed(
+    mode_rung: str, tmp_path: Path
+) -> None:
+    # A bare replay_approved=True flag is not evidence: the durable approval
+    # file must exist and be readable or the gated row refuses (fail closed).
+    with pytest.raises(PolicyError, match="replay approval"):
+        resolve_model_policy(
+            mode_rung,
+            replay_approved=True,
+            replay_evidence_path=str(tmp_path / "no-such-evidence.json"),
+        )
+    with pytest.raises(PolicyError, match="replay_evidence_path"):
+        resolve_model_policy(mode_rung, replay_approved=True)
 
 
 def test_l3_orchestrator_resolves_without_replay_approval() -> None:
