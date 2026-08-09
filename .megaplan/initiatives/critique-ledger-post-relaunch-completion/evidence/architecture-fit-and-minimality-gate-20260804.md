@@ -19,7 +19,8 @@ and its M6A–M11 ownership/adoption work.
 
 ## Required minimality proof
 
-Every F1–F8 handoff must include an architecture-fit receipt proving:
+F1/F2/F3, and any later milestone that adds or changes an authority reader,
+writer or compatibility bridge, must include an architecture-fit receipt proving:
 
 - every new state field and mutation has exactly one existing owner;
 - no new authority ledger, event bus, snapshot authority, fixer framework,
@@ -27,9 +28,9 @@ Every F1–F8 handoff must include an architecture-fit receipt proving:
   exception;
 - each compatibility writer/reader is either retired, fenced read-only, or has
   an owner, expiry, and removal proof;
-- at least one complete crash, response-loss, restart, or stale-evidence slice
-  is proven end-to-end through WBC + Run Authority + Custody before broadening
-  inventory;
+- for F1/F2/F3 and any later authority-changing milestone, at least one complete
+  crash, response-loss, restart, or stale-evidence slice is proven end-to-end
+  through WBC + Run Authority + Custody before broadening inventory;
 - implementation, review, and evidence work are separated from replay,
   queue, compaction, and orchestration overhead in the work ledger; and
 - the bounded T6.2/current relaunch remains independently runnable and is not
@@ -38,9 +39,11 @@ Every F1–F8 handoff must include an architecture-fit receipt proving:
 ## Sprint placement
 
 - **F1:** produce the ownership matrix, no-new-store decision, and one exact
-  occurrence/lease recovery proof before expanding storage or retirement scope.
-- **F2:** inventory every launch/resume/override/replay entry point, retire or
-  fence bypasses, and prove one admission path rather than adding wrappers.
+  occurrence/lease recovery proof before expanding retained Critique recovery
+  scope.
+- **F2:** derive the retained Critique launch/resume/override/replay entry-point
+  set, retire or fence bypasses, and prove one admission path rather than adding
+  wrappers.
 - **F3:** prove one thin ordinary CL2 path end-to-end before accepting broad
   feature execution.
 - **F7:** run the deletion/retirement and complexity audit; unresolved duplicate

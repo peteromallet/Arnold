@@ -7,9 +7,16 @@ and this incident becomes a permanent fail-closed regression gate.
 
 Success is evidence, not status prose:
 
+- plan finalization, admission, execution and validation consume one
+  content-addressed selector/task-output contract, and only an accepted result
+  envelope can satisfy a declared output;
 - each model attempt carries exact authenticated raw-byte custody;
 - failed, unknown or unverifiable work never projects as clean success;
-- every external effect has one WBC occurrence and exact replay semantics;
+- any source/runtime/plan/chain binding change creates an append-only,
+  authority-accepted migrated child/new attempt while the parent remains
+  immutable and quarantined;
+- every external effect is bound to one Custody occurrence and durable WBC
+  intent/outcome evidence with exact replay semantics;
 - one eligible failure creates at most one repair occurrence and one genuine
   decision notification;
 - v3 advances from authoritative predecessor completion manifests;
@@ -31,6 +38,12 @@ attempt/effect evidence, provenance and receipts; Custody owns occurrence
 identity, leases/epochs and recovery/reconciliation; projections and observers
 are read-only. Critique owns critique semantics and product workflow only.
 
+The causal history is a content-addressed join across those owner-specific
+append-only records, not a new omnibus ledger. Any composite admission receipt
+is a non-bearer reference: each action rereads the current Run Authority
+grant/fence and Custody lease/epoch, then checks the exact WBC boundary evidence.
+The host snapshot is coherent evidence, never positive authority.
+
 No milestone may introduce a competing ledger, event bus, snapshot authority,
 fixer framework, daemon, or persistence substrate without an explicit reviewed
 architecture exception. Every new writer or reader must name its owner and
@@ -43,5 +56,9 @@ The detailed acceptance and stop conditions are the committed
 [`architecture-fit-and-minimality-gate-20260804.md`](evidence/architecture-fit-and-minimality-gate-20260804.md).
 
 The Stage-A handoff proves only a bounded finalize transition. Before ordinary
-execution/publication authority expands, this epic first completes the deferred
-platform-wide owner/storage/recovery and admission/model/effect release work.
+Critique execution/publication authority expands, F1/F2 close this failure
+category on every retained Critique state-mutating entry point and effect class;
+any unproven surface remains hard-denied. Broad historical storage adoption,
+retirement sweeps, key/reminder policy, unrelated effect-family migration and
+release-matrix work remain explicitly owned in `UNFINISHED_WORK.md` and the
+Custody Control Plane; they do not block this enabled-surface cutline.

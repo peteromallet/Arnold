@@ -8,6 +8,7 @@ resolution so the CLI can instantiate them on demand.
 from __future__ import annotations
 
 import abc
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,23 @@ from arnold_pipelines.megaplan.custody.process_adapter_wbc import (
 )
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec
 from arnold_pipelines.megaplan.types import CliError
+
+
+def megaplan_runtime_invocation(spec: CloudSpec) -> str:
+    """Return the hermetic remote Megaplan interpreter invocation.
+
+    Cloud control-plane commands must not resolve the legacy ``arnold`` console
+    script through PATH.  A cloud spec therefore has to name the absolute
+    runtime interpreter that owns the Megaplan module.  Missing identity is a
+    configuration error, never permission to fall back to a mutable command.
+    """
+    runtime_python = getattr(spec.megaplan, "runtime_python", None)
+    if not isinstance(runtime_python, str) or not runtime_python.strip():
+        raise CliError(
+            "runtime_identity_missing",
+            "cloud.megaplan.runtime_python must name the absolute pinned Megaplan interpreter",
+        )
+    return f"{shlex.quote(runtime_python)} -P -m arnold_pipelines.megaplan"
 
 
 @dataclass

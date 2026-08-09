@@ -14,12 +14,12 @@ used to weaken the bounded v3 canary or to manufacture a T6.2 acceptance.
    default; any break-glass path is bounded, occurrence-bound, and durably
    audited. No entry point may create an alternate launch or effect authority.
 
-2. **One custody-complete admission token.** A launch, resume, override, or
-   adoption receives one token that composes WBC, Run Authority, and Custody
-   evidence. The token binds the attempt, occurrence, generation, source,
-   runtime, lease, and effect scope. A second authority ledger is forbidden;
-   caller-writable projections are never the source of truth for admission or
-   consumed effects.
+2. **One non-bearer admission receipt.** A launch, resume, override, or adoption
+   receives one content-addressed reference to the canonical action envelope.
+   Every action rereads the current Run Authority grant/fence and Custody
+   lease/epoch, then checks the exact WBC boundary evidence. The receipt binds
+   attempt, occurrence, generation, source, runtime, lease and effect scope but
+   cannot grant authority by itself. A second authority ledger is forbidden.
 
 3. **Occurrence/generation recovery.** Every failure, receipt, phase result,
    recovery mutation, lease, and notification carries the exact occurrence,
@@ -27,13 +27,14 @@ used to weaken the bounded v3 canary or to manufacture a T6.2 acceptance.
    rejected before mutation, including after restart, rollback, deletion, or
    process replacement.
 
-4. **Provider and credential authority.** Orchestration, task, and validation
+4. **Provider-route and credential attestation.** Orchestration, task, and validation
    providers resolve through one role-scoped resolver, with authentication and
    capability preflight before lease acquisition and again on resume. Every
    resident, repair, sidecar, and replay process uses the same host-managed
    credential bootstrap; missing credentials fail closed and emit one
    deduplicated incident. The accepted profile bytes and resolved model map
    are attested, so a stale overlay cannot silently route a phase elsewhere.
+   These facts are admission evidence; they never mint positive authority.
 
 5. **Runtime command integrity.** Generated cloud commands must use the
    configured pinned `runtime_python` for every Python/pip operation. Bare

@@ -27,10 +27,13 @@ and contract bundle; do not re-run the accepted finalize canary.
   WBC + Run Authority + Custody owners; feature breadth cannot substitute for
   this architecture-fit proof.
 
-## Open questions
+## Bound inputs
 
-- Which exact CL2 feature slice remains after the accepted T6.2 transition?
-- Does the accepted graph require the single permitted narrow repair?
+The T6.2 handoff supplies the frozen CL2 brief hash, accepted cursor,
+completed/unresolved task IDs, graph/contract hash and predecessor manifests.
+F3 derives its exact residual slice mechanically from that manifest. Any narrow
+graph repair must already be represented as a typed unresolved item; otherwise
+it is out of scope and fails closed.
 
 ## Constraints
 
@@ -47,6 +50,8 @@ caller-minted authority, duplicate repair or duplicate publication.
 - Independent review finds no bypass, false success or duplicate effect.
 - The architecture-fit receipt records the one owner/writer for each new
   mutation and any compatibility path retired or fenced during the slice.
+- Executed task IDs and brief/graph hashes equal the frozen T6.2 residual-work
+  manifest; no milestone planner choice or implicit scope expansion remains.
 
 ## Touchpoints
 

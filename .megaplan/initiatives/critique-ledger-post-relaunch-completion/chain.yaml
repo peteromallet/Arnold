@@ -15,11 +15,56 @@ launch_preconditions:
   - name: safe v3 canary handoff is committed input
     kind: git_tracked
     path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+  - name: handoff contains accepted r5 migrated-child receipt
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: arnold.megaplan.r5_vj24_migrated_child_receipt.v1
+  - name: r5 parent is immutable and quarantined
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"parent_disposition":"QUARANTINED_IMMUTABLE"'
+  - name: same occurrence resume is explicitly prohibited
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"same_occurrence_resume":false'
+  - name: continuation is an authority approved child or new attempt
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"continuation_class":"AUTHORITY_APPROVED_MIGRATED_CHILD_OR_NEW_ATTEMPT"'
+  - name: selector result and cursor recovery are independently accepted
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"vj24_recovery_decision":"accepted"'
+  - name: parent Run Authority journal CAS is accepted
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"parent_ra_journal_cas":"accepted"'
+  - name: child lifecycle advance is accepted separately
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"child_lifecycle_advance":"accepted"'
+  - name: T6.2 handoff freezes residual CL2 through CL5 work
+    path: .megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json
+    check:
+      kind: contains_text
+      text: '"frozen_cl2_cl5_residual_work":"accepted"'
   - name: independent T6.2 decision is accepted
     path: evidence/critique-ledger-recovery/T6.2/safe-v3-canary-acceptance.json
     check:
       kind: contains_text
       text: '"decision":"accepted"'
+  - name: independent T6.2 decision accepts migrated lineage
+    path: evidence/critique-ledger-recovery/T6.2/safe-v3-canary-acceptance.json
+    check:
+      kind: contains_text
+      text: '"r5_migrated_lineage_decision":"accepted"'
   - name: independent T6.2 decision is committed evidence
     kind: git_tracked
     path: evidence/critique-ledger-recovery/T6.2/safe-v3-canary-acceptance.json
@@ -72,7 +117,7 @@ milestones:
     depth: high
     with_prep: true
     prep_clarify: false
-    notes: Difficulty 5/5; VERY HARD. Closes deferred owner/storage/recovery debt before ordinary v3 execution authority expands. Must pass the architecture-fit/minimality gate before broadening inventory.
+    notes: Difficulty 5/5; VERY HARD. Closes the VJ24 binding/repair-custody/observation/notification category on retained Critique surfaces before ordinary v3 authority expands. Generic control-plane substrate and broad historical debt stay with their canonical owners.
   - label: f2-admission-model-effect-release-closure
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/f2-admission-model-effect-release-closure.md
     branch: epic/critique-ledger-v3/f2-admission-model-effect-release-closure
@@ -84,7 +129,7 @@ milestones:
     prep_clarify: false
     depends_on:
       - f1-owner-storage-recovery-hardening
-    notes: Difficulty 5/5; VERY HARD. Generalizes the Stage-A scoped controls platform-wide and closes zero-debt release qualification before authority expansion. Must retire or fence bypasses rather than add a parallel authority path.
+    notes: Difficulty 5/5; VERY HARD. Enforces the selector/result, admission, provider/runtime and exact replay contracts on every retained state-mutating Critique entry point/effect class; unproven surfaces remain hard-denied.
   - label: f3-cl2-real-work-and-publication
     idea: .megaplan/initiatives/critique-ledger-post-relaunch-completion/briefs/m1-cl2-ordinary-completion.md
     branch: epic/critique-ledger-v3/f3-cl2-real-work-and-publication

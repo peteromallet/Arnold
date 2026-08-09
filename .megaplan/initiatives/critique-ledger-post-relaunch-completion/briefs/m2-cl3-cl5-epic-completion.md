@@ -20,10 +20,11 @@ publication and independent boundary verification for each milestone.
   chain with one deduplicated actionable incident; it does not spin or notify
   repeatedly.
 
-## Open questions
+## Bound inputs
 
-- What residual implementation work is assigned to CL3–CL5 by the frozen v3
-  briefs?
+The T6.2 handoff supplies frozen CL3-CL5 brief hashes, completed/unresolved task
+IDs and predecessor-manifest requirements. F4 derives work only from that
+content-addressed residual set; any mismatch is binding drift and fails closed.
 
 ## Constraints
 
@@ -37,6 +38,8 @@ unowned repair or duplicated effect.
 - Real implementation commits are current and dependency-closed.
 - The final v3 completion manifest and proof map are reproducible.
 - Independent review confirms no false completion or stale/duplicate writer.
+- Executed CL3-CL5 task IDs and brief hashes exactly match the frozen T6.2
+  residual-work manifest.
 
 ## Touchpoints
 

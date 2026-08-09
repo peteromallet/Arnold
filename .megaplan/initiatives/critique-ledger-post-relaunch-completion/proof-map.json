@@ -1,25 +1,17 @@
 {
   "f1-owner-storage-recovery-hardening": [
-    "evidence/critique-ledger-recovery/T0.3/",
-    "evidence/critique-ledger-recovery/T1.5/",
-    "evidence/critique-ledger-recovery/T1.7/",
-    "evidence/critique-ledger-recovery/T1.8/",
-    "evidence/critique-ledger-recovery/T1.9/",
-    "evidence/critique-ledger-recovery/T1.10/"
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/handoff/safe-v3-canary-completion-manifest.json",
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/immediate-fix-and-category-hardening-20260805.md",
+    ".megaplan/incident-ledger/evidence/critique-v3-r5-vj24-20260805-sol-launch-cutline.md",
+    "evidence/critique-ledger-recovery/F1/vj24-causal-lineage-acceptance.json",
+    "evidence/critique-ledger-recovery/F1/host-observer-notification-acceptance.json"
   ],
   "f2-admission-model-effect-release-closure": [
-    "evidence/critique-ledger-recovery/T1.1/",
-    "evidence/critique-ledger-recovery/T1.2/",
-    "evidence/critique-ledger-recovery/T1.3/",
-    "evidence/critique-ledger-recovery/T1.4/",
-    "evidence/critique-ledger-recovery/T1.6/",
-    "evidence/critique-ledger-recovery/T2.2/",
-    "evidence/critique-ledger-recovery/T2.4/",
-    "evidence/critique-ledger-recovery/T2.5/",
-    "evidence/critique-ledger-recovery/T2.6/",
-    "evidence/critique-ledger-recovery/T3.5/",
-    "evidence/critique-ledger-recovery/T3.6/",
-    "evidence/critique-ledger-recovery/T8.3/"
+    ".megaplan/initiatives/critique-ledger-post-relaunch-completion/evidence/incident-specific-control-amendment-20260804.md",
+    ".megaplan/incident-ledger/evidence/critique-v3-r5-vj24-20260805-sol-launch-cutline.md",
+    "evidence/critique-ledger-recovery/F2/selector-result-contract-acceptance.json",
+    "evidence/critique-ledger-recovery/F2/entry-point-admission-acceptance.json",
+    "evidence/critique-ledger-recovery/F2/vj24-category-replay-acceptance.json"
   ],
   "f3-cl2-real-work-and-publication": [
     "evidence/critique-ledger-recovery/T6.3/",

@@ -1,14 +1,175 @@
 # Megaplan Native Parity Corrective North Star
 
+The byte-preserved completion proposal and its supersession crosswalk are
+normative inputs for every milestone assigned completion work. The bootstrap's
+accepted `completion-crosswalk-readiness.json` resolves every requirement and
+changed historical constraint to canonical milestone and proof-rule IDs. No
+Native milestone may close with an assigned row missing, stale, unconsumed, or
+mapped only by prose.
+
 Canonical Megaplan must have one source-authoritative native workflow and one
 composed, fenced runtime history.
 
+Launch additionally requires the completed
+`megaplan-chain-milestone-gates` bootstrap. Every milestone is checked before
+merge eligibility and rebound to merge HEAD. Every authority/effect cutover is
+a declared chain transition that consumes the exact accepted readiness receipt,
+emits an immutable transition receipt, and is followed by a separate
+post-transition verifier before milestone completion. S5A proves the complete
+future-live delivery behavior matrix and all external-effect protocol classes
+in shadow; S5B alone performs the live switch.
+The bootstrap's own single PR is deliberately non-self-hosted: external CI
+and a mechanically independent content-addressed attestation must precede
+automatic merge readiness and its post-merge backstop.
+
 The final semantic authority is:
 
-- `arnold_pipelines/megaplan/workflows/workflow.pypeline`;
+- `arnold_pipelines/megaplan/workflows/workflow.pype`;
 - named native subworkflows imported by that source;
 - declared policies attached to named source constructs;
 - retained pure phase bodies behind typed interfaces.
+
+## Canonical source suffix
+
+`.pype` is the only target suffix for newly authored or admitted Arnold
+workflow source. S1 inventories and stages the complete rename while keeping
+the old path usable. S2F implements and proves the exact-one compiler/linker,
+then its typed post-validation transition renames `workflow.pypeline` and every
+live named subworkflow to `.pype`, updates compiler/loader, package data, source
+maps, manifests and locks, CLI/help, validators, generators, tests, examples,
+editor/Linguist configuration, and selects the new suffix as one fail-closed
+migration.
+
+The old `.pypeline` suffix may survive only in immutable historical evidence or
+an explicit expiry-bound reader for a pre-cutover pinned executable. It cannot
+author or admit a new workflow, select a runtime route, satisfy final
+conformance, or silently resume an existing occurrence as `.pype`. Existing
+nonterminal work must resolve its exact pinned artifact or consume an accepted
+typed migration/new-attempt/quarantine decision.
+
+## One `.pype`, one workflow
+
+`docs/arnold/pype-authoring-contract.md` is the normative format authority.
+Every admitted root or child workflow lives in its own `.pype`, and every
+`.pype` contains exactly one top-level `@workflow`. The exactly-one rule makes
+that workflow canonical; there is no `main`, `__all__`, multi-export module,
+library-only `.pype`, declaration-order selection, or file-local root selector.
+
+A `.pype` may also contain private file-local steps and deterministic helpers.
+They cannot be imported or independently addressed, and their transitive
+behavior digest folds into the containing workflow. Reusable or independently
+durable steps, effects, schemas, policies, prompts, types, and helpers live in
+`.py`. An admitted `.py` workflow is forbidden; ordinary-Python workflows are
+available only in explicit non-durable preview with fresh ephemeral identity
+and fake/ephemeral-only effects with no durable effect history.
+
+“Subworkflow” is a hosting role of `workflow`, not a separate authored kind.
+Only the one canonical workflow crosses a `.pype` boundary. A step is a leaf:
+it may call pure helpers and declared effect adapters but cannot invoke a
+workflow or another decorated step. Workflows and helpers cannot call effect
+adapters directly. Helper data may feed a visible authored branch; a helper
+cannot return an invocation target, route table, or hidden policy owner.
+
+Shared `.py` steps may use ordinary Python and third-party imports. The resolved
+graph lock or explicit bindings pin selected implementations, optional features,
+Python/runtime environment and plugins; import-time effects or mutable Arnold
+registration, ambient dependency selection, imported topology and undeclared
+effect bypass reject. Policies are immutable typed canonical values in
+ordinary `.py`, conventionally `policies.py`, with stable kind/schema, explicit
+attachment, provenance, precedence and digest; they cannot contain callables,
+open route tables, mutable/ambient defaults or hidden product branches.
+
+Static imports link canonical `.pype` workflows and typed `.py` components
+without executing author source. Dynamic/conditional/star imports, import
+registration, re-export laundering, import cycles, and recursive workflow
+calls fail before durable lowering or authority. Explicit bounded workflow
+loops are finite IR rather than recursion.
+
+Logical workflow identity is `(distribution_name, logical_workflow_name)`;
+the logical name is the explicit workflow ID when present and otherwise the
+decorated function name, and is unique within the distribution. Physical and
+wheel paths are provenance. Executable identity adds the complete behavior
+digest. Moves with unchanged logical/digest identity are provenance changes;
+rename, signature/outcome/hostability change, extraction, inline, private-step
+promotion, or behavior drift requires an explicit accepted migration or a new
+attempt/quarantine.
+
+The canonical Arnold package descriptor owns the optional default pipeline,
+the cross-package allowlist of canonical workflows (package visibility, not
+file exports), source/descriptor correspondence, locks, and
+append-only identity migration log. S1 must extend the existing canonical pack
+metadata rather than create a parallel descriptor unless the inventory proves
+none exists. Once a run resolves a pipeline, its logical and executable
+identities are frozen across manifest, lock, admission, checkpoint, replay,
+source map, and proof.
+
+Unsupported code may run only in explicit `authoring_preview`, with no durable,
+resume, comparison, admission, promotion, or certification claim. Durable
+modes reject hidden topology/effects before authority or effect intent.
+Diagnostics always name the definition and call spans, violated
+responsibility, failed claim, and a supported rewrite.
+
+S2F must close a content-addressed `GO-FORMAT` gate for this complete contract
+before C1. It covers file shape, import/privacy/leaf laws, identity and
+migration, preview/legacy isolation, source/package correspondence, and
+checkout/editable/wheel/cloud equivalence. C1 and C2 build the non-authoritative
+completion kernel from that exact identity handoff. S2R independently
+revalidates GO-FORMAT and both kernel receipts, implements durable runtime
+primitives and concrete aggregation instances, and closes GO-0 through the sole
+authoritative kernel-enablement transition before S3A.
+
+## Completion kernel and semantic proof
+
+The completion critical path is:
+
+```text
+S2F identity and durable-boundary call-site templates
+  -> C1 contract/identity/shadow generation/divergence ledger
+  -> C2 immutable binding/evaluation/compatibility/shadow acceptance
+  -> S2R concrete primitive instances and sole GO-0 enablement
+  -> S3A ... S7 consuming exact receipts and current ledger hash
+```
+
+S2F does not pretend that runtime human, dynamic fanout-child, invocation, or
+rework occurrences already exist. Admission and S2R instantiate them beneath
+source-stable call-site templates; S5 admits product-created reopened and
+genuinely new work.
+
+C1 is the inserted execution of Completion M1 and C2 is the inserted execution
+of Completion M2. Native hosts them in this frontier; the preserved Completion
+proposal, source briefs, and supersession crosswalk remain their normative
+semantic source. C1 owns the experimental `arnold/workflow/completion/` boundary, internally
+versioned schemas/serialization from introduction, executable obligation
+identity `(spec_hash, obligation_id)`, a mechanically decidable durable-subject
+predicate and static omission lint, one canonical completion
+candidate-outcome registry, `superseded_by_named_exit`, shadow generation, the
+false-done/`REVIEW` golden exemplar, and one content-addressed append-only
+divergence ledger. Any Megaplan or platform completion registry is a strict
+generated and tested projection of that canonical registry. C2 owns immutable
+binding/evaluation schemas, the normative evidence-window tuple and proof
+modes, candidate-first evaluation with typed blocked/waived proof, aggregation
+signatures, verifier independence by producer identity and trust class,
+waiver taint, internal persisted-wire compatibility and decoder behavior,
+shadow atomic acceptance integration, introduction-time restore including
+store-incarnation invalidation, and projection deletion/forgery invariance.
+Neither milestone is authoritative.
+
+S2R freezes child sets and supplies one concrete total aggregation instance for
+every supported durable primitive. Its accepted GO-0 transition receipt is the
+only live kernel enablement. Internal persisted-wire compatibility begins at
+that point; stable public authoring/API publication remains Platform S6-only.
+
+Completion authoring must remain elegant: authors declare durable intent and
+domain obligations once on the canonical authoring surface; deterministic
+tooling derives mechanical obligations, generates and pins bindings, and emits
+human-readable worksheets/Markdown as non-authoritative disposable
+projections. Static lint and admission reject omissions. Pure helpers require
+no completion contract and inherit no independent durable identity.
+
+Platform enforcement dispositions and completion candidate outcomes remain two
+different versioned typed registries. Their interaction is one total generated
+boundary mapping that rejects unknown pairs; neither vocabulary may be
+collapsed into the other or extended through an unversioned local table.
 
 “Python-native” means this source is the sole product control-flow authority,
 not merely that orchestration is implemented in Python. Topology/control code
@@ -198,6 +359,14 @@ stores, exact-version queries, action validator, lease/recovery services,
 outbox/reconciliation, projections, controlled-writer inventory, and generic
 conformance fixtures.
 
+The accepted/consolidated Custody manifest must also bind the exact
+`bounded-incident-projection-handoff.json`, including crash-safe
+cursor-incremental or bounded snapshot-plus-tail behavior, invalidation,
+full-rebuild parity, and the 57,000-event latency/peak-memory benchmark. Custody
+owns the projector and receipt. Native launch and S5B consume that exact
+handoff and prove no full-history fallback; Completion and Platformization do
+not implement a competing projection.
+
 The accepted M11 proof must include restore-resistant Run Authority fence and
 Custody epoch monotonicity and canonical acceptance-time revalidation of repair
 requests. A restored store cannot resurrect pre-restore authority. Native
@@ -225,6 +394,17 @@ promote comparison history.
 
 - Source lowering is load-bearing and preserves every semantic node, decision,
   loop, dynamic fanout policy, reducer, call-site policy, and child path.
+- Exact inventory equality holds across durable subjects, CompletionBindings,
+  required evidence, CompletionVerdicts, accepted Run Authority decisions,
+  effects, and terminal candidate outcomes; no competing completion writer
+  remains.
+- Every S3A–S7 gate consumes the exact accepted C1/C2 manifests, S2R
+  kernel-enablement receipt, and current divergence-ledger hash with no stale
+  unresolved blocking occurrence.
+- The complete finalize/admit → execute → landed-write/validation evidence →
+  verdict/acceptance → review → reopen or admit new work → execute → aggregate
+  slice rejects false `done`, never dispatches `REVIEW`, preserves unrelated
+  accepted evidence, and meets the 57k bounded-query gate.
 - Components, handlers, runtime maps, `_core` tables, compatibility native
   programs, CLI dispatch, and auto-drive cannot independently choose product
   behavior.
@@ -271,7 +451,13 @@ promote comparison history.
   isolated across repeated subworkflow invocations, fanout siblings, and runs.
 - A rebuildable Native composed-history explanation and repair preflight joins
   admitted M11 facts for operators but remains observational/request-only and
-  behaviorally inert.
+  behaviorally inert. It supports bidirectional navigation from every
+  workflow/step occurrence and generation/attempt to agent sessions,
+  model/tool/effect calls, cost and immutable structured-log/transcript
+  artifacts, and from those records back to the owning semantic occurrence and
+  source span plus consuming decision/terminal when one exists. Complete
+  durable-boundary history is required; arbitrary Python
+  instruction/local-variable tracing is not required.
 - Comparison/shadow execution is non-authoritative, non-resumable, and
   non-effect-capable in a quarantined namespace excluded from admitted queries;
   its history can never be promoted or relabeled as canonical.

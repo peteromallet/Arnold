@@ -9,6 +9,20 @@ to non-authoritative consumers of the admitted M11 control/query APIs.
 Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
 `NP-GT-006A`, `NP-GT-006B`, and `NP-GT-006C`.
 
+Before any S6 work, reconsume the exact C1/C2 manifests, S2R
+kernel-enablement receipt, S5B completion-slice receipt, current
+divergence-ledger hash, accepted M11 coordinates, and scoped
+topology/obligation hashes. Missing, stale, unresolved-blocking,
+cross-incarnation, or mismatched evidence blocks GO-3.
+
+S6 closes GO-3 through the pre-merge/post-merge `conformance_gate`. Every
+registry-side control-authority demotion, legacy-writer fence/delete, or
+heterogeneous rollout operation must consume that exact accepted post-merge
+receipt. A chain milestone state or later S7 result cannot authorize it.
+The cutover runs only as the chain's declared S6 transition, emits one
+immutable control-authority receipt, and must pass the separate post-transition
+GO-3 verifier over the final writer/fence/consumer state before S6 completes.
+
 ## Product scope
 
 - abort, force-proceed, replan, recover-blocked, resume-clarify,
@@ -24,9 +38,15 @@ Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
 
 ## Required work
 
+- Keep `workflows/control/` workflow-free unless a genuine independently
+  hosted child topology is discovered and separately migrated. Override,
+  reconfiguration, human-control, auto-drive, and compatibility operations are
+  typed `.py` steps/effects/policies whose resulting route remains visible in
+  the calling workflow (`plan_quality/gate.pype` or
+  `delivery/cycle.pype`). No control step may invoke a step or workflow.
 - Author each action as a closed typed decision with capability, exact semantic
   target/reentry, and terminal or loop effect.
-- Implement model/vendor/profile/robustness changes through the S2 typed
+- Implement model/vendor/profile/robustness changes through the S2R typed
   `reconfigure` transition: accepted schema-versioned delta, durable checkpoint,
   new policy/executable/product-contract binding, and exact named-cursor
   reentry. Ambient context or live flags cannot mutate control flow.
@@ -44,9 +64,25 @@ Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
   model/config change, resume, or terminal.
 - Adopt M11 exact-version WBC queries and pure rebuildable projections for
   observation. Do not rewrite status/watchdog/auditor projection machinery.
-- Delete/fence `LEGACY_ALIASES`, component override matrices, handler action
+- Make completion status, Markdown, causal explanations and fixer inputs pure
+  projections from immutable bindings/verdicts/acceptance records. Delete,
+  rebuild, forge, corrupt and cursor-diverge each projection; none may satisfy
+  an obligation, choose a candidate, accept a decision, dispatch repair, or
+  change effect/terminal truth.
+- Prove every legacy independent completion writer and reader-to-authority path
+  is deleted or structurally inert through reader/use-def reachability plus
+  mutation. Compatibility readers may decode exact pinned legacy records as
+  `legacy/unknown`; compatibility writers may not remain.
+- Prove `LEGACY_ALIASES`, component override matrices, handler action
   dispatch, manifest route maps/defaults, `_core` product transitions, projected
-  native programs, and CLI decision translation.
+  native programs, and CLI decision translation are absent or structurally
+  inert, then delete/fence them only through the GO-3-consuming cutover path.
+  Structurally inert means reader/use-def reachability proves no data or
+  control path from the carrier to route selection, decision acceptance,
+  admission, resume, retry, effect intent, terminalization, or an
+  operator-facing action that can bypass current RA/Custody/WBC admission.
+  Pair reachability with carrier mutation; writer-only inventory is
+  insufficient.
 - Add projection-forgery, stale-cursor, replay, and evidence-as-authority
   negative tests.
 - Author one closed cancel/publish/deliver/terminal arbitration and CAS contract.
@@ -85,7 +121,7 @@ Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
   from lowered IR. Require exact equality with the versioned policy index and
   force every participant pair to the pre-CAS boundary in both release orders,
   preserving loser/rejected-late raw facts.
-- Join every derived site to S2's certified linearizable canonical
+- Join every derived site to S2R's certified linearizable canonical
   store/service operation. Run two independent clients through the production
   adapter, force both orders and crash edges, and record adapter/store/schema
   provenance; application read/check/write or an in-process lock fails.
@@ -93,8 +129,10 @@ Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
   boundary, or pass restore-then-replay before it becomes authoritative in S6.
   The receipt binds store incarnation/restore generation and raw-history
   high-water cursor.
-- Remove S5's delivery/control seam and prove no remaining control bridge can
+- Remove S5B's delivery/control seam and prove no remaining control bridge can
   route, retry, resume, configure or terminalize.
+- Append every completion comparison difference to C1's same stable-occurrence
+  divergence ledger and bind its exact current hash in GO-3.
 - Explicitly make `_core/workflow_data.py:WORKFLOW` and
   `_ROBUSTNESS_OVERRIDES` inert/hard-fenced or delete them. Mutate every
   supported robustness level and prove no runtime, auto, or CLI entry point
@@ -123,6 +161,9 @@ Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
   receipts and projections cannot trigger or authorize an action.
 - Projection deletion/rebuild is deterministic; forged, stale, internally
   consistent, or cursor-divergent projections remain observational only.
+- Completion projections and legacy completion carriers are likewise inert,
+  and the accepted S2R kernel remains the sole semantic evaluator/decoder
+  authority.
 - Mixed-version control/effect workers reject before action, and the composed
   explanation/preflight remains observation/request-only under every race.
 - Stale or forged repair-request preconditions are recomputed from canonical
