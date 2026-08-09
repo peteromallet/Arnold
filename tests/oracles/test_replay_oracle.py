@@ -926,13 +926,13 @@ def test_routed_replan_matches_legacy_structural_rewrite(
 
 
 @pytest.mark.replay_oracle
-def test_routed_override_registry_covers_all_ten_characterized_actions() -> None:
+def test_routed_override_registry_covers_all_characterized_actions() -> None:
     routed_actions = override_handler._control_routed_override_actions()
     assert set(routed_actions) == (
         set(override_handler._OVERRIDE_ACTIONS) - {"adopt-execution"}
     ) | {"force-proceed"}
     assert "force-proceed" not in override_handler._OVERRIDE_ACTIONS
-    assert len(routed_actions) == 10
+    assert len(routed_actions) == 12
 
 
 @pytest.mark.replay_oracle
