@@ -444,6 +444,17 @@ if [[ -n "$MANIFEST_EPIC_BRANCH" ]]; then
 else
   SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 fi
+# Fail-closed manifest authority (codex review fix #3): a PRESENT manifest
+# that declares no epic.branch must never silently fall back to the shared
+# editable branch — that is exactly the wrong-branch repair the per-epic
+# design eliminates. Only a genuinely absent manifest keeps the legacy
+# fallback (today's manifest-less box state).
+if [[ -f "$(arnold_runtime_manifest_path)" && -z "$MANIFEST_EPIC_BRANCH" ]]; then
+  printf '[repair-loop %s] runtime manifest exists but declares no epic.branch; failing closed (would repair the wrong branch)\n' \
+    "$(date -Iseconds)" >>"$LOG" 2>&1 || true
+  echo "arnold-repair-loop: runtime manifest present without epic.branch; failing closed" >&2
+  exit 78
+fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
@@ -716,48 +727,78 @@ prepare_repair_agent_exec_env() {
 prepare_repair_delivery_authority() {
   local shim_dir="$RUN_DIR/delivery-authority-bin"
   local real_git real_gh
+  # Bake the real binary paths INTO the shim (never exported to the agent env)
+  # so a repair agent cannot redirect delivery through an env override.
   real_git="$(command -v git)"
   real_gh="$(command -v gh 2>/dev/null || true)"
   mkdir -p "$shim_dir"
-  cat > "$shim_dir/git" <<'SH'
+  cat > "$shim_dir/git" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
+real_git='${real_git}'
 want_push=0
-for arg in "$@"; do
-  if [[ "$arg" == "push" ]]; then
+for arg in "\$@"; do
+  if [[ "\$arg" == "push" ]]; then
     want_push=1
-    if [[ "${ARNOLD_REPAIR_PUSH_AUTHORIZED:-0}" != "1" ]]; then
+    if [[ "\${ARNOLD_REPAIR_PUSH_AUTHORIZED:-0}" != "1" ]]; then
       echo "git push refused: repair push authority is disabled" >&2
       exit 77
     fi
   fi
-  if [[ "$arg" == "commit" && "${ARNOLD_REPAIR_COMMIT_AUTHORIZED:-0}" != "1" ]]; then
+  if [[ "\$arg" == "commit" && "\${ARNOLD_REPAIR_COMMIT_AUTHORIZED:-0}" != "1" ]]; then
     echo "git commit refused: repair commit authority is disabled" >&2
     exit 77
   fi
 done
-if [[ "$want_push" == "1" && -n "${ARNOLD_REPAIR_MANIFEST_BRANCH:-}" ]]; then
-  # Fixer-unification: with a per-epic runtime manifest, the repair agent may
-  # push ONLY the manifest-declared epic branch.  arnold-promote is the only
-  # path that advances the base; pushing the shared editable branch from a
-  # manifest-bound runtime is a fail-closed rejection.
-  target=""
-  for tok in "$@"; do
-    case "$tok" in
-      push|origin|--*) continue ;;
-      *:*) target="${tok##*:}" ;;
-      *) [[ -z "$target" ]] && target="$tok" ;;
+if [[ "\$want_push" == "1" ]]; then
+  # Delivery broker (codex review fix #1): refuse every escape hatch.
+  for arg in "\$@"; do
+    case "\$arg" in
+      --all|--mirror|-f|--force|--force-with-lease)
+        echo "git push refused: push flag '\$arg' is outside repair delivery authority" >&2
+        exit 77
+        ;;
     esac
   done
-  if [[ -z "$target" ]]; then
-    target="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
-  fi
-  if [[ -n "$target" && "$target" != "$ARNOLD_REPAIR_MANIFEST_BRANCH" ]]; then
-    echo "git push refused: manifest-declared epic branch is '$ARNOLD_REPAIR_MANIFEST_BRANCH', not '$target'" >&2
-    exit 77
+  if [[ -n "\${ARNOLD_REPAIR_MANIFEST_BRANCH:-}" ]]; then
+    bare=()
+    for tok in "\$@"; do
+      case "\$tok" in
+        push|--*) continue ;;
+        http://*|https://*|git@*)
+          echo "git push refused: remote URL override is outside repair delivery authority" >&2
+          exit 77
+          ;;
+        *) bare+=("\$tok") ;;
+      esac
+    done
+    target=""
+    if [[ "\${#bare[@]}" -eq 0 ]]; then
+      target="\$("\$real_git" symbolic-ref --short HEAD 2>/dev/null || true)"
+    elif [[ "\${#bare[@]}" -eq 1 ]]; then
+      if [[ "\${bare[0]}" != "origin" ]]; then
+        target="\${bare[0]##*:}"
+      else
+        target="\$("\$real_git" symbolic-ref --short HEAD 2>/dev/null || true)"
+      fi
+    else
+      if [[ "\${bare[0]}" != "origin" ]]; then
+        echo "git push refused: remote must be 'origin', got '\${bare[0]}'" >&2
+        exit 77
+      fi
+      if [[ "\${#bare[@]}" -gt 2 ]]; then
+        echo "git push refused: multi-refspec pushes are outside repair delivery authority" >&2
+        exit 77
+      fi
+      target="\${bare[1]##*:}"
+    fi
+    if [[ -n "\$target" && "\$target" != "\$ARNOLD_REPAIR_MANIFEST_BRANCH" ]]; then
+      echo "git push refused: manifest-declared epic branch is '\$ARNOLD_REPAIR_MANIFEST_BRANCH', not '\$target'" >&2
+      exit 77
+    fi
   fi
 fi
-exec "$ARNOLD_REPAIR_REAL_GIT" "$@"
+exec "\$real_git" "\$@"
 SH
   chmod 0755 "$shim_dir/git"
   if [[ -n "$real_gh" ]]; then
@@ -772,8 +813,6 @@ exec "$ARNOLD_REPAIR_REAL_GH" "$@"
 SH
     chmod 0755 "$shim_dir/gh"
   fi
-  export ARNOLD_REPAIR_REAL_GIT="$real_git"
-  export ARNOLD_REPAIR_REAL_GH="$real_gh"
   export ARNOLD_REPAIR_COMMIT_AUTHORIZED="$([[ "$COMMIT_REPAIRS" == "1" ]] && printf 1 || printf 0)"
   export ARNOLD_REPAIR_PUSH_AUTHORIZED="$([[ "$COMMIT_REPAIRS" == "1" && "$PUSH_REPAIRS" == "1" ]] && printf 1 || printf 0)"
   export ARNOLD_REPAIR_MANIFEST_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
@@ -8655,6 +8694,37 @@ run_dev_fix_turn() {
   append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
 }
 
+# ── Delivery broker: verifiable remote-target control (codex review) ───────
+# A PATH shim is a deterrent; the verifiable control runs HERE, in the
+# supervisor's context, and proves the repair moved ONLY the manifest-declared
+# epic branch on the remote.  Any other remote head that moved is a delivery
+# target violation and fails the turn closed.
+
+capture_remote_head_snapshot() {
+  local snapshot_path="$1"
+  git -C "$ARNOLD_SRC" ls-remote --heads origin 2>/dev/null | sort > "$snapshot_path" || true
+}
+
+verify_remote_delivery_target() {
+  local before="$1" after="$2"
+  local target_branch="${MANIFEST_EPIC_BRANCH:-$SYNC_BRANCH}"
+  local violations="" ref sha before_sha
+  [[ -f "$before" && -f "$after" ]] || return 0
+  while read -r sha ref; do
+    [[ -n "$ref" ]] || continue
+    [[ "$ref" == "refs/heads/$target_branch" ]] && continue
+    before_sha="$(awk -v r="$ref" '$2==r {print $1}' "$before" | head -1)"
+    if [[ -n "$before_sha" && "$before_sha" != "$sha" ]]; then
+      violations="${violations}${ref}:${before_sha:0:8}->${sha:0:8} "
+    fi
+  done < "$after"
+  if [[ -n "$violations" ]]; then
+    log "delivery target violation: remote heads moved outside '$target_branch': ${violations}"
+    return 77
+  fi
+  return 0
+}
+
 run_kimi_launch_turn() {
   require_repair_lock_held
   require_investigation_before_mutation "kimi-launch"
@@ -8682,13 +8752,21 @@ run_kimi_launch_turn() {
   local plan_name="$3"
   local relaunch_command="$4"
   local prompt_path report_path rc health run_id_file managed_run_id
+  local remote_before remote_after
   local -a managed_cmd worker_cmd
   prompt_path="$RUN_DIR/iter${iteration}-kimi-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-kimi-report.json"
+  remote_before="$RUN_DIR/iter${iteration}-remote-before.txt"
+  remote_after="$RUN_DIR/iter${iteration}-remote-after.txt"
   write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
   KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
   log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
   prepare_repair_agent_exec_env
+  # Delivery broker snapshot: prove post-repair that only the manifest-declared
+  # epic branch moved on the remote (codex review fix #1).
+  if [[ -n "$MANIFEST_EPIC_BRANCH" ]]; then
+    capture_remote_head_snapshot "$remote_before"
+  fi
   run_id_file="$RUN_DIR/iter${iteration}-kimi-managed-run-id"
   worker_cmd=(
     env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
@@ -8746,6 +8824,16 @@ run_kimi_launch_turn() {
   fi
   managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
   export CURRENT_MANAGED_REPAIR_WORKER_RUN_ID="$managed_run_id"
+  # Delivery broker verification: any remote head that moved outside the
+  # manifest-declared epic branch fails the turn closed (codex review fix #1).
+  if [[ -n "$MANIFEST_EPIC_BRANCH" && "$rc" == "0" ]]; then
+    capture_remote_head_snapshot "$remote_after"
+    if ! verify_remote_delivery_target "$remote_before" "$remote_after"; then
+      repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:delivery_target_violation" "$report_path" 77
+      kill_tmux_session_if_present "$SESSION"
+      return 1
+    fi
+  fi
   health="$(verify_started_and_holding "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$KIMI_VERIFY_INITIAL_SECS" "$KIMI_VERIFY_HOLD_SECS")" || {
     repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:$health" "$report_path" "$rc"
     kill_tmux_session_if_present "$SESSION"

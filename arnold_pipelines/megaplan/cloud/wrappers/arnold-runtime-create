@@ -119,6 +119,24 @@ manifest_valid() {
 }
 
 mkdir -p "$MANIFEST_DIR"
+# Single-writer creation lock (codex review fix #2): concurrent runtime
+# creations must not race the active pointer or last-writer-wins each other.
+# flock on Linux (the box); mkdir-based fallback keeps macOS dev sandboxes
+# (where flock is absent) fail-closed too.
+CREATE_LOCK="$MANIFEST_DIR/.runtime-create.lock"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$CREATE_LOCK"
+  if ! flock -n 9; then
+    echo "arnold-runtime-create: another runtime creation holds the lock ($CREATE_LOCK); refusing concurrent create" >&2
+    exit 1
+  fi
+else
+  if ! mkdir "$CREATE_LOCK.d" 2>/dev/null; then
+    echo "arnold-runtime-create: another runtime creation holds the creation lock ($CREATE_LOCK); refusing concurrent create" >&2
+    exit 1
+  fi
+  trap 'rmdir "$CREATE_LOCK.d" 2>/dev/null || true' EXIT
+fi
 MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX")"
 python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" <<'PY'
 import json, os, sys

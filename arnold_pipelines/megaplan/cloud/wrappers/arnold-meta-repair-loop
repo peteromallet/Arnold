@@ -132,6 +132,12 @@ if [[ -n "$_MANIFEST_EPIC_BRANCH" ]]; then
 else
   SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
 fi
+# Fail-closed manifest authority (codex review fix #3): a present manifest
+# without an epic branch must not silently fall back to the shared branch.
+if [[ -f "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" && -z "$_MANIFEST_EPIC_BRANCH" ]]; then
+  echo "arnold-meta-repair-loop: runtime manifest present without epic.branch; failing closed" >&2
+  exit 78
+fi
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 if [[ ! -f "$REPAIR_LOOP_BIN" && -f "$REPAIR_LOOP_FALLBACK" ]]; then
