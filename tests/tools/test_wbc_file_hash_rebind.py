@@ -40,7 +40,7 @@ WBC_TRACKED_FILES = [
     "docs/arnold/workflow-boundary-contracts.md",
 ]
 
-REBOUND_COMMIT = "65b93723a1d5eb956b47971f0d5674afa7f880ca"
+REBOUND_COMMIT = "cebb1ef6e2345ff274f3666a37e55c0a4e6849f9"
 OLD_MERGE_COMMIT = "24afce006b9ad20391ac7af10ef67ea0b1774f9f"
 
 
