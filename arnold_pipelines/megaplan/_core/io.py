@@ -1799,9 +1799,11 @@ def list_batch_artifacts(plan_dir: Path) -> list[Path]:
                 and child.suffix == ".json"
             ]
             if candidates:
-                # Same-index resumes may have distinct task-set receipts. Keep
-                # all audited claims so aggregate scope accounting sees the union.
-                by_index[index] = sorted(candidates)
+                # A reused batch index holds retry attempts; only the newest
+                # fenced attempt is authoritative for this index. Prefer it so
+                # stale pre-dispatch receipts never double-count in aggregate
+                # scope accounting or ack scans.
+                by_index[index] = [_preferred_batch_attempt(candidates)]
     for path in plan_dir.glob("execution_batch_*.json"):
         if not path.is_file():
             continue

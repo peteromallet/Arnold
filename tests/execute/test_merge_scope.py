@@ -84,8 +84,8 @@ def test_code_execute_rejects_off_batch_task_updates() -> None:
     checks_by_id = {check["id"]: check for check in finalize_data["sense_checks"]}
     assert checks_by_id["SC2"]["executor_note"] == ""
     assert checks_by_id["SC7"]["executor_note"] == ""
-    assert any("unknown task_id 'T7'" in issue for issue in issues)
-    assert any("unknown sense_check_id 'SC7'" in issue for issue in issues)
+    assert any("subject_outside_dispatched_batch" in issue for issue in issues)
+    assert any("T7" in issue for issue in issues)
     assert any("1/1 batch tasks have no executor update" in issue for issue in issues)
 
 

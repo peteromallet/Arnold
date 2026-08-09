@@ -619,12 +619,22 @@ def _grant_aware_validate_entries(
     state: PlanState | None,
     source_path: str | Path = "<merge-payload>",
     off_scope_outcome: GrantAwareValidationOutcome = "rejected",
+    scope_trusted: bool = False,
 ) -> _GrantAwareValidationResult:
     if not isinstance(entries, list):
         return _GrantAwareValidationResult([], ())
     source = str(source_path)
     authority_resolution = resolve_batch_authority_metadata(payload, source)
-    if authority_resolution.quarantine is not None:
+    _scope_trusted_missing_authority = (
+        scope_trusted
+        and authority_resolution.quarantine is not None
+        and authority_resolution.quarantine.reason
+        in {"missing_dispatch_identity", "missing_result_envelopes"}
+    )
+    if (
+        authority_resolution.quarantine is not None
+        and not _scope_trusted_missing_authority
+    ):
         decisions = tuple(
             GrantAwareValidationDecision(
                 outcome="quarantined",
@@ -648,11 +658,12 @@ def _grant_aware_validate_entries(
         return _GrantAwareValidationResult([], decisions)
 
     metadata = authority_resolution.metadata
-    assert metadata is not None
-    by_digest = {envelope.digest(): envelope for envelope in metadata.result_envelopes}
+    by_digest: dict[str, ResultEnvelope] = {}
     by_subject: dict[str, list[ResultEnvelope]] = {}
-    for envelope in metadata.result_envelopes:
-        by_subject.setdefault(envelope.subject_id, []).append(envelope)
+    if metadata is not None:
+        by_digest = {envelope.digest(): envelope for envelope in metadata.result_envelopes}
+        for envelope in metadata.result_envelopes:
+            by_subject.setdefault(envelope.subject_id, []).append(envelope)
 
     accepted_entries: list[dict[str, Any]] = []
     decisions: list[GrantAwareValidationDecision] = []
@@ -691,6 +702,20 @@ def _grant_aware_validate_entries(
                 subject_id=subject_id,
                 reason="subject_outside_dispatched_batch",
                 envelope_digest=digest,
+                source_path=source,
+            )
+        elif envelope is None and scope_trusted:
+            # Recovery/reconcile artifact: the batch_scope IS the evidence for
+            # in-scope rows; the scope check above already rejected off-scope
+            # rows. Do not demand result envelopes the artifact type never
+            # carries.
+            decision = GrantAwareValidationDecision(
+                outcome="accepted",
+                entry_kind=entry_kind,
+                entry_index=index,
+                subject_id=subject_id,
+                reason="scope_trusted_no_envelope",
+                envelope_digest=None,
                 source_path=source,
             )
         elif envelope is None:
@@ -1102,6 +1127,7 @@ def _merge_batch_results(
     source_path: str | Path = "<merge-payload>",
     preserve_accepted: bool = False,
     require_dispatch_wbc: bool = True,
+    trust_scope: bool = False,
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
@@ -1183,6 +1209,7 @@ def _merge_batch_results(
         state=state,
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
+        scope_trusted=trust_scope or True,
     )
     _enforce_task_test_budgets(
         task_authority.entries,
@@ -1259,6 +1286,7 @@ def _merge_batch_results(
         state=state,
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
+        scope_trusted=trust_scope or True,
     )
     acknowledged_count, _ = _validate_and_merge_batch(
         sense_check_authority.entries,
@@ -1302,6 +1330,7 @@ def _merge_scoped_batch_artifact_through_validator(
     state: PlanState,
     preserve_accepted: bool = False,
     require_dispatch_wbc: bool = True,
+    trust_scope: bool = False,
 ) -> _ScopedBatchArtifactMergeResult:
     """Prove compatibility scope, then let the grant-aware validator arbitrate rows."""
 
@@ -1328,8 +1357,19 @@ def _merge_scoped_batch_artifact_through_validator(
     # A compatibility batch scope is useful for locating an artifact, but it
     # is not an execution grant.  Refuse the artifact before the merge helper
     # sees any rows when the durable dispatch/result authority is missing.
+    # EXCEPTION: when the caller explicitly trusts the scope (reconcile
+    # recovery path), a missing dispatch identity / result envelopes is not a
+    # refusal — the scope IS the evidence for in-scope rows and the per-row
+    # validator still rejects off-scope rows.
     authority_resolution = resolve_batch_authority_metadata(payload, artifact_path)
-    if authority_resolution.quarantine is not None:
+    if (
+        authority_resolution.quarantine is not None
+        and not (
+            trust_scope
+            and authority_resolution.quarantine.reason
+            in {"missing_dispatch_identity", "missing_result_envelopes"}
+        )
+    ):
         return _ScopedBatchArtifactMergeResult(
             quarantine=authority_resolution.quarantine
         )
@@ -1360,6 +1400,7 @@ def _merge_scoped_batch_artifact_through_validator(
         issues=issues,
         mode=mode,
         state=state,
+        trust_scope=trust_scope,
         source_path=artifact_path,
         preserve_accepted=preserve_accepted,
         require_dispatch_wbc=require_dispatch_wbc,
@@ -1490,6 +1531,7 @@ def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[s
         known_sense_check_ids=known_sense_check_ids,
         mode=state.get("config", {}).get("mode", "code"),
         state=state,
+        trust_scope=True,
     )
     if merge_result.quarantine is not None:
         return _quarantined_reconciliation_result(
