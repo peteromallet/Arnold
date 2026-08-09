@@ -100,7 +100,7 @@ def _cloud_spec() -> CloudSpec:
         agents={"default": "codex"},
         codex=CodexSpec(),
         mode="idle",
-        megaplan=MegaplanSpec(),
+        megaplan=MegaplanSpec(runtime_python="/workspace/runtime-venvs/test/bin/python"),
         resources=ResourcesSpec(),
         secrets=[],
         ssh=SshSpec(host="testhost"),
@@ -1806,7 +1806,7 @@ def test_cloud_resume_uses_resume_command_for_failed_plan(monkeypatch, tmp_path:
 
     assert rc == 0
     assert commands == [
-        "cd /workspace/chain-51d959cf/vibecomfy && arnold resume --plan milestone-demo"
+        "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd /workspace/chain-51d959cf/vibecomfy && /workspace/runtime-venvs/test/bin/python -P -m arnold_pipelines.megaplan resume --plan milestone-demo"
     ]
 
 

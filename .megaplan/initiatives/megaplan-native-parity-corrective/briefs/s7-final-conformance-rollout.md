@@ -1,5 +1,11 @@
 # S7 - Native-Topology Conformance on the M11 Proof Framework
 
+Rerun the bootstrap-installed completion-crosswalk validator and require exact
+equality across every requirement and changed-constraint ID, canonical owner
+milestone, proof rule, and accepted proof artifact. No prose-only, unconsumed,
+stale, missing-source, or unknown-owner row may enter the Native-to-Platform
+handoff.
+
 ## Objective
 
 Extend—not duplicate—the admitted Custody M11 conformance framework with
@@ -14,6 +20,42 @@ authority.
 
 ## Required work
 
+- Create the corrective target's new machine gate:
+  `docs/arnold/megaplan-native-parity-conformance.yaml`,
+  `docs/arnold/megaplan-native-parity-traceability.yaml`, and
+  `scripts/validate_megaplan_native_parity_conformance.py`, consumed with
+  `final-proof-map.json` by the chain's final validation hook. Extend compatible
+  evidence from the older `native-platform-followup` ledger only through
+  explicit reconsumption; do not mutate or treat its `.pypeline` validator/
+  ledger as target proof.
+- Prove `workflow.pype` and the workflow files it invokes as children are the only live
+  authored workflow sources in checkout, wheel/sdist, and cloud. Fail on any
+  `.pypeline` source, accepted suffix alias, package-data rule, resource path,
+  compiler/loader branch, source map, manifest/lock field, CLI surface,
+  validator/generator, current test/example, editor/Linguist mapping, or
+  downstream handoff that still treats `.pypeline` as current.
+- Permit `.pypeline` only in classified immutable historical/archive evidence
+  and, until its recorded expiry, the explicit pinned-artifact legacy reader.
+  Prove neither can author, compile, admit, route, resume by alias, or satisfy
+  conformance. Delete the reader when no live pinned occurrence requires it.
+- Prove the exact-one `.pype` contract in checkout, wheel/sdist, and pinned
+  cloud: canonical workflow imports and aliases, packages with multiple
+  separate workflow files, private local steps/helpers, shared `.py` steps,
+  descriptor-owned optional default and explicit selection, transitive locks,
+  and definition/import/call/source maps. Reject zero/two workflows, private
+  imports, durable `.py` topology, last-declaration/path selection, cycles/
+  collisions/recursion, dynamic/conditional/star imports, source/descriptor
+  mismatch, step→step/workflow, helper→step/workflow/effect, and hidden durable
+  code before authority. Prove bounded-loop IR is not recursion.
+- Prove identity and migration behavior: pure physical moves retain logical and
+  executable identity while updating provenance; logical rename, extraction,
+  inline, hostability change, private/shared promotion, and behavior drift
+  require explicit migration/new-attempt/quarantine. Converter/refactor
+  receipts and exact pinned legacy resolution must agree across package forms.
+- Prove positive helper behavior: allowed pure helpers retain transitive
+  dependency/call-site source maps, deterministic replay, and behavior-relevant
+  digest drift; forbidden I/O/effects reached through a helper fail with both
+  the originating and call spans.
 - Generate exact set equality across authored source nodes/children, lowered
   topology, registered WBC producers, executed runtime node/child attempts,
   authority-increasing actions, semantic checkpoint/reentry coordinates, and
@@ -22,6 +64,36 @@ authority.
   exactly one accepted Run Authority decision, and consumed runtime
   transitions/actions. Reject orphan, duplicate, unaccepted, stale-fence,
   inferred, outcome-mismatched, or multiply consumed decisions.
+- Generate exact completion inventory equality across every admitted durable
+  subject, S2F call-site template, runtime occurrence, immutable
+  `CompletionBinding`, required evidence obligation, evaluated
+  `CompletionVerdict`, accepted Run Authority decision/effect, and terminal
+  candidate outcome. Pure helpers and projections have no binding.
+- Reconsume the exact C1/C2 manifests, S2R
+  `completion-kernel-enablement-receipt.json`, every later Native completion
+  receipt, and the final current `completion-divergence-ledger.json` hash. Fail
+  on missing, stale, replaced, unresolved-blocking, or cross-incarnation
+  evidence.
+- Prove no competing completion schema/evaluator/decoder/writer, evidence or
+  waiver registry, acceptance transaction, or durable store exists. Rerun the
+  neutral-package import lint and adapter-copy/reverse-dependency negatives.
+  Prove the neutral kernel imports neither Megaplan nor Arnold product policy,
+  and every product/platform completion registry is a strict generated and
+  tested projection of the one canonical completion candidate registry.
+- Re-execute the false-done/`REVIEW` corpus, immutable rework admission,
+  verifier-independence, absence/set proof, waiver-taint, named-exit,
+  internal-wire reader/writer/decoder, restore/replay, and projection
+  deletion/forgery invariance suites in checkout, clean wheel/sdist, and cloud.
+  Include `(spec_hash, obligation_id)` identity/non-reuse, the machine
+  durable-subject predicate/static omission lint, candidate-first applicable-
+  obligation selection, typed blocked/waived proof, nonterminal quarantine,
+  normative evidence-window tuples, producer/trust-class verifier
+  independence, total child-disposition/multiplicity/no-double-counting, and
+  store-incarnation invalidation.
+- Consume S5B's exact 57,000-event bounded-query receipt and Custody's
+  `bounded-incident-projection-handoff.json`; prove no Native query or fixer
+  falls back to full-history recomputation. Custody remains the implementation
+  and benchmark owner.
 - Join every authoritative consumption/arbitration site to the certified
   linearizable conditional operation at the canonical production store/service.
   Require exact production adapter/store/schema provenance and consume the
@@ -48,11 +120,31 @@ authority.
 - Produce `final-proof-map.json` deliberately from accepted proof artifacts;
   the chain's required `final_conformance_gate` must pass and its validation
   receipt must be included in completion evidence.
+- Make
+  `.megaplan/initiatives/megaplan-native-parity-corrective/platformization-handoff-manifest.json`
+  a mandatory named final-proof-map row. The Native completion manifest must
+  hash that exact artifact and its schema/content bindings; Platformization's
+  `chain_completed + require_manifest` and explicit artifact preconditions
+  must feed an S1 intake gate that matches the exact path and current hash to
+  one validated manifest proof row.
+- Make `completion-kernel-c1-manifest.json`,
+  `completion-kernel-c2-manifest.json`,
+  `completion-kernel-enablement-receipt.json`, and
+  `completion-divergence-ledger.json` mandatory named final-proof-map rows.
+  The Platformization handoff binds their exact paths/hashes, schema and
+  serialization versions, candidate-outcome registry, total enforcement-
+  disposition boundary mapping, decoder/compatibility matrix, proof corpus,
+  legacy-writer retirement, S5 vertical-slice receipts, bounded-projection
+  receipt, and extraction/coupling inventory.
 - Land the S1-planned proof-map plumbing: the chain runner passes the declared
   map to the validator, the validator consumes the complete per-sprint receipt
   registry, and missing/extra/unknown/unconsumed/stale/non-executed/non-commit-
   bound/red receipts are blocking. The validation receipt binds the proof-map
   hash before its own receipt is appended.
+- Run synthetic missing, extra, red, stale, unbound, unconsumed,
+  cross-incarnation, self-certified and pre-proof-map-hash mutations against
+  both the stage-gate and final validators. The validator producer cannot be
+  its sole verifier.
 - Run the retained old current-tree ledger/evidence bundle as a negative fixture;
   it must fail even after all path/hash records are refreshed.
 - Execute all six golden scenario families and every mandatory mutation against
@@ -63,7 +155,10 @@ authority.
   before normalization. Run an audit normalizer/verifier with disjoint code
   provenance from production lowering/runtime trace adaptation; only the
   golden contract's versioned volatile-field allowlist may elide a field and
-  unknown fields reject.
+  unknown fields reject. Pin the immutable nonvolatile-floor digest and exact
+  table version. A table/allowlist amendment requires a content-addressed
+  amendment receipt, independent re-verification and invalidation/replay of
+  every affected dependent receipt.
 - Mutate arbitration/consumption fields that must never be volatile: semantic
   key, participant/result vocabulary, accepted and loser identities, CAS
   sequence, precedence and store incarnation/high-water cursor. Elision,
@@ -73,6 +168,13 @@ authority.
   expressible at the Python topology or declared call-site policy/effect
   vocabulary with mechanically regenerated bindings. Handler/auto/metadata-only
   additions must fail or remain inert.
+- Run the canonical-authoring omission/ergonomics fixture: create one new
+  durable step and one new workflow by declaring only durable intent plus
+  domain obligations; deterministic tooling must generate and pin their
+  bindings and disposable worksheets/Markdown. Omit each declaration,
+  template, and binding in turn and require static/admission rejection. Add an
+  ordinary pure helper and prove it needs no completion contract and receives
+  no independent binding.
 - Enforce structural readability/edit locality: one topology representation;
   one call to one authored reusable delivery cycle from every entry route; the
   small durable primitive set; generated mechanical identity/control-plane
@@ -179,14 +281,36 @@ authority.
   with identical recorded boundaries. Normalized lifecycle/admission traces are
   identical and meet the declared virtual-time and wall-latency budget; local
   success remains insufficient for release.
-- Prove every S3A/S3B/S4/S5 typed outgoing seam has expired or is structurally
+- Prove every S3A/S3B/S4/S5B typed outgoing seam has expired or is structurally
   route-inert, and emit a content-addressed Native-to-Platformization handoff
   manifest: reusable candidates/dependencies, exact typed contract snapshots,
-  golden adapters, zero-Megaplan-import proof for generic primitives, coupling,
-  exclusions and executed extraction classification. Do not extract patterns.
+  the exact `pype-authoring-contract.md` version, compiler/diagnostic/converter/
+  minimal-preview surfaces, accepted `GO-FORMAT` and source/package/identity/
+  legacy receipts, golden adapters, zero-Megaplan-import proof for generic
+  primitives, exact completion-kernel implementation/receipts and final
+  divergence-ledger hash, completion candidate-outcome registry and distinct
+  platform enforcement-disposition mapping, internal persisted-wire/decoder
+  promises, false-done/`REVIEW` and bounded-projection proofs, legacy completion
+  writer retirement, coupling, exclusions and executed extraction
+  classification.
+  The handoff retains exact content-addressed references to the accepted M11
+  manifest/proof rows and bounded-projection handoff; supersession may classify
+  ownership but cannot orphan or replace live evidence.
+  Distinguish what S2B productizes from what Native already proves. Do not
+  extract patterns inside S7 or let Platformization regenerate product
+  migration proof; Platformization owns neutral extraction/recomposition from
+  this exact handoff.
 
 ## Semantic gate
 
+- Canonical source discovery, package contents, manifests/locks, source maps,
+  CLI/tooling, and the Platformization handoff agree on `.pype`; new
+  `.pypeline` input is deterministically rejected and cannot pass through an
+  alternate loader or compatibility path.
+- The selected logical workflow and canonical import/lock graph are identical
+  across checkout, wheel/sdist, and cloud. Declaration/resource ordering and
+  pure moves are identity-inert; logical or behavioral changes take the
+  explicit compatibility/migration/new-attempt/quarantine path.
 - Source/lowering/runtime topology and dynamic child sets are equal; every
   route, loop, fanout/reducer, suspension/reentry, call-site policy, and
   terminal outcome is source-determined.
@@ -199,6 +323,9 @@ authority.
 - All golden families preserve same-run order, partial-order sibling freedom,
   occurrence multiplicity, exact joins, effects, and one terminal across all
   three install forms.
+- Exact completion inventory equality, no competing completion writer,
+  cumulative neutral import lint, final divergence-ledger disposition, S2R
+  internal-wire compatibility, and projection/restore invariance are green.
 - All six extension mutations pass at the intended edit point and fail from
   handler/auto/metadata-only bypasses; the one-topology/readability contract
   has a reviewed acceptance receipt.
@@ -249,8 +376,11 @@ authority.
 13. `NP-GT-001` through `NP-GT-006` (including A/B/C) same-run ordered/multiset
     equivalence across checkout/wheel/cloud.
 14. Heterogeneous stale-worker rejection before body/effect intent.
-15. GO-2 production-shaped effect reconciles exactly once with old writer inert
-    and no dual-write interval.
+15. GO-2 covers every external-effect protocol class with direct
+    crash/cross-host reconciliation proof or an independently verified
+    equivalence record; a weaker proxy cannot authorize another class. S5B
+    consumes the exact receipt, the old writer is reader/use-def inert, and no
+    dual-write interval exists.
 16. Closed cancel/publish/deliver/terminal CAS arbitration.
 17. Six future-extension edit-locality mutations and structural readability.
 18. Rebuildable Native composed-history explanation/preflight is causally
@@ -296,12 +426,46 @@ authority.
     identity and provenance; changed-code resume, preview/comparison promotion,
     admitted-history append, production effect-key reuse and diagnostic
     downgrade fail across checkout, installed package and cloud.
+39. `.pype` suffix conformance: canonical and named sources, discovery,
+    compiler/loader, package data/resources, manifests/locks, source maps,
+    CLI/help, validators/generators, tests/examples, editor/Linguist support,
+    and the Platformization handoff agree; no live `.pypeline` admission path
+    remains.
+40. `.pype` authoring/identity conformance: exact-one files, canonical imports,
+    private/local and shared/`.py` boundaries, package default/explicit
+    selection, aliases, pure-helper provenance/digest drift, transitive locks,
+    source/package correspondence, preview-only `.py` workflows, physical
+    moves, logical migrations, converter/refactor receipts and cross-file
+    diagnostics agree across checkout/wheel/cloud. Zero/two workflows, private
+    imports, step/helper leaf-law violations, cycles/recursion/dynamic
+    `.pype`/topology imports, descriptor mismatch, transitive forbidden I/O and
+    hidden durable Python fail closed; no downstream carrier may change the
+    frozen logical workflow.
+41. Completion-kernel conformance: C1/C2 remain non-authoritative until the
+    exact S2R GO-0 transition; every later cutover consumes that receipt and
+    current divergence-ledger hash; every primitive has one total aggregation
+    instance; false-done/`REVIEW`, immutable rework admission, waiver taint,
+    proof modes, decoder compatibility, restore/projection invariance, no
+    duplicate writer, and 57k bounded-query consumption pass.
+42. Platform handoff conformance: the exact Native completion implementation
+    and proof corpus are content-addressed for neutral extraction, while stable
+    public authoring/API publication remains Platform S6-only.
 
 ## Do not close if
 
 - The final report says implemented while any blocking check is red.
+- The final chain still points at
+  `validate_native_representation_conformance.py` or the older
+  `megaplan-native-representation-{conformance,traceability}.yaml` baseline
+  instead of the corrective target gate.
 - The proof generator begins from rows already labeled implemented.
 - A clean installed end-to-end workflow has not actually executed.
+- Any current source/tool/package/proof/handoff surface still accepts or emits
+  `.pypeline`, or a legacy reader can do more than resolve an exact pinned
+  pre-cutover artifact.
+- A workflow is inferred from declaration order/path, discovery executes author
+  code, a `.pype` has zero/multiple workflows or exposes a private member, or
+  durable/effectful work can execute outside a typed step/effect boundary.
 - The validator did not consume the declared proof map or its pre-receipt hash
   is absent from the validation receipt.
 - The refreshed old self-declared/hash-only ledger passes.
@@ -317,6 +481,10 @@ authority.
 - A comparison record becomes admitted, an unregistered plane executes, a
   product-contract edit waives evidence, or any measurable ergonomics gate is
   advisory/red.
+- A C1/C2 record is authoritative before S2R GO-0, a later gate omits the
+  current divergence-ledger hash, a legacy completion writer remains live, the
+  two disposition registries collapse, or public API stability is claimed
+  before Platform S6.
 - Any runner infers or silently changes mode, fresh experiment identity requires
   production migration ceremony, or preview/sandbox/comparison can produce an
   admitted/certification claim or reuse production effect/history identity.

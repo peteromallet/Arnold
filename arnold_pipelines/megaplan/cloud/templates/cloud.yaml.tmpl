@@ -125,11 +125,15 @@ chain:
 #                 installs it before each driver run, without an image rebuild.
 #   src_path      On-volume megaplan source clone used by `cloud chain` refresh.
 #                 Defaults to /workspace/arnold.
+#   runtime_python Absolute path to the pinned Python interpreter that owns the
+#                 Megaplan module. Required for cloud status/resume and must be
+#                 the same identity used by chain, resident, and watchdog.
 #   install_spec  Advanced pip-spec override, installed verbatim. Git specs get
 #                 `@ref` appended.
 megaplan:
   ref: main
   codex_auth: chatgpt
+  # runtime_python: /workspace/runtime-venvs/arnold-current/bin/python
   # repo: https://github.com/peteromallet/arnold.git
   # src_path: /workspace/arnold
   # install_spec: arnold[agent] @ git+https://github.com/peteromallet/arnold.git

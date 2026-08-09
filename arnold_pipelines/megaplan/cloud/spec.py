@@ -79,6 +79,7 @@ class MegaplanSpec:
     repo: str | None = None
     install_spec: str | None = None
     src_path: str = "/workspace/arnold"
+    runtime_python: str | None = None
     codex_auth: str = "chatgpt"
 
 
@@ -498,6 +499,11 @@ def load_spec(path: Path) -> CloudSpec:
         src_path=_absolute_posix(
             megaplan_raw.get("src_path", "/workspace/arnold"),
             "megaplan.src_path",
+        ),
+        runtime_python=(
+            _absolute_posix(megaplan_raw["runtime_python"], "megaplan.runtime_python")
+            if megaplan_raw.get("runtime_python") is not None
+            else None
         ),
         codex_auth=codex_auth,
     )

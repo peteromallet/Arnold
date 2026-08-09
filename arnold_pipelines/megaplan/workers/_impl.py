@@ -4128,6 +4128,18 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     if deescaped is not None:
         raw = deescaped
 
+    # GLM on the coding endpoint sometimes double-encodes the JSON payload
+    # (backslash-escaped interior quotes). De-escape one layer so the strategies
+    # below can see the real object.
+    try:
+        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+
+        deescaped = _deescape_double_encoded_json(raw)
+        if deescaped is not None:
+            raw = deescaped
+    except Exception:
+        pass
+
     def _iter_nested_json_dicts(value: Any) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         if isinstance(value, dict):
@@ -4288,6 +4300,20 @@ def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
         stripped = line.strip()
         if stripped.startswith("{") or stripped.startswith("["):
             candidates.append(stripped)
+    # GLM coding-endpoint double-encoded JSON: if the de-escaped form parses
+    # cleanly, the output is not malformed, so do not report a decode error.
+    try:
+        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+
+        deescaped = _deescape_double_encoded_json(raw)
+        if deescaped is not None:
+            try:
+                json.loads(deescaped)
+                return None
+            except json.JSONDecodeError:
+                candidates.insert(0, deescaped)
+    except Exception:
+        pass
     for candidate in candidates:
         try:
             json.loads(candidate)

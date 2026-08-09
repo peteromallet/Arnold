@@ -112,8 +112,11 @@ def test_render_step_message_budgets_named_model() -> None:
     )
 
 
-def test_render_step_message_blocks_budget_overflow_at_assembly() -> None:
-    """A declared input budget overflow is rejected before model dispatch."""
+def test_render_step_message_overflow_is_advisory_not_blocking() -> None:
+    """A declared input budget overflow is ADVISORY, not blocking: the size gate
+    is demoted so the provider API is the authority on context limits. The render
+    succeeds and the overflow is surfaced as BudgetStatus.EXCEEDED telemetry.
+    (Replaces the prior hard-block assertion after the gate demotion.)"""
     invocation = StepInvocation(
         kind="model",
         metadata={
@@ -126,8 +129,9 @@ def test_render_step_message_blocks_budget_overflow_at_assembly() -> None:
         },
     )
 
-    with pytest.raises(ModelBudgetError, match="budget exceeded"):
-        render_step_message(invocation)
+    rendered = render_step_message(invocation)  # must NOT raise
+    assert rendered.budget is not None
+    assert rendered.budget.budget_result is BudgetStatus.EXCEEDED
 
 
 # ---------------------------------------------------------------------------

@@ -23,18 +23,18 @@ content-addressed handoff and its committed acceptance evidence exist.
   newer failure.
 - Runtime/source/worktree/interpreter/test identity is bound to the repair
   receipt; changed imports or test hashes fail before mutation.
-- Owner-issued occurrence IDs, monotonic consumed grants, exact wrapper
-  handoff, notification dedupe and no-redispatch semantics remain outside
-  caller-writable projections.
+- Custody-issued occurrence IDs, Run Authority monotonic consumed grants/CAS,
+  exact wrapper handoff and WBC notification intent/outcome evidence remain
+  outside caller-writable projections.
 - Snapshot/projection corruption, storage failure and notification replay are
   explicit and fail closed.
 
 ## F2 — admission, model, effect and release acceptance
 
-- Every launch/resume/override/adoption entry point presents one admission
-  token. Direct `cloud exec`, `force-proceed`, unsafe `adopt-execution`,
+- Every launch/resume/override/adoption entry point presents one non-bearer
+  canonical action-envelope receipt. Direct `cloud exec`, `force-proceed`, unsafe `adopt-execution`,
   bootstrap, epic-chain refresh and AgentBox replay are denied or break-glass.
-- Provider authority is role-scoped (`orchestration`, `task`, `validation`),
+- Provider route/capability attestation is role-scoped (`orchestration`, `task`, `validation`),
   resolved by one canonical resolver, and verified before lease/resource
   acquisition and on resume.
 - Lease/process/source/runtime identity is part of installed-parity and hostile
@@ -44,9 +44,11 @@ content-addressed handoff and its committed acceptance evidence exist.
 - Cross-entry-point inventory proves exactly one authoritative writer and no
   bypass.
 
-These are follow-up hardening obligations, not prerequisites for the bounded
-current-run recovery beyond its existing VJ9/source/runtime/lease gates. They
-also must not weaken any safe-v3 canary launch precondition.
+The occurrence-specific subset is a prerequisite only through the independently
+accepted r5 quarantine/migrated-child and T6.2 handoff. Cross-entry-point
+generalization remains F1/F2 follow-up and must not hold the bounded canary
+hostage; unproven surfaces stay denied. Neither layer may weaken a safe-v3
+canary launch precondition.
 
 ## Incident-specific amendment
 
@@ -54,7 +56,7 @@ The relaunch evidence also produced an explicit amendment,
 [`incident-specific-control-amendment-20260804.md`](incident-specific-control-amendment-20260804.md),
 with acceptance ID `incident-specific-control-amendment.v1`. It closes the
 remaining implicit edges: P1 containment of every cloud/replay entry point;
-one custody-complete WBC + Run Authority + Custody admission token; exact
+one non-bearer WBC + Run Authority + Custody action-envelope receipt; exact
 occurrence/generation stale rejection; shared credential bootstrap and
 role-scoped pre-lease authentication; configured `runtime_python` use in all
 generated commands; snapshot-first status and durable notification dedupe;

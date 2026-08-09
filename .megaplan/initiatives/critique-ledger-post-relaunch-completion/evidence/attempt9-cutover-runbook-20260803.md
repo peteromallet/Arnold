@@ -1,5 +1,14 @@
 # Critique r5: exact attempt-9 cutover runbook
 
+> **SUPERSEDED / NON-OPERATIVE (2026-08-05).** This runbook is retained only
+> as immutable incident evidence. Its same-session/same-chain resume decision
+> and all mutation commands below are forbidden for the current VJ24 state.
+> The controlling decision is the quarantine plus authority-approved migrated
+> child/new-attempt route in
+> [`immediate-fix-and-category-hardening-20260805.md`](immediate-fix-and-category-hardening-20260805.md).
+> Nothing in this file authorizes a resume, relaunch, process action, marker
+> action, notification, or cloud mutation.
+
 ## Decision
 
 Continue the existing r5 session, workspace, chain cursor, plan, and accepted

@@ -35,6 +35,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
     DeployStepReport,
     _write_redacted_output,
     get_provider,
+    megaplan_runtime_invocation,
 )
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
@@ -1353,7 +1354,12 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 argv = list(_phase_command(next_step, substrate=cloud_substrate))
                 if plan_name:
                     argv.extend(["--plan", plan_name])
-            command = f"cd {shlex.quote(resume_workspace)} && arnold {shlex.join(argv)}"
+            command = (
+                f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+                f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+                f"cd {shlex.quote(resume_workspace)} && "
+                f"{megaplan_runtime_invocation(spec)} {shlex.join(argv)}"
+            )
             result = provider.ssh_exec(command)
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return 0
