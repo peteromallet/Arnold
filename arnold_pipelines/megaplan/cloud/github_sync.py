@@ -1,14 +1,15 @@
-"""One-way GitHub publication for persistent incident problems."""
+"""GitHub sync: persistent-problem publication plus the base→origin recoverability PUSH leg."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold.runtime.event_journal import read_event_journal_paged
 
@@ -49,6 +50,119 @@ class GitHubSyncConfig:
     repo_path: Path | str
     issue_labels: tuple[str, ...] = ("incident-control-plane", "persistent-problem")
     thresholds: GitHubSyncThresholds = field(default_factory=GitHubSyncThresholds)
+
+
+def _git_run(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _tail(text: str, *, max_lines: int = 20) -> str:
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text.strip()
+    return "\n".join(lines[-max_lines:]).strip()
+
+
+def _command_text(command: list[str]) -> str:
+    return " ".join(command)
+
+
+def sync_policy_gate(policy: Mapping[str, Any] | None) -> tuple[bool, str]:
+    """Decide whether sync is allowed under the manifest's ``sync_policy``.
+
+    Truth table: ``None`` -> ``(True, "no_policy")``; ``{"enabled": false}``
+    or the string ``"disabled"`` -> ``(False, "sync_policy_disabled")``;
+    ``{"enabled": true}`` -> ``(True, "sync_policy_enabled")``. Any other
+    value (e.g. ``"push-on-promote"``) is treated as enabled — this is the
+    re-enable switch for the base->origin PUSH leg (design Phase 4).
+    """
+    if policy is None:
+        return (True, "no_policy")
+    if isinstance(policy, Mapping):
+        enabled = policy.get("enabled")
+        if enabled is False:
+            return (False, "sync_policy_disabled")
+        if enabled is True:
+            return (True, "sync_policy_enabled")
+    if isinstance(policy, str) and policy.strip().lower() == "disabled":
+        return (False, "sync_policy_disabled")
+    return (True, "sync_policy_enabled")
+
+
+def push_base_to_origin(
+    *,
+    repo_root: Path,
+    origin_url: str,
+    branch: str = "base/editable-install",
+    commit_message: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """CAS-push the local *branch* to *origin_url* (base->origin PUSH leg).
+
+    A plain ``git push`` with no ``--force`` IS the compare-and-swap on the
+    origin ref: a stale or diverged origin rejects with a non-zero exit,
+    surfaced here as ``{"status": "rejected", "reason": "non_fast_forward"}``.
+    On success the result carries ``from_sha``/``to_sha`` (the promotion-journal
+    record fields). ``dry_run=True`` returns the would-run command without
+    executing anything.
+    """
+    repo = Path(repo_root)
+    command = ["git", "-C", str(repo), "push", origin_url, branch]
+    if dry_run:
+        return {
+            "status": "would_push",
+            "dry_run": True,
+            "branch": branch,
+            "origin_url": origin_url,
+            "commit_message": commit_message,
+            "command": command,
+            "command_text": _command_text(command),
+        }
+
+    repo_check = _git_run(repo, "rev-parse", "--is-inside-work-tree")
+    if repo_check.returncode != 0:
+        return {
+            "status": "error",
+            "reason": "not_a_git_repo",
+            "branch": branch,
+            "origin_url": origin_url,
+        }
+
+    branch_proc = _git_run(repo, "rev-parse", "--verify", f"refs/heads/{branch}")
+    if branch_proc.returncode != 0:
+        return {
+            "status": "error",
+            "reason": "branch_missing",
+            "branch": branch,
+            "origin_url": origin_url,
+        }
+    from_sha = (branch_proc.stdout or "").strip() or None
+
+    push_proc = _git_run(repo, "push", origin_url, branch)
+    if push_proc.returncode != 0:
+        return {
+            "status": "rejected",
+            "reason": "non_fast_forward",
+            "branch": branch,
+            "origin_url": origin_url,
+            "stderr_tail": _tail(push_proc.stderr or ""),
+        }
+
+    return {
+        "status": "pushed",
+        "branch": branch,
+        "origin_url": origin_url,
+        "commit_message": commit_message,
+        "from_sha": from_sha,
+        "to_sha": from_sha,
+        "command_text": _command_text(command),
+        "dry_run": False,
+    }
 
 
 def sync_persistent_problems(
@@ -651,7 +765,9 @@ __all__ = [
     "GitHubSyncConfig",
     "GitHubSyncThresholds",
     "main",
+    "push_base_to_origin",
     "sync_persistent_problems",
+    "sync_policy_gate",
 ]
 
 

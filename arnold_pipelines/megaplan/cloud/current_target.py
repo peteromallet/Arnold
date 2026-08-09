@@ -28,6 +28,7 @@ from arnold_pipelines.megaplan.observability.event_checkpoint import (
     EventCheckpointError,
     read_bounded_event_projection,
 )
+from arnold_pipelines.megaplan.cloud.shadow_attestation import attest_target_content
 
 _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
@@ -63,6 +64,52 @@ def _mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def attestation_section(tree_path: Path | None) -> dict[str, Any]:
+    """Content attestation of the executed runtime tree, as resolver evidence.
+
+    Built via ``shadow_attestation.attest_target_content`` (module ``__file__``,
+    digest, and mount identity) — the content-level counterpart to the
+    st_dev/st_ino identity the resolver already records.  Never raises: probe
+    failures surface in ``errors``, and downstream callers opt in to refusal
+    via ``refuse_shadowed_target``.  When no usable tree path is available the
+    section reports ``errors=["tree_path_unavailable"]``.
+    """
+    if tree_path is None:
+        return {"errors": ["tree_path_unavailable"]}
+    tree = Path(tree_path)
+    if not tree.exists():
+        return {"errors": ["tree_path_unavailable"]}
+    att = attest_target_content(tree, module_name="arnold_pipelines")
+    return {
+        "tree_path": att.tree_path,
+        "module_file": att.module_file,
+        "module_digest": att.module_digest,
+        "mount_id": att.mount_id,
+        "declared_vs_observed_match": att.declared_vs_observed_match,
+        "errors": list(att.errors),
+    }
+
+
+def _resolver_tree_path(
+    workspace: Path | None, remote_spec: Path | None
+) -> Path | None:
+    """Best runtime-tree candidate for the resolved target.
+
+    Preference order: the explicitly executed runtime source
+    (``MEGAPLAN_RUNTIME_SRC`` env), then the marker workspace, then the
+    remote-spec parent directory.  Returns ``None`` when no candidate exists
+    (the caller then reports ``tree_path_unavailable``).
+    """
+    runtime_src = os.environ.get("MEGAPLAN_RUNTIME_SRC", "").strip()
+    if runtime_src:
+        return Path(runtime_src)
+    if workspace is not None:
+        return workspace
+    if remote_spec is not None:
+        return remote_spec.parent
+    return None
 
 
 def _is_terminal_plan_state(value: Any) -> bool:
@@ -133,6 +180,7 @@ def resolve_current_target(
             "event_cursors": {},
             "tmux_process": {},
             "current_target_liveness": liveness_from_current_target(None),
+            "runtime_attestation": attestation_section(None),
             "needs_human": {},
             "repair_progress": {"present": False, "items": []},
             "chain_log": {},
@@ -423,6 +471,10 @@ def resolve_current_target(
         chain_state_present=bool(chain_state_path and chain_state_path.exists()),
         tmux_live=tmux_process.get("live_status"),
     )
+
+    runtime_attestation = attestation_section(
+        _resolver_tree_path(workspace, remote_spec)
+    )
     return {
         "schema_version": 2,
         "session": session,
@@ -500,6 +552,7 @@ def resolve_current_target(
         "event_cursors": event_cursors,
         "tmux_process": tmux_process,
         "current_target_liveness": current_target_liveness,
+        "runtime_attestation": runtime_attestation,
         "needs_human": {
             "path": str(needs_human_path),
             "present": needs_human_path.exists(),
