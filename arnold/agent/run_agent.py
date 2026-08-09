@@ -457,7 +457,7 @@ class IterationBudget:
     :meth:`refund` so they don't eat into the budget.
     """
 
-    def __init__(self, max_total: int):
+    def __init__(self, max_total: int | None):
         self.max_total = max_total
         self._used = 0
         self._lock = threading.Lock()
@@ -465,7 +465,11 @@ class IterationBudget:
     def consume(self) -> bool:
         """Try to consume one iteration.  Returns True if allowed."""
         with self._lock:
-            if self._used >= self.max_total:
+            # ``None`` is the explicit completion-driven mode used by the
+            # resident fixer.  It is intentionally not represented as a
+            # large magic number: the fixer must stop on its machine-checked
+            # postcondition, not on an arbitrary call count.
+            if self.max_total is not None and self._used >= self.max_total:
                 return False
             self._used += 1
             return True
@@ -483,6 +487,11 @@ class IterationBudget:
     @property
     def remaining(self) -> int:
         with self._lock:
+            if self.max_total is None:
+                # Existing callers compare this property with ``<= 0``.
+                # Preserve that interface while making the unbounded state
+                # explicit in ``max_total``.
+                return 2**63 - 1
             return max(0, self.max_total - self._used)
 
 
@@ -937,7 +946,7 @@ class AIAgent:
         command: str = None,
         args: list[str] | None = None,
         model: str = "anthropic/claude-opus-4.6",  # OpenRouter format
-        max_iterations: int = 90,  # Default tool-calling iterations (shared with subagents)
+        max_iterations: int | None = 90,  # None = completion-driven (shared with subagents)
         tool_delay: float = 1.0,
         enabled_toolsets: List[str] = None,
         disabled_toolsets: List[str] = None,
@@ -989,7 +998,9 @@ class AIAgent:
             provider (str): Provider identifier (optional; used for telemetry/routing hints)
             api_mode (str): API mode override: "chat_completions" or "codex_responses"
             model (str): Model name to use (default: "anthropic/claude-opus-4.6")
-            max_iterations (int): Maximum number of tool calling iterations (default: 90)
+            max_iterations (int | None): Maximum number of tool calling iterations
+                (default: 90). ``None`` is completion-driven and is reserved for
+                managed recovery runs with an external machine-checked stop condition.
             tool_delay (float): Delay between tool calls in seconds (default: 1.0)
             enabled_toolsets (List[str]): Only enable tools from these toolsets (optional)
             disabled_toolsets (List[str]): Disable tools from these toolsets (optional)
@@ -1025,6 +1036,15 @@ class AIAgent:
         """
         _install_safe_stdio()
 
+        # The managed resident worker already marks a no-timeout recovery as
+        # ``ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1``.  Honour that contract here
+        # instead of silently falling back to the generic 90-turn guard.  Only
+        # the default is promoted; an explicit caller cap remains authoritative.
+        if (
+            max_iterations == 90
+            and os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1"
+        ):
+            max_iterations = None
         self.model = model
         self.max_iterations = max_iterations
         # Shared iteration budget — parent creates, children inherit.
@@ -5524,41 +5544,93 @@ class AIAgent:
         # Pre-compression memory flush: let the model save memories before they're lost
         self.flush_memories(messages, min_turns=0)
 
+        previous_summary = self.context_compressor._previous_summary
+        previous_compression_count = self.context_compressor.compression_count
+        previous_system_prompt = self._cached_system_prompt
+        previous_session_id = self.session_id
+        previous_db_cursor = self._last_flushed_db_idx
+        previous_pressure_flags = (
+            self._context_50_warned,
+            self._context_70_warned,
+        )
         compressed = self.context_compressor.compress(messages, current_tokens=approx_tokens)
 
-        todo_snapshot = self._todo_store.format_for_injection()
-        if todo_snapshot:
-            compressed.append({"role": "user", "content": todo_snapshot})
+        if not self.context_compressor.last_compaction_succeeded:
+            # Summary generation is a transaction boundary. Do not append
+            # snapshots, rebuild prompts, split persisted sessions, reset DB
+            # cursors, or clear pressure warnings unless compaction committed.
+            return messages, self._cached_system_prompt or system_message
 
-        self._invalidate_system_prompt()
-        new_system_prompt = self._build_system_prompt(system_message)
-        self._cached_system_prompt = new_system_prompt
+        try:
+            todo_snapshot = self._todo_store.format_for_injection()
+            if todo_snapshot:
+                compressed.append({"role": "user", "content": todo_snapshot})
 
-        if self._session_db:
-            try:
+            self._invalidate_system_prompt()
+            new_system_prompt = self._build_system_prompt(system_message)
+            self._cached_system_prompt = new_system_prompt
+
+            if self._session_db:
                 # Propagate title to the new session with auto-numbering
                 old_title = self._session_db.get_session_title(self.session_id)
-                self._session_db.end_session(self.session_id, "compression")
                 old_session_id = self.session_id
-                self.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-                self._session_db.create_session(
-                    session_id=self.session_id,
-                    source=self.platform or "cli",
-                    model=self.model,
-                    parent_session_id=old_session_id,
-                )
+                new_session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
                 # Auto-number the title for the continuation session
+                new_title = None
                 if old_title:
                     try:
                         new_title = self._session_db.get_next_title_in_lineage(old_title)
-                        self._session_db.set_session_title(self.session_id, new_title)
-                    except (ValueError, Exception) as e:
+                    except Exception as e:
                         logger.debug("Could not propagate title on compression: %s", e)
-                self._session_db.update_system_prompt(self.session_id, new_system_prompt)
+
+                atomic_split = getattr(
+                    self._session_db,
+                    "split_session_for_compression",
+                    None,
+                )
+                if callable(atomic_split):
+                    atomic_split(
+                        old_session_id=old_session_id,
+                        new_session_id=new_session_id,
+                        source=self.platform or "cli",
+                        model=self.model,
+                        system_prompt=new_system_prompt,
+                        title=new_title,
+                    )
+                else:
+                    # Compatibility path for external SessionStore adapters.
+                    # Create the child before ending the parent so a failure
+                    # leaves the original session authoritative.
+                    self._session_db.create_session(
+                        session_id=new_session_id,
+                        source=self.platform or "cli",
+                        model=self.model,
+                        system_prompt=new_system_prompt,
+                        parent_session_id=old_session_id,
+                    )
+                    if new_title:
+                        self._session_db.set_session_title(new_session_id, new_title)
+                    self._session_db.end_session(old_session_id, "compression")
+                self.session_id = new_session_id
                 # Reset flush cursor — new session starts with no messages written
                 self._last_flushed_db_idx = 0
-            except Exception as e:
-                logger.debug("Session DB compression split failed: %s", e)
+
+        except Exception as exc:
+            # Roll back all in-memory compaction state. The built-in SessionDB
+            # split is atomic; legacy stores keep the parent authoritative by
+            # creating the child before attempting to end it.
+            self.context_compressor._previous_summary = previous_summary
+            self.context_compressor.compression_count = previous_compression_count
+            self.context_compressor.last_compaction_succeeded = False
+            self._cached_system_prompt = previous_system_prompt
+            self.session_id = previous_session_id
+            self._last_flushed_db_idx = previous_db_cursor
+            self._context_50_warned, self._context_70_warned = previous_pressure_flags
+            logger.warning(
+                "Context compression state commit failed; preserving original messages: %s",
+                exc,
+            )
+            return messages, previous_system_prompt or system_message
 
         # Reset context pressure warnings — usage drops after compaction
         self._context_50_warned = False
@@ -6380,7 +6452,11 @@ class AIAgent:
           - Caution (70%): nudge to consolidate work
           - Warning (90%): urgent, must respond now
         """
-        if not self._budget_pressure_enabled or self.max_iterations <= 0:
+        if (
+            not self._budget_pressure_enabled
+            or self.max_iterations is None
+            or self.max_iterations <= 0
+        ):
             return None
         progress = api_call_count / self.max_iterations
         remaining = self.max_iterations - api_call_count
@@ -6854,7 +6930,10 @@ class AIAgent:
         # Clear any stale interrupt state at start
         self.clear_interrupt()
         
-        while api_call_count < self.max_iterations and self.iteration_budget.remaining > 0:
+        while (
+            (self.max_iterations is None or api_call_count < self.max_iterations)
+            and self.iteration_budget.remaining > 0
+        ):
             # Reset per-turn checkpoint dedup so each iteration can take one snapshot
             self._checkpoint_mgr.new_turn()
 
@@ -8410,7 +8489,10 @@ class AIAgent:
                 # role-alternation invariants.
 
                 # If we're near the limit, break to avoid infinite loops
-                if api_call_count >= self.max_iterations - 1:
+                if (
+                    self.max_iterations is not None
+                    and api_call_count >= self.max_iterations - 1
+                ):
                     final_response = f"I apologize, but I encountered repeated errors: {error_msg}"
                     # Append as assistant so the history stays valid for
                     # session resume (avoids consecutive user messages).
@@ -8418,7 +8500,10 @@ class AIAgent:
                     break
         
         if final_response is None and (
-            api_call_count >= self.max_iterations
+            (
+                self.max_iterations is not None
+                and api_call_count >= self.max_iterations
+            )
             or self.iteration_budget.remaining <= 0
         ):
             if self.iteration_budget.remaining <= 0 and not self.quiet_mode:
@@ -8426,7 +8511,9 @@ class AIAgent:
             final_response = self._handle_max_iterations(messages, api_call_count)
         
         # Determine if conversation completed successfully
-        completed = final_response is not None and api_call_count < self.max_iterations
+        completed = final_response is not None and (
+            self.max_iterations is None or api_call_count < self.max_iterations
+        )
 
         # Save trajectory if enabled
         self._save_trajectory(messages, user_message, completed)

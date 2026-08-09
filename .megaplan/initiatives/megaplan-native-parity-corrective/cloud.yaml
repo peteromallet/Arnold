@@ -2,8 +2,8 @@ provider: ssh
 
 repo:
   url: https://github.com/peteromallet/Arnold.git
-  branch: main
-  workspace: /workspace/megaplan-native-parity-corrective/Arnold
+  branch: editible-install
+  workspace: /workspace/custody-control-plane-20260714/Arnold
 
 agents:
   default: codex
@@ -12,11 +12,11 @@ codex:
   model: gpt-5.4
   reasoning: high
 
-chain_session: megaplan-native-parity-corrective
+chain_session: megaplan-native-parity-completion-sequenced
 mode: idle
 
 chain:
-  spec: /workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
+  spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
 
 megaplan:
   ref: editible-install

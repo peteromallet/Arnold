@@ -1,0 +1,95 @@
+I now have all the evidence needed. No arnold distribution files exist in site-packages at all (the bind-time `.pth` at `_editable_impl_arnold.pth` is gone, no `arnold-0.23.0.dist-info`/editable finder found) — the installed editable state has diverged from the recorded binding, and no canonical rebind/migration record exists anywhere. Composing the FLASH REPORT.
+
+---
+
+FLASH REPORT
+
+**1. question_id:** FQ-07
+
+**2. verdict:** supported
+
+**3. investigated_claim:** Runtime B (77b76e3a4, the currently installed runtime) does NOT satisfy the chain's `require_editable_runtime_match` policy as recorded in chain state, and no canonical rebind/migration record authorizes A→B for this session.
+
+**4. vantage:**
+- hostname/container: 782c6da82a8f (session owner host per custody lease; observer = resident managed subagent worker)
+- workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+- runtime_or_commit: read-only inspection; runtime A repo HEAD d5848010695e28ddb9d9cbee8675d7ebe725caae; runtime B repo HEAD 77b76e3a487809a2d1c89ea6785aac473c8931c8 (A is ancestor of B)
+- investigator: hermes:deepseek:deepseek-v4-flash (FQ-07 evidence investigator, read-only)
+
+**5. utc_window:**
+- started: 2026-08-06T09:54Z (session start; approximate — `date` not on allowlist)
+- ended: 2026-08-06T10:10Z (approximate; bounded by inspected artifact mtimes up to 2026-08-06T09:47:38Z)
+
+**6. artifacts:**
+
+| absolute_path | exists | type | size_bytes | mtime_utc | sha256 | role |
+|---|---|---|---|---|---|---|
+| /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/.chains/chain-880bd6e04632.json | yes | JSON (chain state) | 15254 | 2026-08-06T00:53:46.678854203Z | 143e1a8573e5246477b8e8674248ea4c538139adf532f40444bce91a72e0aa37 | persistence + policy record |
+| /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml | yes | YAML (chain spec) | 4045 | 2026-08-05T21:40:41.811163809Z | da4b317822a3d2e9c4c5944dd832edbff0f4c01c413a8d32a6b2b5098d21f0d1 | producer (policy) |
+| /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/fresh_child_admission.json | yes | JSON (admission receipt) | 16703 | 2026-08-05T21:40:57.168859066Z | 3606ad09f6343baca3e771308ea5d8aaeb80625be4c659072828b91c74753dea | authority (child admission; not a rebind record) |
+| /workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v3-r7-launch-20260805.json | yes | JSON (session marker) | 39949 | 2026-08-05T21:40:57.696848590Z | 9eb2559460e4767ede0a809ac6cdc9d24f2d75c093a615d5dc0aee9649ef524e | persistence (session runtime custody) |
+| .../incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/evidence-pack.md | yes | MD (evidence) | 11966 | 2026-08-06T09:42:35.620959008Z | ca22f99f7de663a8901eeec8636467a919013b15d4a2b10894a7b3f413cb2401 | producer (observed installed-runtime claim) |
+| .../incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/sol-stage1.md | yes | MD (report contract) | 26055 | 2026-08-06T09:47:38.239659605Z | 0b923557a0e630986cfdfb451ddfc43e3fb875c583a21034e5683b7bd10f1e65 | consumer (contract) |
+| /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/chain/execution_binding.py | yes | Python (policy impl) | 64930 | 2026-08-06T09:02:58.887594426Z | 9614ccece4295914ea8ea506cfefd731b51c1377f3243169dff22b5e5f84fffc | policy |
+| /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/cloud/runtime_cutover.py | yes | Python (rebind impl) | 9569 | 2026-08-06T09:02:58.905594064Z | 28034c9ff482a57dbda1ec60b3debce97f1b91536c38e86ff94603eeac8ecffa | policy (marker_runtime_rebind.v1) |
+| /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/cloud/supervise.py | yes | Python | 43739 | 2026-08-06T09:02:58.907594024Z | 95e0c0a76f7f30cd9fdd24b1647ed2377fc95c60fe11133b78eaa0c86ec513a1 | policy (rebind gate recommendation) |
+| /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/cloud/runtime_provenance.py | yes | Python | 26616 | 2026-08-06T09:02:58.905594064Z | c58269d34eae36cf190f1a0b26a080a051fd05f238a4ebde322745fd2a468b1f | policy (identity computation) |
+| /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/runtime/execution_environment.py | yes | Python | 9555 | 2026-08-06T09:02:58.966592838Z | a7672ae9f9aa1223dc4b23580cbe6f546acfd803f78ca2c98125c36c339a6005 | policy (preflight/target_rebind consumer) |
+| /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth | **no** (bind-time recorded path; recorded sha256 a2e6bee4907592da90ed9ed56d2e1bfa8dfabf6b9c5cd8b9b5f30d1194eae9ff in chain state) | not-applicable | not-applicable | not-applicable | not-applicable | persistence (diverged) |
+| /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/arnold-0.23.0.dist-info/direct_url.json | **no** | not-applicable | not-applicable | not-applicable | not-applicable | persistence (absent) |
+
+**7. commands** (all read-only, GIT_OPTIONAL_LOCKS=0; no mutation; cwd = session workspace unless noted):
+
+- cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold — `GIT_OPTIONAL_LOCKS=0 git -C /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 rev-parse HEAD` — exit 0 — stdout: `d5848010695e28ddb9d9cbee8675d7ebe725caae`
+- cwd: same — `GIT_OPTIONAL_LOCKS=0 git -C /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4 rev-parse HEAD` — exit 0 — stdout: `77b76e3a487809a2d1c89ea6785aac473c8931c8`
+- cwd: same — `GIT_OPTIONAL_LOCKS=0 git -C /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4 merge-base --is-ancestor d5848010695e 77b76e3a4` — exit 0 (A is ancestor of B; ancestry only, not authorization)
+- cwd: same — `rg -n --hidden 'rebind|migrat|77b76e3a4|e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6' .../Arnold/.megaplan` — exit 0 — no rebind/migration authority record; only unrelated docs, the custody lease (fresh-child admission), and this investigation's own incident-evidence files contain the tokens
+- cwd: same — `rg -n --hidden 'require_editable_runtime_match' .../Arnold/.megaplan` — exit 0 — only chain.yaml:92 (`true`) for this chain (+ sibling initiative specs custody-control-plane, r6)
+- cwd: same — `rg -n 'require_editable_runtime_match|runtime.?match|rebind|migrat' .../arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan` — exit 0 — policy impl at chain/execution_binding.py; rebind mechanics at cloud/runtime_cutover.py; supervise.py:257 "Explicit operator-authorized content-addressed rebind is required"
+- cwd: same — `rg -n --hidden 'rebind_events|marker_runtime_rebind|runtime_binding|last_rebound_at|runtime-marker-migrations' /workspace/.megaplan/cloud-sessions` — exit 0 — no such record for r7 marker (matches were unrelated r2/r3 relaunch-command substrings)
+- cwd: same — `sha256sum` + `stat` on the 11 persistent artifacts above — exit 0 (values in §6)
+- cwd: same — `sed -n '1,220p' .../cloud/runtime_cutover.py`, `sed -n '230,300p' .../cloud/supervise.py`, `sed -n '80,160p'`/`sed -n '340,430p' .../chain/execution_binding.py`, `sed -n '1,170p' .../cloud/runtime_provenance.py`, `sed -n '150,230p' .../runtime/execution_environment.py` — exit 0 each
+- cwd: same — `sed -n '1,80p' /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth` — exit 2 (file does not exist)
+- cwd: same — `rg -l 'arnold|runtime-candidates' --glob '*.pth' /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages` — exit 1 (no matches); site-packages contains only `distutils-precedence.pth`
+
+**8. trace:**
+- producer: chain.yaml (driver block) — produced_value_or_key: `driver.execution_binding=required`, `driver.require_editable_runtime_match=true` (chain.yaml:89,92; chain_spec_sha256 da4b3178…)
+- consumer: chain start binding evaluation (execution_binding.py `runtime_binding_required()` → `required && require_editable_runtime_match` = **true**; errors on `editable_runtime_missing` / `editable_runtime_import_root_mismatch` / `editable_runtime_revision_mismatch`) — consumed_value_or_key: spec driver policy + active `runtime_provenance()` identity
+- persistence: chain-880bd6e04632.json — persisted_value_or_key: `metadata.execution_binding.launched_identity.runtime` = A (import_root/source_revision/editable_revision d5848010…, content_sha256 e8b12504…, pth sha a2e6bee4…, ready:true, errors:[]); `metadata.runtime_binding.current_identity` = A (identical); `metadata.runtime_binding.rebind_events` = **[]**; `metadata.execution_environment.engine_root` = A; `target_head/target_base` = d5848010…
+- policy: require_editable_runtime_match=true + execution_binding=required → bound identity must equal the active editable runtime at evaluation time; recorded binding is A; B (77b76e3a4) appears nowhere in chain state, session marker, or any canonical record — predicate_and_result: recorded current identity (A, e8b12504…) ≠ B (77b76e3a4); **B does not satisfy the recorded match**; rebind path (runtime_cutover.py `update_marker_runtime`, schema marker_runtime_rebind.v1) has **no executed event** — marker lacks `runtime_binding`/`rebind_events`/`last_rebound_at`, `editable_source_head`=d5848010 (A), `updated_at` 2026-08-05T21:40:56.788986Z; no runtime-marker-migrations evidence; no repair request for the finalize blocker (evidence-pack §4).
+
+**9. adherence_classification:** MISSING_STRUCTURE
+
+**10. missing_or_contradictory_structure:**
+- No canonical persistence of the *installed* runtime identity: the bind-time `.pth` (`_editable_impl_arnold.pth`, sha a2e6bee4…) recorded in chain state no longer exists; no `arnold-0.23.0.dist-info/direct_url.json`; no arnold `.pth`/editable finder in site-packages. The claim that "the currently installed runtime is B" rests on the evidence pack's observed import resolution (evidence-pack §1 line 24, observed 09:32–09:52Z); I could not re-execute python (not allowlisted) to re-verify the live import root.
+- `metadata.runtime_binding.rebind_events` is an empty array; the session marker carries no `runtime_binding` object at all — the A→B edge is entirely unrecorded.
+- No canonical rebind/migration authority record names B's commit (77b76e3a4) or content identity anywhere under session `.megaplan` or `/workspace/.megaplan/cloud-sessions`; the only `77b76e3a4` occurrences in `.megaplan` are inside this investigation's own incident-evidence briefs.
+- fresh_child_admission.json (runtime_binding_digest bffe1efd…) authorizes the *child plan's existence* (operator:user-requested-independent-child, legacy_child_missing_authority, phase=plan) — it is not an A→B rebind record and does not name B.
+
+**11. evidence_supporting_verdict:**
+- Chain state affirmatively records the bound runtime identity as A (d5848010695e, content_sha256 e8b12504…) in both `launched_identity.runtime` and `runtime_binding.current_identity`, with `rebind_events: []` (chain-880bd6e04632.json lines 103–131, 186–220).
+- Policy is live and strict: chain.yaml driver.execution_binding=required (line 89) and require_editable_runtime_match=true (line 92); execution_binding.py `runtime_binding_required()` = required ∧ match → true, with editable-match errors defined (lines 381–396).
+- Session marker (9eb25594…) pins editable heads to d5848010 (A) with status `already_contains`, last updated 2026-08-05T21:40:56Z, and contains no runtime rebind record; the relaunch command refresh-verifies and pins ENGINE_DIR=A via `runtime_provenance --expected-revision d5848010…`.
+- Git identities verified: A HEAD = d5848010…, B HEAD = 77b76e3a4…, A is ancestor of B (exit 0) — ancestry alone, which the contract forbids treating as authorization.
+- Negative-existence search across chain state, session marker, cloud-sessions, and `.megaplan` found no rebind/migration authority record for this session (only unrelated material and this investigation's own briefs).
+
+**12. evidence_against_verdict:**
+- None found. The only counter-hypothesis (a canonical record permitting B) is affirmatively absent; the installed-runtime-identity premise (B) is evidence-pack-asserted rather than re-verified by execution, but even if the live import root were ambiguous, the recorded binding and the absence of any rebind record are unaffected.
+
+**13. confidence:** high
+
+**14. confidence_basis:** Direct inspection of the authoritative chain state (hash 143e1a85…), chain spec (da4b3178…), session marker (9eb25594…), and admission receipt (3606ad09…), plus verified Git identities and a negative search across all canonical record surfaces. The recorded binding (A, e8b12504…) and empty `rebind_events` are unambiguous; the policy predicate is implemented and active. Residual uncertainty is limited to (a) live import-root re-verification (python execution not allowlisted) and (b) the environmental divergence of the editable install (bind-time pth absent), which supports — rather than contradicts — the claim.
+
+**15. immediate_decision_informed:** Horizon A in-place consideration for this occurrence is NOT authorized by any recorded runtime identity: chain state binds A (content e8b12504…) and records zero rebind events; B is unrecorded and unauthorized for this session. Per the mandatory stop gate "Runtime binding to B is absent, ambiguous, or unauthorized," any in-place re-attempt under B must stop unless/until Sol adjudicates an authority-approved runtime migration/rebind record (or a same-lineage resume finding that does not depend on B). Ancestry (A→B) is not execution authority.
+
+**16. durable_decision_informed:** The binding/cutover machinery already requires a CAS-protected, operator-authorized content-addressed rebind (runtime_cutover.py `update_marker_runtime`, marker_runtime_rebind.v1) and supervise.py's gate recommendation ("Explicit operator-authorized content-addressed rebind is required; do not retry the unchanged chain start"). Durable design should keep runtime identity content-addressed in chain state + session marker, require a rebind event for any change, and ensure installed-editable state (pth/dist-info) is reconciled with the recorded binding before any run — this incident shows the installed editable state can diverge from the recorded binding without any record.
+
+**17. safety_observations:**
+- No mutation performed; all inspections read-only (stat/sha256sum/sed/rg/git rev-parse/merge-base with GIT_OPTIONAL_LOCKS=0); no lifecycle, network, or package commands; no credentials observed or exposed.
+- Environment divergence noted: the bind-time `.pth` is gone and no arnold dist-info/direct_url.json exists in site-packages — the installed editable state is unrecorded and unverified by this pass; the evidence pack's "installed = B" observation is the only record.
+- Do not treat `merge-base --is-ancestor d5848010695e 77b76e3a4` (exit 0) or any behavioral reproduction as authorization.
+
+**18. unresolved_questions:**
+- Which exact editable install state does the default python import currently resolve to, and when/how did the bind-time `.pth` disappear (no canonical record)?
+- Would a chain-start/binding re-evaluation under the current environment produce `chain_execution_binding_drift` (i.e., does the policy fail closed against B)?
+- Whether Sol treats the A→B boundary as same-lineage resume or a migration requiring a fresh marker `runtime_binding` + `rebind_events` entry (Sol-only judgement per contract §E).

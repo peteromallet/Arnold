@@ -9,9 +9,11 @@ tags:
 - operator-experience
 - chain
 - reliability
+- managed-recovery-custody
+- canonical-timeline-consumer
 codebase_id: null
 created_at: '2026-06-07T12:48:34.180619+00:00'
-last_edited_at: '2026-06-07T12:48:34.180619+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics: []
 ---
 
@@ -33,3 +35,10 @@ Suggested touchpoints
 - `arnold/pipelines/megaplan/chain/__init__.py`
 - `tests/test_monitor.py`
 
+## 2026-07-31 reconciliation
+
+Keep open as standalone operator-experience work. The bounded status substrate
+and dead-PID classification now exist, but no compact monitor command satisfying
+this ticket's CLI, follow/JSONL, and chain rendering contract is integrated.
+Neither Native Parity, Platformization, nor Critique Ledger is an honest
+auto-resolver.

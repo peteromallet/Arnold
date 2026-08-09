@@ -52,7 +52,7 @@ with downstream owner and blocking proof.
 | 27 | handler-purity-audit | Handler topology extraction/purity audit | enabled | audited_pure_phase_body | handler_inventory, purity_scan, source_excerpts, reviewer_signoff |
 | 28 | golden-trace-regeneration | Golden trace regeneration guard | enabled | declared_policy | golden_scenario_manifest, semantic_diff_checklist, reviewer_approval |
 | 29 | source-path-reconciliation | Canonical source path reconciliation | enabled | canonical_source | path_reconciliation_table, import_smoke_test |
-| 30 | behavior-parity | Behavior parity with existing Megaplan | enabled | canonical_source | golden_suite, live_smoke, installed_wheel_conformance |
+| 30 | behavior-parity | Behavior parity with existing Megaplan | enabled | canonical_source | golden_suite, deployed_live_canary_receipt (pending), installed_wheel_conformance |
 | 31 | source-readability | Source readability | enabled | canonical_source | human_review_checklist, rendered_topology_diff |
 
 All 31 rows have been reconciled for status agreement between
@@ -62,6 +62,9 @@ All 31 rows have been reconciled for status agreement between
 
 No row is `missing`. No composition-owned row is `deferred` — all deferrals are
 platform-only aspects awaiting `native-platform-followup` hardening.
+Behavior-parity's deterministic contract remains implemented, but its separate
+deployed-proof status is `pending` until the release run records and commits a
+valid four-scenario workflow-canary verdict.
 
 ## Handler Purity Inventory
 

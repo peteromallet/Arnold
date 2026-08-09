@@ -1,0 +1,176 @@
+{
+  "diagnostics": [],
+  "roadmap": {
+    "Later": [
+      {
+        "horizon": "Later",
+        "ref": "01KTH21EC489596QWBC3419JC9",
+        "source": {
+          "column": 1,
+          "line": 111,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Add compact megaplan monitor command for plan and chain health",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Later",
+        "ref": "native-workflow-platformization",
+        "source": {
+          "column": 1,
+          "line": 112,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Native Workflow Platformization",
+        "type": "epic"
+      },
+      {
+        "horizon": "Later",
+        "ref": "01KYVKPN6JHD19ZRM3WQF9XV8S",
+        "source": {
+          "column": 1,
+          "line": 113,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Provide backend-neutral WBC persistence and canonical deployed-evidence joins",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Later",
+        "ref": "01KYVQ6D5X008TT6RBNFCFCYZS",
+        "source": {
+          "column": 1,
+          "line": 114,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Make execute-authority recovery converge after a base refresh",
+        "type": "ticket"
+      }
+    ],
+    "Next": [
+      {
+        "horizon": "Next",
+        "ref": "megaplan-chain-milestone-gates",
+        "source": {
+          "column": 1,
+          "line": 106,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Megaplan milestone conformance-gate bootstrap",
+        "type": "epic"
+      },
+      {
+        "horizon": "Next",
+        "ref": "megaplan-native-parity-corrective",
+        "source": {
+          "column": 1,
+          "line": 107,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Megaplan Native Parity Corrective",
+        "type": "epic"
+      }
+    ],
+    "Now": [
+      {
+        "horizon": "Now",
+        "ref": "repository-strategy-roadmap",
+        "source": {
+          "column": 1,
+          "line": 99,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Repository Strategy Roadmap",
+        "type": "epic"
+      },
+      {
+        "horizon": "Now",
+        "ref": "01KYSBGRHM1S8R6RQ1DGZ7843Y",
+        "source": {
+          "column": 1,
+          "line": 100,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Consolidate the post-M11 compatibility release before Native Parity",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Now",
+        "ref": "01KYVJ7A47TMH4BRGEV9JFTK10",
+        "source": {
+          "column": 1,
+          "line": 101,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Implement an honest deployed workflow canary runner",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Now",
+        "ref": "critique-ledger",
+        "source": {
+          "column": 1,
+          "line": 102,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Critique Loop / Cumulative Finding Ledger Implementation Epic",
+        "type": "epic"
+      }
+    ]
+  },
+  "schema_version": "megaplan-strategy-projection-v1",
+  "source_version": "megaplan-strategy-v1",
+  "stable_direction": [
+    {
+      "body": "Arnold builds intelligent pipelines out of many coordinated models. Its first tool, Megaplan, is a planning and execution harness that makes LLM-driven software development systematically robust by decomposing work into independently checked phases, each running on the cheapest model that can do it well.",
+      "source": {
+        "column": 1,
+        "line": 7,
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+      },
+      "title": "Mission"
+    },
+    {
+      "body": "- Structure makes LLMs robust — decompose, scope, and independently check every phase.\n- Use the cheapest capable model per component; reserve premium models for adjudication and genuinely hard work.\n- Typed Markdown is authoritative; generated JSON is a disposable projection.\n- Strategy entries point to artifacts, never copy bodies or lifecycle state.",
+      "source": {
+        "column": 1,
+        "line": 11,
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+      },
+      "title": "Principles"
+    },
+    {
+      "body": "- Pipeline phases are explicit stages with typed I/O contracts.\n- Model routing is profile-driven and vendor-neutral at the agent-spec level.\n- Run state is durable and recoverable; custody and audit trails are first-class.\n- The strategy contract separates stable direction from the living roadmap.\n\n### Native workflow program sequence\n\nThe authoritative rationale and ownership split live in\n[`docs/arnold/completion-spec-sequencing-and-ownership.md`](../../../docs/arnold/completion-spec-sequencing-and-ownership.md).\nThe required native critical path is:\n\n1. accept and manifest the post-M11 Custody release;\n2. complete the one-sprint\n   [`megaplan-chain-milestone-gates`](../megaplan-chain-milestone-gates/)\n   bootstrap;\n3. run\n   [`megaplan-native-parity-corrective`](../megaplan-native-parity-corrective/)\n   through its ordered `S1 -> S2F -> C1 -> C2 -> S2R -> S3A -> S3B -> S4\n   -> S5A -> S5B -> S6 -> S7` chain; and\n4. only then run\n   [`native-workflow-platformization`](../native-workflow-platformization/)\n   through `S1 -> S2A -> S2B -> S3 -> S4 -> S5 -> S6`.\n\nThe completion kernel is deliberately embedded as Native Parity C1/C2 after\nS2F establishes canonical subject identity and before S2R makes durable\ncontrol primitives authoritative. The preserved\n[`standardized-completion-specifications`](../standardized-completion-specifications/)\ninitiative is a normative requirement and traceability index only. It is\nretired, non-launchable, and must never become a competing chain or authority.\n\nThe\n[`critique-ledger`](../critique-ledger/)\ninitiative is a separate product integration line, not a fourth native\nsubstrate owner. Run it only on the accepted post-M11 release and, operationally,\nfinish it before Native Parity begins; the latest safe boundary is before\nNative S3A migrates the critique path. This ordering avoids concurrent\nauthority-changing cutovers while leaving the native completion-kernel\ndependency graph unchanged.\n\nThe release prerequisite is executable, not narrative: Critique Ledger may\nstart only after ticket `01KYSBGRHM1S8R6RQ1DGZ7843Y` has an accepted\nexact-revision release receipt and its deployed-canary blocker\n`01KYVJ7A47TMH4BRGEV9JFTK10` is independently verified.\n\n### Usable exits and gates\n\n- **Post-M11 release:** the existing Megaplan product is usable on the\n  content-addressed released runtime before any follow-on initiative starts.\n- **Critique Ledger:** Megaplan remains usable throughout; exit requires the\n  cumulative finding ledger, replay/accountability proof, coordinated cutover,\n  and legacy writer/reader retirement to be accepted on that released base.\n- **Milestone-gate bootstrap:** existing workflows remain usable; exit is a\n  validated completion manifest plus content-addressed downstream-spec,\n  completion-crosswalk, and editable-runtime readiness. It prepares but does\n  not launch either downstream epic.\n- **Native Parity:** each authority-changing milestone must consume an accepted\n  predecessor receipt and pass its post-transition verifier. Epic exit leaves\n  Megaplan usable on the canonical `.pype` topology with the completion kernel\n  enabled, native execution/review/rework paths accepted, and competing legacy\n  authority retired.\n- **Native Workflow Platformization:** it starts only from the exact Native\n  Parity handoff. Epic exit leaves Megaplan as a proven consumer of the shared\n  workflow platform and permits a stable public completion/workflow API only\n  after isolated recomposition and an independent second-consumer proof.",
+      "source": {
+        "column": 1,
+        "line": 18,
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+      },
+      "title": "Architecture Direction"
+    },
+    {
+      "body": "- Must work in dirty worktrees without cloud state for local validation.\n- Ticket identity is a ULID; epic identity is a canonical initiative slug.\n- The executable roadmap vocabulary is exactly `ticket` and `epic`.",
+      "source": {
+        "column": 1,
+        "line": 85,
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+      },
+      "title": "Constraints"
+    },
+    {
+      "body": "- Replacing existing ticket/epic artifact storage with strategy entries.\n- Making the generated projection JSON independently authoritative.\n- Including every open ticket in the roadmap.",
+      "source": {
+        "column": 1,
+        "line": 91,
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+      },
+      "title": "Non-Goals"
+    }
+  ],
+  "validation_summary": {
+    "clean": true,
+    "error_count": 0,
+    "total_diagnostics": 0,
+    "warning_count": 0
+  }
+}

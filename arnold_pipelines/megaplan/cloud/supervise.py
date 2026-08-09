@@ -8,11 +8,14 @@ blockers but must not invent approvals or force destructive git operations.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +168,200 @@ BLOCKED_REFUSAL_REASONS: dict[str, str] = {
 }
 
 
+def _canonical_runner_mutation_gate(
+    runner: Any,
+    *,
+    require_dead: bool,
+) -> tuple[bool, str]:
+    """Authorize supervisor effects only from the exact canonical target.
+
+    The cloud status payload deliberately carries tmux/``ps`` observations as
+    diagnostics.  This gate never reads them.  A known canonical live target
+    may authorize benign sync refresh, while restart/advance/wake additionally
+    require canonical death so a second runner cannot be created.
+    """
+
+    if not isinstance(runner, dict):
+        return False, "canonical current-target runner evidence is missing"
+    if runner.get("authority") != "canonical_current_target":
+        return False, "runner evidence is not canonical current-target authority"
+    if runner.get("exact_target") is not True:
+        return False, "canonical runner does not match the exact session/workspace/spec/plan"
+    if runner.get("mutation_permitted") is not True:
+        return False, "canonical current-target liveness is UNKNOWN or malformed"
+    state = str(runner.get("state") or "").lower()
+    if state not in {"live", "dead"}:
+        return False, "canonical current-target liveness is not known"
+    if require_dead and state != "dead":
+        return False, "canonical current target is live; duplicate launch refused"
+    return True, "canonical exact-target liveness permits mutation"
+
+
+def _supervisor_problem_signature(
+    *, reason: str, current_plan_name: str
+) -> dict[str, str]:
+    """Preserve a deterministic supervised failure as repair identity.
+
+    ``arnold-supervise`` stops retrying known deterministic failures.  Its
+    queue handoff must retain that exact failure instead of collapsing it to
+    the generic exhausted-process identity used for retry-budget exhaustion.
+    """
+    """Preserve a deterministic supervised failure as repair identity."""
+
+    prefix = "deterministic supervised failure:"
+    normalized_reason = str(reason or "").strip()
+    signature = {
+        "failure_kind": "supervised_run_exhausted",
+        "current_state": "process_exited",
+        "phase_or_step": "arnold-supervise",
+        "milestone_or_plan": current_plan_name,
+        "gate_recommendation": "",
+        "blocked_task_id": "phase:arnold-supervise",
+        "event_signature": "",
+    }
+    if not normalized_reason.startswith(prefix):
+        return signature
+
+    detail = normalized_reason[len(prefix) :].strip()
+    failure_kind, separator, evidence = detail.partition(";")
+    failure_kind = failure_kind.strip()
+    if not failure_kind:
+        return signature
+
+    signature.update(
+        {
+            "failure_kind": failure_kind,
+            "phase_or_step": "chain_execution_binding"
+            if failure_kind == "chain_execution_binding_drift"
+            else "arnold-supervise",
+            "phase_or_step": (
+                "chain_execution_binding"
+                if failure_kind == "chain_execution_binding_drift"
+                else "arnold-supervise"
+            ),
+            "blocked_task_id": f"deterministic:{failure_kind}",
+            "event_signature": detail,
+        }
+    )
+    if failure_kind == "chain_execution_binding_drift":
+        active_errors = ""
+        if separator:
+            key, equals, value = evidence.strip().partition("=")
+            if equals and key.strip() == "active_errors":
+                active_errors = value.strip()
+        if active_errors:
+            signature["blocked_task_id"] = (
+                f"chain_execution_binding:{active_errors}"
+            )
+        signature["gate_recommendation"] = (
+            "Explicit operator-authorized content-addressed rebind is required; "
+            "do not retry the unchanged chain start."
+        )
+    return signature
+
+
+def enqueue_supervisor_repair_request(
+    *,
+    queue_root: str | Path,
+    marker_dir: str | Path,
+    session: str,
+    workspace: str | Path,
+    remote_spec: str,
+    run_kind: str,
+    reason: str,
+    log_path: str,
+) -> dict[str, Any]:
+    """Queue an exhausted supervised run in the validated central queue."""
+
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        derive_repair_identity,
+        enqueue_occurrence_bound_repair_request,
+    )
+
+    # ``remote_spec`` identifies the chain, not its current repair target.  The
+    # central queue compares ``target.plan_name``/``milestone_or_plan`` with the
+    # authoritative current plan and correctly rejects mismatches as stale.
+    # Resolve that identity at enqueue time so a deterministic supervisor exit
+    # cannot be discarded merely because the producer substituted a spec path.
+    current_plan_name = ""
+    current: dict[str, Any] | None = None
+    try:
+        current = resolve_current_target(
+            session,
+            marker_dir=Path(marker_dir),
+            repair_data_dir=Path(marker_dir) / "repair-data",
+        )
+        refs = current.get("current_refs") if isinstance(current, dict) else {}
+        if isinstance(refs, dict):
+            current_plan_name = str(
+                refs.get("current_plan_name")
+                or refs.get("chain_current_plan_name")
+                or refs.get("marker_plan_name")
+                or ""
+            ).strip()
+    except (OSError, ValueError, TypeError):
+        # An empty target is intentionally safer than the wrong target: intake
+        # will bind it to its own authoritative observation instead of
+        # terminalizing a valid request as advanced/stale.
+        current_plan_name = ""
+
+    target = {
+        "workspace": str(workspace),
+        "remote_spec": remote_spec,
+        "supervise_log": log_path,
+    }
+    if current_plan_name:
+        target["plan_name"] = current_plan_name
+
+    problem_signature = _supervisor_problem_signature(
+        reason=reason,
+        current_plan_name=current_plan_name,
+    )
+
+    # Supervisor liveness and log metadata are evidence, not authority.  Only
+    # reuse the complete identity persisted by the current-target owner.
+    occurrence_identity = derive_repair_identity(current_target=current)
+
+    return enqueue_occurrence_bound_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session=session,
+        source="arnold_supervise_exit",
+        workspace=workspace,
+        run_kind=run_kind,
+        target=target,
+        problem_signature=problem_signature,
+        root_cause_hint={"reason": reason, "supervise_log": log_path},
+        occurrence_identity=occurrence_identity,
+        evidence_cursor_digest=_derive_supervise_evidence_cursor_digest(
+            log_path, marker_dir
+        ),
+        terminal_receipt_expectations=[
+            "five_minute",
+            "one_hour",
+            "next_three_hour",
+        ],
+    )
+
+
+def _derive_supervise_evidence_cursor_digest(
+    log_path: str, marker_dir: str | Path
+) -> str:
+    """Derive evidence cursor digest from supervise and marker state."""
+    parts: list[str] = []
+    for path_str in (log_path, str(marker_dir)):
+        try:
+            stat = Path(path_str).stat()
+            parts.append(f"{path_str}:{stat.st_mtime_ns}:{stat.st_size}")
+        except OSError:
+            parts.append(f"{path_str}:absent")
+    if not parts:
+        return ""
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
 # ---------------------------------------------------------------------------
 # Main tick logic
 # ---------------------------------------------------------------------------
@@ -192,6 +389,41 @@ def cloud_supervise_tick(
         _tmux_chain_restart_command,
         cloud_chain_status_payload,
     )
+    from arnold_pipelines.megaplan.cloud import feature_flags
+
+    attempt = begin_process_adapter_attempt(
+        root,
+        producer_family="cloud_supervision_adapter",
+        adapter_name="cloud_supervise_tick",
+        surface="tick",
+        start_details={
+            "spec_provider": getattr(spec, "provider", None),
+            "session": getattr(args, "session", None),
+        },
+    )
+
+    def _report(**kwargs: Any) -> dict[str, Any]:
+        report = _tick_report(**kwargs)
+        if report.get("acted"):
+            attempt.effect(
+                "mutation_requested",
+                details={
+                    "event": report.get("event"),
+                    "next_action": report.get("next_action"),
+                    "effective_status": report.get("effective_status"),
+                },
+            )
+        attempt.terminal(
+            status=str(report.get("effective_status") or "unknown"),
+            outcome="succeeded" if bool(report.get("success")) else "indeterminate",
+            details={
+                "event": report.get("event"),
+                "next_action": report.get("next_action"),
+                "acted": bool(report.get("acted")),
+                "refused_reason": report.get("refused_reason"),
+            },
+        )
+        return report
 
     # ------------------------------------------------------------------
     # (a) Read initial chain status
@@ -199,7 +431,7 @@ def cloud_supervise_tick(
     try:
         payload = cloud_chain_status_payload(root, args, spec, provider)
     except Exception as exc:
-        return _tick_report(
+        return _report(
             success=False,
             event="supervisor_error",
             spec="",
@@ -235,13 +467,43 @@ def cloud_supervise_tick(
         {"status": "unavailable", "reason": "not probed"},
     )
 
+    def l1_mutation_blocked_report(action: str) -> dict[str, Any]:
+        """Return a truthful observation when an L1 effect is unauthorized."""
+        return _report(
+            success=True,
+            event="supervisor_blocked",
+            spec=remote_spec,
+            effective_status=status,
+            next_action="blocked",
+            acted=False,
+            refused_reason=(
+                f"observed {action}; L1 mutation requires ARNOLD_AUTONOMY "
+                "and ARNOLD_REPAIR_TRIGGER_ENABLED"
+            ),
+            runner=runner,
+            sync=sync_info,
+            pr=pr_info,
+            logs=logs_info,
+            sync_refresh=sync_refresh,
+            provider_consistency=provider_consistency,
+            extra_repo_sync=extra_repo_sync_info,
+            human_verification=human_verification,
+        )
+
     # ------------------------------------------------------------------
     # (b) Refresh branch/PR sync — BEFORE any restart/advance/wake decisions
     # ------------------------------------------------------------------
     ssh_meth = getattr(provider, "ssh_exec", None)
     sync_refresh: dict[str, Any] = {"status": "skipped", "reason": "no ssh_exec"}
     sync_refreshed = False
-    if ssh_meth is not None:
+    sync_liveness_ok, sync_liveness_reason = _canonical_runner_mutation_gate(
+        runner, require_dead=False
+    )
+    if (
+        ssh_meth is not None
+        and feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)
+        and sync_liveness_ok
+    ):
         try:
             chain_state_raw = payload.get("chain_state", {})
             pr_number_raw = (
@@ -267,6 +529,18 @@ def cloud_supervise_tick(
         except Exception as exc:
             # Sync refresh failure is now visible in the tick report.
             sync_refresh = {"status": "failed", "reason": str(exc)}
+    elif ssh_meth is not None and not feature_flags.mutation_authorized(
+        feature_flags.MUTATION_PATH_L1
+    ):
+        sync_refresh = {
+            "status": "blocked",
+            "reason": "L1 mutation authorization required for remote sync-state refresh",
+        }
+    elif ssh_meth is not None:
+        sync_refresh = {
+            "status": "blocked",
+            "reason": sync_liveness_reason,
+        }
 
     # ------------------------------------------------------------------
     # (c) Re-read chain status after sync refresh
@@ -355,7 +629,7 @@ def cloud_supervise_tick(
     # (d) Block mutations on provider consistency mismatch
     # ------------------------------------------------------------------
     if provider_consistency.get("status") == "mismatch":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -382,7 +656,7 @@ def cloud_supervise_tick(
 
     # --- running → noop ---
     if status == "running":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_tick",
             spec=remote_spec,
@@ -402,7 +676,7 @@ def cloud_supervise_tick(
 
     # --- complete / done → done ---
     if status == "complete":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_tick",
             spec=remote_spec,
@@ -422,7 +696,7 @@ def cloud_supervise_tick(
 
     # --- human_prerequisite → blocked ---
     if status == "human_prerequisite":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -442,7 +716,7 @@ def cloud_supervise_tick(
 
     # --- quality_gate → blocked ---
     if status == "quality_gate":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -475,12 +749,38 @@ def cloud_supervise_tick(
 
         if pr_state_output == "merged":
             # PR merged — advance with one-shot tick
+            liveness_ok, liveness_reason = _canonical_runner_mutation_gate(
+                runner, require_dead=True
+            )
+            if not liveness_ok:
+                return _report(
+                    success=True,
+                    event="supervisor_blocked",
+                    spec=remote_spec,
+                    effective_status=status,
+                    next_action="blocked",
+                    acted=False,
+                    refused_reason=(
+                        "merged PR cannot advance without canonical exact-target "
+                        f"dead liveness: {liveness_reason}"
+                    ),
+                    runner=runner,
+                    sync=sync_info,
+                    pr=pr_info,
+                    logs=logs_info,
+                    sync_refresh=sync_refresh,
+                    provider_consistency=provider_consistency,
+                    extra_repo_sync=extra_repo_sync_info,
+                    human_verification=human_verification,
+                )
+            if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+                return l1_mutation_blocked_report("merged PR eligible for advance")
             try:
                 restart_cmd = _tmux_chain_restart_command(
                     resolved_workspace, remote_spec, session_name=resolved_session
                 )
                 ssh_meth(restart_cmd)
-                return _tick_report(
+                return _report(
                     success=True,
                     event="supervisor_advanced",
                     spec=remote_spec,
@@ -498,7 +798,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
             except Exception as exc:
-                return _tick_report(
+                return _report(
                     success=False,
                     event="supervisor_error",
                     spec=remote_spec,
@@ -517,7 +817,7 @@ def cloud_supervise_tick(
                 )
         else:
             # PR not merged — blocked
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -540,14 +840,18 @@ def cloud_supervise_tick(
 
     # --- stale_bookkeeping with dead/missing runner → restart ---
     if status == "stale_bookkeeping":
-        runner_status = runner.get("status", "unavailable") if isinstance(runner, dict) else "unavailable"
-        if runner_status in ("dead", "unavailable") and ssh_meth is not None:
+        liveness_ok, liveness_reason = _canonical_runner_mutation_gate(
+            runner, require_dead=True
+        )
+        if liveness_ok and ssh_meth is not None:
+            if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+                return l1_mutation_blocked_report("stale bookkeeping eligible for restart")
             try:
                 restart_cmd = _tmux_chain_restart_command(
                     resolved_workspace, remote_spec, session_name=resolved_session
                 )
                 ssh_meth(restart_cmd)
-                return _tick_report(
+                return _report(
                     success=True,
                     event="supervisor_restarted",
                     spec=remote_spec,
@@ -565,7 +869,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
             except Exception as exc:
-                return _tick_report(
+                return _report(
                     success=False,
                     event="supervisor_error",
                     spec=remote_spec,
@@ -583,15 +887,12 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
         else:
-            # Runner alive but bookkeeping stale, or no ssh_exec — blocked
+            # Canonical target is live/unknown, or no ssh_exec — blocked.
             if ssh_meth is None:
                 reason = "stale bookkeeping but provider lacks ssh_exec; cannot restart runner"
             else:
-                reason = (
-                    f"stale bookkeeping but runner status is '{runner_status}'; "
-                    "supervisor will not force-restart a live runner"
-                )
-            return _tick_report(
+                reason = f"stale bookkeeping restart refused: {liveness_reason}"
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -617,7 +918,7 @@ def cloud_supervise_tick(
     if status == "awaiting_human_verify":
         # (a) Verification facts unavailable / invalid / missing semantics → block
         if human_verification.get("status") != "available":
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -643,7 +944,7 @@ def cloud_supervise_tick(
         if not human_verification.get("all_deferred_must_verified", False):
             pending_count: int = human_verification.get("pending", 0)
             verified_count: int = human_verification.get("verified", 0)
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -668,12 +969,12 @@ def cloud_supervise_tick(
 
         # (c) All deferred-must criteria verified by latest ``pass`` records
         #     AND the resolved runner session is dead / unavailable → wake
-        runner_status = (
-            runner.get("status", "unavailable")
-            if isinstance(runner, dict)
-            else "unavailable"
+        liveness_ok, liveness_reason = _canonical_runner_mutation_gate(
+            runner, require_dead=True
         )
-        if runner_status in ("dead", "unavailable") and ssh_meth is not None:
+        if liveness_ok and ssh_meth is not None:
+            if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+                return l1_mutation_blocked_report("verified runner eligible for wake")
             try:
                 restart_cmd = _tmux_chain_restart_command(
                     resolved_workspace,
@@ -681,7 +982,7 @@ def cloud_supervise_tick(
                     session_name=resolved_session,
                 )
                 ssh_meth(restart_cmd)
-                return _tick_report(
+                return _report(
                     success=True,
                     event="supervisor_restarted",
                     spec=remote_spec,
@@ -699,7 +1000,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
             except Exception as exc:
-                return _tick_report(
+                return _report(
                     success=False,
                     event="supervisor_error",
                     spec=remote_spec,
@@ -720,9 +1021,9 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
 
-        # (d) All verified AND runner is alive → noop / running
+        # (d) All verified but target is live/unknown → no mutation.
         if ssh_meth is None:
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -742,7 +1043,28 @@ def cloud_supervise_tick(
                 extra_repo_sync=extra_repo_sync_info,
                 human_verification=human_verification,
             )
-        return _tick_report(
+        if not liveness_ok:
+            return _report(
+                success=True,
+                event="supervisor_blocked",
+                spec=remote_spec,
+                effective_status=status,
+                next_action="blocked",
+                acted=False,
+                refused_reason=(
+                    "human-verification wake refused without canonical exact-target "
+                    f"dead liveness: {liveness_reason}"
+                ),
+                runner=runner,
+                sync=sync_info,
+                pr=pr_info,
+                logs=logs_info,
+                sync_refresh=sync_refresh,
+                provider_consistency=provider_consistency,
+                extra_repo_sync=extra_repo_sync_info,
+                human_verification=human_verification,
+            )
+        return _report(
             success=True,
             event="supervisor_tick",
             spec=remote_spec,
@@ -763,7 +1085,7 @@ def cloud_supervise_tick(
     # ------------------------------------------------------------------
     # Fallback — unknown status
     # ------------------------------------------------------------------
-    return _tick_report(
+    return _report(
         success=True,
         event="supervisor_tick",
         spec=remote_spec,

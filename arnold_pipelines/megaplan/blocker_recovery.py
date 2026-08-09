@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shlex
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -27,12 +29,178 @@ from arnold_pipelines.megaplan.resolution_contract import (
     resolution_applies_to_task,
     resolution_state,
 )
+from arnold_pipelines.megaplan.types import CliError
 
 PREREQUISITE = "prerequisite"
 QUALITY = "quality"
 UNRESOLVED = "unresolved"
 MALFORMED = "malformed"
 _BEFORE_EXECUTE_GATE_PREFIX = "Read user_actions.md."
+
+
+def compact_failure_identity(value: object) -> dict[str, Any]:
+    """Return the canonical bounded failure identity used by repair custody."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    compact = {
+        key: value.get(key)
+        for key in (
+            "failure_kind",
+            "kind",
+            "phase",
+            "step",
+            "task_id",
+            "blocked_task_id",
+            "message",
+            "error",
+            "timestamp",
+        )
+        if value.get(key) not in (None, "", [], {})
+    }
+    if compact:
+        compact["fingerprint"] = hashlib.sha256(
+            json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    return compact
+
+
+def validated_deterministic_phase_repair(
+    project_dir: Path,
+    state: dict[str, Any],
+    resume_cursor: dict[str, Any] | Mapping[str, Any],
+    repair_commit: object,
+    failure_fingerprint: object,
+    repair_scope: object = None,
+) -> dict[str, str] | None:
+    """Validate an explicit code-repair receipt for a deterministic phase failure.
+
+    Internal failures can stop before ``phase_result.json`` is emitted; provider
+    response-contract failures emit a typed external result.  ``recover-blocked``
+    may replay either only when its dedicated repair cursor is current and the
+    caller binds recovery to the exact code surface that contains the repair.
+    Other states keep the existing fail-closed behavior.
+    """
+
+    latest_failure = state.get("latest_failure")
+    supported_repairs = {
+        "deterministic_phase_failure": "repair_phase_contract",
+        "provider_contract_failure": "repair_provider_contract",
+    }
+    failure_kind = (
+        str(latest_failure.get("kind") or "")
+        if isinstance(latest_failure, dict)
+        else ""
+    )
+    if not isinstance(latest_failure, dict) or (
+        supported_repairs.get(failure_kind) != resume_cursor.get("retry_strategy")
+    ):
+        return None
+    failure_phase = str(latest_failure.get("phase") or "").strip()
+    cursor_phase = str(resume_cursor.get("phase") or "").strip()
+    if not failure_phase or failure_phase != cursor_phase:
+        raise CliError(
+            "phase_repair_cursor_mismatch",
+            "deterministic phase repair must match the current failure and resume phase",
+            extra={"failure_phase": failure_phase, "resume_phase": cursor_phase},
+        )
+    current_fingerprint = str(
+        compact_failure_identity(latest_failure).get("fingerprint") or ""
+    ).strip()
+    expected_fingerprint = str(failure_fingerprint or "").strip()
+    if not current_fingerprint or expected_fingerprint != current_fingerprint:
+        raise CliError(
+            "phase_repair_fingerprint_mismatch",
+            "deterministic phase recovery must bind the exact current failure fingerprint",
+            extra={
+                "expected_fingerprint": expected_fingerprint,
+                "current_fingerprint": current_fingerprint,
+            },
+        )
+    commit = str(repair_commit or "").strip().lower()
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise CliError(
+            "missing_phase_repair_commit",
+            "deterministic phase recovery requires --repair-commit with the validated target HEAD",
+        )
+    requested_scope = str(repair_scope or "").strip().lower()
+    # Keep the historical API default for callers that validate a target
+    # workspace repair, but never infer an engine repair from a mismatched
+    # commit.  Engine-owned deterministic repairs must opt in explicitly.
+    if not requested_scope:
+        requested_scope = (
+            "engine_runtime"
+            if failure_kind == "provider_contract_failure"
+            else "target_workspace"
+        )
+    if requested_scope not in {"target_workspace", "engine_runtime"}:
+        raise CliError(
+            "invalid_phase_repair_scope",
+            "phase repair scope must be target_workspace or engine_runtime",
+            extra={"repair_scope": requested_scope},
+        )
+    if failure_kind == "provider_contract_failure" and requested_scope != "engine_runtime":
+        raise CliError(
+            "phase_repair_scope_mismatch",
+            "provider contract repairs must bind to engine_runtime",
+            extra={"failure_kind": failure_kind, "repair_scope": requested_scope},
+        )
+    selected_scope = requested_scope
+    repair_root = project_dir
+    if selected_scope == "engine_runtime":
+        # Provider response compilation and engine phase-contract repairs are
+        # engine-owned. Binding these repairs to the target product HEAD would
+        # create a receipt for the wrong code surface.
+        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
+
+        repair_root = megaplan_engine_root()
+    repair_head_label = (
+        "engine runtime HEAD"
+        if selected_scope == "engine_runtime"
+        else "target workspace HEAD"
+    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repair_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CliError(
+            "phase_repair_head_unavailable",
+            f"deterministic phase recovery could not verify the {repair_head_label}",
+            extra={"repair_root": str(repair_root), "error": str(error)},
+        ) from error
+    current_head = result.stdout.strip().lower() if result.returncode == 0 else ""
+    if current_head != commit:
+        raise CliError(
+            "phase_repair_commit_mismatch",
+            "deterministic phase recovery repair commit does not match the "
+            f"{repair_head_label}",
+            extra={
+                "repair_root": str(repair_root),
+                "repair_scope": selected_scope,
+                "repair_commit": commit,
+                "current_head": current_head,
+            },
+        )
+    evidence = {
+        "failure_kind": failure_kind,
+        "phase": cursor_phase,
+        "repair_commit": commit,
+        "failure_fingerprint": current_fingerprint,
+        "repair_scope": selected_scope,
+        "repair_root": str(repair_root),
+        "authority": f"explicit_repair_commit_bound_to_{selected_scope}",
+    }
+    if selected_scope == "engine_runtime":
+        evidence["engine_head"] = current_head
+    else:
+        evidence["workspace_head"] = current_head
+    return evidence
 
 
 @dataclass(frozen=True)
@@ -684,6 +852,15 @@ def _phase_coverage_deviations(plan_dir: Path | None) -> tuple[Deviation, ...]:
     return (Deviation(kind="phase_coverage", task_id=None, message=reason),)
 
 
+def _is_pending_authority_coverage_deviation(deviation: Deviation | dict[str, Any] | str) -> bool:
+    coerced = _coerce_deviation(deviation)
+    if coerced is None:
+        return False
+    return coerced.message.startswith(
+        "finalize.json has pending tasks without authoritative execution updates:"
+    )
+
+
 def evaluate_blocker_recovery(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
@@ -698,9 +875,16 @@ def evaluate_blocker_recovery(
         blocked_tasks,
         plan_dir=plan_dir,
     )
+    all_deviations = tuple(deviations) + _phase_coverage_deviations(plan_dir)
+    if prereq.requires_rerun:
+        all_deviations = tuple(
+            deviation
+            for deviation in all_deviations
+            if not _is_pending_authority_coverage_deviation(deviation)
+        )
     quality = evaluate_quality_blockers(
         state,
-        tuple(deviations) + _phase_coverage_deviations(plan_dir),
+        all_deviations,
     )
     return BlockerRecoveryEvaluation(prereq.blockers + quality.blockers)
 

@@ -64,7 +64,6 @@ from .review import (
 from .override import (
     _override_add_note,
     _override_abort,
-    _override_force_proceed,
     _override_replan,
     _override_set_robustness,
     handle_override,

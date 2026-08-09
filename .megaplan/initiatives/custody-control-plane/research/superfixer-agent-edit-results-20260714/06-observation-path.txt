@@ -1,0 +1,34 @@
+## Forensic Findings: Agent-Edit-Verifiable-Transaction-Spine
+
+### Revision Topology
+
+| Layer | Revision | Status |
+|---|---|---|
+| **Pinned** (declared runtime) | `282c89a5` — *"Require durable evidence for repair status"* | HEAD of `/workspace/arnold`, but dirty |
+| **Deployed source** (clean) | `4847a74c` — *"Preserve explicit watchdog runtime controls"* | 11 commits ahead of pinned |
+| **Import root** (`context-router-latest-machine-capture`) | `e8143ebc` — independent snapshot | Merge-base with pinned: `a97abfe2` (earlier ancestor) |
+
+### Wrapper Hash Verification
+
+All six `/usr/local/bin` wrappers (`arnold-supervisor-runtime`, `-lib`, `watchdog`, `run`, `chain`, `healthserver.py`) are **byte-identical** to the deployed source revision `4847a74c`, confirmed via `git show` diff against on-disk content. They do **not** match the pinned revision.
+
+### Healthserver / Status Route
+
+`healthserver.py` (PID 1240) is a trivial catch-all — every GET path including `/status` returns `200 OK` with body `"OK - megaplan cloud container alive"`. There is **no structured state-reporting route**. The "supported on-box status route" is effectively a liveness probe only.
+
+### Skew: Exact Triple Divergence
+
+1. **Resident claims** revision `282c89a5` (pinned) as its runtime identity.
+2. **Wrappers are** at `4847a74c` — 11 commits, 25 files, +3015/-146 lines ahead. This is legitimate forward evolution (wrapper hardening, supervisor isolation, repair custody fixes), not a fork.
+3. **Actual Python runtime** loads from dirty `/workspace/arnold` (HEAD=`282c89a5`, 61 modified files, 122 untracked) via `PYTHONPATH`. Three active subagent Codex workers are concurrently mutating this worktree. The resident process (`python -P -m arnold_pipelines.megaplan resident discord`) imports modules from this dirty tree — it may or may not reflect the latest disk state depending on module caching.
+
+### Observation Artifacts: None
+
+All state is genuine: git revisions verified via `rev-parse`/`merge-base`, wrapper hashes via `sha256sum` against `git show` output, process tree via `ps aux`, healthserver via `curl`. The import root `context-router-latest-machine-capture` is a static snapshot (its `CONTRACT.md` matches pinned revision), not a live import path — it is a reference capture, not a runtime dependency.
+
+### Safe Reconciliation Constraints
+
+- **Do not restart** the resident without first resolving the 61 dirty files — a restart would bind whatever half-edited state exists.
+- **Do not overwrite** `/usr/local/bin` wrappers from the dirty workspace; they are already at the correctly deployed revision.
+- **Any commit** must isolate its own changes and preserve unrelated concurrent edits from the three active subagent workers.
+- **The import root** (`context-router-latest-machine-capture`) must not be treated as authoritative runtime source — it is a stale snapshot whose merge-base predates both pinned and deployed revisions.

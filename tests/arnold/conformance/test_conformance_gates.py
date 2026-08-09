@@ -83,6 +83,37 @@ def test_current_tree_wires_conformance_suite_and_legacy_reference_gate() -> Non
     assert legacy_gate.details["invalid_entries"] == []
     assert legacy_gate.details["duplicates"] == []
 
+    layout_gate = checks_by_id["megaplan-artifact-layout"]
+    assert layout_gate.passed is True
+    assert layout_gate.details["unexpected"] == {}
+
+
+def test_normative_initiative_artifacts_use_canonical_semantic_subdirectories() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    canonical = {
+        ".megaplan/initiatives/megaplan-native-parity-corrective/"
+        "validation/GOLDEN_TRACE_CONTRACT.md",
+        ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/"
+        "research/research.md",
+        ".megaplan/initiatives/native-workflow-platformization/"
+        "decisions/PLATFORM_CONTRACT.md",
+        ".megaplan/initiatives/standardized-completion-specifications/"
+        "evidence/SUPERSESSION_CROSSWALK.yaml",
+    }
+    obsolete = {
+        ".megaplan/initiatives/megaplan-native-parity-corrective/"
+        "GOLDEN_TRACE_CONTRACT.md",
+        ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/"
+        "docs/research.md",
+        ".megaplan/initiatives/native-workflow-platformization/"
+        "PLATFORM_CONTRACT.md",
+        ".megaplan/initiatives/standardized-completion-specifications/"
+        "SUPERSESSION_CROSSWALK.yaml",
+    }
+
+    assert all((repo_root / path).is_file() for path in canonical)
+    assert all(not (repo_root / path).exists() for path in obsolete)
+
 
 def test_conformance_package_import_does_not_import_megaplan() -> None:
     script = """
@@ -273,15 +304,29 @@ def test_megaplan_artifact_layout_fails_on_loose_planning_files(tmp_path: Path) 
 
 def test_megaplan_artifact_layout_accepts_initiative_docs(tmp_path: Path) -> None:
     _write(tmp_path, ".megaplan/initiatives/demo/chain.yaml", "milestones: []\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/cloud.yaml", "provider: ssh\n")
     _write(tmp_path, ".megaplan/initiatives/demo/NORTHSTAR.md", "# North Star\n")
-    _write(tmp_path, ".megaplan/initiatives/demo/proof-map.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/STRATEGY.md", "# Strategy\n")
+    _write(
+        tmp_path,
+        ".megaplan/initiatives/demo/proof-map.json",
+        '{"m1": [".megaplan/initiatives/demo/validation-receipt.json"]}\n',
+    )
     _write(tmp_path, ".megaplan/initiatives/demo/completion-manifest.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/dependency-completion-proof.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/validation-receipt.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/.retired", "retired_at: now\n")
     _write(tmp_path, ".megaplan/initiatives/demo/briefs/m1.md", "# M1\n")
     _write(tmp_path, ".megaplan/initiatives/demo/research/audit.md", "# Audit\n")
     _write(tmp_path, ".megaplan/initiatives/demo/decisions/route.md", "# Decision\n")
     _write(tmp_path, ".megaplan/initiatives/demo/notes/status.md", "# Status\n")
     _write(tmp_path, ".megaplan/initiatives/demo/assets/data.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/archive/old/chain.yaml", "milestones: []\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/annexes/context.md", "# Annex\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/validation/m1.md", "# Validation\n")
     _write(tmp_path, ".megaplan/initiatives/demo/handoff/subagent.md", "# Handoff\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/handoffs/m1/receipt.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/evidence/runtime.json", "{}\n")
 
     result = check_megaplan_artifact_layout(repo_root=tmp_path, allowlist=set())
 

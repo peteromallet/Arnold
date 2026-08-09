@@ -455,6 +455,9 @@ def run_pipeline_bridged(
         "_mp_envelope": ctx.envelope,
         "plan_dir": str(artifact_root),
         "workspace_path": str(_workspace_path_for_plan_dir(artifact_root)),
+        "repair_queue_root": str(
+            _workspace_path_for_plan_dir(artifact_root) / ".megaplan" / "repair-queue"
+        ),
         "plan_name": artifact_root.name,
         "pipeline_name": pipeline_name,
         "run_kind": "plan",

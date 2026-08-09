@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -20,7 +22,9 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     MegaplanChainHandler,
     MegaplanChainLaunchError,
     _record_completion_dm,
+    _send_completion_dm,
 )
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import process_adapter_wbc_dir
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
 
 
@@ -74,24 +78,26 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
     assert run.metadata["validation"]["status"] == "passed"
     assert result.resolved_spec_path == result.project_root / ".megaplan/initiatives/epic/chain.yaml"
     assert result.resolved_spec_path.is_absolute()
-    assert calls == [
-        {
-            "operation_id": "chain-1",
-            "command": (
-                "python",
-                "-m",
-                "arnold_pipelines.megaplan",
-                "chain",
-                "start",
-                "--spec",
-                str(result.resolved_spec_path),
-                "--project-dir",
-                str(result.project_root),
-            ),
-            "cwd": result.project_root,
-            "stdout": result.host_result.run_paths.stdout_path,
-        }
-    ]
+    assert len(calls) == 1
+    launch_call = calls[0]
+    assert launch_call["operation_id"] == "chain-1"
+    assert launch_call["cwd"] == result.project_root
+    assert launch_call["stdout"] == result.host_result.run_paths.stdout_path
+    command = launch_call["command"]
+    assert command[:2] == ("env", "ARNOLD_REPAIR_SESSION=agentbox-chain-1")
+    assert command[6:] == (
+        "python",
+        "-m",
+        "arnold_pipelines.megaplan",
+        "chain",
+        "start",
+        "--spec",
+        str(result.resolved_spec_path),
+        "--project-dir",
+        str(result.project_root),
+    )
+    marker = result.project_root / ".megaplan/cloud-sessions/agentbox-chain-1.json"
+    assert json.loads(marker.read_text(encoding="utf-8"))["run_id"] == "chain-1"
     assert metadata["resolved_spec_path"] == str(result.resolved_spec_path)
     assert "megaplan_chain.validation_passed" in [event["event_type"] for event in events]
     assert {resource.resource_type for resource in resources} == {
@@ -100,6 +106,55 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
         ResourceType.PROCESS_SESSION,
     }
     assert sum(resource.resource_type is ResourceType.PROCESS_SESSION for resource in resources) == 1
+
+
+def test_megaplan_chain_launch_records_process_adapter_wbc_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    _write_valid_chain(repo)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+
+    sidecar = process_adapter_wbc_dir(
+        result.host_result.run_paths.root,
+        producer_family="agentbox_adapter",
+        adapter_name="megaplan_chain",
+    )
+    records = _events(sidecar / "events.ndjson")
+
+    assert [record["payload"]["boundary_event"] for record in records] == [
+        "started",
+        "effect",
+        "effect",
+        "terminal",
+    ]
+    assert records[0]["payload"]["surface"] == "launch"
+    assert records[-1]["payload"]["status"] == "running"
+    assert records[-1]["payload"]["outcome"] == "started"
+    assert records[-1]["payload"]["indeterminate_hooks"] == {
+        "signal": "reserved_for_m10_hardening",
+        "crash": "reserved_for_m10_hardening",
+    }
 
 
 @pytest.mark.parametrize(
@@ -797,6 +852,65 @@ def test_megaplan_chain_status_ignores_stale_completed_current_plan_by_milestone
     assert snapshot.classification.reason == "running_operation_without_live_runner"
 
 
+def test_megaplan_chain_status_does_not_complete_from_terminal_cursor_without_full_completed_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    idea_dir = repo / ".megaplan" / "initiatives" / "epic" / "briefs"
+    idea_dir.mkdir(parents=True, exist_ok=True)
+    (idea_dir / "m1.md").write_text("Implement the first milestone.\n", encoding="utf-8")
+    (idea_dir / "m2.md").write_text("Implement the second milestone.\n", encoding="utf-8")
+    _write_raw_chain(
+        repo,
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                "  - label: m1",
+                "    idea: .megaplan/initiatives/epic/briefs/m1.md",
+                "  - label: m2",
+                "    idea: .megaplan/initiatives/epic/briefs/m2.md",
+                "",
+            ]
+        ),
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+    save_chain_state(
+        result.resolved_spec_path,
+        ChainState(
+            current_milestone_index=2,
+            current_plan_name=None,
+            last_state="done",
+            completed=[{"label": "m1", "plan": "m1", "status": "done"}],
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.inspect_session",
+        lambda name: SessionStatus(name, "dead", False),
+    )
+
+    snapshot = MegaplanChainHandler().status(config, "chain-1")
+
+    assert snapshot.classification.operation_state is OperationState.SUSPENDED
+    assert snapshot.classification.effective_status == "stale_bookkeeping"
+    assert snapshot.classification.reason == "running_operation_without_live_runner"
+
+
 @pytest.mark.parametrize(
     (
         "spec_policy",
@@ -956,7 +1070,7 @@ def test_megaplan_chain_tick_persists_classification_and_status_change_event(
     assert events[-1]["payload"]["current"]["operation_state"] == "suspended"
 
 
-def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runner(
+def test_megaplan_chain_resume_migrates_legacy_command_to_managed_owner_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -996,6 +1110,12 @@ def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runne
         lambda name: SessionStatus(name, "dead", False),
     )
     MegaplanChainHandler().tick(config, "chain-1")
+    legacy_command = tuple(starts[0]["command"])[6:]
+    update_agentbox_operation(
+        config,
+        "chain-1",
+        metadata={"command": list(legacy_command)},
+    )
 
     resumed = MegaplanChainHandler().resume(config, "chain-1")
     events = _events(run_dir_paths(config, "chain-1").events_path)
@@ -1003,6 +1123,12 @@ def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runne
     assert resumed.state is OperationState.RUNNING
     assert len(starts) == 2
     assert starts[-1]["command"] == tuple(load_agentbox_operation(config, "chain-1").metadata["command"])
+    assert starts[-1]["command"][:2] == (
+        "env",
+        "ARNOLD_REPAIR_SESSION=agentbox-chain-1",
+    )
+    marker = result.project_root / ".megaplan/cloud-sessions/agentbox-chain-1.json"
+    assert json.loads(marker.read_text(encoding="utf-8"))["run_id"] == "chain-1"
     assert starts[-1]["cwd"] == result.project_root
     assert events[-1]["event_type"] == "megaplan_chain.resumed"
 
@@ -1112,7 +1238,8 @@ def test_record_completion_dm_emits_event_and_sends_discord_dm(
     payloads: list[dict[str, object]] = []
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
-        lambda payload: payloads.append(dict(payload)) or {"ok": True, "message_count": 1},
+        lambda payload, **_kwargs: payloads.append(dict(payload))
+        or {"ok": True, "message_count": 1},
     )
 
     run = load_agentbox_operation(config, "chain-1")
@@ -1122,7 +1249,9 @@ def test_record_completion_dm_emits_event_and_sends_discord_dm(
     events = _events(run_dir_paths(config, "chain-1").events_path)
 
     assert "Operation chain-1 completed with state succeeded." in updated.metadata["completion_dm"]
-    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert events[-2]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_delivery"
+    assert events[-1]["payload"]["ok"] is True
     assert payloads[0]["title"] == "Megaplan chain complete - chain-1"
     assert payloads[0]["links"] == [{"label": "PR", "url": "https://github.com/example/repo/pull/42"}]
     assert any(field["label"] == "CI" and field["value"] == "passed" for field in payloads[0]["fields"])
@@ -1150,14 +1279,173 @@ def test_record_completion_dm_never_raises_when_discord_send_crashes(
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
-        lambda payload: (_ for _ in ()).throw(RuntimeError("boom")),
+        lambda payload, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
     run = load_agentbox_operation(config, "chain-1")
     _record_completion_dm(config, "chain-1", run)
 
     events = _events(run_dir_paths(config, "chain-1").events_path)
-    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_delivery"
+    assert events[-1]["payload"]["outcome_kind"] == "INDETERMINATE"
+
+
+def test_agentbox_completion_delivery_is_once_across_concurrent_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-once",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-once", state=OperationState.RUNNING)
+    update_agentbox_operation(config, "chain-once", state=OperationState.SUCCEEDED)
+    run = load_agentbox_operation(config, "chain-once")
+
+    # Exercise the real effect protocol while replacing only the transport
+    # boundary.  Both independently opened owners represent concurrent or
+    # restarted AgentBox ticks sharing the canonical SQLite ledger.
+    provider_calls = 0
+    provider_lock = threading.Lock()
+
+    def effect_routed_send(payload, *, delivery_effects):
+        occurrence = str(payload["idempotency_key"])
+
+        def provider(_intent):
+            nonlocal provider_calls
+            with provider_lock:
+                provider_calls += 1
+            return {"ok": True, "message_ids": ["discord-1"], "message_count": 1}
+
+        outcome = delivery_effects.deliver_agentbox(
+            operation_id=run.id,
+            payload={**dict(payload), "idempotency_key": occurrence},
+            apply_fn=provider,
+        )
+        return {
+            "ok": outcome.ok,
+            "glek": outcome.glek,
+            "outcome_kind": outcome.outcome_kind,
+        }
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        effect_routed_send,
+    )
+    from arnold_pipelines.megaplan.resident.delivery_effects import (
+        open_resident_delivery_effects,
+    )
+
+    effects_root = tmp_path / "shared-effects"
+
+    def tick(owner) -> dict[str, object]:
+        try:
+            return _send_completion_dm(
+                run,
+                fallback_text="done",
+                delivery_effects=owner,
+            )
+        finally:
+            owner.close()
+
+    first_owner = open_resident_delivery_effects(effects_root)
+    second_owner = open_resident_delivery_effects(effects_root)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(tick, (first_owner, second_owner)))
+    restarted = tick(open_resident_delivery_effects(effects_root))
+
+    assert provider_calls == 1
+    assert sum(bool(item["ok"]) for item in (first, second, restarted)) >= 1
+    assert {
+        item["glek"] for item in (first, second, restarted) if item["glek"]
+    } == {restarted["glek"]}
+
+
+def test_agentbox_completion_ambiguous_provider_outcome_is_not_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-ambiguous",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-ambiguous", state=OperationState.RUNNING)
+    update_agentbox_operation(config, "chain-ambiguous", state=OperationState.SUCCEEDED)
+    run = load_agentbox_operation(config, "chain-ambiguous")
+    provider_calls = 0
+
+    def effect_routed_send(payload, *, delivery_effects):
+        occurrence = str(payload["idempotency_key"])
+
+        def ambiguous_provider(_intent):
+            nonlocal provider_calls
+            provider_calls += 1
+            raise TimeoutError("provider may have accepted the DM")
+
+        outcome = delivery_effects.deliver_agentbox(
+            operation_id=run.id,
+            payload={**dict(payload), "idempotency_key": occurrence},
+            apply_fn=ambiguous_provider,
+        )
+        return {
+            "ok": outcome.ok,
+            "glek": outcome.glek,
+            "outcome_kind": outcome.outcome_kind,
+        }
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        effect_routed_send,
+    )
+    from arnold_pipelines.megaplan.resident.delivery_effects import (
+        open_resident_delivery_effects,
+    )
+
+    effects_root = tmp_path / "shared-effects"
+    outcomes = []
+    for _ in range(2):
+        owner = open_resident_delivery_effects(effects_root)
+        try:
+            outcomes.append(
+                _send_completion_dm(
+                    run,
+                    fallback_text="done",
+                    delivery_effects=owner,
+                )
+            )
+        finally:
+            owner.close()
+
+    assert provider_calls == 1
+    assert [item["outcome_kind"] for item in outcomes] == [
+        "INDETERMINATE",
+        "INDETERMINATE",
+    ]
+
+
+def test_agentbox_completion_without_effect_owner_fails_closed(
+    tmp_path: Path,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-no-owner",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    run = load_agentbox_operation(config, "chain-no-owner")
+
+    with pytest.raises(RuntimeError, match="no durable DeliveryEffects owner"):
+        _send_completion_dm(run, fallback_text="done")
 
 
 def _config_with_repo(tmp_path: Path, repo_name: str) -> AgentBoxConfig:

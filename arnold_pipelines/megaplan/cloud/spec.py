@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
@@ -16,14 +18,18 @@ except ImportError as exc:  # pragma: no cover - import guard
 
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, KNOWN_AGENTS
 from arnold_pipelines.megaplan.types import CliError
+from .session_markers import RESERVED_SERVICE_SESSION_NAMES
 
 
 VALID_MODES = ("auto", "chain", "idle")
 VALID_PROVIDERS = ("local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
-VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")
+VALID_CODEX_REASONING = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_CODEX_AUTH = ("chatgpt", "apikey")
+_SSH_ALIAS_RE = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?\Z")
+_SSH_USER_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
+_DOCKER_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 @dataclass(frozen=True)
@@ -36,8 +42,8 @@ class RepoSpec:
 
 @dataclass(frozen=True)
 class CodexSpec:
-    model: str = "gpt-5.4"
-    reasoning: str = "high"
+    model: str = "gpt-5.6-sol"
+    reasoning: str = "medium"
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,9 @@ class DriverSpec:
 class ResourcesSpec:
     volume: str | None = None
     port: int = 8080
+    prelaunch_min_free_bytes: int = 1_073_741_824
+    prelaunch_min_free_inodes: int = 10_000
+    prelaunch_receipt_reserve_bytes: int = 1_048_576
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,11 @@ class CloudSpec:
     extra_repos: tuple[RepoSpec, ...] = ()
     chain_session: str = "megaplan-chain"
     chain_session_explicit: bool = False
+    isolated_chain_runner: bool = False
+    isolated_chain_runner_image_id: str | None = None
+    zero_recovery_canary: bool = False
+    zero_recovery_predecessor_container: str | None = None
+    zero_recovery_workspace_dir: str | None = None
 
 
 def apply_repo_overrides(
@@ -169,6 +183,14 @@ def _mapping(raw: Any, label: str) -> dict[str, Any]:
     return raw
 
 
+def _boolean(raw: Any, label: str, *, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    if type(raw) is not bool:
+        raise _invalid(f"`{label}` must be a boolean")
+    return raw
+
+
 def _string(raw: Any, label: str, *, default: str | None = None) -> str:
     if raw is None:
         if default is None:
@@ -185,6 +207,58 @@ def _optional_string(raw: Any, label: str) -> str | None:
     if not isinstance(raw, str) or not raw.strip():
         raise _invalid(f"`{label}` must be a non-empty string")
     return raw
+
+
+def validate_ssh_host(raw: Any) -> str:
+    value = _string(raw, "ssh.host")
+    if (
+        value != value.strip()
+        or value.startswith("-")
+        or "@" in value
+        or any(character.isspace() or ord(character) < 32 for character in value)
+    ):
+        raise _invalid("`ssh.host` is not a safe SSH destination host")
+    address = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        if not _SSH_ALIAS_RE.fullmatch(value):
+            raise _invalid("`ssh.host` must be a hostname, SSH alias, IPv4, or IPv6 address")
+    return value
+
+
+def validate_ssh_user(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    value = _optional_string(raw, "ssh.user")
+    if value is None or not _SSH_USER_RE.fullmatch(value) or value.startswith("-"):
+        raise _invalid("`ssh.user` is not a safe SSH login name")
+    return value
+
+
+def validate_ssh_identity_file(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    value = _optional_string(raw, "ssh.identity_file")
+    if (
+        value is None
+        or value != value.strip()
+        or value.startswith("-")
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise _invalid("`ssh.identity_file` is not a safe SSH identity path")
+    return value
+
+
+def _chain_session(raw: Any, *, default: str) -> str:
+    value = _string(raw, "chain_session", default=default)
+    if value in RESERVED_SERVICE_SESSION_NAMES:
+        reserved = ", ".join(sorted(RESERVED_SERVICE_SESSION_NAMES))
+        raise _invalid(
+            f"`chain_session` {value!r} is reserved for a supervised service; "
+            f"reserved names: {reserved}"
+        )
+    return value
 
 
 def _absolute_posix(raw: Any, label: str) -> str:
@@ -205,9 +279,13 @@ def _port(raw: Any) -> int:
 def _positive_port(raw: Any, label: str, *, default: int) -> int:
     if raw is None:
         return default
-    if not isinstance(raw, int) or raw <= 0:
-        raise _invalid(f"`{label}` must be a positive integer")
+    if type(raw) is not int or not 1 <= raw <= 65535:
+        raise _invalid(f"`{label}` must be an integer from 1 through 65535")
     return raw
+
+
+def validate_ssh_port(raw: Any) -> int:
+    return _positive_port(raw, "ssh.port", default=22)
 
 
 def _optional_positive_int(raw: Any, label: str) -> int | None:
@@ -215,6 +293,14 @@ def _optional_positive_int(raw: Any, label: str) -> int | None:
         return None
     if not isinstance(raw, int) or raw <= 0:
         raise _invalid(f"`{label}` must be a positive integer")
+    return raw
+
+
+def _nonnegative_int(raw: Any, label: str, *, default: int) -> int:
+    if raw is None:
+        return default
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 0:
+        raise _invalid(f"`{label}` must be a non-negative integer")
     return raw
 
 
@@ -318,19 +404,81 @@ def load_spec(path: Path) -> CloudSpec:
     extra_repos = _extra_repos(raw.get("extra_repos"), repo)
 
     codex_raw = _mapping(raw.get("codex"), "codex")
-    codex_reasoning = _string(codex_raw.get("reasoning"), "codex.reasoning", default="high")
+    codex_reasoning = _string(codex_raw.get("reasoning"), "codex.reasoning", default="medium")
     if codex_reasoning not in VALID_CODEX_REASONING:
         raise _invalid(
             f"codex.reasoning must be one of {', '.join(VALID_CODEX_REASONING)}; got {codex_reasoning!r}"
         )
     codex = CodexSpec(
-        model=_string(codex_raw.get("model"), "codex.model", default="gpt-5.4"),
+        model=_string(codex_raw.get("model"), "codex.model", default="gpt-5.6-sol"),
         reasoning=codex_reasoning,
     )
 
     mode = _string(raw.get("mode"), "mode", default="idle")
     if mode not in VALID_MODES:
         raise _invalid(f"mode must be one of {', '.join(VALID_MODES)}; got {mode!r}")
+    isolated_chain_runner = _boolean(
+        raw.get("isolated_chain_runner"), "isolated_chain_runner"
+    )
+    if isolated_chain_runner and (provider != "ssh" or mode != "idle"):
+        raise _invalid(
+            "`isolated_chain_runner: true` requires `provider: ssh` and `mode: idle`"
+        )
+    isolated_image_raw = raw.get("isolated_chain_runner_image_id")
+    isolated_chain_runner_image_id = (
+        _string(isolated_image_raw, "isolated_chain_runner_image_id")
+        if isolated_image_raw is not None
+        else None
+    )
+    if isolated_chain_runner_image_id is not None and (
+        not isolated_chain_runner
+        or not _DOCKER_IMAGE_ID_RE.fullmatch(isolated_chain_runner_image_id)
+    ):
+        raise _invalid(
+            "`isolated_chain_runner_image_id` requires the isolated profile and an exact sha256 image ID"
+        )
+    zero_recovery_canary = _boolean(
+        raw.get("zero_recovery_canary"), "zero_recovery_canary"
+    )
+    if zero_recovery_canary and (provider != "ssh" or mode != "idle"):
+        raise _invalid(
+            "`zero_recovery_canary: true` requires `provider: ssh` and `mode: idle`"
+        )
+    if isolated_chain_runner and zero_recovery_canary:
+        raise _invalid(
+            "`isolated_chain_runner` and `zero_recovery_canary` are mutually exclusive"
+        )
+    secrets = _secrets(raw.get("secrets"))
+    if isolated_chain_runner and secrets:
+        raise _invalid("`isolated_chain_runner: true` requires `secrets: []`")
+    predecessor_raw = raw.get("zero_recovery_predecessor_container")
+    zero_recovery_predecessor_container = (
+        _string(predecessor_raw, "zero_recovery_predecessor_container")
+        if predecessor_raw is not None
+        else None
+    )
+    if zero_recovery_canary and not zero_recovery_predecessor_container:
+        raise _invalid(
+            "`zero_recovery_canary: true` requires `zero_recovery_predecessor_container`"
+        )
+    if not zero_recovery_canary and zero_recovery_predecessor_container is not None:
+        raise _invalid(
+            "`zero_recovery_predecessor_container` is only valid for a zero-recovery canary"
+        )
+    zero_workspace_raw = raw.get("zero_recovery_workspace_dir")
+    zero_recovery_workspace_dir = (
+        _absolute_posix(zero_workspace_raw, "zero_recovery_workspace_dir")
+        if zero_workspace_raw is not None
+        else None
+    )
+    if zero_recovery_canary and zero_recovery_workspace_dir is None:
+        raise _invalid(
+            "`zero_recovery_canary: true` requires `zero_recovery_workspace_dir`"
+        )
+    if not zero_recovery_canary and zero_recovery_workspace_dir is not None:
+        raise _invalid(
+            "`zero_recovery_workspace_dir` is only valid for a zero-recovery canary"
+        )
 
     agents = _agents(raw.get("agents"))
 
@@ -358,6 +506,21 @@ def load_spec(path: Path) -> CloudSpec:
     resources = ResourcesSpec(
         volume=_optional_string(resources_raw.get("volume"), "resources.volume"),
         port=_port(resources_raw.get("port")),
+        prelaunch_min_free_bytes=_nonnegative_int(
+            resources_raw.get("prelaunch_min_free_bytes"),
+            "resources.prelaunch_min_free_bytes",
+            default=1_073_741_824,
+        ),
+        prelaunch_min_free_inodes=_nonnegative_int(
+            resources_raw.get("prelaunch_min_free_inodes"),
+            "resources.prelaunch_min_free_inodes",
+            default=10_000,
+        ),
+        prelaunch_receipt_reserve_bytes=_nonnegative_int(
+            resources_raw.get("prelaunch_receipt_reserve_bytes"),
+            "resources.prelaunch_receipt_reserve_bytes",
+            default=1_048_576,
+        ),
     )
 
     local_raw = _mapping(raw.get("local"), "local")
@@ -372,10 +535,10 @@ def load_spec(path: Path) -> CloudSpec:
 
     ssh_raw = _mapping(raw.get("ssh"), "ssh")
     ssh = SshSpec(
-        host=_string(ssh_raw.get("host"), "ssh.host"),
-        user=_optional_string(ssh_raw.get("user"), "ssh.user"),
-        port=_positive_port(ssh_raw.get("port"), "ssh.port", default=22),
-        identity_file=_optional_string(ssh_raw.get("identity_file"), "ssh.identity_file"),
+        host=validate_ssh_host(ssh_raw.get("host")),
+        user=validate_ssh_user(ssh_raw.get("user")),
+        port=validate_ssh_port(ssh_raw.get("port")),
+        identity_file=validate_ssh_identity_file(ssh_raw.get("identity_file")),
         remote_dir=_absolute_posix(
             ssh_raw.get("remote_dir", "/opt/megaplan-cloud/deploy"),
             "ssh.remote_dir",
@@ -394,6 +557,30 @@ def load_spec(path: Path) -> CloudSpec:
             default="megaplan-cloud-agent",
         ),
     ) if provider == "ssh" or ssh_raw else None
+    if zero_recovery_canary and ssh is not None:
+        if (
+            not _SSH_ALIAS_RE.fullmatch(zero_recovery_predecessor_container or "")
+            or zero_recovery_predecessor_container == ssh.container
+        ):
+            raise _invalid(
+                "zero-recovery predecessor must be a safe container name distinct from ssh.container"
+            )
+        shared_workspace = PurePosixPath(ssh.workspace_dir)
+        isolated_workspace = PurePosixPath(zero_recovery_workspace_dir or "/")
+        if (
+            isolated_workspace.parent != shared_workspace
+            or isolated_workspace.name in {"", ".", ".."}
+            or not _SSH_ALIAS_RE.fullmatch(isolated_workspace.name)
+        ):
+            raise _invalid(
+                "zero_recovery_workspace_dir must be one safe direct child of ssh.workspace_dir"
+            )
+        if repo.workspace != "/workspace/Arnold":
+            raise _invalid(
+                "zero-recovery repo.workspace must be exactly /workspace/Arnold"
+            )
+        if resources.volume is not None:
+            raise _invalid("zero-recovery resources.volume must be omitted")
 
     auto_spec: AutoSpec | None = None
     if mode == "auto":
@@ -433,9 +620,8 @@ def load_spec(path: Path) -> CloudSpec:
     chain_session_explicit = "chain_session" in raw or (
         chain_spec is not None and chain_spec.chain_session is not None
     )
-    chain_session = _string(
+    chain_session = _chain_session(
         raw.get("chain_session"),
-        "chain_session",
         default=chain_spec.chain_session if chain_spec and chain_spec.chain_session else "megaplan-chain",
     )
 
@@ -447,7 +633,7 @@ def load_spec(path: Path) -> CloudSpec:
         mode=mode,
         megaplan=megaplan,
         resources=resources,
-        secrets=_secrets(raw.get("secrets")),
+        secrets=secrets,
         auto=auto_spec,
         chain=chain_spec,
         driver=driver,
@@ -457,4 +643,9 @@ def load_spec(path: Path) -> CloudSpec:
         extra_repos=extra_repos,
         chain_session=chain_session,
         chain_session_explicit=chain_session_explicit,
+        isolated_chain_runner=isolated_chain_runner,
+        isolated_chain_runner_image_id=isolated_chain_runner_image_id,
+        zero_recovery_canary=zero_recovery_canary,
+        zero_recovery_predecessor_container=zero_recovery_predecessor_container,
+        zero_recovery_workspace_dir=zero_recovery_workspace_dir,
     )

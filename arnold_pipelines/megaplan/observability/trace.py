@@ -92,6 +92,11 @@ def _kind_label(kind: str) -> str:
         "cost_recorded": "💰 COST",
         "health_check_failed": "💥 HEALTH",
         "drift_detected": "↯ DRIFT",
+        "session_start": "▷ SESSION",
+        "inference": "⚙ INFER",
+        "tool": "🔧 TOOL",
+        "git": "⎇ GIT",
+        "transition": "↪ TRANS",
     }
     return labels.get(kind, kind.upper())
 
@@ -293,6 +298,36 @@ def format_narrative(events: Sequence[dict], *, now: datetime | None = None) -> 
         elif kind == "drift_detected":
             msg = payload.get("message", "")
             lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Drift detected: {msg}.")
+        elif kind == "session_start":
+            session_id = payload.get("session_id", "?")
+            env = payload.get("environment", "")
+            env_str = f" env={env}" if env else ""
+            lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Session started: {session_id}{env_str}.")
+        elif kind == "inference":
+            model = payload.get("model", "?")
+            provider = payload.get("provider", "?")
+            dur = payload.get("duration_s", 0)
+            tokens_in = payload.get("tokens_in", 0)
+            tokens_out = payload.get("tokens_out", 0)
+            lines.append(
+                f"{ts[:19].replace('T', ' ')} ({rel}) → Inference: {provider}/{model}, "
+                f"{tokens_in}+{tokens_out} tokens, {dur:.0f}s."
+            )
+        elif kind == "tool":
+            tool_name = payload.get("tool_name", "?")
+            dur = payload.get("duration_s", 0)
+            lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Tool: {tool_name} ({dur:.0f}s).")
+        elif kind == "git":
+            operation = payload.get("operation", "?")
+            repo = payload.get("repo", "")
+            repo_str = f" [{repo}]" if repo else ""
+            lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Git: {operation}{repo_str}.")
+        elif kind == "transition":
+            frm = payload.get("from", "?")
+            to = payload.get("to", "?")
+            trigger = payload.get("trigger", "")
+            trig_str = f" via {trigger}" if trigger else ""
+            lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Transition: {frm} → {to}{trig_str}.")
         else:
             lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → {kind}: {json.dumps(payload)}")
 

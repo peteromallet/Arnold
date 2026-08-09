@@ -295,19 +295,18 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_tiebreaker_parser(subparsers: Any) -> None:
+    run_parser = subparsers.add_parser(
+        "tiebreaker-run",
+        help="Execute the pending tiebreaker through the canonical phase handler",
+    )
+    run_parser.add_argument("--plan", default=None, help="Plan name")
+    _add_common_agent_args(run_parser)
+
     tb_parser = subparsers.add_parser(
         "tiebreaker",
-        help="Run structured decision support for architectural questions",
+        help="Inspect or decide a canonical tiebreaker run",
     )
-    tb_sub = tb_parser.add_subparsers(dest="tiebreaker_action")
-
-    # Default (run) action args live on the top-level tiebreaker parser.
-    tb_parser.add_argument("--plan", default=None, help="Plan name")
-    question_group = tb_parser.add_mutually_exclusive_group()
-    question_group.add_argument("--question", help="Decision question (inline)")
-    question_group.add_argument("--question-file", help="Path to decision question file")
-    tb_parser.add_argument("--output", help="Additional output path for the synthesis markdown")
-    _add_common_agent_args(tb_parser)
+    tb_sub = tb_parser.add_subparsers(dest="tiebreaker_action", required=True)
 
     # Status subcommand
     status_parser = tb_sub.add_parser("status", help="Show tiebreaker run status")

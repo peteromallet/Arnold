@@ -1,5 +1,8 @@
 # S3: Megaplan Boundary Coverage And Cloud Custody
 
+> Superseded as an executable milestone by C1-C6. Preserved as historical
+> checklist material; see the 2026-07-10 corrective reshape decision.
+
 ## Outcome
 
 Extend the boundary-contract system across Megaplan phases, reducers, chain
@@ -16,7 +19,7 @@ This sprint collapses the detailed briefs:
 
 IN:
 
-- Add contracts or documented exemptions for plan, revise, critique, critique
+- Add contracts or time-bounded migration exceptions for plan, revise, critique, critique
   evaluator, gate, execute, finalize, review, tiebreaker, feedback where
   present, child/reducer flows, and parent-state promotion.
 - Represent reducer semantics: child outputs, aggregate canonical outputs,
@@ -58,7 +61,8 @@ OUT:
 
 ## Done Criteria
 
-1. Every covered phase has a contract or documented exemption.
+1. Every covered phase has a contract; no supported-surface exception survives
+   C6 final acceptance.
 2. Semantic-health tests cover at least one broken contract per phase family.
 3. Reducer tests cover child output without reducer promotion and reducer
    promotion without required child evidence.

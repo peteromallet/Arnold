@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 from arnold_pipelines.megaplan.discord_dm import DISCORD_MESSAGE_LIMIT, render_discord_dm, send_discord_dm
 
@@ -80,6 +81,24 @@ def test_send_discord_dm_degrades_when_config_missing() -> None:
     assert result["ok"] is False
     assert result["reason"] == "missing_config"
     assert result["missing"] == ["DISCORD_BOT_TOKEN", "DISCORD_DM_USER_ID"]
+
+
+def test_send_discord_dm_suppresses_pytest_fixture_before_network() -> None:
+    def exploding_opener(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("test fixture notification reached the network")
+
+    result = send_discord_dm(
+        {
+            "title": "Megaplan needs human review - demo-chain",
+            "workspace": "/tmp/pytest-of-root/pytest-411/test_gate0/ws",
+        },
+        env={"DISCORD_BOT_TOKEN": "configured", "DISCORD_DM_USER_ID": "123"},
+        opener=exploding_opener,
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "test_execution_suppressed"
+    assert result["suppression_reason"] == "pytest_workspace:workspace"
 
 
 def test_send_discord_dm_posts_dm_channel_then_messages() -> None:
@@ -235,3 +254,21 @@ def test_send_discord_dm_returns_chunked_message_ids_without_secret_bearing_fiel
     assert "token-123" not in json.dumps(result)
     assert "supersecret" not in json.dumps(result)
     assert "bearer-secret-token-value" not in json.dumps(result)
+
+
+def test_selected_delivery_adapter_exception_never_falls_back_to_direct_provider() -> None:
+    effects = MagicMock()
+    effects.deliver.side_effect = RuntimeError("ledger unavailable")
+
+    def forbidden_network(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("direct Discord fallback was invoked")
+
+    result = send_discord_dm(
+        {"title": "incident", "incident_occurrence_id": "occ-1"},
+        env={"DISCORD_BOT_TOKEN": "token", "DISCORD_DM_USER_ID": "user"},
+        opener=forbidden_network,
+        delivery_effects=effects,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "delivery_adapter_indeterminate"
+    assert result["outcome_kind"] == "INDETERMINATE"

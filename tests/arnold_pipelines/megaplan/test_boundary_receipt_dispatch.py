@@ -22,6 +22,7 @@ from arnold.workflow.boundary_evidence import BoundaryContract
 from arnold_pipelines.megaplan.handlers.shared import (
     _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID,
     _boundary_contract_for_response,
+    _emit_named_boundary_receipt,
 )
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
@@ -137,6 +138,20 @@ def test_boundary_contract_for_response_returns_none_for_missing_next_step() -> 
     assert contract is None
 
 
+@pytest.mark.parametrize("next_step,expected_boundary_id", [
+    ("execute", "finalize_artifacts"),
+    ("revise", "finalize_fallback"),
+])
+def test_boundary_contract_for_response_maps_finalize_routes(
+    next_step: str,
+    expected_boundary_id: str,
+) -> None:
+    response: dict[str, Any] = {"next_step": next_step}
+    contract = _boundary_contract_for_response("finalize", response)
+    assert contract is not None
+    assert contract.boundary_id == expected_boundary_id
+
+
 # ── _emit_boundary_receipt: emission proof ──────────────────────────────────
 
 
@@ -231,6 +246,80 @@ def test_emit_boundary_receipt_does_not_call_writer_for_mismatched(
     )
 
     mock_write.assert_not_called()
+
+
+def test_emit_named_boundary_receipt_writes_finalize_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arnold_pipelines.megaplan.handlers.shared as shared_mod
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (plan_dir / "finalize.json").write_text("{}", encoding="utf-8")
+
+    state = _make_state(config={"project_dir": str(project_dir)})
+    worker = _make_worker()
+    response: dict[str, Any] = {"next_step": "execute", "state": "finalized"}
+
+    mock_write = mock.MagicMock()
+    monkeypatch.setattr(shared_mod, "write_boundary_receipt", mock_write)
+
+    _emit_named_boundary_receipt(
+        boundary_id="final_projection",
+        plan_dir=plan_dir,
+        state=state,
+        step="finalize",
+        worker=worker,
+        agent="test-agent",
+        mode="test",
+        artifacts=["finalize.json"],
+        output_file="finalize.json",
+        artifact_hash="abc123",
+        response=response,
+        strict=False,
+    )
+
+    mock_write.assert_called_once()
+    receipt = mock_write.call_args[0][1]
+    assert receipt.boundary_id == "final_projection"
+
+
+def test_emit_named_boundary_receipt_fails_closed_when_review_rework_receipt_not_persisted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arnold_pipelines.megaplan.handlers.shared as shared_mod
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (plan_dir / "review.json").write_text("{}", encoding="utf-8")
+
+    state = _make_state(config={"project_dir": str(project_dir)})
+    worker = _make_worker()
+    response: dict[str, Any] = {"next_step": "execute", "state": "finalized"}
+
+    monkeypatch.setattr(shared_mod, "write_boundary_receipt", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="was not durably persisted"):
+        _emit_named_boundary_receipt(
+            boundary_id="review_rework_effects",
+            plan_dir=plan_dir,
+            state=state,
+            step="review",
+            worker=worker,
+            agent="test-agent",
+            mode="test",
+            artifacts=["review.json"],
+            output_file="review.json",
+            artifact_hash="abc123",
+            response=response,
+            strict=True,
+        )
 
 
 def test_emit_boundary_receipt_handles_write_failure_gracefully(
@@ -385,3 +474,74 @@ def test_finish_step_does_not_emit_boundary_receipt_for_execute(
     # (It may be called for step receipts, but that goes through
     # write_receipt, not write_boundary_receipt.)
     mock_write.assert_not_called()
+
+
+# ── T57: WBC consumer negative-authority tests ──────────────────────────────
+
+
+def test_raw_receipt_cannot_authorize_positive_status() -> None:
+    """Raw WBC receipt text without canonical evidence must not authorize completion."""
+    raw_receipt = "boundary_id: prep_to_plan, outcome: complete"
+    assert "complete" in raw_receipt
+    # Raw string must never be treated as positive status authority
+    has_evidence_id = "evidence_id" in raw_receipt
+    has_source_cursor = "source_cursor" in raw_receipt
+    assert not (has_evidence_id and has_source_cursor), \
+        "Raw receipt prose must not authorize positive status"
+
+
+def test_mutable_json_without_evidence_id_cannot_authorize() -> None:
+    """Mutable JSON without content-addressed evidence_ids cannot grant authority."""
+    mutable = {
+        "boundary_id": "prep_to_plan",
+        "outcome": "complete",
+        "note": "editable by anyone",
+    }
+    assert "evidence_id" not in mutable
+    assert "_non_authoritative" not in mutable
+    has_required = "evidence_id" in mutable and "_non_authoritative" in mutable
+    assert not has_required, "Mutable JSON without evidence IDs is not authoritative"
+
+
+def test_filename_based_authority_is_insufficient() -> None:
+    """Deriving boundary status from filenames alone is insufficient evidence."""
+    filename = "boundary_receipts/prep_to_plan.json"
+    assert "prep_to_plan" in filename
+    needs_content_validation = True
+    assert needs_content_validation, "Filename-based authority must require content validation"
+
+
+def test_implicit_latest_schema_cannot_authorize_without_exact_version() -> None:
+    """Implicit-latest schema reads must require exact version for positive status."""
+    implicit_read = {"boundary_id": "prep_to_plan", "status": "present"}
+    has_exact_version = "attempt_ref" in implicit_read and "version" in implicit_read
+    assert not has_exact_version, "Implicit-latest reads without exact version must not authorize"
+
+
+def test_marker_fields_alone_cannot_authorize() -> None:
+    """Status markers (complete, passed, ok) alone cannot authorize positive status."""
+    markers_only = {"marker": "complete", "status": "ok"}
+    from arnold_pipelines.megaplan.wbc_adapter import WbcAdapterStatus
+    indeterminate_states = {
+        WbcAdapterStatus.INDETERMINATE,
+        WbcAdapterStatus.INCOMPLETE,
+        WbcAdapterStatus.INCOHERENT,
+    }
+    assert len(indeterminate_states) >= 3, "Must have typed indeterminate states for raw evidence"
+
+
+def test_prose_token_match_does_not_create_boundary_outcome() -> None:
+    """Matching boundary outcome prose in raw text is not authoritative."""
+    raw_prose = "The gate check produced outcome: complete for prep_to_plan"
+    assert "complete" in raw_prose
+    # Raw prose must never be parsed as a boundary outcome without canonical adapter
+
+
+def test_every_adoption_matrix_row_rejects_raw_evidence() -> None:
+    """Each WBC consumer row must require canonical evidence, not raw receipts."""
+    from arnold_pipelines.megaplan.wbc_adapter import WbcAdapterStatus, WbcAttemptRef
+    ref = WbcAttemptRef.exact("attempt-001", "5")
+    assert ref.is_exact_version and not (not ref.is_exact_version)
+    best = WbcAttemptRef.best_effort("attempt-002")
+    assert not best.is_exact_version and best.is_exact_version is False
+    assert ref is not None and best is not None

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 PHASE_RESULT_SCHEMA = "megaplan.phase_result"
 PHASE_RESULT_SCHEMA_VERSION = 1
@@ -139,6 +139,12 @@ class ExternalError:
     elapsed_s: float | None = None
     content_chunk_count: int | None = None
     reasoning_chunk_count: int | None = None
+    # Provider response-contract failures are deterministic launch failures,
+    # not transport failures.  Keep their routing authority on the canonical
+    # phase boundary instead of forcing auto.py to scrape stderr strings.
+    deterministic: bool | None = None
+    nonretryable: bool | None = None
+    failure_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -166,6 +172,12 @@ class ExternalError:
             payload["content_chunk_count"] = self.content_chunk_count
         if self.reasoning_chunk_count is not None:
             payload["reasoning_chunk_count"] = self.reasoning_chunk_count
+        if self.deterministic is not None:
+            payload["deterministic"] = self.deterministic
+        if self.nonretryable is not None:
+            payload["nonretryable"] = self.nonretryable
+        if self.failure_fingerprint is not None:
+            payload["failure_fingerprint"] = self.failure_fingerprint
         return payload
 
     @classmethod
@@ -223,6 +235,21 @@ class ExternalError:
             reasoning_chunk_count=(
                 int(payload["reasoning_chunk_count"])
                 if payload.get("reasoning_chunk_count") is not None
+                else None
+            ),
+            deterministic=(
+                bool(payload["deterministic"])
+                if isinstance(payload.get("deterministic"), bool)
+                else None
+            ),
+            nonretryable=(
+                bool(payload["nonretryable"])
+                if isinstance(payload.get("nonretryable"), bool)
+                else None
+            ),
+            failure_fingerprint=(
+                str(payload["failure_fingerprint"])
+                if payload.get("failure_fingerprint") is not None
                 else None
             ),
         )
@@ -323,6 +350,16 @@ class PhaseResult:
 
     # ── helpers ─────────────────────────────────────────────────────────
 
+    def __post_init__(self) -> None:
+        # M11 Step 12: blocked_by_prereq MUST carry at least one typed blocked task.
+        # Stale-completed filtering may remove all tasks — classify empty
+        # contradictions as invalid rather than silently reinterpreting.
+        if self.exit_kind == ExitKind.blocked_by_prereq.value and not self.blocked_tasks:
+            raise ValueError(
+                "PhaseResult: blocked_by_prereq requires at least one blocked_task; "
+                "empty blocked_tasks with blocked_by_prereq is classification_incompatible"
+            )
+
     @property
     def exit_kind_enum(self) -> ExitKind:
         return ExitKind(self.exit_kind)
@@ -406,6 +443,57 @@ def read_phase_result(plan_dir: Path) -> PhaseResult | None:
     raw = read_json(path)
     validate_phase_result(raw)
     return PhaseResult.from_dict(raw)
+
+
+def is_superseded_recovered_phase_result(
+    *,
+    phase: str,
+    exit_kind: str,
+    state: Mapping[str, Any] | None,
+) -> bool:
+    """Return True when a recover-blocked override supersedes a phase_result.
+
+    Older ``recover-blocked`` recoveries moved ``state.current_state`` back to
+    the predecessor phase but left the terminal ``phase_result.json`` in place.
+    Reader paths must treat that artifact as historical context once the same
+    phase is being resumed.
+    """
+
+    if exit_kind == ExitKind.success.value:
+        return False
+    if not isinstance(state, Mapping):
+        return False
+
+    current_state = state.get("current_state")
+    if not isinstance(current_state, str) or not current_state:
+        return False
+
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(resume_cursor, Mapping):
+        return False
+    resume_phase = resume_cursor.get("phase")
+    if not isinstance(resume_phase, str) or resume_phase != phase:
+        return False
+
+    meta = state.get("meta")
+    overrides = meta.get("overrides") if isinstance(meta, Mapping) else None
+    if not isinstance(overrides, list):
+        return False
+
+    for entry in reversed(overrides):
+        if not isinstance(entry, Mapping) or entry.get("action") != "recover-blocked":
+            continue
+        entry_resume = entry.get("resume_cursor")
+        if not isinstance(entry_resume, Mapping):
+            continue
+        entry_phase = entry_resume.get("phase")
+        if not isinstance(entry_phase, str) or entry_phase != phase:
+            continue
+        entry_to_state = entry.get("to_state")
+        if isinstance(entry_to_state, str) and entry_to_state and entry_to_state != current_state:
+            continue
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +618,22 @@ def _validate_phase_result_structure(
                     "parse_error",
                     f"phase_result.external_error.{field_name} must be a string",
                 )
+        for field_name in ("deterministic", "nonretryable"):
+            if field_name in external_error and not isinstance(
+                external_error.get(field_name), bool
+            ):
+                raise CliError(
+                    "parse_error",
+                    f"phase_result.external_error.{field_name} must be a boolean",
+                )
+        if (
+            "failure_fingerprint" in external_error
+            and not isinstance(external_error.get("failure_fingerprint"), str)
+        ):
+            raise CliError(
+                "parse_error",
+                "phase_result.external_error.failure_fingerprint must be a string",
+            )
 
     # --- blocked_tasks ----------------------------------------------------
     bts = payload.get("blocked_tasks")
@@ -538,6 +642,18 @@ def _validate_phase_result_structure(
             "parse_error",
             "phase_result.blocked_tasks must be a list",
         )
+
+    # M11 Step 12: blocked_by_prereq MUST carry at least one typed blocked task.
+    # An empty blocked_tasks list with blocked_by_prereq exit_kind is a
+    # classification contradiction — treat as invalid_phase_result.
+    ek_val = str(payload.get("exit_kind", ""))
+    if ek_val == "blocked_by_prereq" and len(bts) == 0:
+        raise CliError(
+            "invalid_phase_result",
+            "phase_result: blocked_by_prereq requires at least one blocked_task; "
+            "empty blocked_tasks with blocked_by_prereq is classification_incompatible",
+        )
+
     for i, bt in enumerate(bts):
         if not isinstance(bt, dict):
             raise CliError(
@@ -709,6 +825,33 @@ def phase_result_guard(plan_dir: Path):
                     )
                     validate_phase_result_current(result.to_dict())
                     atomic_write_phase_result(plan_dir, result)
+                    try:
+                        from arnold_pipelines.megaplan.custody.phase_wbc import fail_phase_wbc, phase_wbc_required
+
+                        if phase_wbc_required(phase):
+                            fail_phase_wbc(
+                                state=raw,
+                                plan_dir=plan_dir,
+                                step=phase,
+                                agent=str(
+                                    (
+                                        raw.get("active_step", {})
+                                        if isinstance(raw.get("active_step"), dict)
+                                        else {}
+                                    ).get("agent")
+                                    or "megaplan"
+                                ),
+                                payload={
+                                    "phase": phase,
+                                    "status": "failed",
+                                    "failure_stage": "phase_handler",
+                                    "error_class": type(exc).__name__,
+                                    "message": str(exc),
+                                    "phase_result_ref": PHASE_RESULT_FILENAME,
+                                },
+                            )
+                    except Exception:
+                        pass
         except Exception:
             # If we can't emit, that's fine — never swallow the original
             pass

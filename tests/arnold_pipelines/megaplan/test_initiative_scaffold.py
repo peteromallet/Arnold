@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
+from arnold_pipelines.megaplan.chain import run_chain_cli
 from arnold_pipelines.megaplan.cli import handle_initiative
 from arnold_pipelines.megaplan.cloud.cli import _run_chain_wrapper, _run_preflight
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -43,6 +46,7 @@ def _initiative_args(**overrides: object) -> argparse.Namespace:
         "description_file": None,
         "north_star": None,
         "north_star_file": None,
+        "strategy": False,
         "doc": [],
         "chain": False,
         "milestone": ["m1=First Sprint"],
@@ -95,6 +99,166 @@ def test_initiative_new_scaffolds_cloud_ready_canonical_layout(tmp_path: Path) -
     assert cloud["ssh"]["host"] == "TODO_SSH_HOST"
     assert cloud["chain_session"] == "cloud-ready-project"
     assert result["next"]["launch"].endswith(f"cloud chain {chain_path} --cloud-yaml {cloud_path}")
+
+
+@pytest.mark.parametrize("initialize_git", [False, True], ids=["invalid-worktree", "valid-worktree"])
+def test_initiative_retire_hides_discovery_and_blocks_chain_continuation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    initialize_git: bool,
+) -> None:
+    if initialize_git:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    handle_initiative(tmp_path, _initiative_args(slug="old-work", cloud=False))
+    handle_initiative(tmp_path, _initiative_args(slug="replacement", cloud=False))
+    old_root = tmp_path / ".megaplan" / "initiatives" / "old-work"
+    chain_path = old_root / "chain.yaml"
+    evidence = old_root / "handoff" / "replacement-evidence.json"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text('{"replacement":"replacement"}\n', encoding="utf-8")
+    chain_sha = hashlib.sha256(chain_path.read_bytes()).hexdigest()
+
+    result = handle_initiative(
+        tmp_path,
+        argparse.Namespace(
+            initiative_action="retire",
+            slug="old-work",
+            superseded_by="replacement",
+            reason="replacement owns the remaining work",
+            expect_chain_sha256=chain_sha,
+            evidence=[str(evidence.relative_to(tmp_path))],
+        ),
+    )
+
+    assert result["success"] is True
+    assert result["retirement"]["truthfulness"] == {
+        "completion_asserted": False,
+        "unfinished_milestones_completed": False,
+        "historical_evidence_deleted": False,
+    }
+    assert (old_root / ".retired").is_file()
+
+    listed = handle_initiative(
+        tmp_path,
+        argparse.Namespace(initiative_action="list", limit=None, include_retired=False),
+    )
+    assert [item["slug"] for item in listed["initiatives"]] == ["replacement"]
+    historical = handle_initiative(
+        tmp_path,
+        argparse.Namespace(initiative_action="list", limit=None, include_retired=True),
+    )
+    assert {item["slug"] for item in historical["initiatives"]} == {"old-work", "replacement"}
+    search = handle_initiative(
+        tmp_path,
+        argparse.Namespace(
+            initiative_action="search",
+            keywords=["old-work"],
+            keywords_all=True,
+            limit=None,
+            include_retired=False,
+        ),
+    )
+    assert "old-work" not in {item["slug"] for item in search["initiatives"]}
+    historical_search = handle_initiative(
+        tmp_path,
+        argparse.Namespace(
+            initiative_action="search",
+            keywords=["old-work"],
+            keywords_all=True,
+            limit=None,
+            include_retired=True,
+        ),
+    )
+    assert "old-work" in {item["slug"] for item in historical_search["initiatives"]}
+
+    if initialize_git:
+        worktree_probe = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert Path(worktree_probe.stdout.strip()).resolve() == tmp_path.resolve()
+    else:
+        worktree_probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=tmp_path,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert worktree_probe.returncode != 0
+
+    def snapshot_non_git_files() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(tmp_path)): path.read_bytes()
+            for path in sorted(tmp_path.rglob("*"))
+            if path.is_file() and ".git" not in path.relative_to(tmp_path).parts
+        }
+
+    def unexpected_preflight(*_args, **_kwargs):
+        pytest.fail("retired initiative reached chain mutation/runtime preflight")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._require_git_worktree_root",
+        unexpected_preflight,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.chain_spec.load_spec",
+        unexpected_preflight,
+    )
+    before = snapshot_non_git_files()
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(chain_action="start", spec=str(chain_path)),
+    )
+    after = snapshot_non_git_files()
+    assert rc != 0
+    assert after == before
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == "initiative_retired"
+
+
+def test_initiative_retire_rejects_changed_chain(tmp_path: Path) -> None:
+    handle_initiative(tmp_path, _initiative_args(slug="old-work", cloud=False))
+    handle_initiative(tmp_path, _initiative_args(slug="replacement", cloud=False))
+
+    with pytest.raises(CliError, match="Chain SHA-256 changed"):
+        handle_initiative(
+            tmp_path,
+            argparse.Namespace(
+                initiative_action="retire",
+                slug="old-work",
+                superseded_by="replacement",
+                reason="replacement owns the remaining work",
+                expect_chain_sha256="0" * 64,
+                evidence=[],
+            ),
+        )
+
+
+def test_initiative_new_can_scaffold_root_strategy_without_briefs_fallback(
+    tmp_path: Path,
+) -> None:
+    result = handle_initiative(
+        tmp_path,
+        _initiative_args(
+            slug="Product Direction",
+            strategy=True,
+            milestone=[],
+            chain=False,
+            cloud=False,
+        ),
+    )
+
+    initiative = tmp_path / ".megaplan" / "initiatives" / "product-direction"
+    strategy = initiative / "STRATEGY.md"
+    assert result["strategy"] == str(strategy)
+    assert strategy.is_file()
+    assert "schema_version: megaplan-strategy-v1" in strategy.read_text(encoding="utf-8")
+    assert not (tmp_path / ".megaplan" / "briefs").exists()
 
 
 def test_cloud_preflight_rejects_template_placeholders_without_override(
@@ -221,6 +385,11 @@ def test_cloud_chain_rejects_template_placeholders_before_remote_work(tmp_path: 
         _run_chain_wrapper(project, args, _cloud_spec(), provider=None)
     except CliError as exc:
         assert exc.code == "template_placeholders_present"
-        assert "TODO_REPO_URL" in exc.message
+        placeholders = {
+            finding["placeholder"]
+            for finding in exc.extra["template_placeholders"]
+        }
+        assert "TODO_REPO_URL" in placeholders
+        assert "TODO_NORTH_STAR_END_STATE" in placeholders
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("cloud chain unexpectedly accepted template placeholders")

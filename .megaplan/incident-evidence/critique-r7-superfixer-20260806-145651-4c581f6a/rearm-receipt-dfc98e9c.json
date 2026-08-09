@@ -1,0 +1,12 @@
+{
+ "schema": "megaplan.planner_repair_rearm",
+ "schema_version": 1,
+ "rearmed": true,
+ "plan": "cl2-wbc-backed-ledger-20260805-2140",
+ "occurrence_digest": "sha256:f3b952beb7881acc80f5efc98b1f21b64a911cc6d17dd87b220e1d336b4e55c5",
+ "candidate_id": "candidate:36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07",
+ "failure_fingerprint": "382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df",
+ "runtime_revision": "dfc98e9c801acb5f2249272ac3258730cb213b7a",
+ "circuit_still_open": true,
+ "rearmed_at": "2026-08-06T16:03:46Z"
+}

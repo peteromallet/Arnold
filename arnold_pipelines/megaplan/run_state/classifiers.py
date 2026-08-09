@@ -42,13 +42,31 @@ from arnold_pipelines.megaplan.run_state.evidence import (
 from arnold_pipelines.megaplan.run_state.model import (
     CanonicalRunState,
     CanonicalState,
+    CustodyRef,
+    FailureTokenKind,
+    NormalizedFailureToken,
+    RunAuthorityRef,
     TypedHumanGate,
+    UncertaintyLevel,
+    WbcEvidenceRef,
 )
+from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
 
 
 # ---------------------------------------------------------------------------
 # constants
 # ---------------------------------------------------------------------------
+
+# Failure-related chain/plan labels that should be normalized to canonical
+# failure tokens when present in evidence.
+_FAILURE_LABEL_TOKENS: frozenset[str] = frozenset(
+    {"fail", "failed", "error", "blocked", "execution_blocked"}
+)
+
+# Maximum acceptable freshness (seconds) for evidence to be considered LOW
+# uncertainty.  Beyond this threshold the resolver escalates uncertainty.
+_DEFAULT_FRESHNESS_LOW_THRESHOLD_S = 60.0  # 1 minute
+_DEFAULT_FRESHNESS_HIGH_THRESHOLD_S = 300.0  # 5 minutes
 
 # Terminal plan/chain states that represent authoritative SUCCESS.
 _SUCCESS_TERMINAL_STATES = frozenset({"done"})
@@ -83,6 +101,9 @@ _IMPLEMENTATION_BLOCK_TOKENS = (
     "missing_fallthrough_route",
     "stale_assertion",
     "fixture_refresh",
+    "quality_gate_blocked",
+    "deterministic_quality_blocked",
+    "blocked_recovery_not_resolved",
 )
 
 # Tokens that indicate a retryable *execution* block (transient / budget).
@@ -98,16 +119,6 @@ _RETRYABLE_EXECUTION_TOKENS = (
 # that escalates a run to ``BROKEN_STATE_MACHINE``.
 _BROKEN_REPEAT_THRESHOLD = 3
 
-# Structured needs-human field names that may carry a typed gate category.
-_GATE_CATEGORY_FIELDS = (
-    "gate_type",
-    "human_gate",
-    "gate",
-    "category",
-    "gate_kind",
-    "kind",
-)
-
 # Structured numeric fields that may report repeated blocker attempts.
 _BROKEN_COUNT_FIELDS = (
     "attempt_count",
@@ -117,30 +128,6 @@ _BROKEN_COUNT_FIELDS = (
     "repeat_count",
     "repeated_blocker_count",
 )
-
-# Mapping from canonical gate-category tokens to :class:`TypedHumanGate`.
-_GATE_CATEGORY_MAP = {
-    "explicit_approval": TypedHumanGate.EXPLICIT_APPROVAL,
-    "approval": TypedHumanGate.EXPLICIT_APPROVAL,
-    "approve": TypedHumanGate.EXPLICIT_APPROVAL,
-    "credential": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "credentials": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "credential_account": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "account": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "missing_credential": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "quota": TypedHumanGate.QUOTA,
-    "rate_limit": TypedHumanGate.QUOTA,
-    "ratelimit": TypedHumanGate.QUOTA,
-    "rate-limit": TypedHumanGate.QUOTA,
-    "verification": TypedHumanGate.VERIFICATION,
-    "verify": TypedHumanGate.VERIFICATION,
-    "review": TypedHumanGate.VERIFICATION,
-    "policy": TypedHumanGate.POLICY,
-    "user_action": TypedHumanGate.USER_ACTION,
-    "user-action": TypedHumanGate.USER_ACTION,
-    "action": TypedHumanGate.USER_ACTION,
-}
-
 
 # ---------------------------------------------------------------------------
 # small helpers
@@ -163,6 +150,13 @@ def _safe_lower(mapping: Mapping[str, Any], key: str) -> str:
     value = mapping.get(key)
     if isinstance(value, str):
         return value.strip().lower()
+    return ""
+
+
+def _safe_str(value: object) -> str:
+    """Return a trimmed string, or ``\"\"`` for non-string / None values."""
+    if isinstance(value, str):
+        return value.strip()
     return ""
 
 
@@ -189,16 +183,7 @@ def _infer_typed_gate(needs_human: Mapping[str, Any]) -> "TypedHumanGate | None"
     ``category`` / ``gate_kind`` / ``kind``) are consulted — never the
     free-text ``summary``, so this is not keyword scanning of prose.
     """
-    for field_name in _GATE_CATEGORY_FIELDS:
-        raw = needs_human.get(field_name)
-        if not isinstance(raw, str):
-            continue
-        token = raw.strip().lower()
-        if not token:
-            continue
-        if token in _GATE_CATEGORY_MAP:
-            return _GATE_CATEGORY_MAP[token]
-    return None
+    return typed_human_gate(needs_human)
 
 
 def _iter_containers(obj: object, _depth: int = 0):
@@ -228,6 +213,245 @@ def _detect_broken_repeat(evidence: Mapping[str, Any]) -> int:
             if isinstance(value, (int, float)):
                 best = max(best, int(value))
     return best
+
+
+def _has_durable_repair_custody(evidence: Mapping[str, Any]) -> bool:
+    """Require formal custody records; repair-progress presence is advisory."""
+
+    custody = evidence.get("repair_custody")
+    if not isinstance(custody, Mapping):
+        return False
+    active_requests = {
+        str(value).strip()
+        for value in custody.get("active_request_ids", ())
+        if isinstance(value, str) and value.strip()
+    }
+    active_claims = {
+        str(value).strip()
+        for value in custody.get("active_claim_request_ids", ())
+        if isinstance(value, str) and value.strip()
+    }
+    if active_requests & active_claims:
+        return True
+    attempts = custody.get("attempts")
+    if not isinstance(attempts, list):
+        return False
+    for attempt in attempts:
+        if not isinstance(attempt, Mapping) or attempt.get("terminal") is not False:
+            continue
+        attempt_id = str(attempt.get("attempt_id") or "").strip()
+        source = str(attempt.get("source") or "").strip()
+        path = str(attempt.get("path") or "").strip()
+        request_id = str(attempt.get("request_id") or "").strip()
+        if attempt_id and path and (
+            request_id in active_requests or source == "repair_queue_dispatch_attempt"
+        ):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# M9: failure token normalization & WBC / authority / custody extraction
+# ---------------------------------------------------------------------------
+
+
+def _normalize_failure_token_from_evidence(
+    evidence: Mapping[str, Any],
+) -> NormalizedFailureToken | None:
+    """Extract and normalize a failure token from evidence.
+
+    Looks for failure signals in chain_state last_state, plan_state
+    current_state, latest_failure_kind, and event_signature_labels.
+    The first token that matches a known failure label is normalized
+    and returned with preserved identity (commands, criterion IDs,
+    hashes, occurrence id) extracted from the same evidence block.
+
+    Returns ``None`` when no failure token is present.
+    """
+    chain_state = evidence.get("chain_state")
+    chain_state = chain_state if isinstance(chain_state, Mapping) else {}
+    plan_state = evidence.get("plan_state")
+    plan_state = plan_state if isinstance(plan_state, Mapping) else {}
+
+    # Collect candidate raw failure strings in priority order
+    candidates: list[tuple[str, Mapping[str, Any]]] = []
+
+    chain_last = _safe_lower(chain_state, "last_state")
+    if chain_last and chain_last in _FAILURE_LABEL_TOKENS:
+        candidates.append((chain_last, chain_state))
+
+    plan_current = _safe_lower(plan_state, "current_state")
+    if plan_current and plan_current in _FAILURE_LABEL_TOKENS:
+        candidates.append((plan_current, plan_state))
+
+    # Also check diagnostic codes for failure-kind labels
+    diagnostic = evidence.get("diagnostic_codes")
+    if isinstance(diagnostic, Mapping):
+        esc = _safe_lower(diagnostic, "escalation_label")
+        if esc and esc in _FAILURE_LABEL_TOKENS:
+            candidates.append((esc, diagnostic))
+
+    if not candidates:
+        return None
+
+    raw, source = candidates[0]
+
+    # Extract preserved identity fields from the source mapping
+    command = _safe_str(source.get("command"))
+    criterion_ids_raw = source.get("criterion_ids")
+    if isinstance(criterion_ids_raw, list):
+        criterion_ids = tuple(str(c) for c in criterion_ids_raw if c)
+    else:
+        criterion_ids = ()
+    content_hash = _safe_str(
+        source.get("content_hash") or source.get("fingerprint") or ""
+    )
+    occurrence_id = _safe_str(
+        source.get("occurrence_id")
+        or source.get("event_id")
+        or source.get("attempt_id")
+        or ""
+    )
+
+    return NormalizedFailureToken.normalize(
+        raw,
+        command=command,
+        criterion_ids=criterion_ids,
+        content_hash=content_hash,
+        occurrence_id=occurrence_id,
+    )
+
+
+def _extract_wbc_refs(evidence: Mapping[str, Any]) -> tuple[WbcEvidenceRef, ...]:
+    """Extract WBC evidence refs from the evidence dict.
+
+    Looks for a ``wbc_envelopes`` list containing pre-built envelope
+    reference dicts.  Each dict must have at least ``envelope_type``.
+    """
+    raw = evidence.get("wbc_envelopes")
+    if not isinstance(raw, list):
+        return ()
+    refs: list[WbcEvidenceRef] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        envelope_type = _safe_str(entry.get("envelope_type"))
+        if not envelope_type:
+            continue
+        refs.append(
+            WbcEvidenceRef(
+                envelope_type=envelope_type,
+                status=_safe_str(entry.get("status")),
+                attempt_id=_safe_str(entry.get("attempt_id")),
+                content_digest=_safe_str(entry.get("content_digest")),
+                evidence_ids=tuple(
+                    str(e) for e in entry.get("evidence_ids", ()) if e
+                ) if isinstance(entry.get("evidence_ids"), list) else (),
+            )
+        )
+    return tuple(refs)
+
+
+def _extract_run_authority_ref(
+    evidence: Mapping[str, Any],
+) -> RunAuthorityRef | None:
+    """Extract a Run Authority grant/fence ref from evidence.
+
+    Looks for a ``run_authority`` sub-dict with grant_id or fence_id.
+    """
+    raw = evidence.get("run_authority")
+    if not isinstance(raw, Mapping):
+        return None
+    grant_id = _safe_str(raw.get("grant_id"))
+    fence_id = _safe_str(raw.get("fence_id"))
+    if not grant_id and not fence_id:
+        return None
+    return RunAuthorityRef(
+        grant_id=grant_id,
+        decision_id=_safe_str(raw.get("decision_id")),
+        fence_id=fence_id,
+        authority_version=_safe_str(raw.get("authority_version")),
+    )
+
+
+def _extract_custody_ref(evidence: Mapping[str, Any]) -> CustodyRef | None:
+    """Extract a Custody lease/epoch ref from evidence.
+
+    Looks for a ``custody`` sub-dict with lease_id, epoch_id, or
+    projection_id.
+    """
+    raw = evidence.get("custody")
+    if not isinstance(raw, Mapping):
+        return None
+    lease_id = _safe_str(raw.get("lease_id"))
+    epoch_id = _safe_str(raw.get("epoch_id"))
+    projection_id = _safe_str(raw.get("projection_id"))
+    if not lease_id and not epoch_id and not projection_id:
+        return None
+    return CustodyRef(
+        lease_id=lease_id,
+        epoch_id=epoch_id,
+        projection_id=projection_id,
+    )
+
+
+def _compute_freshness_lag(
+    evidence: Mapping[str, Any],
+) -> tuple[float | None, float | None]:
+    """Compute freshness and lag seconds from evidence timestamps.
+
+    Freshness: seconds since the most recent evidence ``gathered_at``
+    (or equivalent timestamp field).  Lag: difference between the
+    resolver invocation time and the evidence gather time.
+
+    Returns ``(freshness_seconds, lag_seconds)`` — each may be ``None``
+    when timestamps are unavailable.
+    """
+    import time
+
+    now = time.time()
+
+    # Look for gathered_at in plan_state, chain_state, or top-level
+    gathered_at: float | None = None
+    for key in ("plan_state", "chain_state", "diagnostic_codes"):
+        sub = evidence.get(key)
+        if isinstance(sub, Mapping):
+            ts = sub.get("gathered_at")
+            if isinstance(ts, (int, float)) and ts > 0:
+                gathered_at = float(ts)
+                break
+
+    if gathered_at is None:
+        ts = evidence.get("gathered_at")
+        if isinstance(ts, (int, float)) and ts > 0:
+            gathered_at = float(ts)
+
+    if gathered_at is None:
+        return None, None
+
+    freshness = max(0.0, now - gathered_at)
+    lag = freshness  # For now, lag equals freshness
+    return freshness, lag
+
+
+def _compute_uncertainty(
+    freshness_seconds: float | None,
+    stale_source_count: int,
+) -> UncertaintyLevel:
+    """Compute the uncertainty level from freshness and stale-source count.
+
+    * LOW: freshness < 60s and no stale sources.
+    * MEDIUM: freshness 60-300s or 1-2 stale sources.
+    * HIGH: freshness > 300s or >= 3 stale sources.
+    """
+    if freshness_seconds is None:
+        return UncertaintyLevel.HIGH
+
+    if freshness_seconds < _DEFAULT_FRESHNESS_LOW_THRESHOLD_S and stale_source_count == 0:
+        return UncertaintyLevel.LOW
+    if freshness_seconds > _DEFAULT_FRESHNESS_HIGH_THRESHOLD_S or stale_source_count >= 3:
+        return UncertaintyLevel.HIGH
+    return UncertaintyLevel.MEDIUM
 
 
 # ---------------------------------------------------------------------------
@@ -269,9 +493,18 @@ class ResolverContext:
     # progress signals
     changed_file_count: "int | None"
     has_active_repair: bool
+    is_operator_paused: bool
     # shared projections
     root_cause_fingerprint: str
     base_evidence: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    # ── M9 dimensions ──────────────────────────────────────────────────
+    failure_token: NormalizedFailureToken | None = None
+    wbc_refs: tuple[WbcEvidenceRef, ...] = ()
+    run_authority_ref: RunAuthorityRef | None = None
+    custody_ref: CustodyRef | None = None
+    freshness_seconds: float | None = None
+    lag_seconds: float | None = None
+    uncertainty: UncertaintyLevel = UncertaintyLevel.MEDIUM
 
     @classmethod
     def build(cls, evidence: Mapping[str, Any], blocker_verdict: str) -> "ResolverContext":
@@ -284,6 +517,14 @@ class ResolverContext:
 
         chain_last = _safe_lower(chain_state, "last_state")
         plan_current = _safe_lower(plan_state, "current_state")
+        chain_metadata = chain_state.get("metadata")
+        chain_metadata = chain_metadata if isinstance(chain_metadata, Mapping) else {}
+        operator_pause = chain_metadata.get("operator_pause")
+        is_operator_paused = bool(
+            plan_current == "paused"
+            or chain_last == "paused"
+            or (isinstance(operator_pause, Mapping) and operator_pause.get("active") is True)
+        )
         stale_label = next(
             (label for label in (chain_last, plan_current) if label in _STALE_DERIVED_LABELS),
             "",
@@ -325,6 +566,16 @@ class ResolverContext:
             _evi("blocker_verdict", "", blocker_verdict or "none"),
         )
 
+        # ── M9: extract enriched evidence dimensions ──────────────────
+        failure_token = _normalize_failure_token_from_evidence(evidence)
+        wbc_refs = _extract_wbc_refs(evidence)
+        run_authority_ref = _extract_run_authority_ref(evidence)
+        custody_ref = _extract_custody_ref(evidence)
+        freshness_seconds, lag_seconds = _compute_freshness_lag(evidence)
+        uncertainty = _compute_uncertainty(
+            freshness_seconds, len(stale_source_names)
+        )
+
         return cls(
             norm=norm,
             blocker_verdict=blocker_verdict,
@@ -345,15 +596,41 @@ class ResolverContext:
             has_missing_workspace=norm.is_missing_workspace,
             broken_repeat_count=_detect_broken_repeat(evidence),
             changed_file_count=norm.changed_file_count,
-            has_active_repair=norm.has_active_repair,
+            has_active_repair=_has_durable_repair_custody(evidence),
+            is_operator_paused=is_operator_paused,
             root_cause_fingerprint=root_cause_fingerprint,
             base_evidence=base_evidence,
+            # ── M9 dimensions ──────────────────────────────────────────
+            failure_token=failure_token,
+            wbc_refs=wbc_refs,
+            run_authority_ref=run_authority_ref,
+            custody_ref=custody_ref,
+            freshness_seconds=freshness_seconds,
+            lag_seconds=lag_seconds,
+            uncertainty=uncertainty,
         )
 
     def evidence_with_fingerprint(self) -> tuple[Mapping[str, Any], ...]:
         return self.base_evidence + (
             _evi("root_cause_fingerprint", "", self.root_cause_fingerprint),
         )
+
+    def _m9_kwargs(self) -> dict[str, Any]:
+        """Return the M9 dimension kwargs shared by every classifier.
+
+        Every ``CanonicalRunState`` produced by a classifier must carry the
+        enriched evidence dimensions so downstream consumers can reason about
+        freshness, uncertainty, authority provenance, and failure identity.
+        """
+        return {
+            "failure_token": self.failure_token,
+            "wbc_refs": self.wbc_refs,
+            "run_authority_ref": self.run_authority_ref,
+            "custody_ref": self.custody_ref,
+            "freshness_seconds": self.freshness_seconds,
+            "lag_seconds": self.lag_seconds,
+            "uncertainty": self.uncertainty,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +698,7 @@ def classify_broken_state_machine(ctx: ResolverContext) -> "CanonicalRunState | 
         next_action="escalate_broken_state_machine",
         reason=reason,
         evidence=evidence,
+        **ctx._m9_kwargs(),
     )
 
 
@@ -430,7 +708,16 @@ def classify_completed(ctx: ResolverContext) -> "CanonicalRunState | None":
         ctx.evidence.get("chain_state") if isinstance(ctx.evidence.get("chain_state"), Mapping) else {},
         "last_state",
     )
-    authority_done = ctx.is_terminal_success
+    plan_current = _safe_lower(
+        ctx.evidence.get("plan_state") if isinstance(ctx.evidence.get("plan_state"), Mapping) else {},
+        "current_state",
+    )
+    # A chain-level success projection cannot complete a named, nonterminal
+    # current plan.  Prefer the plan lifecycle when it exists; use chain
+    # completion only when no plan lifecycle is available.
+    authority_done = plan_current == "done" or (
+        not plan_current and chain_last == "done"
+    )
     # Secondary branch: real work completed (files changed) while a stale
     # chain layer still projects failed/no_next_step and the worker is not
     # live (i.e. the "deferred baseline with real tasks complete" shape).
@@ -474,6 +761,28 @@ def classify_completed(ctx: ResolverContext) -> "CanonicalRunState | None":
             _evi("changed_file_count", "", ctx.changed_file_count if ctx.changed_file_count is not None else "unknown"),
             _evi("authority_completion", "", ctx.terminal_state or "real_work_complete"),
         ),
+        **ctx._m9_kwargs(),
+    )
+
+
+def classify_operator_paused(ctx: ResolverContext) -> "CanonicalRunState | None":
+    """Durable operator intent outranks liveness and all recovery evidence."""
+
+    if not ctx.is_operator_paused:
+        return None
+    return CanonicalRunState(
+        canonical_state=CanonicalState.PAUSED,
+        confidence="high",
+        source_of_truth=("chain_state", "plan_state"),
+        stale_sources=ctx.stale_source_names,
+        human_required=False,
+        human_gate=None,
+        repairable=False,
+        running=False,
+        next_action="explicit_operator_resume",
+        reason="Durable operator pause authority is active; automatic recovery is forbidden.",
+        evidence=ctx.evidence_with_fingerprint(),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -508,6 +817,7 @@ def classify_stale_derived_state(ctx: ResolverContext) -> "CanonicalRunState | N
             "evidence overrides the stale label."
         ),
         evidence=ctx.evidence_with_fingerprint(),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -527,6 +837,7 @@ def classify_running(ctx: ResolverContext) -> "CanonicalRunState | None":
         next_action="monitor_live_run",
         reason="Live worker / active-step heartbeat present with no blocking signal.",
         evidence=ctx.evidence_with_fingerprint(),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -573,6 +884,7 @@ def classify_human_action_required(ctx: ResolverContext) -> "CanonicalRunState |
         ),
         evidence=ctx.evidence_with_fingerprint()
         + (_evi("human_gate", "", gate.name),),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -601,6 +913,7 @@ def classify_real_implementation_block(ctx: ResolverContext) -> "CanonicalRunSta
             _evi("event_signatures", "", " ".join(ctx.norm.event_signature_labels) or "none"),
             _evi("advisory_needs_human", "", "present" if ctx.has_needs_human_label else "absent"),
         ),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -648,26 +961,28 @@ def classify_retryable_execution_block(ctx: ResolverContext) -> "CanonicalRunSta
                 ctx.norm.retry_strategy or ("mechanical_blocker" if is_mechanical else "none"),
             ),
         ),
+        **ctx._m9_kwargs(),
     )
 
 
 def classify_repairing(ctx: ResolverContext) -> "CanonicalRunState | None":
-    """Active repair-progress sidecars with no more-specific diagnosis."""
+    """Durable repair custody with no more-specific diagnosis."""
     if not ctx.has_active_repair:
         return None
     return CanonicalRunState(
         canonical_state=CanonicalState.REPAIRING,
         confidence="medium",
-        source_of_truth=("repair_progress",),
+        source_of_truth=("repair_custody",),
         stale_sources=ctx.stale_source_names,
         human_required=False,
         human_gate=None,
         repairable=True,
         running=False,
         next_action="continue_repair",
-        reason="Active repair-progress sidecars present (advisory repair data).",
+        reason="Current durable repair custody proves an active repair owner or attempt.",
         evidence=ctx.evidence_with_fingerprint()
         + (_evi("repair_status", "", ctx.norm.active_repair_status or "active"),),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -690,6 +1005,7 @@ def classify_unknown(ctx: ResolverContext) -> CanonicalRunState:
         ),
         evidence=ctx.evidence_with_fingerprint()
         + (_evi("fallback", "", "conservative_unknown"),),
+        **ctx._m9_kwargs(),
     )
 
 
@@ -708,6 +1024,7 @@ def classify_unknown(ctx: ResolverContext) -> CanonicalRunState:
 # (classify_unknown is the conservative fallback appended by the resolver.)
 ORDERED_CLASSIFIERS = (
     classify_completed,
+    classify_operator_paused,
     classify_broken_state_machine,
     classify_stale_derived_state,
     classify_running,

@@ -55,6 +55,22 @@ def test_resume_plan_reenters_cursor_and_clears_failure_after_success(tmp_path: 
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         assert state["current_state"] == "finalized"
         assert state["latest_failure"] == {"kind": "execution_blocked"}
+        (plan_dir / "finalize.json").write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "T1",
+                            "status": "done",
+                            "commands_run": [
+                                "pytest tests/editorial_run_lifecycle.py"
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
         state["current_state"] = "executed"
         (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
         return 0, "ok", ""
@@ -69,19 +85,23 @@ def test_resume_plan_reenters_cursor_and_clears_failure_after_success(tmp_path: 
     assert "resume_cursor" not in state
 
 
-def test_resume_plan_preserves_failure_after_failed_resume(tmp_path: Path) -> None:
+def test_resume_plan_rejects_later_phase_without_execute_authority(tmp_path: Path) -> None:
     project = _project(tmp_path)
     plan_dir = _plan_dir(project, "failed-resume", phase="review", batch_index=None)
+    called = False
 
     def runner(args: list[str], cwd: Path | None = None):
-        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-        assert state["current_state"] == "executed"
-        return 5, "", "still bad"
+        nonlocal called
+        called = True
+        return 0, "", ""
 
-    result = resume_plan(project, "failed-resume", runner=runner)
+    with pytest.raises(CliError) as exc:
+        resume_plan(project, "failed-resume", runner=runner)
 
-    assert result["success"] is False
-    assert result["phase"] == "review"
+    assert exc.value.code == "resume_execute_authority_blocked"
+    assert exc.value.extra["guard"] == "before_later_phase_dispatch"
+    assert exc.value.extra["reason"] == "execute_authority_unavailable"
+    assert called is False
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["current_state"] == "blocked"
     assert state["latest_failure"] == {"kind": "execution_blocked"}

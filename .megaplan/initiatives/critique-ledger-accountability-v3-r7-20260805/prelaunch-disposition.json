@@ -1,0 +1,40 @@
+{
+  "schema": "arnold.megaplan.critique_r5_independent_child_disposition.v1",
+  "status": "prelaunch",
+  "parent": {
+    "session": "critique-ledger-accountability-v3-r5-20260803",
+    "plan": "cl2-wbc-backed-ledger-20260803-1357",
+    "checkout_head": "b9add7e867f1f306750509000b320a9e4a9a8678",
+    "disposition": "immutable_evidence_only",
+    "authority_migration": "not_performed",
+    "reason": "r5 has no authoritative Run Authority journal records; reducer projections and batch artifacts are not owner authority"
+  },
+  "action": {
+    "kind": "start_fresh_independent_child",
+    "session": "critique-ledger-accountability-v3-r7-launch-20260805",
+    "workspace": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+    "runtime_source": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+    "same_occurrence_resume": false,
+    "parent_cas_claimed": false,
+    "human_approval": "user_requested_continuation"
+  },
+  "candidate": {
+    "branch": "fix/r7-fresh-child-launch-20260805",
+    "commit": "df12e6785",
+    "baseline": "c116f38cc83de11a1a508eff6153205504d1ba5a",
+    "provider_effect_started": false
+  },
+  "cloud_runner": {
+    "container": "megaplan-cloud-agent-critique-ledger-v3",
+    "container_id": "782c6da82a8f988646747e8e57d51ca7f69d336d21920e3adebd9fb556e00117",
+    "image_id": "sha256:2b6b18caeaf90ecdf6246f2c5eec5bcb9eccdb86435f66b0c3f98a5af0dce82d",
+    "attestation": "preflight_running_exact_pinned_image"
+  },
+  "tests": {
+    "focused_count": 406,
+    "scope": "Run Authority, migration/Custody, selector lifecycle, merge, and isolated cloud runner suites",
+    "status": "passed"
+  },
+  "follow_up": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/",
+  "launch_authority": "This disposition records the honest parent boundary; it does not assert that the old occurrence was migrated or that post-launch acceptance has occurred."
+}

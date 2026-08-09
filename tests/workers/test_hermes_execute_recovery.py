@@ -6,7 +6,7 @@ from pathlib import Path
 from arnold_pipelines.megaplan.workers.hermes import _reconstruct_execute_payload
 
 
-def test_reconstruct_execute_payload_prefers_current_batch_output(tmp_path: Path) -> None:
+def test_reconstruct_execute_payload_never_adopts_unbound_batch_scratch(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     plan_dir = tmp_path / "plan"
@@ -73,24 +73,12 @@ def test_reconstruct_execute_payload_prefers_current_batch_output(tmp_path: Path
     )
 
     assert payload is not None
-    assert payload["output"] == "T3: current batch recovered from scratch output."
-    assert payload["task_updates"] == [
-        {
-            "task_id": "T3",
-            "status": "done",
-            "executor_notes": "Current batch task update.",
-            "files_changed": ["src/current.ts"],
-            "commands_run": ["npm test -- current"],
-        }
-    ]
-    assert payload["sense_check_acknowledgments"] == [
-        {"sense_check_id": "SC3", "executor_note": "Current batch ack."}
-    ]
-    assert "src/current.ts" in payload["files_changed"]
+    assert payload["task_updates"] == []
+    assert payload["sense_check_acknowledgments"] == []
     assert "npm test -- current" in payload["commands_run"]
 
 
-def test_reconstruct_execute_payload_falls_back_when_current_batch_output_has_no_updates(
+def test_reconstruct_execute_payload_ignores_stale_checkpoint_after_restart(
     tmp_path: Path,
 ) -> None:
     project_dir = tmp_path / "project"
@@ -156,22 +144,12 @@ def test_reconstruct_execute_payload_falls_back_when_current_batch_output_has_no
     )
 
     assert payload is not None
-    assert payload["task_updates"] == [
-        {
-            "task_id": "T12",
-            "status": "done",
-            "executor_notes": "Recovered from audited checkpoint.",
-            "files_changed": ["src/checkpoint.ts"],
-            "commands_run": ["npm test -- checkpoint"],
-        }
-    ]
-    assert payload["sense_check_acknowledgments"] == [
-        {"sense_check_id": "SC12", "executor_note": "Recovered checkpoint ack."}
-    ]
-    assert "src/reconstructed.ts" in payload["files_changed"]
+    assert payload["task_updates"] == []
+    assert payload["sense_check_acknowledgments"] == []
+    assert "python -m pytest tests/cloud/test_meta_repair.py -q" in payload["commands_run"]
 
 
-def test_reconstruct_execute_payload_falls_back_when_current_batch_updates_are_malformed(
+def test_reconstruct_execute_payload_ignores_malformed_scratch_and_checkpoint(
     tmp_path: Path,
 ) -> None:
     project_dir = tmp_path / "project"
@@ -266,15 +244,5 @@ def test_reconstruct_execute_payload_falls_back_when_current_batch_updates_are_m
     )
 
     assert payload is not None
-    assert payload["task_updates"] == [
-        {
-            "task_id": "T12",
-            "status": "done",
-            "executor_notes": "Recovered from audited checkpoint.",
-            "files_changed": ["src/checkpoint.ts"],
-            "commands_run": ["npm test -- checkpoint"],
-        }
-    ]
-    assert payload["sense_check_acknowledgments"] == [
-        {"sense_check_id": "SC12", "executor_note": "Recovered checkpoint ack."}
-    ]
+    assert payload["task_updates"] == []
+    assert payload["sense_check_acknowledgments"] == []

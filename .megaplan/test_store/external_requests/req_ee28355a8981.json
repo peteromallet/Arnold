@@ -1,0 +1,24 @@
+{
+  "id": "req_ee28355a8981",
+  "idempotency_key": "idem_1",
+  "provider": "discord",
+  "endpoint": "POST /channels/channel_1/messages",
+  "tool_call_id": null,
+  "turn_id": "turn_42256d4635a3",
+  "request_summary": {
+    "content_preview": "hello"
+  },
+  "request_body": {
+    "content": "hello"
+  },
+  "status": "orphaned",
+  "provider_request_id": null,
+  "provider_response_summary": null,
+  "attempt_count": 1,
+  "first_attempted_at": "2026-07-14T01:19:38.294556Z",
+  "last_attempted_at": "2026-07-14T01:19:38.297388Z",
+  "completed_at": "2026-07-14T01:19:38.297387Z",
+  "error_details": {
+    "reason": "expired"
+  }
+}

@@ -65,7 +65,8 @@ def test_compiled_pipeline_has_canonical_phase_nodes() -> None:
     step_ids = {s.id for s in pipeline.steps}
     assert step_ids == {
         "prep", "plan", "critique", "gate", "revise",
-        "tiebreaker_run", "tiebreaker_decide",
+        "tiebreaker_challenger", "tiebreaker_researcher",
+        "tiebreaker_synthesis", "tiebreaker_decision",
         "finalize", "execute", "review",
         "halt", "override",
     }, f"unexpected step ids: {sorted(step_ids)}"

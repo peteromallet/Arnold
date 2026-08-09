@@ -1,0 +1,67 @@
+{
+  "schema": "arnold.critique_ledger.supersession_index.v1",
+  "current_operational_route": {
+    "path": ".megaplan/initiatives/critique-ledger-post-relaunch-completion/finite-canary-operational-route.json",
+    "sha256": "b7bd81ddf77642f5dc220b2977e5ee07865484189f6c9f97758105f6e3396478",
+    "profile": "ZERO_RECOVERY_NONROOT_FINITE_CANARY",
+    "reason": "composes the post-T1.5 shortest route with mandatory mount, privilege, resource, effect, honest model-evidence, trusted host control-state, bounded reclaim/fence, stable-exit custody, typed substrate and exact deferred-obligation bindings"
+  },
+  "superseded": [
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/CLOUD/zero-recovery-cl2-canary-launch-design-review.md",
+      "sha256": "7a962e6241bece0e81cff350a225b188fd9568ca01d1d1d2908a9f99fef20d77",
+      "status": "SUPERSEDED_PRE_PRIVILEGE_REVIEW_DESIGN_EVIDENCE_ONLY",
+      "reason": "predates the isolated child plus non-root per-phase model boundary, finite resource envelope and honest codex_cli_turn_context vocabulary; its root HOME/auth and actual-model language has no launch authority"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/SEQUENCING/relaunch-cutline-luna-audit.md",
+      "sha256": "9f80dac9152bdc10a330bef3244de0b33ea9c5d1be142827be1015e5ac9e76a4",
+      "status": "SUPERSEDED_FOR_FINITE_CANARY_CUT_TASK_RATIONALE_ONLY",
+      "reason": "its all-T1-through-T5 prelaunch conclusion predates the independently reviewed bounded zero-recovery route; every task remains in custody but deferred hardening does not block the finite canary"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/minimal-operational-relaunch-map-sol.md",
+      "sha256": "fd1a33ba58566aa126e170643f59a39bca13972e5919d0a338403b50c169312e",
+      "status": "SUPERSEDED_FOR_OPERATIONAL_CANARY_EVIDENCE_ONLY",
+      "reason": "depends on rejected T1.5 and stale four-change route"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/INTEGRATION/stage-a-integration-map-sol.md",
+      "sha256": "87809fc379846c1de21b6b9d7a79575ac209936a7935445931c3b876bbcbc910",
+      "status": "SUPERSEDED_FOR_OPERATIONAL_CANARY_EVIDENCE_ONLY",
+      "reason": "contains positive T1.5/T1.10 capabilities forbidden by zero-recovery profile"
+    },
+    {
+      "path": ".megaplan/subagents/critique-ledger-recovery/T1.4/incident-stall-notify-exact-implementation-map-luna.md",
+      "sha256": "fd83c969cd8c2ffa45819aa5d23d098974bbd2aab2b37259f48f919beada1213",
+      "status": "COUNTERFACTUAL_FOLLOW_UP_EVIDENCE_ONLY",
+      "reason": "assumes later-rejected T1.5 candidate; useful interface analysis only"
+    },
+    {
+      "commit": "9642193a063d91a6be364f2d11a04b221eae30cf",
+      "tree": "27a3d61dff39a4c1a26a8a736dc85ce727c57b7c",
+      "status": "HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+      "rejection_report": ".megaplan/subagents/critique-ledger-recovery/T1.5/t1-5-operational-pass3-independent-review-luna.md",
+      "rejection_report_sha256": "290fcd8b2132b5834c6e6fe961a2640329bfb133eb1acd618f82fed2b3d8d13a"
+    },
+    {
+      "commit": "0c3d662024bc0497ed3979991a20b3b48ecf19cd",
+      "tree": "d4c10e167be87e1655704d1beeaf92d6c4e46526",
+      "status": "HARD_FAIL_NOT_CONSUMED_OPERATIONAL_CANARY",
+      "rejection_report": ".megaplan/subagents/critique-ledger-recovery/T1.10/notification-ux-independent-review-pass4-luna-result.md",
+      "rejection_report_sha256": "2fba7fd07882c98b2080ae9867dc8a739b77625b311dadad820547636ab9584b"
+    },
+    {
+      "commit": "3513e4937096ad57ef01beed56d4fba17aaf2b17",
+      "status": "SUPERSEDED_BY_LINT_CLEAN_AMEND",
+      "superseded_by": "96d368de54876aaaec205290e2640d9daf78f3ea"
+    },
+    {
+      "commit": "96d368de54876aaaec205290e2640d9daf78f3ea",
+      "tree": "e2f3633739acaa75ccb9324365a1b8b966fc4f4f",
+      "status": "REJECTED_AND_SUPERSEDED_BY_BOUNDED_REPAIR",
+      "superseded_by": "26aca6ace7f0af3279ca5b311e6983d4904a4d3a",
+      "reason": "independent review found fail-open inspect/capacity/SSH classification defects; retain the rejected identity as evidence"
+    }
+  ]
+}

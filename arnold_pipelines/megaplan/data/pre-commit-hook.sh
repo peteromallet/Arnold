@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Regenerate composed bundles; fail if any changed.
+# Refuse stale installed copies, then regenerate composed bundles; fail if any
+# changed.  The regen command stages the exact paths it reports changing.
 #
 # Launcher resolution mirrors the megaplan SKILL.md order so the hook works
 # regardless of how python is exposed on this machine (pyenv, venv,
@@ -16,11 +17,26 @@ LAUNCHERS=(
 run_regen() {
   local cmd="$1"
   # shellcheck disable=SC2086
-  eval "$cmd -m arnold_pipelines.megaplan setup --regen-composed"
+  eval "$cmd -m arnold_pipelines.megaplan setup --regen-composed --stage-regenerated"
+}
+
+check_hook() {
+  local cmd="$1"
+  # shellcheck disable=SC2086
+  eval "$cmd -m arnold_pipelines.megaplan setup --check-hooks"
 }
 
 rc=127
 for launcher in "${LAUNCHERS[@]}"; do
+  if check_hook "$launcher"; then
+    rc=0
+  else
+    rc=$?
+    if [ "$rc" = "1" ]; then
+      exit 1
+    fi
+    continue
+  fi
   if run_regen "$launcher"; then
     rc=0
     break
@@ -36,7 +52,6 @@ for launcher in "${LAUNCHERS[@]}"; do
 done
 
 if [ "$rc" = "1" ]; then
-  git add arnold_pipelines/megaplan/data/_composed/
   echo 'megaplan: regenerated composed bundles — re-run git commit' >&2
   exit 1
 fi

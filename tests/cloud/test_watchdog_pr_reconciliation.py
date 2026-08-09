@@ -31,6 +31,8 @@ def _run_watchdog_shell(
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
+    env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
     if extra_env:
@@ -208,6 +210,7 @@ def test_watchdog_pr_reconciliation_fetches_missing_merge_and_relaunches_auto_ch
             f"MERGE_SHA={merge_sha!r}",
             f"CHAIN_PATH={str(chain_path)!r}",
             f"ADVANCED_FLAG={str(advanced_flag)!r}",
+            f"SUPERVISE_BIN={str(WRAPPER_DIR / 'arnold-supervise')!r}",
             """
 log() { printf '%s\n' "$*" >> "$CALL_LOG"; }
 report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
@@ -234,7 +237,13 @@ tmux() {
   case "$1" in
     has-session) return 1 ;;
     kill-session) return 0 ;;
-    new-session) bash "$LAUNCH_SCRIPT"; return $? ;;
+    new-session)
+      sed "s|/usr/local/bin/arnold-supervise|$SUPERVISE_BIN|" \
+        "$LAUNCH_SCRIPT" > "$LAUNCH_SCRIPT.packaged"
+      mv "$LAUNCH_SCRIPT.packaged" "$LAUNCH_SCRIPT"
+      bash "$LAUNCH_SCRIPT"
+      return $?
+      ;;
   esac
   return 0
 }
@@ -243,7 +252,16 @@ tmux() {
         ]
     )
 
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    result = _run_watchdog_shell(
+        script,
+        path_prefix=tmp_path,
+        extra_env={
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+            "MEGAPLAN_RUNTIME_SRC": str(REPO_ROOT),
+        },
+    )
 
     assert result.returncode == 0, result.stderr
     assert advanced_flag.read_text(encoding="utf-8").strip() == "advanced"
@@ -332,7 +350,7 @@ tmux() { printf 'tmux %s\n' "$*" >> "$CALL_LOG"; return 0; }
     assert "tmux new-session" not in calls
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #43 state=open evidence=queued\t" in report
-    queued = list((tmp_path / "repair-queue" / "requests").glob("*.json"))
+    queued = list((tmp_path / ".megaplan" / "repair-queue" / "requests").glob("*.json"))
     assert len(queued) == 1
     payload = json.loads(queued[0].read_text(encoding="utf-8"))
     assert payload["source"] == "watchdog_pr_merge_reconciliation"
@@ -408,3 +426,287 @@ tmux() { printf 'tmux %s\n' "$*" >> "$CALL_LOG"; return 0; }
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #44 state=open evidence=queue_disabled\t" in report
     assert not list((tmp_path / "repair-queue" / "requests").glob("*.json"))
+
+
+# ── T13: Watchdog PR boundary evidence conformance tests ─────────────────
+
+
+def test_watchdog_pr_reconciliation_writes_boundary_evidence_for_merged_pr(
+    tmp_path: Path,
+) -> None:
+    """After watchdog reconciles a merged PR, the chain state contains
+    pr_boundary_evidence conforming to pr.merged.1 contract."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    queue_root = tmp_path / "repair-queue"
+    queue_root.mkdir()
+
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "demo-chain.json"
+    _write_chain_state(
+        chain_path,
+        {"last_state": "awaiting_pr_merge", "pr_number": 55, "pr_state": "open"},
+    )
+
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2 $3\" == \"pr view 55\" ]]; then\n"
+        "  printf '%s\\n' '{\"state\":\"MERGED\",\"mergeCommit\":{\"oid\":\"merge5555555555555\"},\"headRefOid\":\"head5555555555555\"}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+    call_log = tmp_path / "calls.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"REPAIR_QUEUE_ROOT={str(queue_root)!r}",
+            f"CALL_LOG={str(call_log)!r}",
+            """
+log() { printf '%s\\n' "$*" >> "$CALL_LOG"; }
+""".strip(),
+            f"reconcile_awaiting_pr_merge demo-session {str(workspace)!r} {str(spec_path)!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    # reconcile exits with 0 for merged PR (triggers relaunch path)
+    # but in isolation without launch_chain_tick, it just exits
+    assert result.returncode == 0, result.stderr
+
+    # Chain state should now contain pr_boundary_evidence
+    chain_state = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert chain_state.get("pr_state") == "merged"
+
+    metadata = chain_state.get("metadata", {})
+    assert isinstance(metadata, dict)
+
+    # Check watchdog_pr_merge_reconciliation (existing metadata)
+    wd_evidence = metadata.get("watchdog_pr_merge_reconciliation")
+    assert isinstance(wd_evidence, dict)
+    assert wd_evidence.get("pr_number") == 55
+    assert wd_evidence.get("pr_state") == "merged"
+    assert wd_evidence.get("merge_commit") == "merge5555555555555"
+
+    # Check pr_boundary_evidence (T12 contract-conformant evidence)
+    boundary = metadata.get("pr_boundary_evidence")
+    assert isinstance(boundary, dict)
+    assert boundary.get("contract_id") == "pr.merged.1"
+    assert boundary.get("boundary_id") == "pr_merged"
+    assert boundary.get("workflow_id") == "megaplan-review"
+    assert boundary.get("pr_number") == 55
+    assert boundary.get("pr_state") == "merged"
+    assert boundary.get("pr_head_sha") == "head5555555555555"
+    assert boundary.get("merge_commit_sha") == "merge5555555555555"
+    assert "evidence_timestamp" in boundary
+    expected_delta = boundary.get("expected_state_delta")
+    assert isinstance(expected_delta, dict)
+    assert expected_delta.get("pr_stage") == "merged"
+
+
+def test_watchdog_pr_reconciliation_writes_boundary_evidence_for_waiting_pr(
+    tmp_path: Path,
+) -> None:
+    """After watchdog reconciles a still-open PR, the chain state contains
+    pr_boundary_evidence conforming to pr.ready.1 contract."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    queue_root = tmp_path / "repair-queue"
+    queue_root.mkdir()
+
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "demo-chain.json"
+    _write_chain_state(
+        chain_path,
+        {"last_state": "awaiting_pr_merge", "pr_number": 66, "pr_state": "open"},
+    )
+
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2 $3\" == \"pr view 66\" ]]; then\n"
+        "  printf '%s\\n' '{\"state\":\"OPEN\",\"headRefOid\":\"head6666666666666\"}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+    call_log = tmp_path / "calls.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"REPAIR_QUEUE_ROOT={str(queue_root)!r}",
+            f"CALL_LOG={str(call_log)!r}",
+            """
+log() { printf '%s\\n' "$*" >> "$CALL_LOG"; }
+""".strip(),
+            f"reconcile_awaiting_pr_merge demo-session {str(workspace)!r} {str(spec_path)!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    # reconcile exits with 0 for waiting PR (no error)
+    assert result.returncode == 0, result.stderr
+
+    # Chain state should now contain pr_boundary_evidence for waiting
+    chain_state = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert chain_state.get("pr_state") == "open"
+
+    metadata = chain_state.get("metadata", {})
+    assert isinstance(metadata, dict)
+
+    # Check pr_boundary_evidence
+    boundary = metadata.get("pr_boundary_evidence")
+    assert isinstance(boundary, dict)
+    assert boundary.get("contract_id") == "pr.ready.1"
+    assert boundary.get("boundary_id") == "pr_ready"
+    assert boundary.get("workflow_id") == "megaplan-review"
+    assert boundary.get("pr_number") == 66
+    assert boundary.get("pr_state") == "open"
+    assert boundary.get("pr_head_sha") == "head6666666666666"
+    # Waiting PR: no merge_commit_sha
+    assert "merge_commit_sha" not in boundary
+    assert "evidence_timestamp" in boundary
+    expected_delta = boundary.get("expected_state_delta")
+    assert isinstance(expected_delta, dict)
+    assert expected_delta.get("pr_stage") == "open"
+
+
+def test_watchdog_pr_reconciliation_evidence_preserves_existing_metadata(
+    tmp_path: Path,
+) -> None:
+    """When watchdog writes pr_boundary_evidence, existing metadata keys survive."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    queue_root = tmp_path / "repair-queue"
+    queue_root.mkdir()
+
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "demo-chain.json"
+    _write_chain_state(
+        chain_path,
+        {
+            "last_state": "awaiting_pr_merge",
+            "pr_number": 77,
+            "pr_state": "open",
+            "metadata": {"preexisting_key": "preexisting_value"},
+        },
+    )
+
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2 $3\" == \"pr view 77\" ]]; then\n"
+        "  printf '%s\\n' '{\"state\":\"MERGED\",\"mergeCommit\":{\"oid\":\"merge7777777777777\"},\"headRefOid\":\"head7777777777777\"}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+    call_log = tmp_path / "calls.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"REPAIR_QUEUE_ROOT={str(queue_root)!r}",
+            f"CALL_LOG={str(call_log)!r}",
+            """
+log() { printf '%s\\n' "$*" >> "$CALL_LOG"; }
+""".strip(),
+            f"reconcile_awaiting_pr_merge demo-session {str(workspace)!r} {str(spec_path)!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+
+    chain_state = json.loads(chain_path.read_text(encoding="utf-8"))
+    metadata = chain_state.get("metadata", {})
+    # Existing metadata preserved
+    assert metadata.get("preexisting_key") == "preexisting_value"
+    # New evidence present
+    assert "pr_boundary_evidence" in metadata
+    assert "watchdog_pr_merge_reconciliation" in metadata
+
+
+def test_watchdog_pr_reconciliation_preserves_manual_clean_review_gate(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "manual" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "merge_policy: auto\n"
+        "review_policy:\n"
+        "  clean_milestone_pr: manual\n"
+        "milestones: []\n",
+        encoding="utf-8",
+    )
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "manual.json"
+    _write_chain_state(
+        chain_path,
+        {"last_state": "awaiting_pr_merge", "pr_number": 45, "pr_state": "open"},
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            (
+                f"reconcile_awaiting_pr_merge demo-session "
+                f"{str(workspace)!r} {str(spec_path)!r}"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("review_policy\t")
+    assert "clean_milestone_pr=manual" in result.stdout
+    assert json.loads(chain_path.read_text(encoding="utf-8"))["pr_state"] == "open"

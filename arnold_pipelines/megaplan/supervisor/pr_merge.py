@@ -18,6 +18,14 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.chain import git_ops
+from arnold_pipelines.megaplan.chain.wbc import (
+    GIT_PR_READY_SURFACE,
+    GIT_PR_READY_WRITER_ID,
+    ChainWbcRule,
+    finalize_artifact_candidates,
+    finalize_receipt_candidates,
+    validate_chain_wbc_transition,
+)
 from arnold.control.interface import ControlBinding, RunStateView
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.supervisor.ladder import (
@@ -41,6 +49,49 @@ _PR_WAIT_CURSOR_KINDS = frozenset(
 _GREEN_MERGE_STATE_STATUSES = frozenset({"clean", "has_hooks"})
 
 
+def _pr_progression_validation_evidence(
+    *,
+    root: Path,
+    plan_dir: Path,
+    pr_number: int,
+    transition_name: str,
+    require_finalize_wbc: bool,
+) -> dict[str, Any]:
+    plan_dir_exists = plan_dir.exists()
+    receipts = finalize_receipt_candidates(plan_dir)
+    artifacts = finalize_artifact_candidates(plan_dir)
+    finalize_evidence_present = bool(receipts) or bool(artifacts) or not plan_dir_exists
+    return validate_chain_wbc_transition(
+        writer_id=GIT_PR_READY_WRITER_ID,
+        surface_name=GIT_PR_READY_SURFACE,
+        transition_name=transition_name,
+        subject=f"pr#{pr_number}",
+        source_path=Path(__file__),
+        project_dir=root,
+        rules=(
+            ChainWbcRule(
+                "plan_dir_or_explicit_cursor",
+                True,
+                plan_dir_exists or bool(str(plan_dir)),
+                plan_dir_exists or bool(str(plan_dir)),
+            ),
+            ChainWbcRule(
+                "finalize_evidence_present",
+                require_finalize_wbc,
+                finalize_evidence_present,
+                finalize_evidence_present or not require_finalize_wbc,
+            ),
+        ),
+        extra={
+            "plan_dir": str(plan_dir),
+            "plan_dir_exists": plan_dir_exists,
+            "finalize_receipts": receipts,
+            "finalize_artifacts": artifacts,
+            "finalize_wbc_required": require_finalize_wbc,
+        },
+    )
+
+
 @dataclass(frozen=True)
 class PRMergeCursor:
     """Parsed PR-merge cursor metadata from a supervisor run-state view."""
@@ -53,7 +104,7 @@ class PRMergeCursor:
 
 @dataclass(frozen=True)
 class PRMergeResolution:
-    """Outcome of the supervisor PR-merge actor."""
+    # Outcome of the supervisor PR-merge actor.
 
     handled: bool
     advanced: bool = False
@@ -61,6 +112,9 @@ class PRMergeResolution:
     pr_number: int | None = None
     pr_state: str | None = None
     reason: str | None = None
+    # PR transition evidence captured at ready/merge points.
+    pr_ready_evidence: Any | None = None
+    pr_merged_evidence: Any | None = None
 
 
 def maybe_resolve_pr_merge_wait(
@@ -74,6 +128,8 @@ def maybe_resolve_pr_merge_wait(
     binding: ControlBinding | str,
     policy: SupervisorLadderPolicy,
     writer,
+    automatic_pr_progression: bool = True,
+    require_finalize_wbc: bool = False,
 ) -> PRMergeResolution:
     """Handle awaiting-human PR merge waits or return ``handled=False``.
 
@@ -84,6 +140,12 @@ def maybe_resolve_pr_merge_wait(
     cursor = parse_pr_merge_cursor(run_state)
     if cursor is None:
         return PRMergeResolution(handled=False)
+    if not automatic_pr_progression:
+        return PRMergeResolution(
+            handled=False,
+            pr_number=cursor.pr_number,
+            reason="chain policy requires human PR review/merge",
+        )
 
     pr_number = cursor.pr_number
     if pr_number is None:
@@ -115,12 +177,27 @@ def maybe_resolve_pr_merge_wait(
         )
 
     if pr_state == "merged":
+        # Capture merged PR evidence: merge commit and tip containment check.
+        validation_evidence = _pr_progression_validation_evidence(
+            root=root,
+            plan_dir=plan_dir,
+            pr_number=pr_number,
+            transition_name="supervisor_pr_merged",
+            require_finalize_wbc=require_finalize_wbc,
+        )
+        merged_evidence = git_ops._capture_pr_merged_evidence(
+            root,
+            pr_number,
+            writer=writer,
+            validation_evidence=validation_evidence,
+        )
         return PRMergeResolution(
             handled=True,
             advanced=True,
             pr_number=pr_number,
             pr_state="merged",
             reason=f"PR #{pr_number} is already merged",
+            pr_merged_evidence=merged_evidence,
         )
 
     try:
@@ -150,6 +227,26 @@ def maybe_resolve_pr_merge_wait(
             reason=f"PR #{pr_number} is not merge-ready ({readiness})",
         )
 
+    # Capture PR-ready evidence before marking ready.
+    validation_evidence = _pr_progression_validation_evidence(
+        root=root,
+        plan_dir=plan_dir,
+        pr_number=pr_number,
+        transition_name="supervisor_pr_ready",
+        require_finalize_wbc=require_finalize_wbc,
+    )
+    pr_ready_evidence = git_ops._capture_pr_ready_evidence(
+        root,
+        pr_number,
+        writer=writer,
+        ci_readiness_state=readiness,
+        validation_evidence=validation_evidence,
+    )
+    # Capture PR head before merge so merged evidence can reference it.
+    pr_head_sha, _last_pushed = git_ops._capture_pr_head_evidence(
+        root, pr_number, writer=writer,
+    )
+
     try:
         git_ops._mark_pr_ready(root, pr_number, writer=writer)
         merged_state = git_ops._enable_auto_merge(root, pr_number, writer=writer)
@@ -166,12 +263,23 @@ def maybe_resolve_pr_merge_wait(
             reason=f"PR #{pr_number} merge handling failed: {exc.message}",
         )
 
+    # Capture merged evidence with tip containment after merge succeeds.
+    merged_evidence = git_ops._capture_pr_merged_evidence(
+        root,
+        pr_number,
+        writer=writer,
+        pr_head_sha=pr_head_sha,
+        validation_evidence=validation_evidence,
+    )
+
     return PRMergeResolution(
         handled=True,
         advanced=True,
         pr_number=pr_number,
         pr_state=merged_state,
         reason=f"PR #{pr_number} is merge-ready ({merged_state})",
+        pr_ready_evidence=pr_ready_evidence,
+        pr_merged_evidence=merged_evidence,
     )
 
 

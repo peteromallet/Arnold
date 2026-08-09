@@ -8,6 +8,7 @@ import pytest
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers.hermes import (
     _content_xml_tool_calls,
+    _install_content_tool_call_normalizer,
     _normalize_response_content_tool_calls,
 )
 from arnold_pipelines.megaplan.workers._impl import (
@@ -19,6 +20,52 @@ from arnold_pipelines.megaplan.workers._impl import (
 
 def _arguments(call: SimpleNamespace) -> dict[str, object]:
     return json.loads(call.function.arguments)
+
+
+def test_hermes_transport_omits_null_tool_fields_and_preserves_values() -> None:
+    class FakeAIAgent:
+        unary_kwargs = []
+        streaming_kwargs = []
+
+        def _interruptible_api_call(self, api_kwargs):
+            type(self).unary_kwargs.append(api_kwargs)
+            return SimpleNamespace(choices=[])
+
+        def _interruptible_streaming_api_call(
+            self, api_kwargs, *, on_first_delta=None
+        ):
+            type(self).streaming_kwargs.append(api_kwargs)
+            return SimpleNamespace(choices=[])
+
+    _install_content_tool_call_normalizer(FakeAIAgent)
+    original = {
+        "model": "accounts/fireworks/models/kimi-k2p6",
+        "messages": [],
+        "tools": None,
+        "tool_choice": None,
+        "temperature": 0.2,
+    }
+    non_null = {
+        "model": "accounts/fireworks/models/kimi-k2p6",
+        "messages": [],
+        "tools": [{"type": "function"}],
+        "tool_choice": "auto",
+    }
+    agent = FakeAIAgent()
+
+    agent._interruptible_api_call(original)
+    agent._interruptible_streaming_api_call(original)
+    agent._interruptible_api_call(non_null)
+    agent._interruptible_streaming_api_call(non_null)
+
+    assert original["tools"] is None
+    assert original["tool_choice"] is None
+    assert "tools" not in FakeAIAgent.unary_kwargs[0]
+    assert "tool_choice" not in FakeAIAgent.unary_kwargs[0]
+    assert "tools" not in FakeAIAgent.streaming_kwargs[0]
+    assert "tool_choice" not in FakeAIAgent.streaming_kwargs[0]
+    assert FakeAIAgent.unary_kwargs[1] == non_null
+    assert FakeAIAgent.streaming_kwargs[1] == non_null
 
 
 def test_content_tool_calls_parse_self_closing_read_file_alias() -> None:

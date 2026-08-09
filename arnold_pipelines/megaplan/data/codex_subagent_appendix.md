@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 <!-- Source of truth for Codex-specific subagent orchestration. Appended only to the Codex skill via bundled_global_file('codex_skill.md'). -->
 ## Subagent Mode
 This appendix is Codex-specific. It adds only the orchestration delta for Codex. The base skill remains the workflow source of truth.
@@ -17,7 +19,7 @@ This appendix is Codex-specific. It adds only the orchestration delta for Codex.
 ### Launch
 When subagent mode is active, the outer skill becomes a launcher plus breakpoint relay. Start a Codex subagent with:
 - `agent_type`: `default`
-- `model`: prefer `gpt-5.4` when available
+- `model`: prefer `gpt-5.6-sol` when available
 - `reasoning_effort`: `high`
 - `fork_context`: `false` unless the current thread contains important constraints that are not restated in the prompt
 - `message`: fill the template below with `{IDEA}`, `{PROJECT_DIR}`, `{AUTO_APPROVE}`, `{AUTO_APPROVE_FLAG}`, and `{ROBUSTNESS_FLAG}`

@@ -12,6 +12,10 @@ the driver picks up wherever the previous run stopped.
 
 from __future__ import annotations
 
+import pytest
+
+pytest.skip("archived deleted pipeline resume runtime", allow_module_level=True)
+
 import hashlib
 import json
 from argparse import Namespace

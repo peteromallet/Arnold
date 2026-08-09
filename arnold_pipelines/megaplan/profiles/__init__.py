@@ -29,6 +29,7 @@ from .policy import (
     VALID_DEPTH_CHOICES,
     VALID_PHASE_KEYS,
     _canonicalize_tier_models_for_json,
+    _prep_flat_spec_from_profile,
     _premium_cli_route_available,
     _resolve_default_vendor,
     _swap_premium_spec,
@@ -194,6 +195,38 @@ def _validate_metadata(
                     f"{[c for c in CRITIC_MODEL_CHOICES if c]}; got {value!r}",
                 )
             validated["critic_model"] = value
+        elif key == "critique_routing":
+            if not isinstance(value, dict):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"'critique_routing' must be an object, got {type(value).__name__}",
+                )
+            floor_domains = value.get("floor_domains")
+            if floor_domains is not None and not (
+                isinstance(floor_domains, list)
+                and all(isinstance(d, str) for d in floor_domains)
+            ):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    "'critique_routing.floor_domains' must be a list[str]",
+                )
+            max_blind_passes = value.get("max_blind_passes")
+            if max_blind_passes is not None and not (
+                isinstance(max_blind_passes, int)
+                and not isinstance(max_blind_passes, bool)
+                and max_blind_passes >= 0
+            ):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    "'critique_routing.max_blind_passes' must be an int >= 0",
+                )
+            validated["critique_routing"] = value
         # Future metadata keys go here.
     return validated
 
@@ -521,7 +554,7 @@ def _built_in_profile_files() -> list[Any]:
         seen.add(resolved)
         try:
             for entry in root.iterdir():
-                if entry.is_file() and entry.name.endswith(".toml"):
+                if entry.is_file() and entry.name.endswith(".toml") and not entry.name.startswith("."):
                     entries.append(entry)
         except (OSError, FileNotFoundError):
             continue
@@ -983,6 +1016,75 @@ def _resolve_tier_models_with_inheritance(
     return merged
 
 
+def _resolve_critique_routing_with_inheritance(
+    profile_name: str,
+    *,
+    system_metadata: dict[str, dict[str, Any]],
+    pipeline_local_metadata: dict[str, dict[str, Any]],
+    _visited: set[str] | None = None,
+) -> dict[str, Any]:
+    """Walk the ``extends`` chain and merge ``critique_routing`` metadata.
+
+    Parent routing maps are applied first; child entries override per-key.
+    Profiles without ``critique_routing`` metadata return an empty dict.
+    Mirrors :func:`_resolve_tier_models_with_inheritance`.
+    """
+    if _visited is None:
+        _visited = set()
+
+    if profile_name in _visited:
+        raise CliError(
+            "invalid_profile",
+            f"Cycle detected in profile inheritance: "
+            f"{' -> '.join(sorted(_visited))} -> {profile_name}",
+        )
+    _visited.add(profile_name)
+
+    metadata: dict[str, Any] | None = None
+    if profile_name in pipeline_local_metadata:
+        metadata = pipeline_local_metadata.get(profile_name, {})
+    elif profile_name in system_metadata:
+        metadata = system_metadata.get(profile_name, {})
+
+    if metadata is None:
+        raise CliError(
+            "unknown_profile",
+            f"Unknown profile '{profile_name}'",
+        )
+
+    extends_ref = metadata.get("extends") if metadata else None
+    parent_routing: dict[str, Any] = {}
+    if extends_ref and isinstance(extends_ref, str):
+        if extends_ref.startswith("system:"):
+            parent_name = extends_ref[len("system:"):]
+        elif extends_ref.startswith("@"):
+            rest = extends_ref[1:]
+            if ":" in rest:
+                _pl_name, parent_name = rest.split(":", 1)
+            else:
+                parent_name = rest
+        else:
+            parent_name = None
+        if parent_name:
+            try:
+                parent_routing = _resolve_critique_routing_with_inheritance(
+                    parent_name,
+                    system_metadata=system_metadata,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                    _visited=_visited,
+                )
+            except CliError:
+                parent_routing = {}
+
+    own_routing: dict[str, Any] = metadata.get("critique_routing", {}) if metadata else {}
+    if not isinstance(own_routing, dict):
+        own_routing = {}
+
+    merged: dict[str, Any] = dict(parent_routing)
+    merged.update(own_routing)
+    return merged
+
+
 def _resolve_prep_models_with_inheritance(
     profile_name: str,
     *,
@@ -1055,7 +1157,69 @@ def _resolve_prep_models_with_inheritance(
     return merged
 
 
+# ``arnold_pipelines.megaplan.profiles`` historically exposed Megaplan policy
+# loading from this package.  A later neutral loader was added at the colliding
+# module path ``arnold_pipelines.megaplan.profiles.py``, which Python can never
+# import while this package exists.  Keep both contracts explicit: ordinary
+# Megaplan calls retain their established positional API, while calls carrying
+# neutral-loader keywords are delegated to the adjacent neutral module.
+from . import neutral as _neutral_profiles
+
+_load_megaplan_profile_sources = load_profile_sources
+_load_megaplan_profiles = load_profiles
+_load_megaplan_profile_metadata = load_profile_metadata
+
+ProfileLoadError = _neutral_profiles.ProfileLoadError
+AgentSpecShape = _neutral_profiles.AgentSpecShape
+parse_agent_spec_shape = _neutral_profiles.parse_agent_spec_shape
+parse_profiles_doc = _neutral_profiles.parse_profiles_doc
+validate_declared_stage_keys = _neutral_profiles.validate_declared_stage_keys
+merge_profile_layers = _neutral_profiles.merge_profile_layers
+resolve_default_profile = _neutral_profiles.resolve_default_profile
+
+_NEUTRAL_PROFILE_KEYS = frozenset(
+    {
+        "built_in_paths",
+        "user_path",
+        "project_path",
+        "declared_stage_keys",
+        "known_agents",
+        "metadata_keys",
+        "stage_value_validators",
+    }
+)
+
+
+def _uses_neutral_profile_contract(kwargs: dict[str, Any]) -> bool:
+    return bool(_NEUTRAL_PROFILE_KEYS.intersection(kwargs))
+
+
+def load_profile_sources(*args: Any, **kwargs: Any) -> Any:
+    if _uses_neutral_profile_contract(kwargs):
+        if args:
+            raise TypeError("neutral profile loading accepts keyword arguments only")
+        return _neutral_profiles.load_profile_sources(**kwargs)
+    return _load_megaplan_profile_sources(*args, **kwargs)
+
+
+def load_profiles(*args: Any, **kwargs: Any) -> Any:
+    if _uses_neutral_profile_contract(kwargs):
+        if args:
+            raise TypeError("neutral profile loading accepts keyword arguments only")
+        return _neutral_profiles.load_profiles(**kwargs)
+    return _load_megaplan_profiles(*args, **kwargs)
+
+
+def load_profile_metadata(*args: Any, **kwargs: Any) -> Any:
+    if _uses_neutral_profile_contract(kwargs):
+        if args:
+            raise TypeError("neutral profile loading accepts keyword arguments only")
+        return _neutral_profiles.load_profile_metadata(**kwargs)
+    return _load_megaplan_profile_metadata(*args, **kwargs)
+
+
 __all__ = [
+    "AgentSpecShape",
     "CANONICAL_PREP_MODELS",
     "DEFAULT_AGENT_ROUTING",
     "DEFAULT_DEEPSEEK_PROVIDER",
@@ -1075,6 +1239,7 @@ __all__ = [
     "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
     "PROFILE_METADATA_KEYS",
+    "ProfileLoadError",
     "apply_critic_rewrite",
     "apply_available_model_floor",
     "apply_deepseek_provider_rewrite",
@@ -1085,11 +1250,17 @@ __all__ = [
     "load_profile_metadata",
     "load_profile_sources",
     "load_profiles",
+    "merge_profile_layers",
+    "parse_agent_spec_shape",
+    "parse_profiles_doc",
     "profile_to_phase_models",
+    "_prep_flat_spec_from_profile",
     "resolve_prep_models",
+    "resolve_default_profile",
     "resolve_profile",
     "resolve_pipeline_profile",
     "validate_prep_stage_provider",
+    "validate_declared_stage_keys",
     "_canonicalize_tier_models_for_json",
     "_load_pipeline_local_profiles",
     "_load_pipeline_local_metadata",

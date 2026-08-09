@@ -5,4 +5,6 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/ensure-megaplan-resident
+# Execute the ensure script from the workspace checkout so resident-ensure
+# surfaces cannot materialize unguarded legacy repair authority.
+ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-resident

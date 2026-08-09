@@ -25,9 +25,10 @@ Event types covered
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
 
@@ -40,8 +41,13 @@ _EVENT_PREFIXES = {
     "watchdog_detection": "wd",
     "watchdog_dispatch": "wdd",
     "immediate_repair_attempt": "ira",
+    "managed_repair_claim": "mcl",
     "meta_repair_classification": "mrc",
     "meta_repair_attempt": "mra",
+    # ── next-three-hour auditor (canonical) ──
+    "next_three_hour_auditor_diagnosis": "n3h",
+    "next_three_hour_auditor_audit_complete": "n3c",
+    # ── six-hour auditor (legacy compatibility only) ──
     "six_hour_auditor_diagnosis": "sha",
     "six_hour_auditor_audit_complete": "shc",
     "github_issue_published": "ghp",
@@ -59,20 +65,145 @@ _AUDIT_COMPLETE_OUTCOMES = {
     "auditor_human_escalation",
 }
 
+# Canonical next-three-hour handoffs: diagnosis and reconciliation only.
+# Repair authority (immediate_repair, meta_repair) is NOT in this set — the
+# auditor diagnoses and escalates but never moves repair authority itself.
+_NEXT_THREE_HOUR_AUDITOR_HANDOFFS = {
+    None,
+    "next_three_hour_auditor.audit_complete",
+    "next_three_hour_auditor.diagnosis",
+    "github_sync.publish",
+}
+
+# Legacy six-hour handoff set kept for backward-compatible wrappers only.
+# Repair authority (immediate_repair, meta_repair) is **removed** per T34 —
+# the six-hour auditor may diagnose and escalate but never moves repair
+# authority itself.
 _SIX_HOUR_AUDITOR_HANDOFFS = {
     None,
-    "immediate_repair.repair_attempt",
-    "meta_repair.repair_attempt",
     "github_sync.publish",
     "six_hour_auditor.diagnosis",
+    "next_three_hour_auditor.diagnosis",
 }
 
 _GITHUB_SYNC_HANDOFFS = {
     None,
     "github_sync.publish",
     "github_sync.retry",
-    "six_hour_auditor.diagnosis",
+    "next_three_hour_auditor.diagnosis",
 }
+
+_INCIDENT_LEDGER_RELATIVE = Path(".megaplan") / "incident-ledger"
+_INCIDENT_STORE_FILES = ("events.jsonl", "incidents.json", "problems.json")
+IncidentStoreNamespace = Literal["production", "test", "fixture"]
+
+
+def _resolved(path: Path | str) -> Path:
+    """Resolve aliases and symlinks without requiring the path to exist."""
+    return Path(path).expanduser().resolve(strict=False)
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class IncidentStoreWriter:
+    """An incident writer bound to one explicit custody namespace and root.
+
+    Non-production writers must name the production workspace they are isolated
+    from.  Construction resolves symlinks before comparing the ledger,
+    projection, and journal paths, so a test alias cannot redirect writes into
+    production custody.  Writer identity is checked independently of the root;
+    a production writer therefore cannot be relabelled as a test fixture.
+    """
+
+    root: Path
+    namespace: IncidentStoreNamespace
+    identity: str
+    production_root: Path | None = None
+
+    def __post_init__(self) -> None:
+        root = _resolved(self.root)
+        identity = self.identity.strip()
+        if self.namespace not in {"production", "test", "fixture"}:
+            raise ValueError(f"unsupported incident-store namespace: {self.namespace!r}")
+        if not identity:
+            raise ValueError("incident-store writer identity must be non-empty")
+
+        identity_kind = identity.casefold().split(":", 1)[0]
+        if self.namespace == "production" and identity_kind in {"test", "fixture"}:
+            raise ValueError("production incident writer cannot accept a test or fixture identity")
+        if self.namespace != "production" and identity_kind != self.namespace:
+            raise ValueError(
+                f"{self.namespace} incident writer identity must start with "
+                f"{self.namespace!r}"
+            )
+
+        production_root = self.production_root
+        if self.namespace != "production" and production_root is None:
+            raise ValueError("test and fixture incident writers require production_root")
+        if production_root is not None:
+            production_root = _resolved(production_root)
+        if self.namespace != "production":
+            assert production_root is not None
+            production_ledger = production_root / _INCIDENT_LEDGER_RELATIVE
+            candidate_ledger = root / _INCIDENT_LEDGER_RELATIVE
+            production_paths = {
+                production_ledger,
+                *(production_ledger / name for name in _INCIDENT_STORE_FILES),
+            }
+            candidate_paths = {
+                candidate_ledger,
+                *(candidate_ledger / name for name in _INCIDENT_STORE_FILES),
+            }
+            if (
+                root == production_root
+                or _is_within(root, production_ledger)
+                or production_paths.intersection(candidate_paths)
+            ):
+                raise ValueError(
+                    "test or fixture incident store resolves to a production "
+                    "ledger, projection, or journal path"
+                )
+
+        object.__setattr__(self, "root", root)
+        object.__setattr__(self, "identity", identity)
+        object.__setattr__(self, "production_root", production_root)
+
+    @classmethod
+    def production(cls, root: Path | str, *, identity: str) -> "IncidentStoreWriter":
+        return cls(root=Path(root), namespace="production", identity=identity)
+
+    @classmethod
+    def isolated_test(
+        cls,
+        root: Path | str,
+        *,
+        production_root: Path | str,
+        identity: str = "test:incident_bridge",
+    ) -> "IncidentStoreWriter":
+        return cls(
+            root=Path(root),
+            namespace="test",
+            identity=identity,
+            production_root=Path(production_root),
+        )
+
+    @property
+    def ledger_dir(self) -> Path:
+        return self.root / _INCIDENT_LEDGER_RELATIVE
+
+    @property
+    def events_path(self) -> Path:
+        return self.ledger_dir / "events.jsonl"
+
+    def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        return IncidentLedger(self.root).append_event(event)
 
 
 def _new_event_id(prefix: str) -> str:
@@ -94,8 +225,10 @@ def _resolve_root(root: Path | str | None) -> Path:
 
 def _append(root: Path | str | None, event: dict[str, Any]) -> dict[str, Any]:
     """Validate and append *event* to the incident ledger, return the envelope."""
-    ledger = IncidentLedger(_resolve_root(root))
-    return ledger.append_event(event)
+    writer = IncidentStoreWriter.production(
+        _resolve_root(root), identity="production:incident_bridge"
+    )
+    return writer.append_event(event)
 
 
 def _require_handoff(next_expected_event: str | None, *, allowed: set[str | None], helper: str) -> None:
@@ -203,6 +336,47 @@ def append_watchdog_dispatch(
 # ---------------------------------------------------------------------------
 # Immediate-repair helper
 # ---------------------------------------------------------------------------
+
+
+def append_managed_repair_claim(
+    *,
+    incident_id: str,
+    claim_id: str,
+    actor: str,
+    summary: str,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    next_expected_event: str = "immediate_repair.repair_attempt",
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append the formal claim made by a real managed repair execution."""
+
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["managed_repair_claim"]),
+        "ts": _utc_now_iso(),
+        "type": "claim.acquired",
+        "actor": actor,
+        "scope": "repair_system",
+        "outcome": "acquired",
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": [],
+        "trigger_event_id": None,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": None,
+        "incident_id": incident_id,
+        "claim_id": claim_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
 
 
 def append_immediate_repair_attempt(
@@ -353,6 +527,123 @@ def append_meta_repair_attempt(
     return _append(root, event)
 
 
+def append_next_three_hour_auditor_diagnosis(
+    *,
+    incident_id: str,
+    summary: str,
+    outcome: str = "diagnosed",
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = "next_three_hour_auditor.audit_complete",
+    decision: dict[str, Any] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a next-three-hour auditor diagnosis event.
+
+    This is the canonical diagnosis helper.  The auditor diagnoses and
+    records findings but does **not** hand off to repair authority —
+    ``_NEXT_THREE_HOUR_AUDITOR_HANDOFFS`` excludes immediate_repair and
+    meta_repair.
+    """
+    _require_handoff(
+        next_expected_event,
+        allowed=_NEXT_THREE_HOUR_AUDITOR_HANDOFFS | {"next_three_hour_auditor.audit_complete"},
+        helper="append_next_three_hour_auditor_diagnosis",
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["next_three_hour_auditor_diagnosis"]),
+        "ts": _utc_now_iso(),
+        "type": "next_three_hour_auditor.diagnosis",
+        "actor": "next_three_hour_auditor",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
+def append_next_three_hour_auditor_audit_complete(
+    *,
+    incident_id: str,
+    summary: str,
+    outcome: str,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = None,
+    decision: dict[str, Any] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a next-three-hour auditor audit_complete handoff event.
+
+    This is the canonical audit-complete helper.  Handoffs are restricted
+    to diagnosis / reconciliation targets; repair authority is never
+    moved by the auditor.
+    """
+    _require_allowed_outcome(
+        outcome,
+        allowed=_AUDIT_COMPLETE_OUTCOMES,
+        helper="append_next_three_hour_auditor_audit_complete",
+    )
+    _require_handoff(
+        next_expected_event,
+        allowed=_NEXT_THREE_HOUR_AUDITOR_HANDOFFS,
+        helper="append_next_three_hour_auditor_audit_complete",
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["next_three_hour_auditor_audit_complete"]),
+        "ts": _utc_now_iso(),
+        "type": "next_three_hour_auditor.audit_complete",
+        "actor": "next_three_hour_auditor",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
+# ── Legacy six-hour wrappers (compatibility only) ──────────────────────
+
+
 def append_six_hour_auditor_diagnosis(
     *,
     incident_id: str,
@@ -369,7 +660,15 @@ def append_six_hour_auditor_diagnosis(
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Append a six-hour auditor diagnosis event."""
+    """Legacy compatibility wrapper — prefer :func:`append_next_three_hour_auditor_diagnosis`.
+
+    The six-hour auditor names are retained for backward compatibility
+    only (T33).  New code should use the next-three-hour equivalents.
+    This wrapper records a ``six_hour_auditor.diagnosis`` event type so
+    existing ledger readers are not broken, but it validates handoffs
+    against the legacy set which **still** allows repair-authority
+    handoffs for compatibility with old callers.
+    """
     _require_handoff(
         next_expected_event,
         allowed=_SIX_HOUR_AUDITOR_HANDOFFS | {"six_hour_auditor.audit_complete"},
@@ -418,7 +717,14 @@ def append_six_hour_auditor_audit_complete(
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Append a six-hour auditor audit_complete handoff event."""
+    """Legacy compatibility wrapper — prefer :func:`append_next_three_hour_auditor_audit_complete`.
+
+    The six-hour auditor names are retained for backward compatibility
+    only (T33).  New code should use the next-three-hour equivalents.
+    This wrapper records a ``six_hour_auditor.audit_complete`` event type
+    so existing ledger readers are not broken, but it validates handoffs
+    against the legacy set.
+    """
     _require_allowed_outcome(
         outcome,
         allowed=_AUDIT_COMPLETE_OUTCOMES,
@@ -602,6 +908,7 @@ def append_verified_recovered(
     *,
     incident_id: str,
     summary: str,
+    recovery_verification: dict[str, Any],
     evidence: list[Any] | None = None,
     session_id: str | None = None,
     problem_id: str | None = None,
@@ -611,7 +918,23 @@ def append_verified_recovered(
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Append a *verified_recovered* event confirming the fix chain is complete."""
+    """Append a *verified_recovered* event only from blocker-specific proof."""
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        classify_recovery_verification,
+    )
+
+    classified = classify_recovery_verification(
+        original_blocker=recovery_verification.get("original_blocker"),
+        observation=recovery_verification.get("observation"),
+        repair_completed_at=recovery_verification.get("repair_completed_at"),
+    )
+    if classified["authorizes_verified_recovered"] is not True:
+        raise ValueError(
+            "verified_recovered requires later independent blocker-specific evidence: "
+            f"{classified['status']}:{classified['unknown_type'] or classified['reason']}"
+        )
+    event_evidence = list(evidence or [])
+    event_evidence.append({"kind": "recovery_verification", "data": classified})
     event: dict[str, Any] = {
         "schema_version": 1,
         "event_id": _new_event_id(_EVENT_PREFIXES["verified_recovered"]),
@@ -621,7 +944,7 @@ def append_verified_recovered(
         "scope": "repair_system",
         "outcome": "recovered",
         "summary": summary,
-        "evidence": evidence if evidence is not None else [],
+        "evidence": event_evidence,
         "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
         "trigger_event_id": trigger_event_id,
         "next_expected_event": None,
@@ -635,6 +958,66 @@ def append_verified_recovered(
     if links is not None:
         event["links"] = links
     return _append(root, event)
+
+
+def append_recovery_observation(
+    *,
+    incident_id: str,
+    summary: str,
+    recovery_verification: dict[str, Any],
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Project recovery evidence without promoting provisional/unknown states."""
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        RECOVERY_PROVISIONAL,
+        classify_recovery_verification,
+    )
+
+    classified = classify_recovery_verification(
+        original_blocker=recovery_verification.get("original_blocker"),
+        observation=recovery_verification.get("observation"),
+        repair_completed_at=recovery_verification.get("repair_completed_at"),
+    )
+    if classified["authorizes_verified_recovered"] is True:
+        return append_verified_recovered(
+            incident_id=incident_id,
+            summary=summary,
+            recovery_verification=recovery_verification,
+            evidence=evidence,
+            session_id=session_id,
+            problem_id=problem_id,
+            parent_event_ids=parent_event_ids,
+            trigger_event_id=trigger_event_id,
+            deadline_ts=deadline_ts,
+            root=root,
+        )
+
+    typed_outcome = (
+        RECOVERY_PROVISIONAL
+        if classified["status"] == RECOVERY_PROVISIONAL
+        else f"unknown_{classified['unknown_type']}"
+    )
+    projected_evidence = list(evidence or [])
+    projected_evidence.append({"kind": "recovery_verification", "data": classified})
+    return append_immediate_repair_attempt(
+        incident_id=incident_id,
+        summary=summary,
+        attempt_id=f"{session_id or incident_id}-recovery-observation",
+        outcome=typed_outcome,
+        evidence=projected_evidence,
+        session_id=session_id,
+        problem_id=problem_id,
+        parent_event_ids=parent_event_ids,
+        trigger_event_id=trigger_event_id,
+        deadline_ts=deadline_ts,
+        root=root,
+    )
 
 
 def append_github_issue_published(
@@ -853,6 +1236,8 @@ def append_dispatch_expired(
 # ---------------------------------------------------------------------------
 
 __all__ = [
+    "IncidentStoreNamespace",
+    "IncidentStoreWriter",
     "append_chain_lifecycle",
     "append_dispatch_expired",
     "append_github_issue_publish_failed",
@@ -860,8 +1245,12 @@ __all__ = [
     "append_immediate_repair_attempt",
     "append_install_sync_applied",
     "append_install_sync_failed",
+    "append_managed_repair_claim",
     "append_meta_repair_attempt",
     "append_meta_repair_classification",
+    "append_next_three_hour_auditor_audit_complete",
+    "append_next_three_hour_auditor_diagnosis",
+    "append_recovery_observation",
     "append_repair_retriggered",
     "append_six_hour_auditor_audit_complete",
     "append_six_hour_auditor_diagnosis",

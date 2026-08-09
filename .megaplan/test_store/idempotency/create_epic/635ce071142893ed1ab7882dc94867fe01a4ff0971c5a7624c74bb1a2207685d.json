@@ -1,0 +1,18 @@
+{
+  "operation": "create_epic",
+  "request_hash": "1b03c69643576599fd161c0cb2730458009275e1a8cfc1461c08a5436141e3d9",
+  "response": {
+    "id": "epic_919e688b6e1c",
+    "title": "Conflict Epic",
+    "goal": "Exercise lock/lease conflicts",
+    "body": "Body",
+    "state": "shaping",
+    "home_backend": "file",
+    "migrated_to": null,
+    "revision": 0,
+    "created_at": "2026-07-14T01:19:38.198815Z",
+    "last_edited_at": "2026-07-14T01:19:38.198824Z",
+    "last_active_at": null,
+    "planned_at": null
+  }
+}

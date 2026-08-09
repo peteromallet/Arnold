@@ -55,8 +55,8 @@ agents:
 # codex:
 #   Written to /root/.codex/config.toml on every boot.
 codex:
-  model: gpt-5.4
-  reasoning: high
+  model: gpt-5.6-sol
+  reasoning: medium
 
 # mode behavior:
 #   | mode  | agent session boot action                                  | required fields                    |
@@ -66,6 +66,27 @@ codex:
 #   Missing auto.idea_file or chain.spec is a warning path in sprint 1: the
 #   container drops to idle instead of crashing so you can upload files manually.
 mode: idle
+
+# isolated_chain_runner:
+#   SSH+idle-only runner containment for one explicitly launched `cloud chain`.
+#   The container entrypoint runs only the health server: it never boots an
+#   agent shell, chain, heartbeat, watchdog, auditor, repair loop, resident, or
+#   notification sweep. Launch work later through supported `cloud preflight`
+#   and `cloud chain --fresh` commands. Requires `secrets: []`; Codex OAuth is
+#   seeded through the separate file-based credential path.
+isolated_chain_runner: false
+# Required by deploy and every later container-touching isolated action. Build
+# may run before this digest is known; record the exact built image ID before
+# deploy/preflight/sync/chain/status/logs/chains.
+# isolated_chain_runner_image_id: sha256:<64 lowercase hex>
+
+# zero_recovery_canary:
+#   SSH+idle-only finite-canary containment. The entrypoint runs only the
+#   health server; deploy requires a fresh host predeploy transaction and
+#   fences the fixed recovery/systemd allowlist. It is not deploy authority.
+zero_recovery_canary: false
+# Required with zero_recovery_canary=true; preserved stopped predecessor.
+# zero_recovery_predecessor_container: megaplan-cloud-agent-v2
 
 # auto:
 #   Required only when mode=auto.
@@ -116,9 +137,15 @@ megaplan:
 # resources:
 #   volume  Provider-specific persistent volume name. `destroy` deletes it.
 #   port    Health server port exposed by the container.
+#   prelaunch_min_free_bytes  Required host workspace free-byte floor.
+#   prelaunch_min_free_inodes Required host workspace free-inode floor.
+#   prelaunch_receipt_reserve_bytes Bytes physically reserved during the durability probe.
 resources:
   volume: agent-volume
   port: 8080
+  prelaunch_min_free_bytes: 1073741824
+  prelaunch_min_free_inodes: 10000
+  prelaunch_receipt_reserve_bytes: 1048576
 
 # local:
 #   compose_project  Docker Compose project name used by the local provider.

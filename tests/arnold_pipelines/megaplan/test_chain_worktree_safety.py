@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,11 @@ from arnold_pipelines.megaplan.chain.spec import MilestoneSpec
 from arnold_pipelines.megaplan.chain.spec import load_spec
 from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
 from arnold_pipelines.megaplan.types import CliError
+
+
+@pytest.fixture(autouse=True)
+def _ignore_ambient_chain_no_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -533,6 +539,69 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     local_branch = _git(runner, "rev-parse", "HEAD").stdout.strip()
     assert remote_branch == local_branch
     assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
+
+
+def test_checkout_existing_milestone_skips_rebase_when_remote_base_rewrites_away_expected_base(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    messages: list[str] = []
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "chain.yaml").write_text("profile: partnered-5\n", encoding="utf-8")
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "-u", "origin", "main")
+    expected_base = _git(source, "rev-parse", "HEAD").stdout.strip()
+
+    _git(source, "checkout", "-b", "cloud/m1")
+    (source / "milestone.txt").write_text("m1\n", encoding="utf-8")
+    _git(source, "add", "milestone.txt")
+    _git(source, "commit", "-m", "milestone")
+    milestone_sha = _git(source, "rev-parse", "HEAD").stdout.strip()
+    _git(source, "push", "-u", "origin", "cloud/m1")
+
+    _git(source, "checkout", "--orphan", "rewrite-main")
+    for path in source.iterdir():
+        if path.name == ".git":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    (source / "README.md").write_text("rewritten main\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "rewrite main unrelated")
+    _git(source, "branch", "-M", "rewrite-main", "main")
+    _git(source, "push", "--force", "origin", "main")
+
+    _git(tmp_path, "clone", "--branch", "main", str(origin), str(runner))
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+
+    _checkout_milestone_branch(
+        runner,
+        "cloud/m1",
+        base_branch="main",
+        writer=messages.append,
+        from_origin=True,
+        expected_base_ref=expected_base,
+    )
+
+    assert _git(runner, "branch", "--show-current").stdout.strip() == "cloud/m1"
+    assert _git(runner, "rev-parse", "HEAD").stdout.strip() == milestone_sha
+    assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
+    assert any(
+        "no common ancestor with existing milestone branch cloud/m1" in m
+        for m in messages
+    )
+    assert not any("git rebase origin/main" in m for m in messages)
 
 
 def test_run_chain_repushes_deleted_remote_base_branch_from_local_ref(
@@ -1192,7 +1261,70 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     assert saved.pr_state == "merged"
 
 
-def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
+def test_run_chain_no_push_resume_does_not_checkout_milestone_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"planned"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="failed",
+        ),
+    )
+    dirty_path = root / "retained-wip.txt"
+    dirty_path.write_text("must survive resume\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "planned",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("no-push resume must not prepare the PR branch")
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    result = run_chain(
+        spec_path,
+        root,
+        writer=lambda _message: None,
+        no_push=True,
+        no_git_refresh=True,
+    )
+
+    assert result["status"] == "stopped"
+    assert dirty_path.read_text(encoding="utf-8") == "must survive resume\n"
+
+
+def test_run_chain_resume_without_pr_opens_pr_before_resuming_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1216,7 +1348,6 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
         ),
     )
 
-    commit_calls: list[tuple[str, str, str]] = []
     ensure_calls: list[str] = []
 
     monkeypatch.setattr(
@@ -1240,12 +1371,10 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "arnold_pipelines.megaplan.chain._resume_needs_init_anchor",
-        lambda *_args, **_kwargs: True,
-    )
-    monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._commit_and_push_phase",
-        lambda _root, branch, plan, phase, **_kwargs: commit_calls.append((branch, plan, phase)),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("resuming an existing plan must not recreate its init anchor")
+        ),
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
@@ -1267,73 +1396,13 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
     result = run_chain(spec_path, root, writer=lambda _message: None)
 
     assert result["status"] == "stopped"
-    assert commit_calls == [("test/m1", "plan-m1", "init")]
     assert ensure_calls == ["m1"]
     saved = load_chain_state(spec_path)
     assert saved.pr_number == 81
     assert saved.pr_state == "open"
 
 
-def test_pr_state_treats_gh_graphql_missing_pr_as_closed_even_when_error_message_is_generic(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The real command wrapper exposes gh diagnostics in ``extra.output``."""
-    messages: list[str] = []
-
-    def missing_pr(*_args, **_kwargs):
-        raise CliError(
-            "gh_pr_view_failed",
-            "gh pr view 206 exited 1",
-            extra={
-                "output": "GraphQL: Could not resolve to a PullRequest with the number of 206.",
-            },
-        )
-
-    monkeypatch.setattr(
-        git_ops,
-        "_compat",
-        lambda: SimpleNamespace(
-            _run_command=missing_pr,
-            GH_PR_STATE_ATTEMPTS=3,
-            _is_transient_gh_error=lambda _exc: False,
-        ),
-    )
-
-    assert git_ops._pr_state(tmp_path, 206, writer=messages.append) == "closed"
-    assert any("stale PR cursor as closed" in message for message in messages)
-
-
-def test_run_command_preserves_gh_stderr_as_output(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    observed = "GraphQL: Could not resolve to a PullRequest with the number of 206."
-    monkeypatch.setattr(
-        git_ops,
-        "_compat",
-        lambda: SimpleNamespace(
-            subprocess=SimpleNamespace(
-                run=lambda *_args, **_kwargs: subprocess.CompletedProcess(
-                    ["gh", "pr", "view", "206"], 1, stdout="", stderr=observed
-                ),
-                TimeoutExpired=subprocess.TimeoutExpired,
-            ),
-            _command_env=lambda _cmd: {},
-            _should_retry_gh_without_env=lambda _cmd, _proc: False,
-        ),
-    )
-
-    with pytest.raises(CliError) as exc_info:
-        git_ops._run_command(
-            tmp_path,
-            ["gh", "pr", "view", "206"],
-            writer=lambda _message: None,
-            error_code="gh_pr_view_failed",
-        )
-
-    assert exc_info.value.extra["output"] == observed
-
-
-def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
+def test_run_chain_creates_pr_once_before_phase_commits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1384,7 +1453,7 @@ def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
 
     def fake_ensure(*_args, **_kwargs):
         ensure_calls.append("ensure")
-        return None if len(ensure_calls) == 1 else 80
+        return 80
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
@@ -1418,7 +1487,7 @@ def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
     run_chain(spec_path, root, writer=lambda _message: None)
 
     saved = load_chain_state(spec_path)
-    assert ensure_calls == ["ensure", "ensure"]
+    assert ensure_calls == ["ensure"]
     assert saved.pr_number == 80
     assert saved.pr_state == "open"
 
@@ -1459,9 +1528,30 @@ def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monke
     assert Path.cwd() == root
 
 
-def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
+@pytest.mark.parametrize(
+    ("pr_states", "guard_results", "expected_status"),
+    [
+        (
+            ["open", "open"],
+            [(False, "no typed no-op completion waiver found")],
+            "stopped",
+        ),
+        (
+            ["open", "merged"],
+            [
+                (False, "open PR evidence is stale"),
+                (True, "merged publication evidence is authoritative"),
+            ],
+            "done",
+        ),
+    ],
+)
+def test_run_chain_rechecks_pr_state_when_premerge_completion_guard_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pr_states: list[str],
+    guard_results: list[tuple[bool, str]],
+    expected_status: str,
 ) -> None:
     root = tmp_path / "repo"
     _init_repo(root)
@@ -1541,13 +1631,15 @@ def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
         "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
         lambda *args, **kwargs: (True, "authoritative"),
     )
+    guard_iter = iter(guard_results)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._chain_completion_guard",
-        lambda *args, **kwargs: (False, "no typed no-op completion waiver found"),
+        lambda *args, **kwargs: next(guard_iter),
     )
+    pr_state_iter = iter(pr_states)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._pr_state",
-        lambda *args, **kwargs: "open",
+        lambda *args, **kwargs: next(pr_state_iter),
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._mark_pr_ready",
@@ -1558,14 +1650,87 @@ def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
         lambda *args, **kwargs: merge_calls.append(1) or "merged",
     )
 
-    result = run_chain(spec_path, root, writer=lambda _message: None)
+    messages: list[str] = []
+    result = run_chain(spec_path, root, writer=messages.append)
 
-    assert result["status"] == "stopped"
-    assert "completion guard blocked before PR merge" in result["reason"]
+    assert result["status"] == expected_status
     assert ready_calls == []
     assert merge_calls == []
 
     saved = load_chain_state(spec_path)
-    assert saved.last_state == "blocked"
-    assert saved.pr_number == 80
-    assert saved.pr_state == "open"
+    if expected_status == "stopped":
+        assert "completion guard blocked before PR merge" in result["reason"]
+        assert saved.last_state == "blocked"
+        assert saved.pr_number == 80
+        assert saved.pr_state == "open"
+        assert saved.completed == []
+    else:
+        assert saved.last_state == "done"
+        assert saved.current_milestone_index == 1
+        assert saved.current_plan_name is None
+        assert saved.completed[0]["label"] == "m1"
+        assert saved.completed[0]["pr_state"] == "merged"
+        assert any("merged while completion guard was evaluating" in msg for msg in messages)
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "GraphQL: Could not resolve to a PullRequest with the number of 206.",
+        "GraphQL: Could not resolve to a pull request with the number of 206.",
+        "pull request not found",
+        "no pull requests found for branch",
+        "pull request was not found",
+    ],
+)
+def test_pr_state_classifies_missing_github_pr_as_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    diagnostic: str,
+) -> None:
+    messages: list[str] = []
+
+    def missing_pr(*_args, **_kwargs):
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view 206 exited 1",
+            extra={"stdout": "", "stderr": diagnostic},
+        )
+
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            _run_command=missing_pr,
+            GH_PR_STATE_ATTEMPTS=3,
+            _is_transient_gh_error=lambda _exc: False,
+        ),
+    )
+
+    assert git_ops._pr_state(tmp_path, 206, writer=messages.append) == "closed"
+    assert any("treating persisted PR #206 as closed" in message for message in messages)
+
+
+def test_pr_state_does_not_classify_unrelated_github_error_as_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def permission_error(*_args, **_kwargs):
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view 206 exited 1",
+            extra={"stdout": "", "stderr": "HTTP 403: resource not accessible"},
+        )
+
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            _run_command=permission_error,
+            GH_PR_STATE_ATTEMPTS=1,
+            _is_transient_gh_error=lambda _exc: False,
+        ),
+    )
+
+    with pytest.raises(CliError, match="gh pr view 206 exited 1"):
+        git_ops._pr_state(tmp_path, 206, writer=lambda _message: None)

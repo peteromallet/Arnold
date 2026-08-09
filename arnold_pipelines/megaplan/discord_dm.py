@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 from typing import Any, Mapping, Sequence
 from urllib import error, request
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+from arnold_pipelines.megaplan.notification_safety import classify_user_notification
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,11 +66,28 @@ def send_discord_dm(
     *,
     env: Mapping[str, str] | None = None,
     opener: Any | None = None,
+    delivery_effects: Any | None = None,
 ) -> dict[str, Any]:
-    """Send a structured payload as one or more Discord bot DMs."""
+    """Send a structured payload as one or more Discord bot DMs.
+
+    When *delivery_effects* is provided (Step 13G2), the outbound
+    Discord DM call is routed through the durable WBC delivery effects
+    adapter with stable parent/target/channel global-effect keys.
+    The adapter owns the one provider callback.  Adapter denial or ambiguity
+    is returned to the caller and never falls through to direct Discord.
+    """
 
     environment = env if env is not None else os.environ
     payload = redact_payload(payload, env=environment)
+    safety = classify_user_notification(payload=payload, env=environment)
+    if not safety.allowed:
+        LOGGER.warning("Discord DM suppressed by notification safety policy: %s", safety.reason)
+        return {
+            "ok": False,
+            "reason": "test_execution_suppressed",
+            "suppression_reason": safety.reason,
+            "message_count": 0,
+        }
     token = (environment.get("DISCORD_BOT_TOKEN") or "").strip()
     user_id = (environment.get("DISCORD_DM_USER_ID") or "").strip()
     messages = render_discord_dm(payload)
@@ -92,6 +111,90 @@ def send_discord_dm(
             "missing": missing,
             "message_count": 0,
         }
+
+    # Step 13G2: route through delivery effects when adapter is provided
+    if delivery_effects is not None:
+        try:
+            from arnold_pipelines.megaplan.resident.delivery_effects import (
+                DeliveryChannel,
+                DeliveryTarget,
+            )
+
+            occurrence_key = _notification_idempotency_key(payload)
+
+            target = DeliveryTarget(
+                channel=DeliveryChannel.DISCORD_DM,
+                parent_id=user_id,
+                target_id=f"{user_id}:{occurrence_key}",
+                action="send_dm",
+            )
+
+            def _fake_transport(intent: dict[str, Any]) -> dict[str, Any]:
+                urlopen_fn = opener or request.urlopen
+                ch = _discord_api_request(
+                    "/users/@me/channels",
+                    {"recipient_id": user_id},
+                    token=token,
+                    opener=urlopen_fn,
+                )
+                ch_id = str(ch["id"])
+                mids: list[str] = []
+                for index, content_item in enumerate(messages):
+                    d = _discord_api_request(
+                        f"/channels/{ch_id}/messages",
+                        {
+                            "content": content_item,
+                            "nonce": hashlib.sha256(
+                                f"{occurrence_key}:{index}".encode("utf-8")
+                            ).hexdigest()[:24],
+                            "enforce_nonce": True,
+                        },
+                        token=token,
+                        opener=urlopen_fn,
+                    )
+                    mid = d.get("id")
+                    if mid is not None:
+                        mids.append(str(mid))
+                return {
+                    "ok": True,
+                    "channel_id": ch_id,
+                    "message_ids": mids,
+                    "message_count": len(messages),
+                }
+
+            outcome = delivery_effects.deliver(
+                target=target,
+                intent_payload={**dict(payload), "idempotency_key": occurrence_key},
+                apply_fn=_fake_transport,
+            )
+            if outcome.ok:
+                return {
+                    "ok": True,
+                    "channel_id": outcome.evidence.get("channel_id", ""),
+                    "message_ids": outcome.evidence.get("message_ids", []),
+                    "message_count": len(messages),
+                    "glek": outcome.glek,
+                }
+            return {
+                "ok": False,
+                "reason": "delivery_adapter_blocked",
+                "error": outcome.error,
+                "message_count": 0,
+                "glek": outcome.glek,
+                "outcome_kind": outcome.outcome_kind,
+            }
+        except Exception as delivery_exc:
+            LOGGER.warning(
+                "Delivery effects routing failed for user %s: %s",
+                user_id, delivery_exc,
+            )
+            return {
+                "ok": False,
+                "reason": "delivery_adapter_indeterminate",
+                "error": f"{type(delivery_exc).__name__}: {delivery_exc}",
+                "message_count": 0,
+                "outcome_kind": "INDETERMINATE",
+            }
 
     urlopen = opener or request.urlopen
     try:
@@ -128,6 +231,32 @@ def send_discord_dm(
         "message_ids": message_ids,
         "message_count": len(messages),
     }
+
+
+def _notification_idempotency_key(payload: Mapping[str, Any]) -> str:
+    """Return one stable logical occurrence key across poller restarts."""
+    for field in (
+        "idempotency_key",
+        "notification_intent_id",
+        "incident_occurrence_id",
+        "escalation_id",
+    ):
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    stable_payload = {
+        str(key): value
+        for key, value in payload.items()
+        if str(key) not in {"timestamp_utc", "observed_at", "generated_at"}
+    }
+    canonical = json.dumps(
+        stable_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return "discord-dm:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _discord_api_request(

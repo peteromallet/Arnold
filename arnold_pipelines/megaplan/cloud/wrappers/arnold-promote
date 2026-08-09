@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+#
+# arnold-promote — per-epic runtime lifecycle: PROMPT, STAGED PROMOTION
+#
+# Provenance: fixer-unification design 2026-08-07, Phase 4
+#   design: docs/runtime-and-fixer-unification-design-20260807.md
+#     - §4 Phase 4 (prompt, staged promotion) + §6 file-changes row 13
+#     - §2 design rule 5: candidate ref/PR with provenance -> canary generation
+#       verified in a separate namespace -> compare-and-swap push base to origin
+#       -> promotion journal -> advance the active-generation pointer (retain the
+#       previous generation for rollback). "A successful push is NOT a safe cutover."
+#     - §2 promotion gate 1-6: engine-level fix, allowlist+review, chain green,
+#       base regression NO-OP, policy-SHA match, canary healthy.
+#   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
+#
+# Usage: arnold-promote [--force-gate] <epic-slug> <manifest-path>
+#
+#   1. verify the epic worktree's origin branch exists and is fully pushed
+#   2. promotion gate: a tests-green marker (in the manifest dir or the
+#      worktree) or the explicit --force-gate flag
+#   3. candidate temp ref promote/<slug>-<YYYYMMDD> off the origin branch tip
+#      (git fetch + git branch), pushed to origin for provenance
+#   4. compare-and-swap push of the candidate onto refs/heads/<base-branch> —
+#      a plain push, NEVER a force push; a rejected (non-fast-forward) push
+#      exits 3 with a message
+#   5. promotion journal append (runtime_manifest CLI preferred; append-only
+#      JSONL fallback: {slug, from_sha, to_sha, at, result})
+#   6. advance the active-generation pointer via the runtime_manifest CLI, else
+#      print the manual step; the canary-verification warning is always printed
+#
+# Environment overrides (all optional):
+#   ARNOLD_ORIGIN_URL         fetch/push target (URL or remote name) (default: origin)
+#   ARNOLD_BASE_BRANCH        base branch promoted onto              (default: base/editable-install)
+#   ARNOLD_PROMOTION_JOURNAL  promotion journal path (JSONL)         (default: <manifest-dir>/promotion-journal.jsonl)
+#
+set -euo pipefail
+
+FORCE_GATE=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --force-gate) FORCE_GATE=1 ;;
+    *) POSITIONAL+=("$arg") ;;
+  esac
+done
+
+if [[ ${#POSITIONAL[@]} -ne 2 ]]; then
+  echo "usage: arnold-promote [--force-gate] <epic-slug> <manifest-path>" >&2
+  exit 64
+fi
+
+SLUG="${POSITIONAL[0]}"
+MANIFEST="${POSITIONAL[1]}"
+
+[[ -f "$MANIFEST" ]] || {
+  echo "arnold-promote: manifest '$MANIFEST' not found" >&2
+  exit 1
+}
+
+_json_get() {
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    if not isinstance(d, dict) or key not in d:
+        print("")
+        sys.exit(0)
+    d = d[key]
+if d is None:
+    print("")
+elif isinstance(d, (dict, list)):
+    print(json.dumps(d))
+else:
+    print(str(d))
+' "$1" "$2"
+}
+
+STATE="$(_json_get "$MANIFEST" state)"
+if [[ "$STATE" == "closed" ]]; then
+  echo "arnold-promote: refusing: epic '$SLUG' is closed — promote before close" >&2
+  exit 1
+fi
+
+WORKTREE="$(_json_get "$MANIFEST" epic.worktree_path)"
+BRANCH="$(_json_get "$MANIFEST" epic.branch)"
+if [[ -z "$WORKTREE" || ! -d "$WORKTREE" ]]; then
+  echo "arnold-promote: manifest '$MANIFEST' has no resolvable epic.worktree_path (got '$WORKTREE')" >&2
+  exit 1
+fi
+if [[ -z "$BRANCH" ]]; then
+  echo "arnold-promote: manifest '$MANIFEST' is missing epic.branch" >&2
+  exit 1
+fi
+
+REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
+BASE_BRANCH="${ARNOLD_BASE_BRANCH:-base/editable-install}"
+MANIFEST_DIR="$(dirname "$MANIFEST")"
+JOURNAL="${ARNOLD_PROMOTION_JOURNAL:-$MANIFEST_DIR/promotion-journal.jsonl}"
+
+# (a) Verify the epic worktree's origin branch exists and is fully pushed.
+if ! LOCAL_SHA="$(git -C "$WORKTREE" rev-parse --verify "refs/heads/$BRANCH" 2>/dev/null)"; then
+  echo "arnold-promote: epic branch '$BRANCH' not found in '$WORKTREE'" >&2
+  exit 1
+fi
+ORIGIN_SHA="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/heads/$BRANCH" | awk '{print $1}')"
+if [[ -z "$ORIGIN_SHA" ]]; then
+  echo "arnold-promote: epic branch '$BRANCH' does not exist on '$REMOTE' — push it before promoting (nothing authoritative runs unpushed)" >&2
+  exit 1
+fi
+if [[ "$LOCAL_SHA" != "$ORIGIN_SHA" ]]; then
+  echo "arnold-promote: epic branch '$BRANCH' is not fully pushed (local $LOCAL_SHA != origin $ORIGIN_SHA) — push before promoting" >&2
+  exit 1
+fi
+
+# (b) Promotion gate (design §2 gate 1-6): tests-green marker or explicit flag.
+if [[ "$FORCE_GATE" != "1" ]]; then
+  if [[ -f "$MANIFEST_DIR/tests-green.marker" || -f "$WORKTREE/tests-green.marker" ]]; then
+    : # marker present
+  else
+    echo "arnold-promote: promotion gate NOT satisfied — no tests-green marker (checked '$MANIFEST_DIR/tests-green.marker' and '$WORKTREE/tests-green.marker') and no --force-gate. The gate requires: engine-level fix, allowlist+review, chain green, base regression NO-OP, policy-SHA match, canary healthy (design §2.1-2.6)." >&2
+    exit 1
+  fi
+fi
+
+# (c) Candidate temp ref off the origin branch tip (git fetch + git branch).
+STAMP="$(date +%Y%m%d)"
+TMP_REF="promote/$SLUG-$STAMP"
+git -C "$WORKTREE" fetch --quiet "$REMOTE" "refs/heads/$BRANCH"
+git -C "$WORKTREE" branch -f "$TMP_REF" FETCH_HEAD
+TO_SHA="$(git -C "$WORKTREE" rev-parse "$TMP_REF")"
+FROM_SHA="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/heads/$BASE_BRANCH" | awk '{print $1}')"
+
+# Push the candidate ref to origin for provenance, then the CAS push onto base.
+if ! git -C "$WORKTREE" push "$REMOTE" "$TMP_REF" >/dev/null 2>&1; then
+  echo "arnold-promote: failed to push candidate ref '$TMP_REF' to '$REMOTE' — nothing promoted" >&2
+  exit 1
+fi
+
+# (d) Compare-and-swap push onto the base branch — a plain push, NEVER force.
+if ! PUSH_OUT="$(git -C "$WORKTREE" push "$REMOTE" "$TMP_REF:refs/heads/$BASE_BRANCH" 2>&1)"; then
+  echo "arnold-promote: CAS push onto 'refs/heads/$BASE_BRANCH' REJECTED (non-fast-forward — the base advanced since this epic forked, or the ref is protected). Nothing was promoted; reconcile and re-run. Push output:" >&2
+  echo "$PUSH_OUT" >&2
+  exit 3
+fi
+
+# (e) Promotion journal — runtime_manifest CLI preferred, JSONL fallback.
+AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest append_promotion \
+    --epic-id "$SLUG" --from-sha "$FROM_SHA" --to-sha "$TO_SHA" --result pushed --at "$AT" >/dev/null 2>&1; then
+  : # CLI recorded the promotion
+else
+  echo "arnold-promote: runtime_manifest CLI unavailable/failed; appending to promotion journal '$JOURNAL' and manifest promotions[] (fallback)" >&2
+  mkdir -p "$MANIFEST_DIR"
+  python3 - "$SLUG" "$FROM_SHA" "$TO_SHA" "$AT" <<'PY' >> "$JOURNAL"
+import json, sys
+slug, from_sha, to_sha, at = sys.argv[1:5]
+print(json.dumps({"slug": slug, "from_sha": from_sha, "to_sha": to_sha, "at": at, "result": "pushed"}))
+PY
+  python3 - "$MANIFEST" "$FROM_SHA" "$TO_SHA" "$AT" <<'PY'
+import json, os, sys, tempfile
+from datetime import datetime, timezone
+
+path, from_sha, to_sha, at = sys.argv[1:5]
+with open(path) as fh:
+    m = json.load(fh)
+m.setdefault("promotions", []).append(
+    {"from_sha": from_sha, "to_sha": to_sha, "at": at, "result": "pushed"}
+)
+m.setdefault("timestamps", {})["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".runtime-manifest-", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w") as fh:
+        json.dump(m, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PY
+fi
+
+# (f) Advance the active-generation pointer (retain the previous generation).
+if python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest advance_generation \
+    --epic-id "$SLUG" --to-sha "$TO_SHA" >/dev/null 2>&1; then
+  echo "arnold-promote: active-generation pointer advanced to $TO_SHA via runtime_manifest CLI"
+else
+  echo "arnold-promote: NOTE — active-generation pointer NOT advanced (runtime_manifest CLI has no advance_generation subcommand). Manual step required after canary verification (below)." >&2
+fi
+
+echo "arnold-promote: A successful push is NOT a safe cutover (design rule 5)."
+echo "arnold-promote: REQUIRED NEXT ACTIONS before $BASE_BRANCH may be treated as the live generation:"
+echo "  1. Build a canary generation from the promoted SHA $TO_SHA and verify it in a SEPARATE namespace (fresh-interpreter import smoke test of every runtime package)."
+echo "  2. Observe the canary healthy for the observation window (design gate 2.6)."
+echo "  3. Only then switch the active-generation pointer — retaining the previous generation for rollback."
+echo "arnold-promote: promoted $SLUG -> $BASE_BRANCH ($FROM_SHA -> $TO_SHA); journal: $JOURNAL"

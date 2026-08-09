@@ -37,7 +37,7 @@ from arnold.pipeline.resume import (
     RESUME_CURSOR_FILENAME,
     persist_resume_cursor,
 )
-from arnold_pipelines.megaplan._core.workflow import _resolve_resume_cursor
+from arnold_pipelines.megaplan._core.workflow import _resolve_resume_cursor, resume_plan
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -824,6 +824,39 @@ class TestMegaplanResumeSurfaceRouting:
 
         assert getattr(exc_info.value, "code", None) == "invalid_resume_cursor"
         assert exc_info.value.extra["resume_surface"] == "resume_cursor"
+
+    def test_resume_plan_rejects_later_phase_without_execute_authority(
+        self, tmp_path: Path
+    ) -> None:
+        plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    **self._previous_state(),
+                    "name": "demo",
+                    "config": {"project_dir": str(tmp_path)},
+                    "meta": {"current_invocation_id": "inv-test"},
+                    "resume_cursor": {
+                        "phase": "review",
+                        "retry_strategy": "manual_review",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "finalize.json").write_text(
+            json.dumps({"tasks": [{"id": "T1", "status": "done"}]}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(CliError) as exc_info:
+            resume_plan(tmp_path, "demo")
+
+        assert getattr(exc_info.value, "code", None) == "resume_execute_authority_blocked"
+        assert exc_info.value.extra["guard"] == "before_later_phase_dispatch"
+        assert exc_info.value.extra["reason"] == "execute_authority_diverged"
+        assert exc_info.value.extra["missing_task_ids"] == ["T1"]
 
     def test_native_routing_module_has_no_megaplan_imports(self) -> None:
         """The native routing module must not import from megaplan paths."""

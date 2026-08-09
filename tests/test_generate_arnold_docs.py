@@ -115,14 +115,18 @@ def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> N
     assert "| evidence_pack.verifier | evidence_pack_verifier | native:evidence_pack |" in first
 
 
-def test_composed_rules_require_workflow_first_authoring() -> None:
+def test_docs_generator_does_not_own_composed_megaplan_skills() -> None:
     generator = _load_generator()
-    composed = generator.render_composed_rules()
+    generated = generator.generated_files()
+    composed_dir = (
+        REPO_ROOT / "arnold_pipelines" / "megaplan" / "data" / "_composed"
+    )
 
-    assert composed
-    for path, text in composed.items():
-        assert "native-first" in text
-        assert "@pipeline" in text
-        assert "NativeProgram" in text
-        assert "shim packages" in text  # disallowed
-        assert "workflow-first" not in text
+    # Composed skills are operational installer artifacts owned by
+    # megaplan setup --regen-composed.  A docs refresh must never replace
+    # them with generic workflow documentation.
+    assert all(
+        path.parent != composed_dir
+        for path in generated
+    )
+    assert generator.MEGAPLAN_CODEX_SKILL not in generated

@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -17,9 +18,10 @@ import threading
 import time
 import uuid
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
@@ -28,9 +30,22 @@ from arnold_pipelines.megaplan.fallback_chains import (
     configured_fallback_chain_for_phase,
     decode_phase_model_value,
     fallback_observability_fields,
+    is_same_family_operational_classification,
+    provider_family,
 )
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
-from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
+from arnold_pipelines.megaplan.schemas import (
+    SCHEMAS,
+    EpicEvent,
+    get_execution_schema_key,
+    strict_schema,
+)
+from arnold_pipelines.megaplan.provider_response import (
+    CompiledResponseContract,
+    ResponseEnforcement,
+    compile_response_contract,
+    persist_response_enforcement_attestation,
+)
 from arnold_pipelines.megaplan.orchestration.progress import strip_progress_env
 from arnold_pipelines.megaplan.observability.routing_ledger import (
     format_selected_spec,
@@ -51,6 +66,7 @@ from arnold_pipelines.megaplan.types import (
 )
 from arnold_pipelines.megaplan._core import (
     apply_session_update,
+    atomic_write_json,
     configured_robustness,
     creative_form_id,
     detect_available_agents,
@@ -65,17 +81,21 @@ from arnold_pipelines.megaplan._core import (
     touch_active_step,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
+from arnold_pipelines.megaplan._core.io import framed_json_record_bytes
 from arnold_pipelines.megaplan.prompts import (
     _resolve_prompt_root,
     create_codex_prompt,
 )
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
+    DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES,
+    LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
     ModelBudgetError,
     ModelTier,
     ModelStructuralAuditError,
     audit_step_payload,
     capture_step_output,
+    local_strict_repair_input,
     render_prompt_for_dispatch,
     render_step_message,
     schema_audits_step_payload,
@@ -89,23 +109,1641 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     isolation_cli_error,
 )
 
+if TYPE_CHECKING:
+    from arnold_pipelines.megaplan.custody.common_worker_dispatch import CommonWorkerDispatchSpec
 
 from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_WORKER_CHANNEL = "codex_cli"
+_LOCAL_STRICT_ARTIFACT_DIRNAME = "local-strict-artifacts"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
+_ZERO_RECOVERY_MODEL_PHASES = frozenset(
+    {"plan", "critique", "gate", "revise", "finalize"}
+)
+_ZERO_RECOVERY_MODEL_UID = 65532
+_ZERO_RECOVERY_MODEL_GID = 65532
+_ZERO_RECOVERY_RUNTIME_ROOT = Path("/run/megaplan-zero-recovery")
+_ZERO_RECOVERY_MODEL_PATH = "/opt/zero-recovery-node/bin:/usr/local/bin:/usr/bin:/bin"
+_ZERO_RECOVERY_SCHEMA_PATHS = tuple(
+    f".megaplan/schemas/{filename}" for filename in sorted(SCHEMAS)
+)
+_WORKER_DISPATCH_BINDING: ContextVar[dict[str, Any] | None] = ContextVar(
+    "megaplan_worker_dispatch_binding", default=None
+)
+_ZERO_RECOVERY_ENGINE_RUNTIME_PATHS = (
+    ".megaplan/.state-locks/critique-ledger-cl2-planning-canary.lock",
+    ".megaplan/epics/critique-ledger-cl2-planning-canary/events.jsonl",
+)
+_ZERO_RECOVERY_EPIC_JOURNAL_DIR = (
+    ".megaplan/epics/critique-ledger-cl2-planning-canary/_journal"
+)
+_ZERO_RECOVERY_EMPTY_RUNTIME_DIRS = {
+    _ZERO_RECOVERY_EPIC_JOURNAL_DIR,
+    ".megaplan/blobs",
+    # run_command creates its stdin tempfile here and unlinks the file on every
+    # terminal path. The trusted empty directory may persist; any surviving
+    # child is still rejected by the direct-source manifest walk.
+    ".megaplan/worker_tmp",
+}
+
+
+def _zero_recovery_global_scratch_observation() -> dict[str, str]:
+    """Prove global scratch is inaccessible; IPC-none may omit /dev/shm."""
+    observation: dict[str, str] = {}
+    for global_tmp in (Path("/tmp"), Path("/var/tmp"), Path("/dev/shm")):
+        try:
+            global_tmp_stat = os.lstat(global_tmp)
+        except FileNotFoundError:
+            if global_tmp == Path("/dev/shm"):
+                observation[str(global_tmp)] = "absent_ipc_none"
+                continue
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"required global scratch path is absent: {global_tmp}",
+            )
+        if (
+            not stat.S_ISDIR(global_tmp_stat.st_mode)
+            or stat.S_ISLNK(global_tmp_stat.st_mode)
+            or global_tmp_stat.st_uid != 0
+            or global_tmp_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"global scratch is writable by the finite-model UID: {global_tmp}",
+            )
+        observation[str(global_tmp)] = "root_nonwritable"
+    return observation
+
+
+def _zero_recovery_copy_private_file(source: Path, destination: Path) -> None:
+    source_stat = os.lstat(source)
+    if (
+        not stat.S_ISREG(source_stat.st_mode)
+        or source_stat.st_nlink != 1
+        or source_stat.st_uid != 0
+        or source_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            f"canonical model input is not root-owned immutable data: {source}",
+        )
+    data = source.read_bytes()
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        os.fchmod(fd, 0o600)
+        os.fchown(fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _prepare_zero_recovery_schema_input(
+    schema_file: Path,
+) -> dict[str, Any] | None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    if os.geteuid() != 0:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary schema grant requires the trusted root harness",
+        )
+    schema_stat = os.lstat(schema_file)
+    if (
+        not stat.S_ISREG(schema_stat.st_mode)
+        or schema_stat.st_nlink != 1
+        or schema_stat.st_uid != 0
+        or schema_stat.st_gid != 0
+        or schema_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary schema is not root-owned immutable data",
+        )
+    fd = os.open(schema_file, os.O_RDONLY | os.O_NOFOLLOW)
+    grant_attempted = False
+    try:
+        opened = os.fstat(fd)
+        if (
+            (opened.st_dev, opened.st_ino)
+            != (schema_stat.st_dev, schema_stat.st_ino)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema identity raced before read-only grant",
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+        grant_attempted = True
+        os.fchmod(fd, 0o644)
+        granted = os.fstat(fd)
+        if (
+            (granted.st_dev, granted.st_ino)
+            != (schema_stat.st_dev, schema_stat.st_ino)
+            or not stat.S_ISREG(granted.st_mode)
+            or granted.st_nlink != 1
+            or granted.st_uid != 0
+            or granted.st_gid != 0
+            or stat.S_IMODE(granted.st_mode) != 0o644
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema read-only grant did not seal exact identity",
+            )
+    except BaseException:
+        if grant_attempted:
+            try:
+                os.fchmod(fd, stat.S_IMODE(schema_stat.st_mode))
+            except OSError:
+                pass
+        raise
+    finally:
+        os.close(fd)
+    return {
+        "path": schema_file,
+        "st_dev": schema_stat.st_dev,
+        "st_ino": schema_stat.st_ino,
+        "mode": stat.S_IMODE(schema_stat.st_mode),
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _restore_zero_recovery_schema_input(
+    grant: dict[str, Any] | None,
+) -> None:
+    if grant is None:
+        return
+    schema_file = grant["path"]
+    observed = os.lstat(schema_file)
+    fd = os.open(schema_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        current_mode = stat.S_IMODE(opened.st_mode)
+        if (
+            (observed.st_dev, observed.st_ino)
+            != (grant["st_dev"], grant["st_ino"])
+            or (opened.st_dev, opened.st_ino)
+            != (grant["st_dev"], grant["st_ino"])
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or current_mode not in {0o644, grant["mode"]}
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema changed before read-only grant revocation",
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+        if digest.hexdigest() != grant["sha256"]:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema content changed before grant revocation",
+            )
+        if current_mode == grant["mode"]:
+            return
+        os.fchmod(fd, grant["mode"])
+        restored = os.fstat(fd)
+        if (
+            (restored.st_dev, restored.st_ino)
+            != (grant["st_dev"], grant["st_ino"])
+            or stat.S_IMODE(restored.st_mode) != grant["mode"]
+            or restored.st_uid != 0
+            or restored.st_gid != 0
+            or restored.st_nlink != 1
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite canary schema grant revocation did not reseal identity",
+            )
+    finally:
+        os.close(fd)
+
+
+def _prepare_zero_recovery_model_runtime(
+    *,
+    step: str,
+    plan_dir: Path,
+    output_path: Path,
+    plan_iteration: int,
+    dispatch_ordinal: int,
+) -> dict[str, Any] | None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    if os.geteuid() != 0:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite canary trusted harness must run as root",
+        )
+    preexisting = subprocess.run(
+        ["/usr/bin/pgrep", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
+        env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
+    )
+    if preexisting.returncode != 1:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite-model UID was not process-empty before dispatch",
+        )
+    global_scratch = _zero_recovery_global_scratch_observation()
+    plan_stat = os.lstat(plan_dir)
+    if (
+        not stat.S_ISDIR(plan_stat.st_mode)
+        or stat.S_ISLNK(plan_stat.st_mode)
+        or plan_stat.st_uid != 0
+        or plan_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "plan output parent must be a root-owned non-writable directory",
+        )
+    runtime_root_stat = os.lstat(_ZERO_RECOVERY_RUNTIME_ROOT)
+    if (
+        not stat.S_ISDIR(runtime_root_stat.st_mode)
+        or stat.S_ISLNK(runtime_root_stat.st_mode)
+        or runtime_root_stat.st_uid != 0
+        or stat.S_IMODE(runtime_root_stat.st_mode) != 0o711
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model runtime root is not the admitted root-owned 0711 directory",
+        )
+    runtime = _ZERO_RECOVERY_RUNTIME_ROOT / (
+        f"{dispatch_ordinal:02d}-{step}-i{plan_iteration}-{uuid.uuid4().hex}"
+    )
+    output_created = False
+    try:
+        os.mkdir(runtime, 0o700)
+        home = runtime / "home"
+        codex_home = home / ".codex"
+        tmp = runtime / "tmp"
+        for directory in (
+            home,
+            codex_home,
+            tmp,
+            runtime / "xdg-cache",
+            runtime / "xdg-config",
+        ):
+            os.mkdir(directory, 0o700)
+        canonical_codex = Path("/root/.codex")
+        _zero_recovery_copy_private_file(
+            canonical_codex / "auth.json", codex_home / "auth.json"
+        )
+        _zero_recovery_copy_private_file(
+            canonical_codex / "config.toml", codex_home / "config.toml"
+        )
+        output_fd = os.open(
+            output_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        output_created = True
+        try:
+            os.fchmod(output_fd, 0o600)
+            os.fchown(output_fd, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+            os.fsync(output_fd)
+            output_stat = os.fstat(output_fd)
+        finally:
+            os.close(output_fd)
+        # The trusted root process deliberately lacks DAC_OVERRIDE. Construct
+        # and seed the complete tree before transferring its directories to
+        # the finite model UID; chowning `home` first would make `.codex`
+        # uncreatable under the admitted capability set.
+        for directory in (
+            codex_home,
+            home,
+            tmp,
+            runtime / "xdg-cache",
+            runtime / "xdg-config",
+        ):
+            os.chown(directory, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+        os.chown(runtime, _ZERO_RECOVERY_MODEL_UID, _ZERO_RECOVERY_MODEL_GID)
+        probe_env = _zero_recovery_model_env(
+            {
+                "runtime": runtime,
+                "home": home,
+                "codex_home": codex_home,
+                "tmp": tmp,
+            },
+            turn_id=f"privilege_probe_{step}",
+        )
+        probe = subprocess.run(
+            _zero_recovery_model_command(["/bin/cat", "/proc/self/status"]),
+            cwd=plan_dir,
+            env=probe_env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        status_fields: dict[str, str] = {}
+        for line in probe.stdout.splitlines():
+            key, separator, value = line.partition(":")
+            if separator:
+                status_fields[key] = value.strip()
+        privilege_observation = {
+            key: status_fields.get(key)
+            for key in (
+                "Uid", "Gid", "Groups", "NoNewPrivs", "CapInh", "CapPrm",
+                "CapEff", "CapBnd", "CapAmb",
+            )
+        }
+        zero_cap = "0000000000000000"
+        if (
+            probe.returncode != 0
+            or privilege_observation["Uid"] != "65532\t65532\t65532\t65532"
+            or privilege_observation["Gid"] != "65532\t65532\t65532\t65532"
+            or privilege_observation["Groups"] not in {"", None}
+            or privilege_observation["NoNewPrivs"] != "1"
+            or any(
+                privilege_observation[key] != zero_cap
+                for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
+            )
+        ):
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite-model setpriv probe did not prove zero capabilities and NNP",
+            )
+        post_probe = subprocess.run(
+            ["/usr/bin/pgrep", "-u", str(_ZERO_RECOVERY_MODEL_UID)],
+            env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False,
+        )
+        if post_probe.returncode != 1:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite-model privilege probe left a process",
+            )
+        return {
+            "step": step,
+            "plan_iteration": plan_iteration,
+            "dispatch_ordinal": dispatch_ordinal,
+            "runtime": runtime,
+            "home": home,
+            "codex_home": codex_home,
+            "tmp": tmp,
+            "output_dev": output_stat.st_dev,
+            "output_ino": output_stat.st_ino,
+            "privilege_observation": privilege_observation,
+            "global_scratch": global_scratch,
+        }
+    except BaseException:
+        if output_created:
+            try:
+                os.chown(output_path, 0, 0, follow_symlinks=False)
+                os.chmod(output_path, 0o600, follow_symlinks=False)
+            except OSError:
+                pass
+        if runtime.exists():
+            try:
+                _reclaim_zero_recovery_tree(runtime)
+            except BaseException:
+                pass
+        raise
+
+
+def _reclaim_zero_recovery_tree(path: Path) -> None:
+    current = os.lstat(path)
+    if stat.S_ISLNK(current.st_mode):
+        # Ephemeral Codex arg0 wrappers are symlinks inside the isolated
+        # runtime.  The finite-model UID is process-empty before reclaim, so
+        # remove the link itself without following or touching its target.
+        path.unlink()
+        return
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        and not stat.S_ISREG(current.st_mode)
+        and not stat.S_ISSOCK(current.st_mode)
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "model runtime contains a forbidden filesystem object: "
+            f"{path} mode={stat.S_IFMT(current.st_mode):#o}",
+        )
+    if stat.S_ISREG(current.st_mode) and current.st_nlink != 1:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            f"model runtime contains a hard-linked file: {path}",
+        )
+    if stat.S_ISDIR(current.st_mode):
+        # The trusted harness has CHOWN but deliberately lacks DAC_OVERRIDE.
+        # After UID process emptiness is proven, take ownership of the
+        # directory before recursing so an ephemeral symlink entry can be
+        # unlinked from its formerly model-owned 0700 parent.
+        os.chown(path, 0, 0, follow_symlinks=False)
+        os.chmod(path, 0o700, follow_symlinks=False)
+        with os.scandir(path) as entries:
+            children = [Path(entry.path) for entry in entries]
+        for child in children:
+            _reclaim_zero_recovery_tree(child)
+    else:
+        os.chown(path, 0, 0, follow_symlinks=False)
+        os.chmod(path, 0o600, follow_symlinks=False)
+
+
+def _zero_recovery_runtime_usage(path: Path) -> tuple[int, int]:
+    files = 0
+    total_bytes = 0
+
+    def visit(candidate: Path) -> None:
+        nonlocal files, total_bytes
+        item_stat = os.lstat(candidate)
+        if stat.S_ISDIR(item_stat.st_mode) and not stat.S_ISLNK(item_stat.st_mode):
+            with os.scandir(candidate) as entries:
+                children = [Path(entry.path) for entry in entries]
+            for child in children:
+                visit(child)
+            return
+        if stat.S_ISSOCK(item_stat.st_mode):
+            # Codex creates an AF_UNIX IPC endpoint under its isolated
+            # CODEX_HOME.  Once every finite-model UID process is dead, the
+            # filesystem socket has no listener and is an inert, bounded
+            # runtime object.  Count it without opening or following it; the
+            # subsequent reclaim seals its ownership and mode.
+            files += 1
+            return
+        if stat.S_ISLNK(item_stat.st_mode):
+            # Account for the link itself and its bounded target text without
+            # resolving it.  Reclaim later unlinks this ephemeral runtime-only
+            # object after process emptiness has been established.
+            files += 1
+            total_bytes += len(os.fsencode(os.readlink(candidate)))
+            return
+        if not stat.S_ISREG(item_stat.st_mode) or item_stat.st_nlink != 1:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "finite-model runtime contains a forbidden or linked object: "
+                f"{candidate} mode={stat.S_IFMT(item_stat.st_mode):#o} "
+                f"nlink={item_stat.st_nlink}",
+            )
+        files += 1
+        total_bytes += item_stat.st_size
+
+    visit(path)
+    return files, total_bytes
+
+
+def _write_zero_recovery_privilege_receipt(
+    runtime: dict[str, Any], *, output_path: Path, runtime_files: int, runtime_bytes: int
+) -> None:
+    output_stat = os.lstat(output_path)
+    output_digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+    runtime_stat = os.lstat(runtime["runtime"])
+    payload: dict[str, Any] = {
+        "schema": "arnold.megaplan.zero_recovery_privilege_receipt.v2",
+        "status": "sealed",
+        "phase": runtime["step"],
+        "plan_iteration": runtime["plan_iteration"],
+        "dispatch_ordinal": runtime["dispatch_ordinal"],
+        "model_uid": _ZERO_RECOVERY_MODEL_UID,
+        "model_gid": _ZERO_RECOVERY_MODEL_GID,
+        "uid_processes_before": 0,
+        "uid_processes_after": 0,
+        "privilege_observation": runtime["privilege_observation"],
+        "command_prefix": _zero_recovery_model_command([]),
+        "environment_keys": sorted(
+            _zero_recovery_model_env(runtime, turn_id="receipt").keys()
+        ),
+        "writable_roots": [output_path.name, str(runtime["runtime"])],
+        "global_scratch": runtime["global_scratch"],
+        "limits": {
+            "nproc": 64,
+            "fsize_bytes": 67_108_864,
+            "runtime_max_files": 4096,
+            "runtime_max_bytes": 134_217_728,
+            "output_max_bytes": 16_777_216,
+        },
+        "output": {
+            "path": output_path.name,
+            "st_dev": output_stat.st_dev,
+            "st_ino": output_stat.st_ino,
+            "size": output_stat.st_size,
+            "sha256": output_digest,
+            "sealed_uid": output_stat.st_uid,
+            "sealed_gid": output_stat.st_gid,
+            "mode": f"{stat.S_IMODE(output_stat.st_mode):04o}",
+            "nlink": output_stat.st_nlink,
+        },
+        "runtime": {
+            "path": str(runtime["runtime"]),
+            "st_dev": runtime_stat.st_dev,
+            "st_ino": runtime_stat.st_ino,
+            "files": runtime_files,
+            "bytes": runtime_bytes,
+            "sealed_uid": runtime_stat.st_uid,
+            "sealed_gid": runtime_stat.st_gid,
+            "mode": f"{stat.S_IMODE(runtime_stat.st_mode):04o}",
+        },
+        "recorded_at": now_utc(),
+    }
+    payload["receipt_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt_path = output_path.parent / output_path.name.replace(
+        "-worker-output.json", "-privilege-receipt.json"
+    )
+    fd = os.open(
+        receipt_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    runtime["privilege_receipt_path"] = receipt_path
+    runtime["privilege_receipt_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
+    ).hexdigest()
+
+
+def _quiesce_zero_recovery_model_uid() -> None:
+    process_env = {"PATH": "/usr/bin:/bin"}
+    deadline = time.monotonic() + 5.0
+    consecutive_empty = 0
+    last_processes: list[dict[str, str]] = []
+    # Real Codex may terminate a process tree in waves. Re-issue KILL while the
+    # container's init reaps exited descendants; a one-shot kill plus 200 ms
+    # can mistake a transient orphan/zombie for a live mutation-capable owner.
+    while True:
+        observed = subprocess.run(
+            [
+                "/usr/bin/ps", "--no-headers", "-o", "pid=,ppid=,stat=,lstart=",
+                "-u", str(_ZERO_RECOVERY_MODEL_UID),
+            ],
+            env=process_env, capture_output=True, check=False, text=True,
+        )
+        if observed.returncode not in {0, 1}:
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                "could not observe finite-model UID process states",
+            )
+        last_processes = []
+        for line in (observed.stdout or "").splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) != 4 or not fields[0].isdigit() or not fields[1].isdigit():
+                raise CliError(
+                    "zero_recovery_privilege_boundary_invalid",
+                    "finite-model UID process census was malformed",
+                )
+            last_processes.append(
+                {
+                    "pid": fields[0],
+                    "ppid": fields[1],
+                    "stat": fields[2],
+                    "started": fields[3],
+                }
+            )
+        if not last_processes:
+            consecutive_empty += 1
+            if consecutive_empty == 2:
+                return
+        else:
+            consecutive_empty = 0
+            live_pids = [
+                item["pid"]
+                for item in last_processes
+                if not item["stat"].startswith("Z")
+            ]
+            if live_pids:
+                # Races with a process exiting are harmless: the following
+                # census, not kill(2)'s return code, is authoritative.
+                subprocess.run(
+                    ["/bin/kill", "-KILL", *live_pids],
+                    env=process_env, capture_output=True, check=False,
+                )
+        if time.monotonic() >= deadline:
+            kind = (
+                "unreaped zombies"
+                if last_processes
+                and all(item["stat"].startswith("Z") for item in last_processes)
+                else "surviving processes"
+            )
+            detail = ", ".join(
+                "pid={pid} ppid={ppid} stat={stat} started={started}".format(**item)
+                for item in last_processes[:8]
+            )
+            raise CliError(
+                "zero_recovery_privilege_boundary_invalid",
+                f"finite-model UID retained {kind} after bounded kill/reap: {detail}",
+            )
+        time.sleep(0.05)
+
+
+def _finish_zero_recovery_model_runtime(
+    runtime: dict[str, Any] | None,
+    *,
+    output_path: Path,
+    on_process_empty: Callable[[], None] | None = None,
+) -> None:
+    if runtime is None:
+        return
+    _quiesce_zero_recovery_model_uid()
+    if on_process_empty is not None:
+        on_process_empty()
+    output_stat = os.lstat(output_path)
+    if (
+        not stat.S_ISREG(output_stat.st_mode)
+        or output_stat.st_nlink != 1
+        or output_stat.st_dev != runtime["output_dev"]
+        or output_stat.st_ino != runtime["output_ino"]
+        or output_stat.st_uid != _ZERO_RECOVERY_MODEL_UID
+        or output_stat.st_gid != _ZERO_RECOVERY_MODEL_GID
+    ):
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model replaced or aliased its exact precreated output",
+        )
+    if output_stat.st_size > 16_777_216:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model output exceeded the admitted size bound",
+        )
+    runtime_files, runtime_bytes = _zero_recovery_runtime_usage(runtime["runtime"])
+    if runtime_files > 4096 or runtime_bytes > 134_217_728:
+        raise CliError(
+            "zero_recovery_privilege_boundary_invalid",
+            "finite model runtime exceeded admitted file or byte bounds",
+        )
+    os.chown(output_path, 0, 0, follow_symlinks=False)
+    os.chmod(output_path, 0o600, follow_symlinks=False)
+    _reclaim_zero_recovery_tree(runtime["runtime"])
+    _write_zero_recovery_privilege_receipt(
+        runtime,
+        output_path=output_path,
+        runtime_files=runtime_files,
+        runtime_bytes=runtime_bytes,
+    )
+
+
+def _zero_recovery_model_command(command: list[str]) -> list[str]:
+    return [
+        "/usr/bin/setpriv",
+        f"--reuid={_ZERO_RECOVERY_MODEL_UID}",
+        f"--regid={_ZERO_RECOVERY_MODEL_GID}",
+        "--clear-groups",
+        "--no-new-privs",
+        "--bounding-set=-all",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--",
+        "/usr/bin/prlimit",
+        "--nproc=64",
+        "--fsize=67108864",
+        "--core=0",
+        "--",
+        *command,
+    ]
+
+
+def _zero_recovery_model_env(
+    runtime: dict[str, Any], *, turn_id: str
+) -> dict[str, str]:
+    return {
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "HOME": str(runtime["home"]),
+            "CODEX_HOME": str(runtime["codex_home"]),
+            "TMPDIR": str(runtime["tmp"]),
+            "XDG_CACHE_HOME": str(runtime["runtime"] / "xdg-cache"),
+            "XDG_CONFIG_HOME": str(runtime["runtime"] / "xdg-config"),
+            "PATH": _ZERO_RECOVERY_MODEL_PATH,
+            "USER": "finite-model",
+            "LOGNAME": "finite-model",
+            "MEGAPLAN_TURN_ID": turn_id,
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+
+
+def _zero_recovery_file_record(path: Path, *, trusted_uid: int) -> dict[str, Any]:
+    item_stat = os.lstat(path)
+    if item_stat.st_uid != trusted_uid or (
+        not stat.S_ISLNK(item_stat.st_mode) and item_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            f"source object is not trusted-owner non-writable: {path}",
+        )
+    if stat.S_ISLNK(item_stat.st_mode):
+        target = os.readlink(path)
+        return {
+            "kind": "symlink", "mode": stat.S_IMODE(item_stat.st_mode),
+            "uid": item_stat.st_uid, "gid": item_stat.st_gid,
+            "sha256": hashlib.sha256(target.encode()).hexdigest(),
+        }
+    if not stat.S_ISREG(item_stat.st_mode) or item_stat.st_nlink != 1:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            f"source object is not a single-link regular file: {path}",
+        )
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (item_stat.st_dev, item_stat.st_ino):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied", "source inode raced"
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1024 * 1024):
+            digest.update(chunk)
+    finally:
+        os.close(fd)
+    return {
+        "kind": "file", "mode": stat.S_IMODE(item_stat.st_mode),
+        "uid": item_stat.st_uid, "gid": item_stat.st_gid,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _zero_recovery_runtime_file_identity(
+    path: Path, *, trusted_uid: int
+) -> tuple[dict[str, Any], bytes]:
+    try:
+        observed = os.lstat(path)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary engine runtime file identity is invalid",
+        ) from exc
+    try:
+        identity = os.fstat(fd)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or not stat.S_ISREG(identity.st_mode)
+            or (identity.st_dev, identity.st_ino)
+            != (observed.st_dev, observed.st_ino)
+            or identity.st_nlink != 1
+            or identity.st_uid != trusted_uid
+            or identity.st_mode & 0o022
+            or stat.S_IMODE(identity.st_mode) != 0o644
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary engine runtime file identity is invalid",
+            )
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            raw = handle.read()
+        after_read = os.fstat(fd)
+        if (
+            (after_read.st_dev, after_read.st_ino, after_read.st_size)
+            != (identity.st_dev, identity.st_ino, identity.st_size)
+            or len(raw) != identity.st_size
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary engine runtime file raced",
+            )
+    finally:
+        os.close(fd)
+    return {
+        "path": path.as_posix(),
+        "st_dev": identity.st_dev,
+        "st_ino": identity.st_ino,
+        "size": identity.st_size,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }, raw
+
+
+def _zero_recovery_observe_engine_runtime(
+    root: Path, *, trusted_uid: int
+) -> dict[str, Any]:
+    lock_path = root / _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[0]
+    event_path = root / _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[1]
+    lock = None
+    try:
+        os.lstat(lock_path)
+        lock_present = True
+    except FileNotFoundError:
+        lock_present = False
+    if lock_present:
+        lock, lock_raw = _zero_recovery_runtime_file_identity(
+            lock_path, trusted_uid=trusted_uid
+        )
+        lock["path"] = _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[0]
+        if lock_raw != b"":
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary state lock is not empty",
+            )
+    events = None
+    try:
+        os.lstat(event_path)
+        events_present = True
+    except FileNotFoundError:
+        events_present = False
+    if not events_present:
+        return {"lock": lock, "events": events}
+    journal_dir = root / _ZERO_RECOVERY_EPIC_JOURNAL_DIR
+    if not journal_dir.is_dir() or any(journal_dir.iterdir()):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic transaction journal is not empty at checkpoint",
+        )
+    events, raw = _zero_recovery_runtime_file_identity(
+        event_path, trusted_uid=trusted_uid
+    )
+    events["path"] = _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS[1]
+    flattened: list[dict[str, Any]] = []
+    offset = 0
+    while offset < len(raw):
+        frame_start = offset
+        if len(raw) - offset < 5:
+            break
+        payload_size = int.from_bytes(raw[offset : offset + 4], "big")
+        offset += 4
+        if payload_size > 1024 * 1024 or len(raw) - offset < payload_size + 1:
+            break
+        payload = raw[offset : offset + payload_size]
+        offset += payload_size
+        if raw[offset : offset + 1] != b"\n":
+            break
+        offset += 1
+        try:
+            record = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            break
+        if (
+            not isinstance(record, dict)
+            or framed_json_record_bytes(record) != raw[frame_start:offset]
+        ):
+            break
+        flattened.append(record)
+    if not flattened or offset != len(raw) or len(flattened) % 3:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic event journal is noncanonical",
+        )
+    sequences: list[int] = []
+    transaction_ids: set[str] = set()
+    for record_index in range(0, len(flattened), 3):
+        records = flattened[record_index : record_index + 3]
+        transaction_id = records[0].get("tx_id")
+        if (
+            not isinstance(transaction_id, str)
+            or re.fullmatch(r"tx_[0-9a-f]{12}", transaction_id) is None
+            or transaction_id in transaction_ids
+            or records[0]
+            != {"event_type": "_tx_begin", "tx_id": transaction_id}
+            or records[-1]
+            != {"event_type": "_tx_commit", "tx_id": transaction_id}
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "canary epic event transaction markers are invalid",
+            )
+        transaction_ids.add(transaction_id)
+        for raw_event in records[1:-1]:
+            event = dict(raw_event)
+            if event.pop("tx_id", None) != transaction_id:
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    "canary epic event transaction binding is invalid",
+                )
+            try:
+                parsed = EpicEvent.model_validate(event)
+            except Exception as exc:
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    "canary epic event record is invalid",
+                ) from exc
+            if (
+                set(event) != set(EpicEvent.model_fields)
+                or parsed.epic_id != "critique-ledger-cl2-planning-canary"
+                or parsed.event_type != "state_change"
+                or re.fullmatch(r"evt_[0-9a-f]{12}", parsed.id) is None
+                or re.fullmatch(r"[0-9a-f]{16}", parsed.transaction_id) is None
+                or not isinstance(parsed.post_state, dict)
+                or set(parsed.post_state) != {"event"}
+                or not isinstance(parsed.post_state.get("event"), dict)
+                or type(parsed.post_state["event"].get("seq")) is not int
+            ):
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    "canary epic event record escaped the admitted plan",
+                )
+            sequences.append(parsed.post_state["event"]["seq"])
+    if sequences != list(range(len(sequences))):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic event sequence is not contiguous",
+        )
+    events.update({
+        "transaction_count": len(transaction_ids),
+        "last_seq": sequences[-1],
+        "_raw": raw,
+    })
+    return {"lock": lock, "events": events}
+
+
+def _zero_recovery_validate_engine_runtime_transition(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    before_lock = before.get("lock")
+    after_lock = after.get("lock")
+    before_events = before.get("events")
+    after_events = after.get("events")
+    if before_lock is not None and (
+        after_lock is None
+        or (after_lock["st_dev"], after_lock["st_ino"])
+        != (before_lock["st_dev"], before_lock["st_ino"])
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary state lock identity changed",
+        )
+    if before_events is None:
+        return
+    if (
+        after_events is None
+        or (after_events["st_dev"], after_events["st_ino"])
+        != (before_events["st_dev"], before_events["st_ino"])
+        or after_events["size"] < before_events["size"]
+        or after_events["transaction_count"] < before_events["transaction_count"]
+        or after_events["last_seq"] < before_events["last_seq"]
+        or not after_events["_raw"].startswith(before_events["_raw"])
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canary epic event journal is not append-only",
+        )
+
+
+def _zero_recovery_git_metadata(root: Path, *, trusted_uid: int) -> dict[str, Any]:
+    git_dir = root / ".git"
+    git_stat = os.lstat(git_dir)
+    if (
+        not stat.S_ISDIR(git_stat.st_mode)
+        or stat.S_ISLNK(git_stat.st_mode)
+        or git_stat.st_uid != trusted_uid
+        or git_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied", ".git custody is unsafe"
+        )
+    records: dict[str, Any] = {}
+
+    def visit(path: Path, relative: str) -> None:
+        item_stat = os.lstat(path)
+        if item_stat.st_uid != trusted_uid or item_stat.st_mode & 0o022:
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                f"Git control metadata is writable: .git/{relative}",
+            )
+        if stat.S_ISDIR(item_stat.st_mode):
+            records[relative] = {
+                "kind": "dir", "mode": stat.S_IMODE(item_stat.st_mode),
+                "uid": item_stat.st_uid, "gid": item_stat.st_gid,
+            }
+            with os.scandir(path) as entries:
+                children = sorted(entries, key=lambda entry: entry.name)
+            for entry in children:
+                visit(Path(entry.path), f"{relative}/{entry.name}" if relative else entry.name)
+            return
+        records[relative] = _zero_recovery_file_record(
+            path, trusted_uid=trusted_uid
+        )
+
+    for name in (
+        "HEAD", "config", "config.worktree", "index", "packed-refs",
+        "refs", "hooks", "info", "shallow", "commondir", "gitdir", "modules",
+    ):
+        candidate = git_dir / name
+        try:
+            os.lstat(candidate)
+        except FileNotFoundError:
+            continue
+        visit(candidate, name)
+    return records
+
+
+def _zero_recovery_direct_source_manifest(
+    root: Path,
+    plan_dir: Path,
+    *,
+    tracked_index: list[dict[str, str]],
+    head: str,
+    tree: str,
+) -> dict[str, Any]:
+    trusted_uid = os.geteuid()
+    root_stat = os.lstat(root)
+    if (
+        not stat.S_ISDIR(root_stat.st_mode)
+        or stat.S_ISLNK(root_stat.st_mode)
+        or root_stat.st_uid != trusted_uid
+        or root_stat.st_mode & 0o022
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied", "checkout root custody is unsafe"
+        )
+    tracked_paths = {entry["path"] for entry in tracked_index}
+    tracked_parents = {
+        parent.as_posix()
+        for value in tracked_paths
+        for parent in Path(value).parents
+        if parent.as_posix() != "."
+    }
+    plan_relative = plan_dir.absolute().relative_to(root.absolute()).as_posix()
+    mutable_allowed = (
+        plan_relative,
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
+    )
+    schema_paths = set(_ZERO_RECOVERY_SCHEMA_PATHS)
+    engine_runtime_paths = set(_ZERO_RECOVERY_ENGINE_RUNTIME_PATHS)
+    allowed_ancestors = {
+        parent.as_posix()
+        for value in (
+            *mutable_allowed,
+            *_ZERO_RECOVERY_SCHEMA_PATHS,
+            *_ZERO_RECOVERY_ENGINE_RUNTIME_PATHS,
+            _ZERO_RECOVERY_EPIC_JOURNAL_DIR,
+        )
+        for parent in Path(value).parents
+        if parent.as_posix() != "."
+    }
+    tracked: dict[str, Any] = {}
+    for entry in tracked_index:
+        relative = entry["path"]
+        tracked[relative] = _zero_recovery_file_record(
+            root / relative, trusted_uid=trusted_uid
+        )
+        tracked[relative]["git_mode"] = entry["git_mode"]
+        tracked[relative]["git_object"] = entry["git_object"]
+    runtime_delta: list[dict[str, Any]] = []
+
+    def visit(directory: Path, prefix: str = "") -> None:
+        directory_stat = os.lstat(directory)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or stat.S_ISLNK(directory_stat.st_mode)
+            or directory_stat.st_uid != trusted_uid
+            or directory_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                f"source directory custody is unsafe: {prefix or '.'}",
+            )
+        with os.scandir(directory) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for child in children:
+            relative = f"{prefix}/{child.name}" if prefix else child.name
+            if relative == ".git":
+                continue
+            item_stat = os.lstat(child.path)
+            if stat.S_ISDIR(item_stat.st_mode) and not stat.S_ISLNK(item_stat.st_mode):
+                if (
+                    relative not in tracked_parents
+                    and relative not in allowed_ancestors
+                    and relative not in _ZERO_RECOVERY_EMPTY_RUNTIME_DIRS
+                    and not any(
+                        relative == root_value or relative.startswith(root_value + "/")
+                        for root_value in mutable_allowed
+                    )
+                ):
+                    raise CliError(
+                        "zero_recovery_worker_mutation_denied",
+                        f"forbidden untracked directory: {relative}",
+                    )
+                visit(Path(child.path), relative)
+                continue
+            if relative in tracked_paths:
+                continue
+            if (
+                relative not in schema_paths
+                and relative not in engine_runtime_paths
+                and not any(
+                relative == root_value or relative.startswith(root_value + "/")
+                for root_value in mutable_allowed
+                )
+            ):
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    f"forbidden untracked path: {relative}",
+                )
+            record = _zero_recovery_file_record(
+                Path(child.path), trusted_uid=trusted_uid
+            )
+            runtime_delta.append({"path": relative, **record})
+
+    visit(root)
+    schema_runtime = [
+        item for item in runtime_delta if item["path"] in schema_paths
+    ]
+    if (
+        [item["path"] for item in schema_runtime]
+        != list(_ZERO_RECOVERY_SCHEMA_PATHS)
+        or any(item["kind"] != "file" for item in schema_runtime)
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "canonical runtime schema set is incomplete",
+        )
+    engine_runtime = _zero_recovery_observe_engine_runtime(
+        root, trusted_uid=trusted_uid
+    )
+    git_metadata = _zero_recovery_git_metadata(root, trusted_uid=trusted_uid)
+    return {
+        "head": head,
+        "tree": tree,
+        "tracked_index": tracked_index,
+        "tracked": tracked,
+        "git_metadata": git_metadata,
+        "runtime_delta": runtime_delta,
+        "schema_runtime": schema_runtime,
+        "engine_runtime": engine_runtime,
+    }
+
+
+def _zero_recovery_source_identity(
+    root: Path, plan_dir: Path
+) -> dict[str, Any] | None:
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    git_env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+    }
+
+    def output(argv: list[str]) -> str:
+        result = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", *argv],
+            cwd=root, env=git_env, capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+
+    head = output(["rev-parse", "HEAD"])
+    tree = output(["rev-parse", "HEAD^{tree}"])
+    for argv in (
+        ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "diff", "--quiet", "HEAD", "--"],
+        ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "diff", "--cached", "--quiet", "HEAD", "--"],
+    ):
+        if subprocess.run(argv, cwd=root, env=git_env, check=False).returncode != 0:
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                "model altered tracked source or index state",
+            )
+    staged = subprocess.run(
+        [
+            "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "ls-files", "--stage", "-z",
+        ],
+        cwd=root, env=git_env, capture_output=True, check=True,
+    ).stdout
+    tracked_index: list[dict[str, str]] = []
+    for raw_entry in staged.split(b"\0"):
+        if not raw_entry:
+            continue
+        metadata, raw_path = raw_entry.split(b"\t", 1)
+        git_mode, git_object, stage = metadata.decode("ascii").split(" ")
+        relative = raw_path.decode("utf-8", errors="strict")
+        if stage != "0" or Path(relative).as_posix() != relative or ".." in Path(relative).parts:
+            raise CliError(
+                "zero_recovery_worker_mutation_denied", "invalid tracked index entry"
+            )
+        tracked_index.append(
+            {"path": relative, "git_mode": git_mode, "git_object": git_object}
+        )
+    return _zero_recovery_direct_source_manifest(
+        root, plan_dir, tracked_index=tracked_index, head=head, tree=tree
+    )
+
+
+def _assert_zero_recovery_source_unchanged(
+    root: Path, plan_dir: Path, before: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if before is None:
+        return
+    after = _zero_recovery_direct_source_manifest(
+        root,
+        plan_dir,
+        tracked_index=before["tracked_index"],
+        head=before["head"],
+        tree=before["tree"],
+    )
+    changed: list[str] = []
+    if after["tracked"] != before["tracked"]:
+        changed.append("tracked_source")
+    if after["git_metadata"] != before["git_metadata"]:
+        changed.append("git_control_metadata")
+    if after["schema_runtime"] != before["schema_runtime"]:
+        before_schemas = {
+            item["path"]: (item["mode"], item["sha256"])
+            for item in before["schema_runtime"]
+        }
+        after_schemas = {
+            item["path"]: (item["mode"], item["sha256"])
+            for item in after["schema_runtime"]
+        }
+        schema_changes = sorted(
+            path
+            for path in set(before_schemas) | set(after_schemas)
+            if before_schemas.get(path) != after_schemas.get(path)
+        )
+        schema_evidence = []
+        for path in schema_changes[:8]:
+            prior = before_schemas.get(path)
+            current = after_schemas.get(path)
+            prior_text = (
+                "absent"
+                if prior is None
+                else f"{prior[0]:04o}:{prior[1][:12]}"
+            )
+            current_text = (
+                "absent"
+                if current is None
+                else f"{current[0]:04o}:{current[1][:12]}"
+            )
+            schema_evidence.append(f"{path}({prior_text}->{current_text})")
+        changed.append("runtime_schema:" + ",".join(schema_evidence))
+    if changed:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "model changed admitted source identity: " + " | ".join(changed),
+        )
+    _zero_recovery_validate_engine_runtime_transition(
+        before["engine_runtime"], after["engine_runtime"]
+    )
+    return after
+
+
+def _zero_recovery_plan_snapshot(
+    root: Path,
+    plan_dir: Path,
+    *,
+    output_path: Path,
+) -> dict[str, str] | None:
+    """Hash every plan artifact the finite-model process is forbidden to alter."""
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    plan_root = plan_dir.resolve()
+    output = output_path.absolute()
+    privilege_receipt = (
+        output.parent
+        / output.name.replace("-worker-output.json", "-privilege-receipt.json")
+    )
+    if plan_dir.absolute() != plan_root or output.parent != plan_root:
+        raise CliError(
+            "zero_recovery_worker_output_invalid",
+            "finite canary worker output parent must be the exact plan directory",
+        )
+    snapshot: dict[str, str] = {}
+    receipt_dir = (
+        root
+        / ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts"
+    )
+    trusted_uid = os.geteuid()
+    for prefix, boundary in (("plan", plan_dir), ("receipts", receipt_dir)):
+        boundary_stat = os.lstat(boundary)
+        if (
+            not stat.S_ISDIR(boundary_stat.st_mode)
+            or stat.S_ISLNK(boundary_stat.st_mode)
+            or boundary_stat.st_uid != trusted_uid
+            or boundary_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_worker_mutation_denied",
+                f"{prefix} boundary is not trusted-owner non-writable",
+            )
+        for candidate in boundary.rglob("*"):
+            candidate_stat = os.lstat(candidate)
+            if (
+                candidate_stat.st_uid != trusted_uid
+                or (
+                    not stat.S_ISLNK(candidate_stat.st_mode)
+                    and candidate_stat.st_mode & 0o022
+                )
+            ):
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    f"{prefix} artifact permissions are unsafe: {candidate.name}",
+                )
+            if stat.S_ISDIR(candidate_stat.st_mode) and not stat.S_ISLNK(candidate_stat.st_mode):
+                continue
+            if prefix == "plan" and candidate.absolute() in {output, privilege_receipt}:
+                continue
+            relative = candidate.relative_to(boundary).as_posix()
+            if stat.S_ISLNK(candidate_stat.st_mode):
+                data = os.readlink(candidate).encode()
+            elif stat.S_ISREG(candidate_stat.st_mode) and candidate_stat.st_nlink == 1:
+                data = candidate.read_bytes()
+            else:
+                raise CliError(
+                    "zero_recovery_worker_mutation_denied",
+                    f"unsupported {prefix} artifact at worker boundary: {relative}",
+                )
+            snapshot[f"{prefix}/{relative}"] = hashlib.sha256(data).hexdigest()
+    return snapshot
+
+
+def _assert_zero_recovery_plan_unchanged(
+    root: Path,
+    plan_dir: Path,
+    *,
+    output_path: Path,
+    before: dict[str, str] | None,
+) -> None:
+    if before is None:
+        return
+    try:
+        output_stat = os.lstat(output_path)
+    except FileNotFoundError:
+        output_stat = None
+    if output_stat is not None and (
+        not stat.S_ISREG(output_stat.st_mode) or output_stat.st_nlink != 1
+    ):
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "model output path is not a single-link no-follow regular file",
+        )
+    after = _zero_recovery_plan_snapshot(
+        root, plan_dir, output_path=output_path
+    )
+    if after != before:
+        changed = sorted(set(before) ^ set(after or {}))
+        for path in sorted(set(before) & set(after or {})):
+            if before[path] != (after or {})[path]:
+                changed.append(path)
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "model altered forbidden plan artifacts: " + ", ".join(changed[:8]),
+        )
+
+
+def _verify_zero_recovery_worker_boundaries(
+    *,
+    root: Path,
+    plan_dir: Path,
+    output_path: Path,
+    runtime: dict[str, Any] | None,
+    schema_grant: dict[str, Any] | None,
+    source_before: dict[str, Any] | None,
+    plan_before: dict[str, str] | None,
+) -> None:
+    errors: list[str] = []
+    try:
+        _finish_zero_recovery_model_runtime(
+            runtime,
+            output_path=output_path,
+            on_process_empty=lambda: _restore_zero_recovery_schema_input(
+                schema_grant
+            ),
+        )
+    except BaseException as exc:
+        errors.append(f"{type(exc).__name__}:{str(exc)}")
+    for check in (
+        lambda: _assert_zero_recovery_source_unchanged(root, plan_dir, source_before),
+        lambda: _assert_zero_recovery_plan_unchanged(
+            root, plan_dir, output_path=output_path, before=plan_before
+        ),
+    ):
+        try:
+            check()
+        except BaseException as exc:
+            errors.append(f"{type(exc).__name__}:{str(exc)}")
+    if errors:
+        raise CliError(
+            "zero_recovery_worker_mutation_denied",
+            "finite model boundary failed: " + " | ".join(errors),
+        )
+
+
+def _record_zero_recovery_dispatch(
+    plan_dir: Path,
+    *,
+    step: str,
+    agent: str,
+    model: str | None,
+    effort: str | None,
+    plan_iteration: int,
+) -> dict[str, Any] | None:
+    """Append the sole permitted model dispatch before crossing its boundary."""
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    if step not in _ZERO_RECOVERY_MODEL_PHASES:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            f"model dispatch is not permitted for zero-recovery step {step!r}",
+        )
+    if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") == "1":
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "adaptive agent dispatcher is forbidden for the finite canary",
+        )
+    if agent != "codex" or model != "gpt-5.6-sol" or effort != "high":
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary dispatch did not match the admitted Codex model pin",
+        )
+    if plan_iteration < 1:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary dispatch requires a positive trusted plan iteration",
+        )
+    ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
+    prior_records: list[dict[str, Any]] = []
+    if ledger_path.is_file():
+        try:
+            prior_records = [
+                json.loads(line)
+                for line in ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CliError(
+                "zero_recovery_dispatch_denied",
+                "finite canary dispatch ledger is unreadable",
+            ) from exc
+    if len(prior_records) % 2 != 0 or any(
+        prior_records[index].get("event") != "start"
+        or prior_records[index + 1].get("event") != "terminal"
+        or prior_records[index].get("dispatch_id")
+        != prior_records[index + 1].get("dispatch_id")
+        for index in range(0, len(prior_records), 2)
+    ):
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary dispatch ledger has an unterminated or unordered pair",
+        )
+    if any(
+        record.get("event") == "start"
+        and record.get("phase") == step
+        and record.get("plan_iteration") == plan_iteration
+        for record in prior_records
+    ):
+        raise CliError(
+            "zero_recovery_redispatch_denied",
+            f"a second {step} dispatch for plan iteration {plan_iteration} "
+            "was rejected before provider invocation",
+        )
+    dispatch_ordinal = len(prior_records) // 2 + 1
+    artifact_stem = (
+        f".zero-recovery-{dispatch_ordinal:02d}-{step}-i{plan_iteration}"
+    )
+    lock_path = plan_dir / f"{artifact_stem}-dispatch.lock"
+    try:
+        lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise CliError(
+            "zero_recovery_redispatch_denied",
+            f"a second {step} dispatch was rejected before provider invocation",
+        ) from exc
+    with os.fdopen(lock_fd, "w", encoding="utf-8") as lock:
+        lock.write("single-dispatch\n")
+        lock.flush()
+        os.fsync(lock.fileno())
+    record: dict[str, Any] = {
+        "schema": "arnold.megaplan.zero_recovery_dispatch.v2",
+        "event": "start",
+        "dispatch_id": uuid.uuid4().hex,
+        "phase": step,
+        "selected_agent": agent,
+        "selected_model": model,
+        "selected_effort": effort,
+        "model_cli_argv": ["-c", "model='gpt-5.6-sol'"],
+        "attempt": 1,
+        "plan_iteration": plan_iteration,
+        "dispatch_ordinal": dispatch_ordinal,
+        "retry": False,
+        "fallback": False,
+        "json_repair": False,
+        "adaptive_routing": False,
+        "recorded_at": now_utc(),
+    }
+    ledger_fd = os.open(ledger_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(ledger_fd, "a", encoding="utf-8") as ledger:
+        ledger.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        ledger.flush()
+        os.fsync(ledger.fileno())
+    return record
+
+
+def _record_zero_recovery_dispatch_terminal(
+    plan_dir: Path,
+    *,
+    start: dict[str, Any] | None,
+    worker: WorkerResult,
+) -> None:
+    if start is None:
+        return
+    actual_model = getattr(worker, "model_actual", None)
+    model_evidence = getattr(worker, "model_evidence", None)
+    privilege_receipt_path = getattr(worker, "privilege_receipt_path", None)
+    privilege_receipt_sha256 = getattr(worker, "privilege_receipt_sha256", None)
+    rollout_path = getattr(worker, "rollout_path", None)
+    rollout_sha256 = getattr(worker, "rollout_sha256", None)
+    if (
+        actual_model != start["selected_model"]
+        or model_evidence != "codex_cli_turn_context"
+        or not isinstance(privilege_receipt_path, str)
+        or not isinstance(privilege_receipt_sha256, str)
+        or not isinstance(rollout_path, str)
+        or not isinstance(rollout_sha256, str)
+    ):
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "sealed Codex CLI evidence did not match the admitted model boundary",
+        )
+    record = {
+        "schema": "arnold.megaplan.zero_recovery_dispatch.v2",
+        "event": "terminal",
+        "dispatch_id": start["dispatch_id"],
+        "phase": start["phase"],
+        "actual_agent": start["selected_agent"],
+        "actual_model": actual_model,
+        "model_evidence": model_evidence,
+        "privilege_receipt_path": privilege_receipt_path,
+        "privilege_receipt_sha256": privilege_receipt_sha256,
+        "rollout_path": rollout_path,
+        "rollout_sha256": rollout_sha256,
+        "actual_effort": start["selected_effort"],
+        "attempt": start["attempt"],
+        "plan_iteration": start["plan_iteration"],
+        "dispatch_ordinal": start["dispatch_ordinal"],
+        "retry": False,
+        "fallback": False,
+        "json_repair": False,
+        "adaptive_routing": False,
+        "result": "returned",
+        "recorded_at": now_utc(),
+    }
+    ledger_fd = os.open(
+        plan_dir / "zero_recovery_dispatch_ledger.ndjson",
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+        0o600,
+    )
+    with os.fdopen(ledger_fd, "a", encoding="utf-8") as ledger:
+        ledger.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        ledger.flush()
+        os.fsync(ledger.fileno())
+
+
+def _active_zero_recovery_dispatch(
+    plan_dir: Path, *, step: str
+) -> dict[str, Any] | None:
+    """Return the trusted unpaired start that owns this worker artifact set."""
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+        return None
+    ledger_path = plan_dir / "zero_recovery_dispatch_ledger.ndjson"
+    try:
+        records = [
+            json.loads(line)
+            for line in ledger_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary active dispatch ledger is unreadable",
+        ) from exc
+    active = records[-1] if records else None
+    expected_ordinal = (len(records) + 1) // 2
+    if (
+        len(records) % 2 != 1
+        or not isinstance(active, dict)
+        or active.get("event") != "start"
+        or active.get("phase") != step
+        or active.get("dispatch_ordinal") != expected_ordinal
+        or not isinstance(active.get("plan_iteration"), int)
+        or active["plan_iteration"] < 1
+    ):
+        raise CliError(
+            "zero_recovery_dispatch_denied",
+            "finite canary worker has no matching trusted active dispatch",
+        )
+    return active
 
 # Shared mapping from step name to schema filename, used by both
 # run_claude_step and run_codex_step.
 # Built from the authoritative StepContract registry.
-from arnold_pipelines.megaplan.step_contracts import build_step_schema_filenames
+from arnold_pipelines.megaplan.step_contracts import (
+    build_capture_schema_keys_by_step,
+    build_step_schema_filenames,
+)
 
 STEP_SCHEMA_FILENAMES: dict[str, str] = build_step_schema_filenames()
+STEP_CAPTURE_SCHEMA_FILENAMES: dict[str, str] = build_capture_schema_keys_by_step()
 
 # Derive required keys per step from SCHEMAS so they aren't duplicated.
 _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
-    step: SCHEMAS.get(filename, {}).get("required", [])
+    step: SCHEMAS.get(
+        filename
+        if step == "execute"
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, filename),
+        {},
+    ).get("required", [])
     for step, filename in STEP_SCHEMA_FILENAMES.items()
 }
 _RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({
@@ -539,6 +2177,12 @@ class CodexProgressLiveness:
     """
 
     output_path: Path
+    # Review is read-only and normally short.  Unlike execute, a review must
+    # not let a spinning Codex/node process masquerade as useful work forever:
+    # its JSON trace/rollout/output file are the authoritative evidence that
+    # the model is actually advancing.  Execute keeps CPU sampling because a
+    # legitimate long-running tool can be stdout-silent for minutes.
+    include_cpu_signal: bool = True
 
     session_id: str | None = None
     _stdout_buffer: str = ""
@@ -608,11 +2252,13 @@ class CodexProgressLiveness:
         readable = False
         progressing = False
 
-        for current, attr_name in (
+        signals: list[tuple[Any | None, str]] = [
             (_path_progress_signal(self.output_path), "_last_output_signal"),
             (self._sample_rollout_signal(), "_last_rollout_signal"),
-            (self._sample_cpu_signal(), "_last_cpu_signal"),
-        ):
+        ]
+        if self.include_cpu_signal:
+            signals.append((self._sample_cpu_signal(), "_last_cpu_signal"))
+        for current, attr_name in signals:
             signal_readable, signal_progressing = self._observe(current, attr_name)
             readable = readable or signal_readable
             progressing = progressing or signal_progressing
@@ -673,9 +2319,17 @@ class WorkerResult:
     trace_output: str | None = None
     rendered_prompt: str | None = None
     model_actual: str | None = None
+    model_evidence: str | None = None
+    privilege_receipt_path: str | None = None
+    privilege_receipt_sha256: str | None = None
+    rollout_path: str | None = None
+    rollout_sha256: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # ``unpriced`` means usage was observed but no canonical model rate exists;
+    # cost_usd remains 0.0 for backward-compatible numeric aggregation.
+    cost_pricing: str | None = None
     # Populated by the Shannon worker so the receipt records the rolled
     # session plan (kind, session_id, voice, pre-turn kinds + pre_sleep_s).
     # ``None`` for non-Shannon workers.
@@ -689,6 +2343,7 @@ class WorkerResult:
     attempted_specs: tuple[str, ...] = ()
     failed_attempt_reasons: tuple[str, ...] = ()
     fallback_trigger: str | None = None
+    response_enforcement_attestation: dict[str, Any] | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -708,9 +2363,11 @@ class WorkerResult:
             trace_output=agent_result.trace_output,
             rendered_prompt=agent_result.rendered_prompt,
             model_actual=agent_result.model_actual,
+            model_evidence=metadata.get("model_evidence"),
             prompt_tokens=agent_result.prompt_tokens,
             completion_tokens=agent_result.completion_tokens,
             total_tokens=agent_result.total_tokens,
+            cost_pricing=metadata.get("cost_pricing"),
             shannon_plan=agent_result.shannon_plan,
             rate_limit=rate_limit,
             worker_channel=metadata.get("worker_channel"),
@@ -721,6 +2378,9 @@ class WorkerResult:
             attempted_specs=tuple(metadata.get("attempted_specs", ())),
             failed_attempt_reasons=tuple(metadata.get("failed_attempt_reasons", ())),
             fallback_trigger=metadata.get("fallback_trigger"),
+            response_enforcement_attestation=metadata.get(
+                "response_enforcement_attestation"
+            ),
         )
 
     def to_agent_result(self) -> Any:
@@ -734,11 +2394,14 @@ class WorkerResult:
                 "worker_channel": self.worker_channel,
                 "auth_channel": self.auth_channel,
                 "auth_metadata": self.auth_metadata,
+                "cost_pricing": self.cost_pricing,
+                "model_evidence": self.model_evidence,
                 "configured_specs": list(self.configured_specs),
                 "attempt_index": self.attempt_index,
                 "attempted_specs": list(self.attempted_specs),
                 "failed_attempt_reasons": list(self.failed_attempt_reasons),
                 "fallback_trigger": self.fallback_trigger,
+                "response_enforcement_attestation": self.response_enforcement_attestation,
             }.items()
             if value is not None
         }
@@ -1042,21 +2705,11 @@ def run_command(
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        stdin_path = None
         stdin_file = None
         try:
-            if stdin_text is not None:
-                # Large prompts written to a PIPE can deadlock: the producer
-                # blocks when the pipe buffer fills before the consumer has
-                # started draining stdin. Writing the prompt to a temp file and
-                # letting the child read that file via stdin avoids the race.
-                stdin_handle = tempfile.NamedTemporaryFile(
-                    "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(cwd))
-                )
-                stdin_handle.write(stdin_text)
-                stdin_handle.flush()
-                stdin_handle.close()
-                stdin_path = Path(stdin_handle.name)
+            if stdin_path is not None:
+                # Reuse the single sealed prompt file created above. Creating a
+                # second file here leaked the first on every streaming call.
                 stdin_file = open(stdin_path, "rb")
 
             process = spawn(
@@ -1550,12 +3203,25 @@ def _codex_retry_guidance(step: str | None = None) -> str:
     return "Re-run the same step on Codex once before changing agent."
 
 
+def _codex_hard_quota_guidance() -> str:
+    """Give bounded recovery guidance for capacity that cannot recover now."""
+    return (
+        "Do not retry immediately. Restore Codex credits/capacity or wait until the "
+        "provider-stated reset, then re-run the same step on Codex exactly once."
+    )
+
+
 def _diagnose_codex_failure(raw: str, returncode: int) -> tuple[str, str]:
     """Parse Codex stderr/stdout for known error patterns. Returns (error_code, message)."""
     lower = raw.lower()
     for pattern, code, message in _CODEX_ERROR_PATTERNS:
         if pattern in lower:
-            return code, f"{message}. {_codex_retry_guidance()}"
+            guidance = (
+                _codex_hard_quota_guidance()
+                if code == "quota_exceeded"
+                else _codex_retry_guidance()
+            )
+            return code, f"{message}. {guidance}"
     if re.search(r"\bhttp\s*429\b", lower) or re.search(r"\b429\b", lower):
         return "rate_limit", f"Codex hit a rate limit (HTTP 429). {_codex_retry_guidance()}"
     if re.search(r"\bhttp\s*400\b", lower) or re.search(r"\b400\b", lower):
@@ -2011,7 +3677,9 @@ def _merge_partial_output(raw_output: str, output_path: Path) -> str:
     return merged
 
 
-def _codex_session_jsonl_path(session_id: str) -> Path | None:
+def _codex_session_jsonl_path(
+    session_id: str, *, codex_home: Path | None = None
+) -> Path | None:
     """Locate the rollout JSONL for a given codex session_id.
 
     Codex stores rollouts at
@@ -2022,8 +3690,10 @@ def _codex_session_jsonl_path(session_id: str) -> Path | None:
     """
     if not session_id:
         return None
-    codex_home_str = os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
-    sessions_root = Path(codex_home_str).expanduser() / "sessions"
+    resolved_codex_home = codex_home or Path(
+        os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
+    ).expanduser()
+    sessions_root = resolved_codex_home / "sessions"
     if not sessions_root.is_dir():
         return None
     try:
@@ -2074,6 +3744,36 @@ def _read_codex_total_token_usage(jsonl_path: Path) -> dict[str, Any] | None:
     return last_usage
 
 
+def _read_codex_observed_model(jsonl_path: Path) -> str | None:
+    """Return the latest model genuinely recorded by the Codex rollout."""
+    try:
+        lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    observed: str | None = None
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload")
+        candidate: Any = None
+        if item.get("type") == "turn_context" and isinstance(payload, dict):
+            candidate = payload.get("model")
+        elif (
+            item.get("type") == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "thread_settings_applied"
+            and isinstance(payload.get("thread_settings"), dict)
+        ):
+            candidate = payload["thread_settings"].get("model")
+        if isinstance(candidate, str) and candidate.strip():
+            observed = candidate.strip()
+    return observed
+
+
 def _read_codex_default_model() -> str | None:
     """Best-effort read of the codex CLI default model from ``config.toml``.
 
@@ -2107,6 +3807,9 @@ def _read_codex_default_model() -> str | None:
 def _codex_step_cost(
     session_id: str | None,
     session_entry: dict[str, Any],
+    requested_model: str | None = None,
+    *,
+    codex_home: Path | None = None,
 ) -> tuple[float, int, int, str | None, dict[str, Any] | None]:
     """Compute incremental cost (USD) and token deltas for one codex step.
 
@@ -2115,19 +3818,23 @@ def _codex_step_cost(
     stored on ``session_entry`` (mutated in place to record the new totals).
 
     Returns ``(cost_usd, prompt_tokens_delta, completion_tokens_delta,
-    model, current_total_usage)``. Any failure to read the JSONL or compute
-    the delta returns zeros and a ``None`` usage blob — never raises.
+    model, current_total_usage)``. Unknown model rates produce numeric 0.0 for
+    existing aggregation code; the caller records the explicit ``unpriced``
+    status on the worker result. Missing usage never raises.
     """
     from arnold_pipelines.megaplan.pricing.codex import cost_from_codex_usage_dict
 
     if not session_id:
+        # A requested CLI model is not provider evidence.  In particular, zero
+        # recovery must fail closed when no rollout/session can attest it.
         return 0.0, 0, 0, None, None
-    path = _codex_session_jsonl_path(session_id)
+    path = _codex_session_jsonl_path(session_id, codex_home=codex_home)
     if path is None:
         return 0.0, 0, 0, None, None
+    observed_model = _read_codex_observed_model(path)
     current = _read_codex_total_token_usage(path)
     if current is None:
-        return 0.0, 0, 0, None, None
+        return 0.0, 0, 0, observed_model, None
     prev = session_entry.get("last_total_tokens") if isinstance(session_entry, dict) else None
     if not isinstance(prev, dict):
         prev = {}
@@ -2146,13 +3853,14 @@ def _codex_step_cost(
         "output_tokens": _delta("output_tokens"),
         "reasoning_output_tokens": _delta("reasoning_output_tokens"),
     }
-    model = _read_codex_default_model()
-    cost = cost_from_codex_usage_dict(delta_usage, model)
+    pricing_model = observed_model or requested_model or _read_codex_default_model()
+    priced_cost = cost_from_codex_usage_dict(delta_usage, pricing_model)
+    cost = priced_cost if priced_cost is not None else 0.0
     prompt_tokens = delta_usage["input_tokens"]  # already includes cached
     completion_tokens = (
         delta_usage["output_tokens"] + delta_usage["reasoning_output_tokens"]
     )
-    return cost, prompt_tokens, completion_tokens, model, current
+    return cost, prompt_tokens, completion_tokens, observed_model, current
 
 
 def _emit_codex_execute_llm_start(
@@ -2161,7 +3869,8 @@ def _emit_codex_execute_llm_start(
     model: str | None,
     prompt: str,
     json_trace: bool,
-) -> None:
+) -> str:
+    call_transaction_id = uuid.uuid4().hex
     try:
         from arnold_pipelines.megaplan.observability.events import EventKind, emit
 
@@ -2180,10 +3889,12 @@ def _emit_codex_execute_llm_start(
                 "prompt_hash": prompt_hash,
                 "streaming": bool(json_trace),
                 "request_id": None,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
         pass
+    return call_transaction_id
 
 
 def _emit_codex_execute_llm_end(
@@ -2193,6 +3904,7 @@ def _emit_codex_execute_llm_end(
     model: str | None,
     tokens_in: int,
     tokens_out: int,
+    call_transaction_id: str | None = None,
 ) -> None:
     try:
         from arnold_pipelines.megaplan.observability.events import EventKind, emit
@@ -2206,6 +3918,7 @@ def _emit_codex_execute_llm_end(
                 "tokens_out": tokens_out,
                 "request_id": request_id,
                 "model": model,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
@@ -2403,11 +4116,17 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     """Extract plausible JSON payload objects from raw agent output."""
     # Some models (DeepSeek/Kimi) answer with write-style tool markup containing
     # the JSON payload. Recover that first so downstream extraction sees JSON.
-    from arnold_pipelines.megaplan.workers.hermes import _extract_json_from_mutating_tool_markup
+    from arnold_pipelines.megaplan.workers.hermes import (
+        _deescape_double_encoded_json,
+        _extract_json_from_mutating_tool_markup,
+    )
 
     recovered = _extract_json_from_mutating_tool_markup(raw)
     if recovered is not None:
         raw = recovered
+    deescaped = _deescape_double_encoded_json(raw)
+    if deescaped is not None:
+        raw = deescaped
 
     def _iter_nested_json_dicts(value: Any) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -2547,9 +4266,18 @@ def _extract_plan_capture_input(raw_text: str) -> str | dict[str, Any]:
 
 def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     """Return a representative JSON decode error for malformed model output."""
+    from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+
     text = raw.strip()
     if not text:
         return None
+    deescaped = _deescape_double_encoded_json(text)
+    if deescaped is not None:
+        try:
+            json.loads(deescaped)
+            return None
+        except json.JSONDecodeError:
+            pass
     candidates = [text]
     fenced = re.findall(r"```json\s*\n(.*?)```", raw, re.DOTALL)
     candidates.extend(block.strip() for block in fenced if block.strip())
@@ -2568,6 +4296,260 @@ def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def _codex_repair_input(
+    raw_transport: str,
+    canonical_output: str,
+) -> tuple[str, json.JSONDecodeError | None]:
+    """Select and diagnose the same Codex response source used by capture.
+
+    With ``--json`` the transport is JSONL and therefore is not itself one
+    model response.  The ``-o`` file is canonical whenever it is non-empty.
+    """
+
+    # JSONL is evidence about the invocation, not a substitute response.  In
+    # particular, feeding it to semantic repair gives the model a truncated
+    # event stream instead of the object that failed the contract.
+    repair_raw = canonical_output
+    return repair_raw, _json_decode_error_for_raw(repair_raw)
+
+
+def _codex_terminal_message_candidates(raw_transport: str) -> list[str]:
+    """Extract only terminal assistant-message bodies from Codex JSONL.
+
+    Tool results and event payloads can themselves contain arbitrary JSON.
+    Broad recursive candidate recovery therefore cannot establish which text
+    Codex selected as its final response.  This recognises only the documented
+    assistant-message event shapes and leaves an absent event as explicitly
+    unavailable evidence.
+    """
+
+    candidates: list[str] = []
+    for line in raw_transport.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("type")
+        item = event.get("item")
+        if event_type == "item.completed" and isinstance(item, dict):
+            if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                candidates.append(item["text"])
+            continue
+        if event_type == "agent_message" and isinstance(event.get("text"), str):
+            candidates.append(event["text"])
+            continue
+        if event_type in {"message.completed", "response.output_text.done"}:
+            text_value = event.get("text") or event.get("output_text")
+            if isinstance(text_value, str):
+                candidates.append(text_value)
+    return candidates
+
+
+def _select_codex_terminal_output(raw_transport: str, output_raw: str) -> str:
+    """Select the exact ``-o`` response and cross-check JSONL when possible."""
+
+    if not output_raw.strip():
+        raise ModelStructuralAuditError(
+            "Codex selected terminal output file is empty; JSONL transport is not a response fallback"
+        )
+    selected = output_raw.strip()
+    # Tool-using Codex turns legitimately emit intermediate agent_message
+    # items before commands.  The CLI's ``-o/--output-last-message`` contract
+    # selects the last assistant message, so cross-check that ordered terminal
+    # value rather than treating earlier progress messages as ambiguity.
+    candidates = [
+        candidate.strip()
+        for candidate in _codex_terminal_message_candidates(raw_transport)
+        if candidate.strip()
+    ]
+    if candidates and candidates[-1] != selected:
+        raise ModelStructuralAuditError(
+            "Codex selected terminal output does not equal the last JSONL assistant message"
+        )
+    return output_raw
+
+
+def _new_response_occurrence(
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    step: str,
+) -> dict[str, Any]:
+    """Mint an occurrence identity bound to plan, invocation, phase and WBC."""
+
+    binding = _WORKER_DISPATCH_BINDING.get() or {}
+    active = state.get("active_step")
+    meta = state.get("meta")
+    invocation_id = None
+    # The phase and worker WBC identities are minted from the canonical
+    # invocation stored in state.meta.  ``active_step.run_id`` is only the
+    # process-liveness fence and must not be mislabeled as that invocation.
+    if isinstance(meta, dict):
+        invocation_id = meta.get("current_invocation_id")
+    if not invocation_id and isinstance(active, dict):
+        orphan_fence = active.get("orphan_fence")
+        if isinstance(orphan_fence, dict):
+            invocation_id = orphan_fence.get("invocation_id")
+        invocation_id = invocation_id or active.get("invocation_id") or active.get("run_id")
+    material = {
+        "plan_name": str(state.get("name") or plan_dir.name),
+        "plan_dir": str(plan_dir.resolve()),
+        "phase": step,
+        "plan_iteration": int(state.get("iteration") or 0),
+        "invocation_id": str(invocation_id or "unavailable"),
+        "phase_wbc_attempt_id": str(
+            binding.get("phase_wbc_attempt_id") or "unavailable"
+        ),
+        "worker_wbc_attempt_id": str(
+            binding.get("worker_wbc_attempt_id") or "unavailable"
+        ),
+        "nonce": uuid.uuid4().hex,
+    }
+    material["occurrence_id"] = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return material
+
+
+def _response_output_path(
+    plan_dir: Path,
+    *,
+    step: str,
+    occurrence_id: str,
+    repair_ordinal: int,
+) -> Path:
+    """Return a fresh per-occurrence ``-o`` path; primary and repair never alias."""
+
+    safe_step = re.sub(r"[^a-zA-Z0-9_.-]", "-", step).strip(".-") or "step"
+    path = _project_local_tmp_dir(plan_dir) / (
+        f"response-{safe_step}-{occurrence_id}-r{repair_ordinal}.json"
+    )
+    if path.exists() or path.is_symlink():
+        raise CliError(
+            "local_response_contract",
+            "fresh per-occurrence Codex response output unexpectedly already exists",
+        )
+    return path
+
+
+def _write_response_evidence_blob(path: Path, data: bytes) -> None:
+    """Create one immutable content-addressed evidence blob."""
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        if path.read_bytes() != data:
+            raise CliError(
+                "local_response_contract",
+                "content-addressed Codex response evidence digest collision",
+            )
+        return
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _persist_codex_response_evidence(
+    plan_dir: Path,
+    *,
+    occurrence: dict[str, Any],
+    repair_ordinal: int,
+    raw_transport: str,
+    terminal_output: str,
+    output_path: Path,
+    model: str | None,
+    selection_error: Exception | None,
+) -> dict[str, Any]:
+    """Persist hash-addressed transport, terminal output and selection receipt."""
+
+    evidence_root = plan_dir / ".megaplan" / "model-response-evidence"
+    objects = evidence_root / "objects"
+
+    def _blob(value: str, suffix: str) -> dict[str, Any] | None:
+        data = value.encode("utf-8")
+        if not data:
+            return None
+        digest = hashlib.sha256(data).hexdigest()
+        blob_path = objects / f"{digest}.{suffix}"
+        _write_response_evidence_blob(blob_path, data)
+        return {
+            "sha256": f"sha256:{digest}",
+            "bytes": len(data),
+            "path": str(blob_path.relative_to(plan_dir)),
+        }
+
+    transport = _blob(raw_transport, "jsonl")
+    selected = _blob(terminal_output, "json")
+    receipt = {
+        "schema": "arnold.megaplan.codex-response-evidence.v1",
+        "occurrence": dict(occurrence),
+        "repair_ordinal": repair_ordinal,
+        "phase": occurrence["phase"],
+        "plan_name": occurrence["plan_name"],
+        "invocation_id": occurrence["invocation_id"],
+        "phase_wbc_attempt_id": occurrence["phase_wbc_attempt_id"],
+        "worker_wbc_attempt_id": occurrence["worker_wbc_attempt_id"],
+        "model": model,
+        "output_path": str(output_path),
+        "transport": transport,
+        "selected_terminal_output": selected,
+        "selection_status": "accepted" if selection_error is None else "rejected",
+        "selection_error": str(selection_error) if selection_error is not None else None,
+    }
+    receipt_path = (
+        evidence_root
+        / "occurrences"
+        / occurrence["occurrence_id"]
+        / f"repair-{repair_ordinal}.json"
+    )
+    if receipt_path.exists() or receipt_path.is_symlink():
+        raise CliError(
+            "local_response_contract",
+            "Codex response evidence receipt already exists for this occurrence ordinal",
+        )
+    atomic_write_json(receipt_path, receipt)
+    return {
+        "receipt_path": str(receipt_path.relative_to(plan_dir)),
+        "receipt_sha256": "sha256:"
+        + hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+        **receipt,
+    }
+
+
+def _build_response_contract_repair_prompt(
+    *,
+    step: str,
+    schema: dict[str, Any],
+    failure_reason: str,
+    selected_output: str,
+) -> str:
+    """Build one semantic repair from the full selected object and schema."""
+
+    return (
+        "Your previous selected response failed the canonical local response contract.\n"
+        f"Phase: {step}\n"
+        f"Structural audit: {failure_reason}\n\n"
+        "Return ONLY one corrected JSON object. Do not use Markdown, prose, NDJSON, "
+        "or an event stream. Preserve all valid content while fixing the exact contract "
+        "violations.\n\nCanonical JSON Schema (complete):\n"
+        + json.dumps(schema, sort_keys=True, ensure_ascii=False)
+        + "\n\nSelected response to repair (complete):\n"
+        + selected_output
+    )
 
 
 def _build_json_repair_prompt(error: json.JSONDecodeError, raw: str) -> str:
@@ -2784,7 +4766,7 @@ def _mock_result(
 # empty trace. Update both sets to add a new step.
 _MOCK_SUPPORTED_STEPS: tuple[str, ...] = (
     "plan", "prep", "prep-triage", "prep-research", "prep-distill", "loop_plan",
-    "critique", "revise", "gate", "finalize",
+    "critique_evaluator", "critique", "revise", "gate", "finalize",
     "execute", "loop_execute", "review",
 )
 _MOCK_TRACE_OUTPUTS: dict[str, str] = {
@@ -3006,13 +4988,23 @@ def update_session_state(
 
 _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 _VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
-_CODEX_EFFORT_ALIASES: dict[str, str] = {}
 
 
 def _normalize_codex_effort(effort: str | None) -> str | None:
+    """Preserve an explicitly requested Codex effort without silent clamping."""
+
+    return effort
+
+
+def _codex_effort_flag(effort: str | None) -> list[str]:
+    """Build the exact Codex CLI effort flag, preserving xhigh/max."""
+
+    effort = _normalize_codex_effort(effort)
     if effort is None:
-        return None
-    return _CODEX_EFFORT_ALIASES.get(effort, effort)
+        return []
+    if effort not in _VALID_CODEX_EFFORTS:
+        raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
+    return ["-c", f"model_reasoning_effort={effort}"]
 
 
 def _codex_model_flag(model: str | None) -> list[str]:
@@ -3101,6 +5093,269 @@ def run_claude_step(
     )
 
 
+def _prepare_codex_response_contract(
+    *,
+    schema: dict[str, Any],
+    plan_dir: Path,
+    step: str,
+    model: str | None,
+    provider_schema_available: bool,
+) -> tuple[CompiledResponseContract, Path | None]:
+    """Compile, persist, and expose one Codex response-enforcement decision."""
+
+    contract = compile_response_contract(
+        schema,
+        provider="codex",
+        model=model,
+        phase=step,
+        provider_schema_available=provider_schema_available,
+    )
+    persist_response_enforcement_attestation(plan_dir, contract.attestation)
+    transport_path: Path | None = None
+    if contract.transport_schema is not None:
+        transport_path = _project_local_tmp_dir(plan_dir) / (
+            f"response-schema-{step}-{contract.attestation.transport_schema_hash}.json"
+        )
+        atomic_write_json(transport_path, contract.transport_schema)
+    print(
+        "[megaplan] response enforcement "
+        f"phase={step} mode={contract.attestation.response_enforcement} "
+        f"reason={contract.attestation.enforcement_reason}",
+        flush=True,
+    )
+    return contract, transport_path
+
+
+def _codex_response_schema_args(transport_schema_file: Path | None) -> list[str]:
+    """Return Codex response arguments for the selected enforcement mode."""
+
+    if transport_schema_file is None:
+        return ["-"]
+    return ["--output-schema", str(transport_schema_file), "-"]
+
+
+def _is_codex_provider_schema_rejection(raw: str) -> bool:
+    """Recognize a backend rejection of the submitted response schema."""
+
+    lowered = raw.lower()
+    return bool(
+        "invalid_json_schema" in lowered
+        or (
+            ("output schema" in lowered or "response_format" in lowered)
+            and (
+                "invalid schema" in lowered
+                or "http 400" in lowered
+                or "invalid_request_error" in lowered
+            )
+        )
+    )
+
+
+def _codex_provider_contract_error(
+    contract: CompiledResponseContract,
+    raw: str,
+) -> CliError:
+    """Return the typed, stable failure for a rejected compiled schema."""
+
+    attestation = contract.attestation
+    material = {
+        "compiler_version": attestation.compiler_version,
+        "provider": attestation.provider,
+        "model": attestation.model,
+        "phase": attestation.phase,
+        "canonical_schema_hash": attestation.canonical_schema_hash,
+        "transport_schema_hash": attestation.transport_schema_hash,
+        "failure_class": "provider_schema_rejected",
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    message = (
+        "Codex rejected the compiled response schema before model execution; "
+        "an identical request is non-retryable"
+    )
+    return CliError(
+        "provider_contract",
+        message,
+        extra={
+            "raw_output": raw,
+            "_external_error": {
+                "provider": "codex",
+                "error_kind": "provider_contract",
+                "message": message,
+                "error_layer": "schema_error",
+                "deterministic": True,
+                "nonretryable": True,
+                "failure_fingerprint": fingerprint,
+            },
+            "response_enforcement_attestation": attestation.to_json(),
+        },
+    )
+
+
+def _prepare_local_strict_artifact_handoff(
+    plan_dir: Path,
+    *,
+    step: str,
+) -> dict[str, Any]:
+    """Mint one non-reusable candidate path for a local-strict invocation."""
+
+    root = (_project_local_tmp_dir(plan_dir) / _LOCAL_STRICT_ARTIFACT_DIRNAME).absolute()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root_stat = os.lstat(root)
+    if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        raise CliError(
+            "local_response_contract",
+            "local-strict artifact handoff root is not a real directory",
+        )
+    root = root.resolve(strict=True)
+    safe_step = re.sub(r"[^a-zA-Z0-9_.-]", "-", step).strip(".-") or "step"
+    candidate = root / f"{safe_step}-{uuid.uuid4().hex}.candidate.json"
+    if candidate.exists() or candidate.is_symlink():
+        raise CliError(
+            "local_response_contract",
+            "fresh local-strict artifact candidate unexpectedly already exists",
+        )
+    return {
+        "schema": LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA,
+        "root": str(root),
+        "candidate_path": str(candidate),
+        "max_bytes": DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES,
+    }
+
+
+def _preflight_trusted_container_artifact_handoff(handoff: dict[str, Any]) -> None:
+    """Prove the trusted-container handoff supports atomic non-empty publish.
+
+    The environment flag remains an explicit operator assertion; this check
+    neither infers nor enables trust.  Once asserted, we fail before model
+    dispatch unless the exact handoff filesystem can create, fsync, rename,
+    read and remove a non-empty regular file without traversing symlinks.
+    """
+
+    if not _trusted_container():
+        raise CliError(
+            "local_response_contract",
+            "trusted-container artifact handoff preflight requires explicit MEGAPLAN_TRUSTED_CONTAINER",
+        )
+    root = Path(str(handoff.get("root") or ""))
+    candidate = Path(str(handoff.get("candidate_path") or ""))
+    if not root.is_absolute() or candidate.parent != root:
+        raise CliError(
+            "local_response_contract",
+            "trusted-container artifact handoff preflight received an invalid path binding",
+        )
+    probe_target = root / f".handoff-canary-{uuid.uuid4().hex}.json"
+    probe_tmp = root / f".{probe_target.name}.tmp-{uuid.uuid4().hex}"
+    payload = b'{"handoff":"atomic-nonempty"}\n'
+    try:
+        fd = os.open(probe_tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(probe_tmp, probe_target)
+        observed = os.lstat(probe_target)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or stat.S_ISLNK(observed.st_mode)
+            or observed.st_nlink != 1
+            or observed.st_size != len(payload)
+            or probe_target.read_bytes() != payload
+        ):
+            raise OSError("atomic handoff canary did not round-trip exactly")
+    except OSError as error:
+        raise CliError(
+            "local_response_contract",
+            "trusted-container filesystem cannot provide an atomic non-empty artifact handoff",
+            extra={"handoff_root": str(root), "pre_dispatch": True},
+        ) from error
+    finally:
+        for path in (probe_tmp, probe_target):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
+def _local_response_contract_error(
+    *,
+    step: str,
+    schema: dict[str, Any],
+    reason: str,
+    raw: str,
+    attempts: int = 2,
+    occurrence: dict[str, Any] | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> CliError:
+    """Return the terminal receipt after this occurrence used its one repair."""
+
+    from arnold_pipelines.megaplan.provider_response import schema_sha256
+
+    occurrence_material = {
+        "phase": step,
+        "canonical_schema_hash": schema_sha256(schema),
+        "failure_class": "local_response_contract",
+    }
+    occurrence_id = str(
+        (occurrence or {}).get("occurrence_id")
+        or hashlib.sha256(
+            json.dumps(
+                {**occurrence_material, "nonce": uuid.uuid4().hex},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
+    material = {
+        **occurrence_material,
+        "reason": reason,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if attempts <= 1:
+        message = (
+            f"Codex {step} output failed the local response custody contract; "
+            "semantic repair is forbidden because no unambiguous selected response exists"
+        )
+    else:
+        message = (
+            f"Codex {step} output failed the local response contract after the "
+            "single occurrence-scoped repair; repeating the unchanged phase is forbidden"
+        )
+    return CliError(
+        "local_response_contract",
+        message,
+        extra={
+            "raw_output": raw,
+            "local_response_contract": {
+                "attempts": attempts,
+                "repairs": max(0, attempts - 1),
+                "max_attempts": 2,
+                "exhausted": True,
+                "occurrence_id": occurrence_id,
+                "failure_fingerprint": fingerprint,
+                "occurrence": dict(occurrence or {}),
+                "evidence_receipt": (
+                    evidence.get("receipt_path") if isinstance(evidence, dict) else None
+                ),
+            },
+            "_external_error": {
+                "provider": "codex",
+                "error_kind": "local_response_contract",
+                "message": message,
+                "error_layer": "model_output",
+                "deterministic": True,
+                "nonretryable": True,
+                "failure_fingerprint": fingerprint,
+            },
+        },
+    )
+
+
 def _run_codex_step_uncapped(
     step: str,
     state: PlanState,
@@ -3118,6 +5373,7 @@ def _run_codex_step_uncapped(
     output_path: Path | None = None,
     repair_attempted: bool = False,
     free_text: bool = False,
+    response_occurrence: dict[str, Any] | None = None,
 ) -> WorkerResult:
     if read_only and step not in {"prep-triage", "prep-distill", "critique", "review"}:
         raise CliError(
@@ -3133,6 +5389,10 @@ def _run_codex_step_uncapped(
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
+    response_occurrence = response_occurrence or _new_response_occurrence(
+        state, plan_dir, step=step
+    )
+    repair_ordinal = 1 if repair_attempted else 0
     work_dir = resolve_work_dir(state)
     execution_env = resolve_execution_environment(root=root, state=state)
     sandbox_fingerprint = (
@@ -3183,22 +5443,98 @@ def _run_codex_step_uncapped(
             state["sessions"].pop(session_key, None)
             session = {}
             fresh = True
-    if output_path is None:
-        out_handle = tempfile.NamedTemporaryFile(
-            "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(plan_dir))
+    active_dispatch: dict[str, Any] | None = None
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
+        active_dispatch = _active_zero_recovery_dispatch(plan_dir, step=step)
+        assert active_dispatch is not None
+        artifact_stem = (
+            f".zero-recovery-{active_dispatch['dispatch_ordinal']:02d}-{step}"
+            f"-i{active_dispatch['plan_iteration']}"
         )
-        out_handle.close()
-        output_path = Path(out_handle.name)
+        fixed_output = plan_dir / f"{artifact_stem}-worker-output.json"
+        if output_path is not None and Path(output_path).absolute() != fixed_output.absolute():
+            raise CliError(
+                "zero_recovery_worker_output_invalid",
+                "finite canary requires the fixed per-phase worker output",
+            )
+        output_path = fixed_output
+        if output_path.exists() or output_path.is_symlink():
+            raise CliError(
+                "zero_recovery_worker_output_invalid",
+                "finite canary worker output already exists",
+            )
+    elif output_path is None:
+        output_path = _response_output_path(
+            plan_dir,
+            step=step,
+            occurrence_id=response_occurrence["occurrence_id"],
+            repair_ordinal=repair_ordinal,
+        )
     else:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.is_symlink():
+            raise CliError(
+                "local_response_contract",
+                "Codex response output path must not be a symlink",
+            )
+        if output_path.exists() and output_path.stat().st_size > 0:
+            raise CliError(
+                "local_response_contract",
+                "Codex response output path already contains evidence; overwriting it is forbidden",
+            )
     seam_tier = (
         ModelTier.NON_ENFORCED
         if persistent and session.get("id") and not fresh and not read_only
         else ModelTier.ENFORCED
     )
-    schema = read_json(schema_file)
-    capture_schema = SCHEMAS.get(codex_schema_name, schema)
+    persisted_schema = read_json(schema_file)
+    capture_schema_name = (
+        codex_schema_name
+        if step == "execute"
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, codex_schema_name)
+    )
+    capture_schema = SCHEMAS.get(capture_schema_name, persisted_schema)
+    # Preserve the consumer's semantic required/optional contract.  Gate is
+    # the one established exception: every gate reader already treats its
+    # OpenAI-strict projection as canonical (see model_seam audit handling).
+    # Provider compatibility must never be obtained by silently promoting
+    # optional fields before this compiler sees them.
+    schema = (
+        strict_schema(deepcopy(capture_schema))
+        if step == "gate"
+        else deepcopy(capture_schema)
+    )
+    response_contract: CompiledResponseContract | None = None
+    transport_schema_file: Path | None = None
+    if not free_text:
+        response_contract, transport_schema_file = _prepare_codex_response_contract(
+            schema=schema,
+            plan_dir=plan_dir,
+            step=step,
+            model=model,
+            provider_schema_available=not (
+                persistent and session.get("id") and not fresh and not read_only
+            ),
+        )
+    response_attestation = (
+        response_contract.attestation.to_json()
+        if response_contract is not None
+        else None
+    )
+    local_strict_handoff: dict[str, Any] | None = None
+    if (
+        response_contract is not None
+        and response_contract.attestation.response_enforcement
+        == ResponseEnforcement.LOCAL_STRICT_JSON.value
+        and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and _trusted_container()
+    ):
+        local_strict_handoff = _prepare_local_strict_artifact_handoff(
+            plan_dir,
+            step=step,
+        )
+        _preflight_trusted_container_artifact_handoff(local_strict_handoff)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -3213,6 +5549,29 @@ def _run_codex_step_uncapped(
         **(prompt_kwargs or {}),
     )
     prompt = _normalize_stdin_text(rendered_prompt.prompt) or ""
+    if (
+        response_contract is not None
+        and response_contract.attestation.response_enforcement
+        == ResponseEnforcement.LOCAL_STRICT_JSON.value
+    ):
+        prompt += (
+            "\n\nResponse enforcement: return exactly one JSON object matching "
+            "the supplied canonical schema. Do not use Markdown fences or prose."
+        )
+        if local_strict_handoff is not None:
+            candidate_path = local_strict_handoff["candidate_path"]
+            candidate_path_json = json.dumps(candidate_path, ensure_ascii=True)
+            prompt += (
+                " If the complete object is too large for the final response, use the "
+                "authorized artifact handoff instead: write the complete canonical JSON "
+                f"to exactly {candidate_path!r} via a temporary sibling file followed by "
+                "an atomic rename. Do not write finalize_output.json or any other scratch "
+                "or canonical artifact. Then return only this exact receipt shape: "
+                f"{{\"schema\":\"{LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA}\","
+                f"\"path\":{candidate_path_json},\"sha256\":\"<64 lowercase hex>\","
+                "\"bytes\":<exact byte count>}. The receipt path is fixed and may not "
+                "be substituted."
+            )
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:
@@ -3235,12 +5594,13 @@ def _run_codex_step_uncapped(
                 "sandbox_mode='read-only'",
             ])
         command.extend(_codex_model_flag(model))
-        if effort is not None:
-            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_codex_effort_flag(effort))
+        if json_trace:
+            command.append("--json")
         if free_text:
             command.append("-")
         else:
-            command.extend(["--output-schema", str(schema_file), "-"])
+            command.extend(_codex_response_schema_args(transport_schema_file))
     elif persistent and session.get("id") and not fresh:
         # codex exec resume does not support --output-schema; capture_step_output
         # handles the output file validation after parsing instead. It also
@@ -3250,8 +5610,7 @@ def _run_codex_step_uncapped(
         if _trusted_container():
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.extend(_codex_model_flag(model))
-        if effort is not None:
-            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_codex_effort_flag(effort))
         command.extend(_codex_exec_mode_flags(step))
         # Cap tool-result output per message at 50k chars (defense-in-depth;
         # codex interprets this as tokens — 50k tokens ≈ 200k chars, generous
@@ -3279,7 +5638,8 @@ def _run_codex_step_uncapped(
             # In a trusted container the surrounding runtime is the sandbox.
             # Skip the workspace-write sandbox (which requires user namespaces
             # that most container runtimes don't grant) and let Codex run
-            # unsandboxed. The outer container boundary still contains writes.
+            # without Codex's nested sandbox. The dedicated nonroot process and
+            # outer container boundaries still constrain writes.
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
             # Allow projects to declare extra writable roots via state.config.
@@ -3299,8 +5659,7 @@ def _run_codex_step_uncapped(
             str(output_path),
         ])
         command.extend(_codex_model_flag(model))
-        if effort is not None:
-            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_codex_effort_flag(effort))
         if not persistent:
             command.append("--ephemeral")
         command.extend(_codex_exec_mode_flags(step))
@@ -3311,8 +5670,9 @@ def _run_codex_step_uncapped(
         command.extend(["-c", "tool_output_token_limit=50000"])
         if json_trace:
             command.append("--json")
-        command.extend(["--output-schema", str(schema_file), "-"])
+        command.extend(_codex_response_schema_args(transport_schema_file))
 
+    capture_failure: Exception | None = None
     try:
         # Pre-first-byte timeout: codex CLI can hang at startup (auth handshake,
         # default-endpoint connect, etc.) producing zero bytes while megaplan's
@@ -3331,38 +5691,124 @@ def _run_codex_step_uncapped(
             codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "600"))
         except (TypeError, ValueError):
             codex_idle_s = 600.0
+        execute_call_transaction_id: str | None = None
         if step == "execute":
-            _emit_codex_execute_llm_start(
+            execute_call_transaction_id = _emit_codex_execute_llm_start(
                 plan_dir,
                 model=model,
                 prompt=prompt,
                 json_trace=json_trace,
             )
-        liveness = CodexProgressLiveness(output_path=output_path)
-        result = run_command(
-            command,
-            cwd=work_dir,
-            stdin_text=prompt,
-            env=_codex_child_env(turn_id=f'plan_worker_{state["name"]}'),
-            timeout=timeout_seconds,
-            activity_callback=_activity_callback_for_state(state, plan_dir),
-            activity_guard=liveness.activity_guard,
-            pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
-            idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
-            progress_liveness_factory=liveness.bind_process,
-            progress_liveness_grace_timeout=codex_idle_s if codex_idle_s > 0 else None,
+        # Non-execute phases have no long mutating tool turn to protect.  They
+        # must show a structured Codex event, rollout token, or output artifact
+        # to extend their idle window; a live-but-silent node process is a
+        # transport/CLI wedge, not progress.  Execute deliberately retains
+        # CPU-based liveness because pytest/build subprocesses can be
+        # legitimately quiet for minutes.
+        strict_structured_liveness = step not in _EXECUTE_STEPS
+        liveness = CodexProgressLiveness(
+            output_path=output_path,
+            include_cpu_signal=not strict_structured_liveness,
         )
+        worker_plan_before = _zero_recovery_plan_snapshot(
+            root, plan_dir, output_path=output_path
+        )
+        worker_source_before = _zero_recovery_source_identity(root, plan_dir)
+        schema_grant = None
+        try:
+            schema_grant = _prepare_zero_recovery_schema_input(schema_file)
+            model_runtime = _prepare_zero_recovery_model_runtime(
+                step=step,
+                plan_dir=plan_dir,
+                output_path=output_path,
+                plan_iteration=(
+                    active_dispatch["plan_iteration"]
+                    if active_dispatch is not None
+                    else 0
+                ),
+                dispatch_ordinal=(
+                    active_dispatch["dispatch_ordinal"]
+                    if active_dispatch is not None
+                    else 0
+                ),
+            )
+            try:
+                child_env = _codex_child_env(turn_id=f'plan_worker_{state["name"]}')
+                if model_runtime is not None:
+                    child_env = _zero_recovery_model_env(
+                        model_runtime, turn_id=f'plan_worker_{state["name"]}'
+                    )
+                    command = _zero_recovery_model_command(command)
+                result = run_command(
+                    command,
+                    cwd=work_dir,
+                    stdin_text=prompt,
+                    env=child_env,
+                    timeout=timeout_seconds,
+                    activity_callback=(
+                        None
+                        if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+                        else _activity_callback_for_state(state, plan_dir)
+                    ),
+                    activity_guard=liveness.activity_guard,
+                    pre_first_byte_timeout=(
+                        pre_first_byte_s if pre_first_byte_s > 0 else None
+                    ),
+                    idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
+                    progress_liveness_factory=liveness.bind_process,
+                    # Structured non-execute liveness has no grace: a process that is
+                    # merely alive but has no token/event/artifact evidence must
+                    # surface as a retryable worker_stall at the configured bounded
+                    # idle timeout.
+                    progress_liveness_grace_timeout=(
+                        0.0
+                        if strict_structured_liveness
+                        else (codex_idle_s if codex_idle_s > 0 else None)
+                    ),
+                )
+            finally:
+                _verify_zero_recovery_worker_boundaries(
+                    root=root,
+                    plan_dir=plan_dir,
+                    output_path=output_path,
+                    runtime=model_runtime,
+                    schema_grant=schema_grant,
+                    source_before=worker_source_before,
+                    plan_before=worker_plan_before,
+                )
+        finally:
+            if schema_grant is not None:
+                _quiesce_zero_recovery_model_uid()
+                _restore_zero_recovery_schema_input(schema_grant)
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
     except CliError as error:
-        error.extra["raw_output"] = _merge_partial_output(
-            str(error.extra.get("raw_output", "")),
-            output_path,
+        transport_raw = str(error.extra.get("raw_output", ""))
+        try:
+            terminal_raw = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            terminal_raw = ""
+        try:
+            _select_codex_terminal_output(transport_raw, terminal_raw)
+            timeout_selection_error: Exception | None = None
+        except ModelStructuralAuditError as selection_error:
+            timeout_selection_error = selection_error
+        timeout_response_evidence = _persist_codex_response_evidence(
+            plan_dir,
+            occurrence=response_occurrence,
+            repair_ordinal=repair_ordinal,
+            raw_transport=transport_raw,
+            terminal_output=terminal_raw,
+            output_path=output_path,
+            model=model,
+            selection_error=timeout_selection_error,
         )
+        error.extra["raw_output"] = transport_raw
+        error.extra["response_evidence"] = timeout_response_evidence
         # Recover from a lost session: container restarted since the session was
         # created, codex's rollout store is gone, but megaplan still has the id.
         # Clear the stale session and retry once with fresh=True.
-        if not fresh and persistent and session.get("id") and _is_rollout_missing(
+        if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1" and not fresh and persistent and session.get("id") and _is_rollout_missing(
             str(error.extra.get("raw_output", ""))
         ):
             print(
@@ -3392,6 +5838,8 @@ def _run_codex_step_uncapped(
         # stale) and we were resuming a session (fresh sessions can't carry
         # the poisoned history). See _is_poisoned_environmental_failure.
         if (
+            os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+            and
             not fresh
             and persistent
             and session.get("id")
@@ -3424,6 +5872,8 @@ def _run_codex_step_uncapped(
         # OpenAI 429s the compaction call, codex gives up and exits. Same
         # session id will keep failing — start fresh.
         if (
+            os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+            and
             not fresh
             and persistent
             and session.get("id")
@@ -3451,50 +5901,7 @@ def _run_codex_step_uncapped(
                 model=model,
                 read_only=read_only,
             )
-        if error.code == "worker_timeout":
-            try:
-                capture_outcome = capture_step_output(
-                    StepInvocation(
-                        kind="model",
-                        metadata={
-                            "tier": seam_tier.value,
-                            "worker": "codex",
-                            "model": model,
-                            "normalized_model": model,
-                            "validation_step": step,
-                            "compatibility_validation_step": step,
-                            "schema": schema,
-                            "capture_schema": capture_schema,
-                            "capture_recovery": {
-                                "step": step,
-                                "plan_dir": str(plan_dir),
-                                "output_path": str(output_path),
-                                "prefer_output_file": False,
-                            },
-                        },
-                    ),
-                    str(error.extra.get("raw_output", "")),
-                )
-                recovered_payload = _normalize_step_payload_for_audit(
-                    step,
-                    dict(capture_outcome.legacy_payload),
-                )
-            except (json.JSONDecodeError, ModelStructuralAuditError):
-                recovered_payload = None
-            if recovered_payload is not None:
-                timeout_session_id = session.get("id") if persistent else None
-                if timeout_session_id is None:
-                    timeout_session_id = extract_session_id(str(error.extra.get("raw_output", "")))
-                return WorkerResult(
-                    payload=recovered_payload,
-                    raw_output=str(error.extra.get("raw_output", "")),
-                    duration_ms=0,
-                    cost_usd=0.0,
-                    session_id=timeout_session_id,
-                    trace_output=str(error.extra.get("raw_output", "")) if json_trace else None,
-                    rendered_prompt=prompt,
-                    worker_channel=_CODEX_WORKER_CHANNEL,
-                )
+        if error.code in {"worker_timeout", "worker_stall"}:
             timeout_session_id = session.get("id") if persistent else None
             if timeout_session_id is None:
                 timeout_session_id = extract_session_id(error.extra.get("raw_output", ""))
@@ -3513,9 +5920,13 @@ def _run_codex_step_uncapped(
                     exit_code=error.exit_code,
                 ) from error
             raise CliError(
-                "worker_timeout",
+                error.code,
                 (
-                    f"Codex {step} step timed out after {timeout_seconds}s before producing structured output. "
+                    (
+                        f"Codex {step} worker became silent before producing structured output. "
+                        if error.code == "worker_stall"
+                        else f"Codex {step} step timed out after {timeout_seconds}s before producing structured output. "
+                    )
                     + _codex_retry_guidance(step)
                 ),
                 extra=error.extra,
@@ -3524,9 +5935,31 @@ def _run_codex_step_uncapped(
             ) from error
         raise
     raw = result.stdout + result.stderr
+    try:
+        output_raw = output_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        output_raw = ""
+    try:
+        selected_output = _select_codex_terminal_output(raw, output_raw)
+        selection_error = None
+    except ModelStructuralAuditError as error:
+        selected_output = ""
+        selection_error = error
+    response_evidence = _persist_codex_response_evidence(
+        plan_dir,
+        occurrence=response_occurrence,
+        repair_ordinal=repair_ordinal,
+        raw_transport=raw,
+        terminal_output=output_raw,
+        output_path=output_path,
+        model=model,
+        selection_error=selection_error,
+    )
     # Same rollout-missing recovery for the non-exception path (non-zero exit
     # without CliError being raised). See _is_rollout_missing for context.
     if (
+        os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and
         not fresh
         and persistent
         and session.get("id")
@@ -3557,6 +5990,8 @@ def _run_codex_step_uncapped(
     # non-zero but produced output that still echoes an obsolete sandbox
     # failure belief. Same guard conditions as the CliError branch above.
     if (
+        os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and
         not fresh
         and persistent
         and session.get("id")
@@ -3586,6 +6021,8 @@ def _run_codex_step_uncapped(
     # Oversized-session recovery on non-exception path. See the matching
     # branch in the CliError handler above for context.
     if (
+        os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1"
+        and
         not fresh
         and persistent
         and session.get("id")
@@ -3612,19 +6049,37 @@ def _run_codex_step_uncapped(
             model=model,
             read_only=read_only,
         )
+    if (
+        result.returncode != 0
+        and response_contract is not None
+        and response_contract.transport_schema is not None
+        and _is_codex_provider_schema_rejection(raw)
+    ):
+        contract_error = _codex_provider_contract_error(response_contract, raw)
+        contract_error.extra["response_evidence"] = response_evidence
+        raise contract_error
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
-        raise CliError(error_code, error_message, extra={"raw_output": raw})
+        raise CliError(
+            error_code,
+            error_message,
+            extra={"raw_output": raw, "response_evidence": response_evidence},
+        )
     if result.returncode != 0:
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
-        if error_code != "worker_error":
-            raise CliError(error_code, error_message, extra={"raw_output": raw})
-    try:
-        output_raw = output_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        output_raw = ""
+        raise CliError(
+            error_code,
+            error_message,
+            extra={"raw_output": raw, "response_evidence": response_evidence},
+        )
     if free_text:
-        text = output_raw or raw
+        if selection_error is not None:
+            raise CliError(
+                "local_response_contract",
+                str(selection_error),
+                extra={"response_evidence": response_evidence, "raw_output": raw},
+            ) from selection_error
+        text = selected_output
         payload: dict[str, Any] = {}
         if step == "plan":
             extracted = _extract_plan_capture_input(text)
@@ -3640,52 +6095,79 @@ def _run_codex_step_uncapped(
             rendered_prompt=prompt,
             worker_channel=_CODEX_WORKER_CHANNEL,
         )
-    capture_input: str | dict[str, Any] = raw
-    plan_text = output_raw or raw
+    if selection_error is not None:
+        raise _local_response_contract_error(
+            step=step,
+            schema=schema,
+            reason=str(selection_error),
+            raw=output_raw,
+            attempts=1,
+            occurrence=response_occurrence,
+            evidence=response_evidence,
+        ) from selection_error
+    capture_input: str | dict[str, Any] = selected_output
+    plan_text = selected_output
     if step == "plan":
         capture_input = _extract_plan_capture_input(plan_text)
     try:
-        capture_outcome = capture_step_output(
-            StepInvocation(
-                kind="model",
-                metadata={
-                    "tier": seam_tier.value,
-                    "worker": "codex",
-                    "model": model,
-                    "normalized_model": model,
-                    "validation_step": step,
-                    "compatibility_validation_step": step,
-                    "schema": schema,
-                    "capture_schema": capture_schema,
-                    "capture_recovery": {
-                        "step": step,
-                        "plan_dir": str(plan_dir),
-                        "output_path": str(output_path),
-                        "prefer_output_file": True,
-                    },
+        capture_invocation = StepInvocation(
+            kind="model",
+            metadata={
+                "tier": seam_tier.value,
+                "worker": "codex",
+                "model": model,
+                "normalized_model": model,
+                "validation_step": step,
+                "compatibility_validation_step": step,
+                "schema": schema,
+                "capture_schema": capture_schema,
+                "response_enforcement_attestation": response_attestation,
+                "capture_recovery": {
+                    "step": step,
+                    "plan_dir": str(plan_dir),
+                    "output_path": str(output_path),
+                    "prefer_output_file": True,
+                    **(
+                        {"artifact_handoff": local_strict_handoff}
+                        if local_strict_handoff is not None
+                        else {}
+                    ),
                 },
-            ),
+            },
+        )
+        capture_outcome = capture_step_output(
+            capture_invocation,
             capture_input,
         )
         payload = _normalize_step_payload_for_audit(
             step,
             dict(capture_outcome.legacy_payload),
         )
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as error:
+        capture_failure = error
         payload = None
     except ModelStructuralAuditError as error:
-        raise CliError("parse_error", str(error), extra={"raw_output": raw}) from error
+        capture_failure = error
+        payload = None
     if payload is None:
-        parse_error = _json_decode_error_for_raw(raw)
         try:
             output_raw = output_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             output_raw = ""
-        if parse_error is None:
-            parse_error = _json_decode_error_for_raw(output_raw)
-        repair_raw = output_raw or raw
-        if parse_error is not None and not repair_attempted:
-            repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
+        repair_selected = local_strict_repair_input(capture_invocation, output_raw)
+        repair_raw, _parse_error = _codex_repair_input(raw, repair_selected)
+        failure_reason = (
+            str(capture_failure)
+            if capture_failure is not None
+            else "model output was not valid canonical JSON"
+        )
+        if not repair_attempted and os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") != "1":
+            repair_prompt = _build_response_contract_repair_prompt(
+                step=step,
+                schema=schema,
+                failure_reason=failure_reason,
+                selected_output=repair_raw,
+            )
             # _pre_dispatch_budget_check sentinel: budget guard for dispatch
             try:
                 render_step_message(StepInvocation(kind="model", metadata={
@@ -3698,6 +6180,12 @@ def _run_codex_step_uncapped(
                 }))
             except ModelBudgetError:
                 raise
+            repair_output_path = _response_output_path(
+                plan_dir,
+                step=step,
+                occurrence_id=response_occurrence["occurrence_id"],
+                repair_ordinal=repair_ordinal + 1,
+            )
             return run_codex_step(
                 step,
                 state,
@@ -3711,17 +6199,19 @@ def _run_codex_step_uncapped(
                 effort=effort,
                 model=model,
                 read_only=read_only,
-                output_path=output_path,
+                output_path=repair_output_path,
                 repair_attempted=True,
+                response_occurrence=response_occurrence,
             )
-        raise CliError(
-            "parse_error",
-            f"Output file {output_path.name} was not valid JSON and no fallback found",
-            extra={
-                "raw_output": repair_raw or raw,
-                "model_output_parse_error": parse_error is not None,
-            },
-        )
+        raise _local_response_contract_error(
+            step=step,
+            schema=schema,
+            reason=failure_reason,
+            raw=repair_raw,
+            attempts=2 if repair_attempted else 1,
+            occurrence=response_occurrence,
+            evidence=response_evidence,
+        ) from capture_failure
     raw_session_id = extract_session_id(raw)
     session_id = session.get("id") if persistent and not fresh else None
     if persistent and not session_id:
@@ -3743,9 +6233,26 @@ def _run_codex_step_uncapped(
         if isinstance(candidate_entry, dict) and candidate_entry.get("id") == cost_session_id:
             session_entry = candidate_entry
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
-        cost_session_id, session_entry
+        cost_session_id,
+        session_entry,
+        model,
+        codex_home=(model_runtime["codex_home"] if model_runtime is not None else None),
     )
+    if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1" and model_actual is None:
+        raise CliError(
+            "zero_recovery_model_evidence_missing",
+            "Codex rollout did not provide a CLI turn-context model record",
+        )
     observed_model = model_actual or model
+    from arnold_pipelines.megaplan.pricing.codex import is_model_priced
+
+    cost_pricing = (
+        "unavailable"
+        if current_totals is None
+        else "priced"
+        if is_model_priced(observed_model)
+        else "unpriced"
+    )
     if step == "execute":
         _emit_codex_execute_llm_end(
             plan_dir,
@@ -3753,8 +6260,9 @@ def _run_codex_step_uncapped(
             model=observed_model,
             tokens_in=prompt_tokens,
             tokens_out=completion_tokens,
+            call_transaction_id=execute_call_transaction_id,
         )
-        if current_totals is not None:
+        if current_totals is not None and cost_pricing == "priced":
             _emit_codex_execute_cost_recorded(
                 plan_dir,
                 request_id=cost_session_id,
@@ -3789,19 +6297,72 @@ def _run_codex_step_uncapped(
             f"{cost_session_id}; step cost will be recorded as $0.00",
             flush=True,
         )
+    elif cost_pricing == "unpriced":
+        print(
+            f"[megaplan] No canonical pricing for Codex model {observed_model!r}; "
+            "step cost is explicitly unpriced (numeric compatibility value $0.00)",
+            flush=True,
+        )
+    privilege_receipt_path: str | None = None
+    privilege_receipt_sha256: str | None = None
+    rollout_relative: str | None = None
+    rollout_sha256: str | None = None
+    if model_runtime is not None:
+        privilege_path = model_runtime.get("privilege_receipt_path")
+        privilege_digest = model_runtime.get("privilege_receipt_sha256")
+        rollout = _codex_session_jsonl_path(
+            cost_session_id or "", codex_home=model_runtime["codex_home"]
+        )
+        if (
+            not isinstance(privilege_path, Path)
+            or not isinstance(privilege_digest, str)
+            or rollout is None
+        ):
+            raise CliError(
+                "zero_recovery_model_evidence_missing",
+                "sealed privilege or Codex CLI rollout evidence is missing",
+            )
+        try:
+            rollout_relative = rollout.relative_to(model_runtime["codex_home"]).as_posix()
+        except ValueError as exc:
+            raise CliError(
+                "zero_recovery_model_evidence_missing",
+                "Codex CLI rollout escaped the sealed phase home",
+            ) from exc
+        rollout_stat = os.lstat(rollout)
+        if (
+            not stat.S_ISREG(rollout_stat.st_mode)
+            or rollout_stat.st_nlink != 1
+            or rollout_stat.st_uid != 0
+            or rollout_stat.st_mode & 0o022
+        ):
+            raise CliError(
+                "zero_recovery_model_evidence_missing",
+                "Codex CLI rollout was not sealed root-owned evidence",
+            )
+        privilege_receipt_path = privilege_path.name
+        privilege_receipt_sha256 = privilege_digest
+        rollout_sha256 = hashlib.sha256(rollout.read_bytes()).hexdigest()
     return WorkerResult(
         payload=payload,
-        raw_output=raw,
+        raw_output=selected_output,
         duration_ms=result.duration_ms,
         cost_usd=cost_usd,
         session_id=session_id,
         trace_output=trace_output,
         rendered_prompt=prompt,
         model_actual=observed_model,
+        model_evidence=("codex_cli_turn_context" if model_actual is not None else "requested_cli_arg"),
+        privilege_receipt_path=privilege_receipt_path,
+        privilege_receipt_sha256=privilege_receipt_sha256,
+        rollout_path=rollout_relative,
+        rollout_sha256=rollout_sha256,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
+        cost_pricing=cost_pricing,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        response_enforcement_attestation=response_attestation,
     )
 
 
@@ -3822,7 +6383,12 @@ def run_codex_step(
     output_path: Path | None = None,
     free_text: bool = False,
     repair_attempted: bool = False,
+    response_occurrence: dict[str, Any] | None = None,
 ) -> WorkerResult:
+    # Non-execute supervision relies on stream-json to observe rollout/token
+    # cadence.  Enforce it here as well as at dispatcher call sites so direct
+    # handler callers cannot silently disable the watchdog's evidence channel.
+    json_trace = json_trace or step not in _EXECUTE_STEPS
     return _run_codex_step_uncapped(
         step,
         state,
@@ -3839,6 +6405,7 @@ def run_codex_step(
         output_path=output_path,
         free_text=free_text,
         repair_attempted=repair_attempted,
+        response_occurrence=response_occurrence,
     )
 
 
@@ -3876,8 +6443,21 @@ def run_codex_prep_step(
     out_handle.close()
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
-    schema = read_json(schema_file)
-    capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], schema)
+    persisted_schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], persisted_schema)
+    schema = (
+        strict_schema(deepcopy(capture_schema))
+        if step == "gate"
+        else deepcopy(capture_schema)
+    )
+    response_contract, transport_schema_file = _prepare_codex_response_contract(
+        schema=schema,
+        plan_dir=plan_dir,
+        step=step,
+        model=model,
+        provider_schema_available=True,
+    )
+    response_attestation = response_contract.attestation.to_json()
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -3892,6 +6472,14 @@ def run_codex_prep_step(
         **(prompt_kwargs or {}),
     )
     prompt = rendered_prompt.prompt
+    if (
+        response_contract.attestation.response_enforcement
+        == ResponseEnforcement.LOCAL_STRICT_JSON.value
+    ):
+        prompt += (
+            "\n\nResponse enforcement: return exactly one JSON object matching "
+            "the supplied canonical schema. Do not use Markdown fences or prose."
+        )
     command = [
         "codex",
         "exec",
@@ -3908,9 +6496,8 @@ def run_codex_prep_step(
             "sandbox_mode='read-only'",
         ])
     command.extend(_codex_model_flag(model))
-    if effort is not None:
-        command.extend(["-c", f"model_reasoning_effort={effort}"])
-    command.extend(["--output-schema", str(schema_file), "-"])
+    command.extend(_codex_effort_flag(effort))
+    command.extend(_codex_response_schema_args(transport_schema_file))
 
     result = run_command(
         command,
@@ -3921,6 +6508,12 @@ def run_codex_prep_step(
         activity_callback=_activity_callback_for_state(state, plan_dir),
     )
     raw = result.stdout + result.stderr
+    if (
+        result.returncode != 0
+        and response_contract.transport_schema is not None
+        and _is_codex_provider_schema_rejection(raw)
+    ):
+        raise _codex_provider_contract_error(response_contract, raw)
     if result.returncode != 0 and (
         not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()
     ):
@@ -3939,6 +6532,7 @@ def run_codex_prep_step(
                     "compatibility_validation_step": step,
                     "schema": schema,
                     "capture_schema": capture_schema,
+                    "response_enforcement_attestation": response_attestation,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),
@@ -3972,6 +6566,7 @@ def run_codex_prep_step(
         rendered_prompt=prompt,
         model_actual=model,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        response_enforcement_attestation=response_attestation,
     )
 
 
@@ -4287,7 +6882,11 @@ def _codex_to_agent_result(
                 root=root,
                 persistent=(mode == "persistent"),
                 fresh=eff_fresh,
-                json_trace=(step == "execute"),
+                # Every non-execute phase needs stream-json too: it supplies
+                # the token/tool evidence used to distinguish a live phase
+                # from a silent transport wedge.  The final schema payload
+                # still comes from the output file.
+                json_trace=True,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
@@ -4304,6 +6903,7 @@ def _codex_to_agent_result(
                 or error.code
                 not in {
                     "worker_timeout",
+                    "worker_stall",
                     "connection_error",
                     "codex_pre_first_byte_stall",
                     "worker_error",
@@ -4494,7 +7094,14 @@ def _advance_configured_spec_fallback(
     failure_class: str | None,
     *,
     mode: str,
+    step: str,
+    read_only: bool,
 ) -> tuple[AgentMode, dict[str, Any]] | None:
+    # Never redispatch after a worker may have mutated the checkout. This is
+    # stricter than the provider/model relationship and keeps mid-write
+    # failures fail-closed for both explicit and profile-provided chains.
+    if not read_only or step in _EXECUTE_STEPS:
+        return None
     if failure_class not in _CONFIGURED_SPEC_FALLBACK_CLASSES:
         return None
     configured_specs = tuple(fallback_metadata["configured_specs"])
@@ -4503,6 +7110,10 @@ def _advance_configured_spec_fallback(
     if next_index >= len(configured_specs):
         return None
     next_spec = configured_specs[next_index]
+    current_spec = configured_specs[attempt_index]
+    if provider_family(next_spec) == provider_family(current_spec):
+        if not is_same_family_operational_classification(failure_class):  # type: ignore[arg-type]
+            return None
     next_mode = _agent_mode_from_configured_spec(
         next_spec,
         mode=mode,
@@ -4590,6 +7201,165 @@ def run_step_with_worker(
     ledger_attempted_specs: tuple[str, ...] | list[str] | str | None = None,
     ledger_failed_attempt_reasons: tuple[str, ...] | list[str] | None = None,
     ledger_fallback_trigger: str | None = None,
+    wbc_dispatch: CommonWorkerDispatchSpec | None = None,
+) -> tuple[WorkerResult, str, str, bool]:
+    if wbc_dispatch is None:
+        return _run_step_with_worker_legacy(
+            step,
+            state,
+            plan_dir,
+            args,
+            root=root,
+            resolved=resolved,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+            read_only=read_only,
+            output_path=output_path,
+            worker_options=worker_options,
+            record_routing=record_routing,
+            ledger_phase=ledger_phase,
+            ledger_step_label=ledger_step_label,
+            ledger_selected_spec=ledger_selected_spec,
+            ledger_tier=ledger_tier,
+            ledger_complexity=ledger_complexity,
+            ledger_tier_routing_active=ledger_tier_routing_active,
+            ledger_configured_specs=ledger_configured_specs,
+            ledger_attempt_index=ledger_attempt_index,
+            ledger_attempted_specs=ledger_attempted_specs,
+            ledger_failed_attempt_reasons=ledger_failed_attempt_reasons,
+            ledger_fallback_trigger=ledger_fallback_trigger,
+        )
+
+    def _dispatch_with_binding(_start: Any) -> tuple[WorkerResult, str, str, bool]:
+        artifacts_metadata = (
+            dict(wbc_dispatch.artifacts.metadata)
+            if wbc_dispatch.artifacts is not None
+            else {}
+        )
+        token = _WORKER_DISPATCH_BINDING.set(
+            {
+                "worker_wbc_attempt_id": wbc_dispatch.attempt_id,
+                "phase_wbc_attempt_id": artifacts_metadata.get("phase_attempt_id"),
+                "phase_step": artifacts_metadata.get("phase_step") or step,
+            }
+        )
+        try:
+            return _run_step_with_worker_legacy(
+                step,
+                state,
+                plan_dir,
+                args,
+                root=root,
+                resolved=resolved,
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+                read_only=read_only,
+                output_path=output_path,
+                worker_options=worker_options,
+                record_routing=record_routing,
+                ledger_phase=ledger_phase,
+                ledger_step_label=ledger_step_label,
+                ledger_selected_spec=ledger_selected_spec,
+                ledger_tier=ledger_tier,
+                ledger_complexity=ledger_complexity,
+                ledger_tier_routing_active=ledger_tier_routing_active,
+                ledger_configured_specs=ledger_configured_specs,
+                ledger_attempt_index=ledger_attempt_index,
+                ledger_attempted_specs=ledger_attempted_specs,
+                ledger_failed_attempt_reasons=ledger_failed_attempt_reasons,
+                ledger_fallback_trigger=ledger_fallback_trigger,
+            )
+        finally:
+            _WORKER_DISPATCH_BINDING.reset(token)
+
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+    worker, agent, mode, refreshed = dispatch_result.worker_result
+    metadata = dict(worker.auth_metadata) if isinstance(worker.auth_metadata, dict) else {}
+    metadata["wbc_dispatch"] = {
+        "attempt_id": dispatch_result.start.attempt_id,
+        "writer_id": dispatch_result.diagnostics["writer_id"],
+        "surface_name": dispatch_result.diagnostics["surface_name"],
+        "expected_source_version": wbc_dispatch.expected_source_version,
+        "start_source_lookup_key": wbc_dispatch.start_source_lookup_key,
+        "terminal_source_lookup_key": wbc_dispatch.success_source_lookup_key,
+        "start_event_sequence": (
+            dispatch_result.start.append_result.event.sequence
+            if dispatch_result.start.append_result is not None
+            else None
+        ),
+        "terminal_event_sequence": (
+            dispatch_result.terminal.append_result.event.sequence
+            if dispatch_result.terminal.append_result is not None
+            else None
+        ),
+        "promotion_mode": dispatch_result.terminal.promotion_mode.value,
+        "route_kind": (
+            dispatch_result.terminal.artifacts.metadata.get("route_kind")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "selected_spec": (
+            dispatch_result.terminal.artifacts.metadata.get("selected_spec")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "attempt_index": (
+            dispatch_result.terminal.artifacts.metadata.get("attempt_index")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "configured_specs": (
+            list(dispatch_result.terminal.artifacts.metadata.get("configured_specs", ()))
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "attempted_specs": (
+            list(dispatch_result.terminal.artifacts.metadata.get("attempted_specs", ()))
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "failed_attempt_reasons": (
+            list(dispatch_result.terminal.artifacts.metadata.get("failed_attempt_reasons", ()))
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "fallback_trigger": (
+            dispatch_result.terminal.artifacts.metadata.get("fallback_trigger")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "worker_channel": worker.worker_channel,
+        "auth_channel": worker.auth_channel,
+    }
+    worker.auth_metadata = metadata
+    return worker, agent, mode, refreshed
+
+
+def _run_step_with_worker_legacy(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    args: argparse.Namespace,
+    *,
+    root: Path,
+    resolved: tuple[str, str, bool, str | None] | AgentMode | None = None,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    read_only: bool = False,
+    output_path: Path | None = None,
+    worker_options: dict[str, Any] | None = None,
+    record_routing: bool = True,
+    ledger_phase: str | None = None,
+    ledger_step_label: str | None = None,
+    ledger_selected_spec: str | None = None,
+    ledger_tier: int | None = None,
+    ledger_complexity: int | None = None,
+    ledger_tier_routing_active: bool = False,
+    ledger_configured_specs: tuple[str, ...] | list[str] | str | None = None,
+    ledger_attempt_index: int | None = None,
+    ledger_attempted_specs: tuple[str, ...] | list[str] | str | None = None,
+    ledger_failed_attempt_reasons: tuple[str, ...] | list[str] | None = None,
+    ledger_fallback_trigger: str | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -4635,6 +7405,88 @@ def run_step_with_worker(
             model=model,
             effort=effort,
         )
+    # ── Worker launch preflight: produce a content-addressed equality proof ──
+    # before any agent dispatch loop.  Records the actual runtime values and, when
+    # a chain execution binding is available, verifies them against the bound
+    # identity.  A mismatch raises CliError and blocks the worker.
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        require_configured_runtime_launch as _require_runtime_launch,
+        runtime_vector_sha256 as _runtime_vector_sha256,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
+
+    _launch_seed = _require_runtime_launch("worker", create=True)
+    _runtime = _rp()
+    _source_ref = str(_runtime.get("source_revision") or "")
+    _configured_spec = format_selected_spec(agent, model, effort) or agent
+    # Attempt to locate a chain spec for expected-value comparison.
+    _expected: dict[str, Any] = {}
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        expected_worker_launch_values,
+        find_bound_chain_spec,
+        require_bound_chain_spec,
+    )
+
+    _launch_seed_present = _launch_seed is not None
+    _bound_chain_spec = (
+        require_bound_chain_spec(root, plan_name=plan_dir.name)
+        if _launch_seed_present
+        else find_bound_chain_spec(root, plan_name=plan_dir.name)
+    )
+    if _bound_chain_spec is not None:
+        _expected = expected_worker_launch_values(
+            spec_path=_bound_chain_spec,
+            root=root,
+            runtime_vector_available=_launch_seed_present,
+        )
+    _strict_runtime_binding = bool(_expected.pop("require_full_vector", False))
+    _runtime_vector = ""
+    if _launch_seed is not None:
+        _runtime_vector = _runtime_vector_sha256(_launch_seed)
+        _seed_chain_binding = _launch_seed.get("chain_runtime_binding")
+        _seed_chain_binding = (
+            _seed_chain_binding if isinstance(_seed_chain_binding, dict) else {}
+        )
+        _expected.update(
+            {
+                "expected_root": str(_launch_seed.get("expected_root") or ""),
+                "expected_runtime_vector_sha256": _runtime_vector,
+                "expected_chain_spec": str(
+                    _seed_chain_binding.get("spec_path") or ""
+                ),
+            }
+        )
+    from arnold_pipelines.megaplan.chain.source_admission import (
+        worker_launch_preflight as _wlp,
+    )
+
+    _wlp(
+        source_ref=_source_ref,
+        installed_package_path=str(_runtime.get("import_root") or ""),
+        runtime_revision=str(_runtime.get("source_revision") or ""),
+        runtime_root=str(_runtime.get("import_root") or ""),
+        runtime_vector_sha256=_runtime_vector,
+        canonical_chain_spec=(
+            str(_bound_chain_spec.resolve(strict=False))
+            if _bound_chain_spec is not None
+            else ""
+        ),
+        selected_model=resolved_model,
+        configured_spec=_configured_spec,
+        require_full_vector=_strict_runtime_binding,
+        **_expected,
+    )
+    _zero_recovery_plan_iteration = int(state.get("iteration", 0) or 0)
+    if step in {"plan", "revise"}:
+        _zero_recovery_plan_iteration += 1
+    _zero_recovery_dispatch_start = _record_zero_recovery_dispatch(
+        plan_dir,
+        step=step,
+        agent=agent,
+        model=resolved_model,
+        effort=effort,
+        plan_iteration=_zero_recovery_plan_iteration,
+    )
     while True:
         attempted_agents.add(agent)
         try:
@@ -4699,6 +7551,7 @@ def run_step_with_worker(
                         except CliError as error:
                             if (
                                 attempted_retry
+                                or os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
                                 or step in _EXECUTE_STEPS
                                 or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
                             ):
@@ -4734,7 +7587,7 @@ def run_step_with_worker(
                                 root=root,
                                 persistent=(mode == "persistent"),
                                 fresh=effective_refreshed,
-                                json_trace=(step == "execute"),
+                                json_trace=True,
                                 prompt_override=prompt_override,
                                 prompt_kwargs=prompt_kwargs,
                                 effort=effort,
@@ -4747,10 +7600,12 @@ def run_step_with_worker(
                             session_id = error.extra.get("session_id")
                             if (
                                 attempted_retry
+                                or os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
                                 or step in _EXECUTE_STEPS
                                 or error.code
                                 not in {
                                     "worker_timeout",
+                                    "worker_stall",
                                     "connection_error",
                                     "codex_pre_first_byte_stall",
                                     "worker_error",
@@ -4841,12 +7696,24 @@ def run_step_with_worker(
                     },
                 )
                 worker = WorkerResult.from_agent_result(_dispatcher.dispatch(_request))
+            _record_zero_recovery_dispatch_terminal(
+                plan_dir,
+                start=_zero_recovery_dispatch_start,
+                worker=worker,
+            )
             fallback_attempt = _advance_configured_spec_fallback(
                 fallback_metadata,
                 _configured_spec_worker_failure_class(worker),
                 mode=mode,
+                step=step,
+                read_only=read_only,
             )
             if fallback_attempt is not None:
+                if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
+                    raise CliError(
+                        "zero_recovery_fallback_denied",
+                        "configured model fallback is forbidden after canary dispatch",
+                    )
                 next_mode, fallback_metadata = fallback_attempt
                 agent = next_mode.agent
                 mode = next_mode.mode
@@ -4893,8 +7760,15 @@ def run_step_with_worker(
                 fallback_metadata,
                 _configured_spec_failure_class(error),
                 mode=mode,
+                step=step,
+                read_only=read_only,
             )
             if fallback_attempt is not None:
+                if os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1":
+                    raise CliError(
+                        "zero_recovery_fallback_denied",
+                        "configured model fallback is forbidden after canary dispatch failure",
+                    ) from error
                 next_mode, fallback_metadata = fallback_attempt
                 agent = next_mode.agent
                 mode = next_mode.mode
@@ -4916,6 +7790,8 @@ def run_step_with_worker(
                 (worker_options or {}).get("_suppress_ambient_agent_fallback")
             )
             if (
+                os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+                or
                 explicit_agent
                 or suppress_ambient_fallback
                 or error.code not in {"auth_error", "connection_error"}

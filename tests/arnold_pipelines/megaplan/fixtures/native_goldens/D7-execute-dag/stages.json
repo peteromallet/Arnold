@@ -1,1 +1,7 @@
-["ingest__pc0","audit__pc1","emit__pc2"]
+[
+  "outline__pc0",
+  "section_drafts__pc1",
+  "critique__pc2",
+  "revise__pc3",
+  "assembly__pc4"
+]

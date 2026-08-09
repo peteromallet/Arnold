@@ -1,8 +1,7 @@
 """M8 benchmark gate — locked profile, report schema, threshold enforcement.
 
-This module implements the opt-in benchmark gate for the M8 acceptance
-suite.  Benchmarks are **skipped by default** and must be explicitly
-selected via ``-m m8_benchmark``.  The locked profile defines a width-32
+This module implements the benchmark gate for the M8 acceptance suite.
+Benchmarks run in the default suite.  The locked profile defines a width-32
 fan-out envelope and timing threshold; failures carry precise diagnostics
 that name the tier, observed value, and threshold.
 
@@ -20,16 +19,15 @@ Thresholds
   name, observed value, and threshold when the run exceeds the cap.
 
 Marker
-  ``m8_benchmark`` — add ``-m m8_benchmark`` to pytest to enable.
+  ``m8_benchmark`` — permits targeted benchmark-only pytest runs.
 """
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -207,9 +205,7 @@ class TestM8BenchmarkGate:
         for tier in M8BENCH_LOCKED_PROFILE:
             artifact = tmp_path / f"artifact-{tier.label}.bin"
             start = time.monotonic()
-            result = validate_locked_by_ref_artifact(
-                artifact, manifest=manifests[tier.label]
-            )
+            validate_locked_by_ref_artifact(artifact, manifest=manifests[tier.label])
             elapsed = time.monotonic() - start
 
             passed = elapsed <= tier.timeout_seconds

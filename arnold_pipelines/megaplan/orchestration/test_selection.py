@@ -16,10 +16,21 @@ def _normalize_relpath(path: str) -> str:
 
 
 def _is_pytest_test_file(rel_path: str) -> bool:
-    path = Path(rel_path)
-    return path.suffix == ".py" and (
-        path.name.startswith("test_") or path.name.endswith("_test.py")
+    path = Path(_normalize_relpath(rel_path))
+    return (
+        path.suffix == ".py"
+        and "tests" in path.parts
+        and (
+            path.name.startswith("test_")
+            or path.name.startswith("editorial_")
+        )
     )
+
+
+def _is_archived_or_hidden_test_path(rel_path: str) -> bool:
+    path = Path(_normalize_relpath(rel_path))
+    parts = path.parts
+    return any(part.startswith(".") for part in parts) or "archive" in parts
 
 
 # Prose-documentation files cannot change test outcomes, so a change confined to
@@ -54,6 +65,8 @@ def _existing_file(repo_root: Path, rel_path: str) -> bool:
 def _existing_pytest_selector_path(repo_root: Path, rel_path: str) -> bool:
     selector_path = rel_path.split("::", 1)[0].strip()
     if not selector_path:
+        return False
+    if _is_archived_or_hidden_test_path(selector_path):
         return False
     candidate = repo_root / selector_path
     return candidate.is_file() or candidate.is_dir()
@@ -106,6 +119,8 @@ def _bounded_selector_candidates(repo_root: Path, stem: str) -> list[str]:
             name.endswith("_test.py") and stem in name[: -len("_test.py")]
         ):
             rel_path = path.relative_to(repo_root).as_posix()
+            if _is_archived_or_hidden_test_path(rel_path):
+                continue
             if rel_path not in matches:
                 matches.append(rel_path)
     return matches
@@ -236,7 +251,9 @@ def compute_default_blast_radius(
 
     normalized = sorted({_normalize_relpath(path) for path in changed_files if path})
     changed_test_files = [
-        rel_path for rel_path in normalized if _is_pytest_test_file(rel_path)
+        rel_path
+        for rel_path in normalized
+        if _is_pytest_test_file(rel_path) and not _is_archived_or_hidden_test_path(rel_path)
     ]
     missing_test_files = [
         rel_path for rel_path in changed_test_files if not _existing_file(repo_root, rel_path)

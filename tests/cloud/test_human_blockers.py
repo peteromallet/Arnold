@@ -69,9 +69,10 @@ def _current_target_proof_resolver(
     authoritative_source: str = "plan_state",
     plan_state_present: bool = True,
     chain_state_present: bool = True,
+    **overrides: object,
 ) -> dict[str, object]:
     """Build a minimal resolver record that passes current-target proof checks."""
-    return {
+    payload: dict[str, object] = {
         "schema_version": 1,
         "session": session,
         "authoritative_source": authoritative_source,
@@ -104,6 +105,8 @@ def _current_target_proof_resolver(
         },
         "stale_evidence": [],
     }
+    payload.update(overrides)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +140,7 @@ def test_classify_true_blocker_when_needs_human_refs_current_plan(
             "summary": "repair exhausted — awaiting human",
             "plan_name": current_plan,
             "current_plan_name": current_plan,
+            "human_gate": "explicit_approval",
         },
     )
 
@@ -240,12 +244,18 @@ def test_classify_stale_mismatch_via_explicit_stale_evidence(
         repair_data_dir=repair_data_dir,
     )
 
-    assert classification.verdict == BlockerVerdict.STALE_MISMATCH
+    assert classification.verdict == BlockerVerdict.INDETERMINATE
     assert classification.is_true_blocker is False
-    assert classification.is_stale_mismatch is True
+    assert classification.is_stale_mismatch is False
+    assert classification.is_indeterminate is True
     assert classification.is_ambiguous is False
-    assert classification.should_block is False
-    assert any("stale needs-human" in r for r in classification.rationale)
+    assert classification.should_block is True
+    # M9: INDETERMINATE verdict produces source_disagreement rationale, not stale mismatch
+    assert any(
+        "deterministic source disagreement" in r or "stale needs-human" in r
+        for r in classification.rationale
+    )
+    assert classification.drift or classification.drift_evidence_ids
 
 
 def test_classify_stale_mismatch_via_plan_ref_difference(
@@ -286,8 +296,8 @@ def test_classify_stale_mismatch_via_plan_ref_difference(
         repair_data_dir=repair_data_dir,
     )
 
-    assert classification.verdict == BlockerVerdict.STALE_MISMATCH
-    assert classification.should_block is False
+    assert classification.verdict == BlockerVerdict.INDETERMINATE
+    assert classification.should_block is True
 
 
 def test_classify_ambiguous_when_needs_human_missing(
@@ -386,6 +396,7 @@ def test_classify_with_preloaded_payload_and_resolver(
         "summary": "manual intervention needed",
         "plan_name": current_plan,
         "current_plan_name": current_plan,
+        "human_gate": "product_decision",
     }
 
     preloaded_resolver = _current_target_proof_resolver(
@@ -432,7 +443,10 @@ def test_classify_with_explicit_needs_human_path(
         current_plan,
         {"name": current_plan, "current_state": "running"},
     )
-    _write_needs_human(custom_path, {"summary": "custom", "plan_name": current_plan})
+    _write_needs_human(
+        custom_path,
+        {"summary": "custom", "plan_name": current_plan, "human_gate": "credential_account"},
+    )
 
     classification = classify_needs_human_blocker(
         session,
@@ -507,10 +521,51 @@ def test_classify_mechanical_blocker_from_liveness_timeout(
     assert classification.is_mechanical is True
 
 
+def test_classify_mechanical_blocker_ignores_auditor_escalation_label(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Audit labels must not mask a stale-worker mechanical blocker as human-only."""
+    session = "audit-prefix-session"
+    current_plan = "m2-current-plan"
+
+    preloaded_payload = {
+        "summary": (
+            "[auditor_human_escalation] signatures: state_written/_ x3 | "
+            "i1 dev=gpt-5.4 sha=none mechanical=failed:stopped kimi=running "
+            "why=The block was a stale active_step pointing to a dead worker."
+        ),
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+    }
+
+    preloaded_resolver = _current_target_proof_resolver(
+        session,
+        current_plan,
+        stale_evidence=[{"kind": "stale_active_step_dead_pid"}],
+        active_step_heartbeat={
+            "active": False,
+            "phase": "execute",
+            "worker_pid": "2715968",
+            "pid_live": False,
+        },
+    )
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+    assert classification.is_mechanical is True
+
+
 def test_classify_true_blocker_overrides_mechanical_when_human_gate_present(
     marker_fixture: dict[str, Path],
 ) -> None:
-    """Human-gate keywords in summary override mechanical indicators → TRUE_BLOCKER."""
+    """A typed human gate overrides mechanical prose indicators."""
     session = "mixed-session"
     current_plan = "m2-current-plan"
 
@@ -519,6 +574,7 @@ def test_classify_true_blocker_overrides_mechanical_when_human_gate_present(
         "summary": "mechanical failure — needs review by human operator",
         "plan_name": current_plan,
         "current_plan_name": current_plan,
+        "human_gate": "explicit_approval",
     }
 
     preloaded_resolver = _current_target_proof_resolver(session, current_plan)
@@ -1430,3 +1486,207 @@ def test_is_mechanical_property() -> None:
     assert mech.is_true_blocker is False
     assert true_b.is_mechanical is False
     assert true_b.is_true_blocker is True
+
+
+# ---------------------------------------------------------------------------
+# T9: HumanGateView diagnostic integration into classification
+# ---------------------------------------------------------------------------
+
+
+def test_classification_includes_human_gate_view_dict_when_payload_present(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """When needs-human payload is available, the classification must
+    include a human_gate_view dict with observations and diagnostics."""
+    session = "hgv-demo"
+    current_plan = "m2-current-plan"
+    plans_dir = marker_fixture["plans_dir"]
+
+    _write_marker(
+        marker_fixture["marker_dir"] / f"{session}.json",
+        {
+            "session": session,
+            "workspace": str(marker_fixture["workspace"]),
+            "plan_name": current_plan,
+            "run_kind": "plan",
+        },
+    )
+    _write_plan_state(plans_dir, current_plan, {"name": current_plan, "current_state": "running"})
+    _write_needs_human(
+        marker_fixture["repair_data_dir"] / f"{session}.needs-human.json",
+        {
+            "summary": "test human gate",
+            "plan_name": current_plan,
+            "current_plan_name": current_plan,
+            "human_gate": "human_verification",
+        },
+    )
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        repair_data_dir=marker_fixture["repair_data_dir"],
+    )
+
+    assert classification.verdict == BlockerVerdict.TRUE_BLOCKER
+    assert classification.human_gate_view is not None
+    hgv = classification.human_gate_view
+    assert isinstance(hgv, dict)
+    assert hgv.get("status") is not None
+    assert isinstance(hgv.get("observations"), list)
+    assert len(hgv["observations"]) >= 1
+    assert hgv["observations"][0]["gate_type"] == "needs_human"
+    assert isinstance(hgv.get("diagnostics"), list)
+    assert hgv.get("view_hash") is not None
+    assert hgv.get("shadow") is True
+    assert hgv.get("read_only") is True
+
+
+def test_classification_human_gate_view_none_when_payload_missing(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """When no needs-human payload is available, human_gate_view must be None."""
+    session = "ghost-session"
+    current_plan = "m1-plan"
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        repair_data_dir=marker_fixture["repair_data_dir"],
+    )
+
+    assert classification.verdict == BlockerVerdict.AMBIGUOUS_BLOCKER
+    assert classification.human_gate_view is None
+
+
+def test_classification_human_gate_view_diagnostics_on_stale(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Stale mismatch classifications must carry human_gate_view diagnostics
+    that include stale_token codes."""
+    session = "stale-hgv"
+    current_plan = "m2-current-plan"
+    old_plan = "m1-old-plan"
+    plans_dir = marker_fixture["plans_dir"]
+
+    _write_marker(
+        marker_fixture["marker_dir"] / f"{session}.json",
+        {
+            "session": session,
+            "workspace": str(marker_fixture["workspace"]),
+            "plan_name": current_plan,
+            "run_kind": "plan",
+        },
+    )
+    _write_plan_state(plans_dir, current_plan, {"name": current_plan, "current_state": "running"})
+    _write_needs_human(
+        marker_fixture["repair_data_dir"] / f"{session}.needs-human.json",
+        {
+            "summary": "old repair",
+            "plan_name": old_plan,
+            "current_plan_name": old_plan,
+        },
+    )
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        repair_data_dir=marker_fixture["repair_data_dir"],
+    )
+
+    assert classification.verdict == BlockerVerdict.INDETERMINATE
+    assert classification.human_gate_view is not None
+    hgv = classification.human_gate_view
+    diagnostics = hgv.get("diagnostics", [])
+    # The view should report stale_token diagnostics
+    stale_codes = {d.get("code") for d in diagnostics if isinstance(d, dict)}
+    # The stale signal should be captured in the view
+    observations = hgv.get("observations", [])
+    assert any(o.get("stale_token") for o in observations if isinstance(o, dict)), (
+        "at least one observation must be marked stale_token=True"
+    )
+
+
+def test_classification_human_gate_view_with_preloaded_payload(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Pre-loaded payload must still produce a human_gate_view dict."""
+    session = "preload-hgv"
+    current_plan = "m1-plan"
+
+    preloaded_resolver = _current_target_proof_resolver(session, current_plan)
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload={
+            "summary": "manual intervention needed",
+            "plan_name": current_plan,
+            "current_plan_name": current_plan,
+            "human_gate": "product_decision",
+        },
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.TRUE_BLOCKER
+    assert classification.human_gate_view is not None
+    hgv = classification.human_gate_view
+    assert hgv.get("status") == "blocked"
+    assert hgv.get("human_required") is True
+    assert isinstance(hgv.get("view_hash"), str)
+    assert len(hgv["view_hash"]) > 0
+
+
+def test_ledger_record_includes_human_gate_diagnostics(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """When ledger is enabled, the classification record must include
+    human_gate_diagnostics extracted from the view."""
+    sidecar_dir = marker_fixture["marker_dir"] / "sidecars"
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    classification = HumanBlockerClassification(
+        verdict=BlockerVerdict.STALE_MISMATCH,
+        session="test-session",
+        current_plan="m1-plan",
+        needs_human_payload={"summary": "test", "plan_name": "old-plan"},
+        human_gate_view={
+            "status": "attention_needed",
+            "human_required": False,
+            "observations": [
+                {
+                    "observation_id": "obs-1",
+                    "gate_type": "needs_human",
+                    "gate_reason": "test",
+                    "source": "test://src",
+                    "stale_token": True,
+                    "superseded": False,
+                }
+            ],
+            "diagnostics": [
+                {"code": "stale_token", "reason": "stale plan ref", "source": "test://src"},
+                {"code": "stale_needs_human", "reason": "all stale", "source": "test://src"},
+            ],
+            "view_hash": "abc123",
+            "shadow": True,
+            "read_only": True,
+        },
+    )
+
+    result = writer.write_classification(classification)
+    assert result is not None
+    records = read_jsonl_records(result)
+    assert len(records) == 1
+    record = records[0]
+    assert "human_gate_diagnostics" in record
+    diags = record["human_gate_diagnostics"]
+    assert len(diags) == 2
+    codes = {d["code"] for d in diags}
+    assert "stale_token" in codes
+    assert "stale_needs_human" in codes

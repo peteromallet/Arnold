@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -11,10 +12,7 @@ from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_one_batch,
     normalize_tier_map,
 )
-from arnold_pipelines.megaplan.fallback_chains import (
-    configured_fallback_chain_for_phase,
-    select_fallback_spec,
-)
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.types import (
@@ -23,9 +21,7 @@ from arnold_pipelines.megaplan.types import (
     StepResponse,
 )
 from arnold_pipelines.megaplan.planning.state import (
-    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
-    STATE_DONE,
     STATE_EXECUTED,
     STATE_FAILED,
     STATE_FINALIZED,
@@ -48,26 +44,53 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.execute.policy import (
     ApprovalOutcome,
+    CircuitDispatchOutcome,
+    CircuitFailureOutcome,
     ExecuteEntryRoute,
-    NextExecuteTransition,
     NoReviewTerminalOutcome,
+    build_circuit_evidence_projection,
+    evaluate_circuit_after_failure,
+    evaluate_circuit_before_dispatch,
     evaluate_destructive_approval,
     evaluate_no_review_terminal,
     resolve_execute_entry_route,
-    resolve_single_batch_next_step,
 )
 from arnold_pipelines.megaplan._core.io import read_plan_state_cached
 from arnold_pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
 from arnold_pipelines.megaplan.runtime.execution_environment import preflight_mutating_phase
+from arnold_pipelines.megaplan.workflows.components import EXECUTE_POLICY, FINALIZE_POLICY
 
 from .shared import (
     _active_step_fallback_fields,
     _agent_mode_parts,
+    _attach_next_step_runtime,
     _emit_phase_notice,
     attach_agent_fallback,
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.orchestration.authority_readers import effective_execute_completed_task_ids
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    apply_state_projection,
+)
+from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+    assert_admitted_task_feasibility,
+)
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    assert_finalize_custody,
+)
+from arnold_pipelines.megaplan.orchestration.repair_adoption import (
+    AdoptionReport,
+    AdoptionVerdict,
+    verify_repair_adoption,
+    verify_repair_adoption_from_view,
+)
+from arnold_pipelines.megaplan.custody.repair_receipt import (
+    RepairReceipt,
+    normalize_repair_receipt,
+)
 
 log = logging.getLogger(__name__)
 
@@ -142,23 +165,6 @@ def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
     return normalized or None
 
 
-def _execute_phase_model_is_pinned(args: argparse.Namespace, state: PlanState) -> bool:
-    """Return true when execute has an explicit phase-model override.
-
-    A pinned execute model is authoritative for the whole execute phase,
-    including per-batch routing. Chain resumes may carry the pin only in
-    persisted state while profile expansion has already populated
-    ``args.tier_models``; checking both sources prevents stale profile execute
-    tiers from overriding the pin inside ``handle_execute_auto_loop``.
-    """
-
-    phase_models = list(getattr(args, "phase_model", None) or [])
-    state_phase_models = (state.get("config") or {}).get("phase_model")
-    if isinstance(state_phase_models, list):
-        phase_models.extend(entry for entry in state_phase_models if isinstance(entry, str))
-    return configured_fallback_chain_for_phase(phase_models, "execute") is not None
-
-
 def _apply_execute_tier_cap(
     tier_map: dict[int, str] | None,
     max_execute_tier: object,
@@ -193,26 +199,129 @@ def _apply_execute_tier_cap(
 # persistence and command-adapter dispatch remain handler-owned.
 # ---------------------------------------------------------------------------
 
-#: Typed no-review terminal outcomes → canonical plan state.
-_NO_REVIEW_TERMINAL_STATE: Mapping[NoReviewTerminalOutcome, str] = {
-    NoReviewTerminalOutcome.TERMINATE_DONE: STATE_DONE,
-    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: STATE_AWAITING_HUMAN_VERIFY,
+_NO_REVIEW_PROJECTION_KEYS: Mapping[NoReviewTerminalOutcome, tuple[str, str]] = {
+    NoReviewTerminalOutcome.TERMINATE_DONE: ("no_review", "no_review_done"),
+    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: (
+        "deferred_human",
+        "no_review_deferred_human",
+    ),
 }
 
-#: Typed no-review terminal outcomes → legacy ``next_step`` (always terminal).
-_NO_REVIEW_NEXT_STEP: Mapping[NoReviewTerminalOutcome, str | None] = {
-    NoReviewTerminalOutcome.TERMINATE_DONE: None,
-    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: None,
-}
 
-#: Typed single-batch transitions → legacy ``next_step`` value.
-_LEGACY_NEXT_STEP: Mapping[NextExecuteTransition, str | None] = {
-    NextExecuteTransition.EXECUTE: "execute",
-    NextExecuteTransition.REVIEW: "review",
-    NextExecuteTransition.BLOCKED: None,
-    NextExecuteTransition.DONE: None,
-    NextExecuteTransition.AWAITING_HUMAN: None,
-}
+def _required_mapping(value: object, *, context: str) -> dict[str, Any]:
+    if not isinstance(value, MappingABC):
+        raise AssertionError(f"{context} must be a mapping")
+    return dict(value)
+
+
+def _required_string(mapping: dict[str, Any], key: str, *, context: str) -> str:
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"{context}.{key} must be a non-empty string")
+    return value
+
+
+def _execute_route_surface() -> dict[str, Any]:
+    metadata = _required_mapping(EXECUTE_POLICY.metadata, context="EXECUTE_POLICY.metadata")
+    return _required_mapping(
+        metadata.get("route_surface"),
+        context="EXECUTE_POLICY.metadata.route_surface",
+    )
+
+
+def _finalize_route_surface() -> dict[str, Any]:
+    metadata = _required_mapping(FINALIZE_POLICY.metadata, context="FINALIZE_POLICY.metadata")
+    return _required_mapping(
+        metadata.get("route_surface"),
+        context="FINALIZE_POLICY.metadata.route_surface",
+    )
+
+
+def _blocked_execute_projection() -> dict[str, str]:
+    blocked_route = _required_mapping(
+        _required_mapping(
+            _execute_route_surface().get("retry_and_reentry"),
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry",
+        ).get("blocked_route"),
+        context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+    )
+    return {
+        "route_signal": _required_string(
+            blocked_route,
+            "route_signal",
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+        ),
+        "next_step": _required_string(
+            blocked_route,
+            "target_ref",
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+        ),
+        "state": _required_string(
+            blocked_route,
+            "recoverable_state",
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+        ),
+    }
+
+
+def _no_review_terminal_projection(outcome: NoReviewTerminalOutcome) -> dict[str, str]:
+    route_key = _NO_REVIEW_PROJECTION_KEYS.get(outcome)
+    if route_key is None:
+        raise AssertionError(f"Unsupported no-review terminal outcome: {outcome!r}")
+    skip_route_key, projection_key = route_key
+    route_surface = _finalize_route_surface()
+    skip_route = _required_mapping(
+        _required_mapping(
+            route_surface.get("skip_review_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.skip_review_routes",
+        ).get(skip_route_key),
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    )
+    projection = _required_mapping(
+        _required_mapping(
+            route_surface.get("final_projection_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes",
+        ).get(projection_key),
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    )
+    route_signal = _required_string(
+        skip_route,
+        "route_signal",
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    )
+    target_ref = _required_string(
+        skip_route,
+        "target_ref",
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    )
+    terminal_state = _required_string(
+        projection,
+        "terminal_state",
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    )
+    if route_signal != _required_string(
+        projection,
+        "route_signal",
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    ):
+        raise AssertionError("No-review terminal route_signal must match finalize projection route")
+    if target_ref != _required_string(
+        projection,
+        "target_ref",
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    ):
+        raise AssertionError("No-review terminal target_ref must match finalize projection route")
+    if terminal_state != _required_string(
+        skip_route,
+        "terminal_state",
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    ):
+        raise AssertionError("No-review terminal state must match finalize skip-review route")
+    return {
+        "route_signal": route_signal,
+        "next_step": target_ref,
+        "state": terminal_state,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +417,23 @@ def _enforce_entry_route(state: PlanState) -> None:
     the historical ``invalid_transition`` error only when the typed route is
     ``INVALID``.  ``PROCEED``/``BLOCKED``/``FAILED`` fall through to batch
     dispatch (mirroring ``require_state(state, "execute", ...)``).
+
+    A terminal ``done`` plan is re-opened into execute only when it carries
+    the chain-recorded rerun cursor (``{"phase": "execute",
+    "retry_strategy": "rerun_phase"}``) — the append-only recovery
+    authority for re-dispatching genuinely blocked tasks that a shadow
+    completion contract let reach done.  No other terminal state is re-opened.
     """
-    decision = resolve_execute_entry_route(state["current_state"])
+    resume_cursor = state.get("resume_cursor")
+    rerun_execute_cursor = (
+        isinstance(resume_cursor, dict)
+        and resume_cursor.get("phase") == "execute"
+        and resume_cursor.get("retry_strategy") == "rerun_phase"
+    )
+    decision = resolve_execute_entry_route(
+        state["current_state"],
+        rerun_execute_cursor=rerun_execute_cursor,
+    )
     if decision.route is ExecuteEntryRoute.INVALID:
         raise CliError(
             "invalid_transition",
@@ -345,13 +469,296 @@ def _enforce_approval_gate(
     return decision.outcome
 
 
+def _best_effort_git_head_for_circuit(project_dir: Path) -> str | None:
+    """Best-effort git HEAD retrieval for circuit ref_metadata."""
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# M8A T13: repair adoption wiring
+# ---------------------------------------------------------------------------
+
+
+def _derive_adoption_context(
+    plan_dir: Path,
+    state: PlanState,
+    finalize_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive current-state fields needed for repair adoption verification.
+
+    Returns a dict with keys matching the ``verify_repair_adoption``
+    keyword arguments.  Missing values are empty strings / zero; the
+    verifier will produce mismatch diagnostics for any check that
+    requires a field the handler cannot resolve.
+    """
+    context: dict[str, Any] = {}
+
+    # Grant identity — best-effort from state metadata or finalize data.
+    meta = state.get("meta", {}) if isinstance(state, dict) else {}
+    context["current_grant_id"] = str(
+        meta.get("run_authority_grant_id")
+        or finalize_data.get("run_authority_grant_id", "")
+    )
+
+    # Plan revision — from finalize data (the plan revision at finalize time).
+    context["current_revision"] = str(
+        finalize_data.get("plan_revision", "")
+    )
+
+    # Task contract — from finalize data.
+    context["current_task_contract"] = str(
+        finalize_data.get("task_contract", "")
+    )
+
+    # Tree/commit — best-effort git HEAD.
+    project_dir = Path(state["config"]["project_dir"])
+    context["current_tree_commit"] = (
+        _best_effort_git_head_for_circuit(project_dir) or ""
+    )
+
+    # Test result hash — from finalize data if present.
+    context["current_test_result_hash"] = str(
+        finalize_data.get("test_result_hash", "")
+    )
+
+    # Fence token — from state metadata.
+    context["current_fence_token"] = int(
+        meta.get("coordinator_fence_token", 0)
+    )
+
+    # Custody lease — from state metadata.
+    context["current_lease_id"] = str(
+        meta.get("custody_lease_id", "")
+    )
+
+    # Custody epoch — from state metadata.
+    context["current_epoch"] = int(
+        meta.get("custody_epoch", 0)
+    )
+
+    return context
+
+
+def _collect_repair_receipts_from_plan(plan_dir: Path) -> list[RepairReceipt]:
+    """Collect repair receipts from plan artifacts.
+
+    Looks for receipt payloads in the plan directory.  Currently scans
+    ``repair_receipts.json`` (single-receipt artifact) and
+    ``repair_receipts/`` (multi-receipt directory).  Returns only
+    successfully-normalized :class:`RepairReceipt` instances.
+    """
+    receipts: list[RepairReceipt] = []
+
+    # Single-receipt artifact.
+    single_path = plan_dir / "repair_receipts.json"
+    if single_path.is_file():
+        try:
+            payload = read_json(single_path)
+            if isinstance(payload, dict):
+                receipt = normalize_repair_receipt(payload)
+                if receipt is not None:
+                    receipts.append(receipt)
+            elif isinstance(payload, list):
+                for entry in payload:
+                    if isinstance(entry, dict):
+                        receipt = normalize_repair_receipt(entry)
+                        if receipt is not None:
+                            receipts.append(receipt)
+        except (OSError, ValueError):
+            log.warning("Could not read repair receipt artifact %s", single_path)
+
+    # Multi-receipt directory.
+    receipts_dir = plan_dir / "repair_receipts"
+    if receipts_dir.is_dir():
+        try:
+            for entry in sorted(receipts_dir.iterdir()):
+                if not entry.is_file() or not entry.suffix == ".json":
+                    continue
+                try:
+                    payload = read_json(entry)
+                    if isinstance(payload, dict):
+                        receipt = normalize_repair_receipt(payload)
+                        if receipt is not None:
+                            receipts.append(receipt)
+                except (OSError, ValueError):
+                    log.warning("Could not read repair receipt %s", entry)
+        except OSError:
+            pass
+
+    return receipts
+
+
+def _adopt_repair_receipts(
+    plan_dir: Path,
+    state: PlanState,
+    finalize_data: dict[str, Any],
+    response: StepResponse | None,
+) -> StepResponse | None:
+    """Verify and adopt repair receipts, returning projection metadata.
+
+    This is **strictly read-only** — no ledgers, custody state, or
+    evidence is mutated.  Receipt labels are never treated as authority.
+
+    Parameters
+    ----------
+    plan_dir
+        Plan directory containing repair receipt artifacts.
+    state
+        Current plan state.
+    finalize_data
+        Loaded finalize.json data.
+    response
+        Current execute response (may be ``None``).
+
+    Returns
+    -------
+    StepResponse | None
+        The response augmented with ``_repair_adoption`` projection
+        metadata, or the original response unchanged if no receipts exist.
+    """
+    receipts = _collect_repair_receipts_from_plan(plan_dir)
+    if not receipts:
+        return response
+
+    ctx = _derive_adoption_context(plan_dir, state, finalize_data)
+
+    adopted: list[dict[str, Any]] = []
+    quarantined: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
+
+    for receipt in receipts:
+        report = verify_repair_adoption(
+            receipt,
+            current_grant_id=ctx["current_grant_id"],
+            current_revision=ctx["current_revision"],
+            current_task_contract=ctx["current_task_contract"],
+            current_tree_commit=ctx["current_tree_commit"],
+            current_test_result_hash=ctx["current_test_result_hash"],
+            current_fence_token=ctx["current_fence_token"],
+            current_lease_id=ctx["current_lease_id"],
+            current_epoch=ctx["current_epoch"],
+        )
+
+        serialized = report.to_dict()
+        if report.verdict == AdoptionVerdict.ADOPT:
+            adopted.append(serialized)
+        elif report.verdict == AdoptionVerdict.QUARANTINE:
+            quarantined.append(serialized)
+        else:  # INVALID
+            invalid.append(serialized)
+
+    # Attach projection metadata only — never rewrite history.
+    projection: dict[str, Any] = {
+        "total_receipts": len(receipts),
+        "adopted": len(adopted),
+        "quarantined": len(quarantined),
+        "invalid": len(invalid),
+    }
+    if adopted:
+        projection["adopted_reports"] = adopted
+    if quarantined:
+        projection["quarantined_reports"] = quarantined
+    if invalid:
+        projection["invalid_reports"] = invalid
+
+    if response is None:
+        response = {}
+    response["_repair_adoption"] = projection
+
+    if quarantined or invalid:
+        log.warning(
+            "Repair adoption: %d adopted, %d quarantined, %d invalid (out of %d receipts)",
+            len(adopted), len(quarantined), len(invalid), len(receipts),
+        )
+        # Quarantined/invalid receipts do NOT block normal execution.
+        response.setdefault("warnings", [])
+        if isinstance(response.get("warnings"), list):
+            response["warnings"].append(
+                f"Repair adoption: {len(quarantined)} quarantined, "
+                f"{len(invalid)} invalid receipts"
+            )
+
+    if adopted:
+        log.info(
+            "Repair adoption: %d receipts adopted via verifier",
+            len(adopted),
+        )
+
+    return response
+
+
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            assert_canonical_source_current,
+        )
+
+        try:
+            assert_canonical_source_current(
+                plan_dir,
+                state,
+                operation="finalized plan execution admission",
+            )
+        except CliError:
+            save_state_merge_meta(plan_dir, state)
+            raise
         # Entry dispatch and approval gating are decided by typed policy
         # outcomes; the handler only translates those outcomes into legacy
         # CliErrors / state mutations (see execute.policy).
         _enforce_entry_route(state)
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
+        # V2 finalize admission is content-addressed. Re-run the same pure
+        # compiler before any approval receipt or mutating preflight so a stale
+        # or hand-edited graph cannot bypass the final-stage sense-check.
+        finalize_data = read_json(plan_dir / "finalize.json")
+        # M10 Step 7H-b (item 3): thread the gate step's seed_epoch
+        # attestation into the execute-entry admission verdict and block
+        # v1/None admission escapes so only admitted v2 graphs reach
+        # dispatch.  The epoch protocol activates only when the gate step
+        # produced a seed_epoch attestation; an absent key preserves
+        # backward-compat for pre-M10 plans.
+        _epoch_kwargs: dict = {}
+        if isinstance(state, dict) and state.get("seed_epoch") is not None:
+            _epoch_kwargs["current_epoch"] = state.get("seed_epoch")
+        try:
+            _admission_report = assert_admitted_task_feasibility(
+                finalize_data, state.get("config", {}), **_epoch_kwargs
+            )
+        except ValueError as exc:
+            raise CliError(
+                "finalized_task_graph_changed",
+                str(exc),
+                valid_next=["finalize", "revise"],
+            ) from exc
+        if _admission_report is None:
+            raise CliError(
+                "finalized_task_graph_changed",
+                "v1 task contract is not admitted by M10 dispatch; "
+                "re-finalize under the v2 task contract before executing",
+                valid_next=["finalize", "revise"],
+            )
+        try:
+            assert_finalize_custody(plan_dir, finalize_data)
+        except CritiqueCustodyError as exc:
+            raise CliError(
+                exc.code,
+                str(exc),
+                valid_next=["finalize", "revise", "critique"],
+                extra={"issues": list(exc.issues)},
+            ) from exc
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire
         # execute runs in the past (codex sandboxed to a subdirectory, writes
@@ -443,15 +850,12 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 worker_module.session_key_for("execute", "codex", model=resolved_model),
                 None,
             )
-        # Detect tier_models.execute from profile expansion. If present, pass
-        # the tier map down so execute batches route by task complexity.
-        # Explicit execute pins strip tier_models.execute during profile
-        # expansion/override handling; a surviving tier map is therefore
-        # authoritative even when config.phase_model also carries the profile's
-        # fallback execute=... default.
+        # Detect tier_models.execute from profile expansion.  If present,
+        # pass the tier map down to the dispatchers so they can route
+        # per-batch by task complexity.  apply_profile_expansion already
+        # strips tier_models.execute when a CLI --phase-model execute=...
+        # override is present, so no double-check is needed here.
         tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
-        if tier_map is None and _execute_phase_model_is_pinned(args, state):
-            tier_map = None
         tier_map = _apply_execute_tier_cap(
             tier_map,
             getattr(args, "max_execute_tier", None)
@@ -468,6 +872,58 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         )
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
+        # --- M8A T9: circuit check before worker dispatch ---
+        # Create a plan-level circuit breaker instance and check whether any
+        # open circuit blocks the pending task set before dispatching workers.
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import PlanCircuit as _PlanCircuit
+
+        _circuit = _PlanCircuit()
+        _finalize_data = read_json(plan_dir / "finalize.json")
+        _tasks_for_circuit = [
+            t for t in _finalize_data.get("tasks", [])
+            if isinstance(t, dict) and isinstance(t.get("id"), str)
+        ]
+        _completed_for_circuit = effective_execute_completed_task_ids(
+            _tasks_for_circuit,
+            plan_dir=plan_dir,
+            project_dir=Path(state["config"]["project_dir"]),
+            state=state,
+        )
+        _pending_task_ids: list[str] = [
+            str(t["id"])
+            for t in _tasks_for_circuit
+            if t["id"] not in _completed_for_circuit
+        ]
+        _circuit_dispatch = evaluate_circuit_before_dispatch(
+            _circuit,
+            task_ids=_pending_task_ids,
+            batch_id=str(getattr(args, "batch", None)) if getattr(args, "batch", None) is not None else None,
+        )
+        if _circuit_dispatch.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN:
+            _circuit_projection = build_circuit_evidence_projection(_circuit)
+            response = {
+                "success": False,
+                "step": "execute",
+                "summary": _circuit_dispatch.reason,
+                "artifacts": [],
+                "monitor_hint": "",
+                "next_step": "revise",
+                "state": STATE_BLOCKED,
+                "files_changed": [],
+                "deviations": [],
+                "warnings": [_circuit_dispatch.reason],
+                "auto_approve": auto_approve,
+                "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+                "blocked_task_ids": [
+                    s.get("task_id") for s in _circuit_dispatch.open_signatures if s.get("task_id")
+                ],
+                "_phase_outcome": "blocked_by_prereq",
+                "_circuit_evidence": _circuit_projection,
+                "result": "blocked",
+            }
+            save_state_merge_meta(plan_dir, state)
+            return response
+        # --- end circuit check ---
         response: StepResponse | None = None
         try:
             with phase_result_guard(plan_dir):
@@ -507,7 +963,74 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             save_state_merge_meta(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
+        # --- M8A T13: repair adoption verification ---
+        # After batch execution completes, verify any pending repair receipts
+        # through the read-only verifier.  Matching receipts are adopted;
+        # mismatches are quarantined.  Neither outcome rewrites history or
+        # treats receipt labels as authority.
+        _finalize_data = read_json(plan_dir / "finalize.json")
+        _repair_start = __import__("time").monotonic()
+        response = _adopt_repair_receipts(plan_dir, state, _finalize_data, response)
+        _repair_elapsed_ms = int((__import__("time").monotonic() - _repair_start) * 1000)
+        # --- M9: work ledger — repair verification tool event ---
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                WorkClass,
+                emit_tool_activity,
+            )
+
+            _rv_adoption = response.get("_repair_adoption", {}) if response else {}
+            emit_tool_activity(
+                plan_dir,
+                phase="execute",
+                tool_name="repair_receipt_adoption",
+                work_class=WorkClass.REPAIR_VERIFICATION,
+                task_id=None,  # plan-scoped
+                batch_id=str(getattr(args, "batch", "auto")),
+                attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                elapsed_ms=_repair_elapsed_ms,
+                metadata={
+                    "total_receipts": _rv_adoption.get("total_receipts", 0),
+                    "adopted": _rv_adoption.get("adopted", 0),
+                    "quarantined": _rv_adoption.get("quarantined", 0),
+                    "invalid": _rv_adoption.get("invalid", 0),
+                },
+            )
+        except Exception:
+            log.debug("Work ledger repair verification event emission skipped", exc_info=True)
+        # --- end work ledger ---
+        # --- end repair adoption ---
         if response.get("result") == "blocked":
+            # --- M8A T9: circuit recording after worker/result failure classification ---
+            # Record each blocked task failure against the plan circuit and persist
+            # circuit evidence as rebuildable projection metadata only.
+            _blocked_ids = response.get("blocked_task_ids", [])
+            if isinstance(_blocked_ids, list) and _blocked_ids:
+                _batch_num = str(getattr(args, "batch", "auto"))
+                _attempt_id = state.get("meta", {}).get("current_invocation_id", "unknown")
+                _provider = getattr(args, "model", None) or state.get("config", {}).get("model")
+                _ref = _best_effort_git_head_for_circuit(Path(state["config"]["project_dir"]))
+
+                for _tid in _blocked_ids:
+                    if isinstance(_tid, str):
+                        _blocker_payload = {"kind": "blocked_by_prereq", "task_id": _tid}
+                        evaluate_circuit_after_failure(
+                            _circuit,
+                            None,  # error — use failure_class override
+                            task_id=_tid,
+                            batch_id=_batch_num,
+                            attempt_id=_attempt_id,
+                            blocker=_blocker_payload,
+                            provider=_provider,
+                            ref_metadata=_ref,
+                            failure_class="blocked_by_prereq",
+                        )
+
+            # Build rebuildable circuit evidence projection and attach to response.
+            _circuit_projection = build_circuit_evidence_projection(_circuit)
+            response["_circuit_evidence"] = _circuit_projection
+            # --- end circuit recording ---
+            blocked_projection = _blocked_execute_projection()
             save_state_merge_meta(plan_dir, state)
             # Include the typed retry decision (from
             # ``evaluate_blocker_recovery_policy``) in the blocked-anchor
@@ -533,17 +1056,13 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             _record_execute_blocked(plan_dir, response)
             state = read_plan_state_cached(plan_dir, mode="authority")
-            response["state"] = STATE_BLOCKED
-            # next_step payload is translated from the typed BLOCKED transition;
-            # ``blocked=True`` is dominant in resolve_single_batch_next_step, so
-            # the legacy value is always None (halt → override recovery).
-            blocked_transition = resolve_single_batch_next_step(
-                is_final_batch=(int(response.get("batches_remaining") or 0) == 0),
-                all_tracked=False,
-                blocked=True,
-            ).transition
-            response["next_step"] = _LEGACY_NEXT_STEP[blocked_transition]
-            response.pop("next_step_runtime", None)
+            apply_response_projection(
+                response,
+                route_signal=blocked_projection["route_signal"],
+                state=blocked_projection["state"],
+                next_step=blocked_projection["next_step"],
+            )
+            _attach_next_step_runtime(response)
         else:
             state["latest_failure"] = None
             state.pop("resume_cursor", None)
@@ -562,12 +1081,21 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 # Target state + next_step payload come from the typed no-review
                 # terminal policy, not an inline branch.
                 terminal = evaluate_no_review_terminal(robustness="bare")
-                next_state = _NO_REVIEW_TERMINAL_STATE[terminal.outcome]
-                state["current_state"] = next_state
+                terminal_projection = _no_review_terminal_projection(terminal.outcome)
+                next_state = terminal_projection["state"]
+                apply_state_projection(
+                    state,
+                    next_state,
+                    route_signal=terminal_projection["route_signal"],
+                )
                 save_state_merge_meta(plan_dir, state)
-                response["state"] = next_state
-                response["next_step"] = _NO_REVIEW_NEXT_STEP[terminal.outcome]
-                response.pop("next_step_runtime", None)
+                apply_response_projection(
+                    response,
+                    route_signal=terminal_projection["route_signal"],
+                    state=next_state,
+                    next_step=terminal_projection["next_step"],
+                )
+                _attach_next_step_runtime(response)
                 _emit_execute_boundary_receipt(
                     boundary_id="execute_no_review_terminal",
                     plan_dir=plan_dir,
@@ -611,7 +1139,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             terminal = evaluate_no_review_terminal(
                 robustness=robustness, has_deferred_must=has_deferred_must
             )
-            next_state = _NO_REVIEW_TERMINAL_STATE[terminal.outcome]
+            terminal_projection = _no_review_terminal_projection(terminal.outcome)
+            next_state = terminal_projection["state"]
 
             stub_review = {
                 "review_verdict": "approved",
@@ -637,11 +1166,19 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")
-            state["current_state"] = next_state
+            apply_state_projection(
+                state,
+                next_state,
+                route_signal=terminal_projection["route_signal"],
+            )
             save_state_merge_meta(plan_dir, state)
-            response["state"] = next_state
-            response["next_step"] = _NO_REVIEW_NEXT_STEP[terminal.outcome]
-            response.pop("next_step_runtime", None)
+            apply_response_projection(
+                response,
+                route_signal=terminal_projection["route_signal"],
+                state=next_state,
+                next_step=terminal_projection["next_step"],
+            )
+            _attach_next_step_runtime(response)
             _emit_execute_boundary_receipt(
                 boundary_id="execute_no_review_terminal",
                 plan_dir=plan_dir,

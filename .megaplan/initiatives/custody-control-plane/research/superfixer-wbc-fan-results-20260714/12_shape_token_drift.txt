@@ -1,0 +1,26 @@
+**YES — TOKEN DRIFT confirmed.**
+
+### Writer tokens → reader branches traced
+
+**1. `launched` (queue attempt) → unreachable repair**
+- **Writer**: `write_dispatch_attempt` (`repair_requests.py:506`) writes `status: "launched"` as immutable `repair_request_attempt`. **No writer ever transitions this record to a terminal outcome.**
+- **Reader**: `project_repair_custody` (`repair_contract.py:571-592`) reads it and hardcodes `outcome=REPAIRING, state=RUNNING` regardless of actual managed-run completion.
+- **Reader**: `durable_repair_active` (`repair_contract.py:2831-2835`) treats any `repair_queue_dispatch_attempt` with a `blocker_id` as perpetually active (`terminal is not False` skipped → returns `True`).
+- **Result**: The custody projection sees an infinitely-active repair. Canonical status stays `repairing` even after the managed run completed.
+
+**2. `completed` (managed agent) → correct mapping, but drowned out**
+- **Writer**: `managed_agent.py:860` writes `"completed"` to the managed manifest.
+- **Writer**: `arnold-repair-loop` (line 4253-4266) records the managed run in `repair-data.json` → `managed_agent_runs[]`.
+- **Reader**: `_managed_attempts_from_snapshot` (`repair_contract.py:2997-3009`) correctly maps `completed` → `ATTEMPT_STATE_SUCCEEDED`, `terminal=True`.
+- **But**: the queue dispatch attempt (source 1) keeps `durable_repair_active()=True`, overriding the managed completion signal.
+
+**3. `finalized` plan state → liveness misclassification**
+- **Writer**: plan `state.json` by chain runner.
+- **Reader**: `_classify_session` (`status_snapshot.py:1696`) — `finalized` is NOT in terminal checks (line 1699 only checks `done/complete/completed`). A `finalized` plan with live PID returns `running` even when stuck. `repair-progress.json` separately sees `finalized`+stalled and triggers dispatch.
+
+**4. `between_milestones` → missing branch**
+- **Writer**: `chain/__init__.py:4512`.
+- **Reader**: watchdog wrapper (line 2826) treats as NONTERMINAL → repair-eligible. But `_classify_session` has **no explicit branch** for `between_milestones` — falls through to `attention`.
+
+### Missing mapping
+**No writer transitions queue dispatch `repair_request_attempt` from `launched` to any terminal outcome.** Sibling: `_managed_attempts_from_snapshot` (line 2937) correctly handles terminal mapping for managed runs, but `project_repair_custody` (line 571) ignores actual completion when reading queue attempts.

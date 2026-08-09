@@ -49,7 +49,7 @@ DEFAULT_DOCS_ROOT = REPO_ROOT / "docs"
 REFERENCE_PATH = Path("reference/arnold-projections.md")
 EXAMPLES_DIR = Path("arnold/examples")
 SKILLS_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "data" / "_codex_skills"
-COMPOSED_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "data" / "_composed"
+MEGAPLAN_CODEX_SKILL = SKILLS_DIR / "megaplan" / "SKILL.md"
 
 GENERATED_HEADER = """\
 <!--
@@ -617,80 +617,15 @@ def render_codex_skills() -> dict[Path, str]:
         if not info.public or info.disposition != "migrate":
             continue
         slug = info.id.replace(".", "-").replace("_", "-")
-        rendered[SKILLS_DIR / slug / "SKILL.md"] = _render_skill(info)
-    return rendered
-
-
-def _render_composed_skill(name: str, description: str) -> str:
-    lines = [
-        "---",
-        f"name: {name}",
-        f"description: {description}",
-        "---",
-        "",
-        f"# {name}",
-        "",
-        "This composed rule references ``arnold.pipeline`` and ``arnold.workflow`` surfaces "
-        "and the shipped pipeline registry.  Native-first pipelines use ``build_pipeline()`` "
-        "returning a projected ``Pipeline`` with a non-null ``native_program``; workflow "
-        "pipelines use ``arnold workflow check`` for validation.",
-        "",
-        "## Launcher",
-        "",
-        "Use the ``arnold`` console script installed by the wheel:",
-        "",
-        "```bash",
-        "arnold workflow --help",
-        "arnold workflow check --module <package.module>:build_pipeline",
-        "```",
-        "",
-        "## Shipped pipelines",
-        "",
-    ]
-    for info in discover_migrated_pipelines():
-        if info.registry_id is None:
+        path = SKILLS_DIR / slug / "SKILL.md"
+        # The operational Megaplan skill is composed from instructions.md and
+        # the Codex appendix by `megaplan setup --regen-composed`.  This docs
+        # generator owns per-pipeline reference skills, not that installer
+        # bundle.
+        if path == MEGAPLAN_CODEX_SKILL:
             continue
-        if info.load_state == "loadable-native":
-            lines.append(
-                f"- `{info.registry_id}` -> native (validate import: `{_builder_target(info)}`)"
-            )
-        elif info.load_state == "workflow":
-            lines.append(
-                f"- `{info.registry_id}` -> `arnold workflow check --module {_builder_target(info)}`"
-            )
-        else:
-            lines.append(
-                f"- `{info.registry_id}` -> load state `{info.load_state}`"
-            )
-    lines.extend(
-        [
-            "",
-            "## Disallowed surfaces",
-            "",
-            "Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, "
-            "hand-built graph fallback builders, shim packages, executor objects, "
-            "or deleted Megaplan-root imports.  New packages must be native-first: use "
-            "``@pipeline``, ``@phase``, ``compile_pipeline``, and ``project_graph`` to return a "
-            "projected ``Pipeline`` with a non-null ``native_program`` from ``build_pipeline()``.  "
-            "``NativeProgram`` is dispatch substrate, not final compositional semantics.",
-            "",
-        ]
-    )
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def render_composed_rules() -> dict[Path, str]:
-    return {
-        COMPOSED_DIR / "claude_skill.md": _render_composed_skill(
-            "workflow-claude", "Workflow-only composed skill for Claude."
-        ),
-        COMPOSED_DIR / "codex_skill.md": _render_composed_skill(
-            "workflow-codex", "Workflow-only composed skill for Codex."
-        ),
-        COMPOSED_DIR / "cursor_rule.mdc": _render_composed_skill(
-            "workflow-cursor", "Workflow-only composed rule for Cursor."
-        ),
-    }
+        rendered[path] = _render_skill(info)
+    return rendered
 
 
 def _registries_to_update() -> dict[Path, tuple[ShippedPipelineInfo, ...]]:
@@ -762,7 +697,6 @@ def generated_files() -> dict[Path, str]:
     files[DEFAULT_DOCS_ROOT / REFERENCE_PATH] = render_reference()
     files.update(render_examples())
     files.update(render_codex_skills())
-    files.update(render_composed_rules())
     files.update(render_registries())
     return files
 

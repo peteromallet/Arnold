@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 import tarfile
 import tempfile
 import venv
@@ -25,24 +24,31 @@ def _run_checked(args: list[str], **kwargs: object) -> subprocess.CompletedProce
 
 
 @pytest.mark.wheel_smoke
-def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
+def test_wheel_has_arnold_entrypoint_and_py_typed(installed_wheel) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
-        build_dir = tmp / "build"
-        build_dir.mkdir()
         sdist_dir = tmp / "sdist"
         sdist_dir.mkdir()
+        build_frontend_dir = tmp / "build-frontend"
+        venv.create(build_frontend_dir, with_pip=True)
+        build_python = build_frontend_dir / "bin" / "python"
+        _run_checked(
+            [str(build_python), "-m", "pip", "install", "--quiet", "build"],
+        )
 
         _run_checked(
-            [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(build_dir), str(REPO_ROOT)],
-        )
-        _run_checked(
-            [sys.executable, "-m", "build", "--sdist", "-o", str(sdist_dir), str(REPO_ROOT)],
+            [
+                str(build_python),
+                "-m",
+                "build",
+                "--sdist",
+                "-o",
+                str(sdist_dir),
+                str(REPO_ROOT),
+            ],
         )
 
-        wheels = list(build_dir.glob("*.whl"))
-        assert wheels, "no wheel produced"
-        wheel = wheels[0]
+        wheel = installed_wheel.wheel
 
         sdists = list(sdist_dir.glob("*.tar.gz"))
         assert sdists, "no sdist produced"
@@ -64,19 +70,20 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
             assert not any(
                 "arnold/pipelines/megaplan/data/" in name for name in names
             ), "legacy generated data still packaged"
+            assert not any("/node_modules/" in f"/{name}" for name in names), (
+                "wheel contains repository-local Node dependency/cache content"
+            )
 
         with tarfile.open(sdist, "r:gz") as tar:
             sdist_names = tar.getnames()
             assert any(name.endswith("pyproject.toml") for name in sdist_names)
+            assert not any("/node_modules/" in f"/{name}" for name in sdist_names), (
+                "sdist contains repository-local Node dependency/cache content"
+            )
 
-        # Install into a clean venv and verify the console script works.
-        venv_dir = tmp / "venv"
-        venv.create(venv_dir, with_pip=True)
-        pip = venv_dir / "bin" / "pip"
-        arnold = venv_dir / "bin" / "arnold"
-        python = venv_dir / "bin" / "python"
-
-        subprocess.run([str(pip), "install", str(wheel)], check=True, capture_output=True)
+        # The shared fixture installs this exact wheel into an isolated package
+        # environment using the validation runtime's pinned dependencies.
+        arnold = installed_wheel.arnold
 
         result = subprocess.run(
             [str(arnold), "workflow", "--help"],

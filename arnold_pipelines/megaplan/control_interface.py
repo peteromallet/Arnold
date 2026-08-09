@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from importlib import import_module
-import logging
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from arnold.workflow.boundary_evidence import BoundaryOutcome, BoundaryReceipt
 from arnold.control.interface import (
-    ArtifactRequest,
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
     CONTROL_TARGET_REROUTE,
+    ArtifactRequest,
     ControlBinding,
     ControlInterfaceTarget,
     ControlProjection,
@@ -25,7 +24,16 @@ from arnold.control.interface import (
     ControlTransitionResult,
     RunStateView,
 )
+from arnold.runtime.outcome import RunOutcome
+from arnold.workflow.boundary_evidence import BoundaryOutcome, BoundaryReceipt
 from arnold_pipelines.megaplan._core.state import write_plan_state
+from arnold_pipelines.megaplan.custody.override_wbc import (
+    validate_override_wbc_transition,
+)
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    clear_phase_wbc_suspension,
+    resume_clarification_phase_wbc_if_present,
+)
 from arnold_pipelines.megaplan.orchestration.override_authority import (
     OverrideAuthorityError,
     build_override_authority_record,
@@ -33,14 +41,25 @@ from arnold_pipelines.megaplan.orchestration.override_authority import (
     override_authority_contract_for_transition,
 )
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
-from arnold_pipelines.megaplan.state_delta import StateDelta, StateDeltaConflict, apply_delta
+from arnold_pipelines.megaplan.state_delta import (
+    StateDelta,
+    StateDeltaConflict,
+    apply_delta,
+)
 from arnold_pipelines.megaplan.workflows.override_matrix import OVERRIDE_ACTION_MATRIX
-from arnold.runtime.outcome import RunOutcome
-
 
 _MISSING_BINDING = object()
 _OVERRIDE_AUTHORITY_TRANSITIONS = frozenset(
-    {"adopt-execution", "recover-blocked", "resume-clarify"}
+    {
+        "abort",
+        "adopt-execution",
+        "force-proceed",
+        "human-gate",
+        "recover-blocked",
+        "replan",
+        "resume-clarify",
+        "suspension-waiver",
+    }
 )
 log = logging.getLogger(__name__)
 
@@ -144,70 +163,91 @@ def emit_override_authority_receipt(
     actor: str = "operator",
     role: str = "human.override",
     details: Mapping[str, Any] | None = None,
+    source_view_hash: str | None = None,
+    source_view_revision: str | None = None,
 ) -> None:
     if action not in _OVERRIDE_AUTHORITY_TRANSITIONS:
         return
+    contract = override_authority_contract_for_transition(action)
+    freshness_token = current_freshness_token(state, transition=action)
+
+    declared_target = DECLARED_OVERRIDE_POLICY_TARGETS.get(action, {})
+    receipt_details: dict[str, Any] = {
+        "dispatch_surface": "workflow.native_policy",
+    }
+    record_details: dict[str, Any] = {
+        **(dict(details) if details else {}),
+    }
+    route_signal = declared_target.get("route_signal")
+    if isinstance(route_signal, str) and route_signal:
+        receipt_details["route_signal"] = route_signal
+        record_details["route_signal"] = route_signal
+    declared_target_ref = declared_target.get("target_ref")
+    if isinstance(declared_target_ref, str) and declared_target_ref:
+        receipt_details["declared_target_ref"] = declared_target_ref
+        record_details["declared_target_ref"] = declared_target_ref
+    policy_route_ref = declared_target.get("policy_route_ref")
+    if isinstance(policy_route_ref, str) and policy_route_ref:
+        receipt_details["policy_route_ref"] = policy_route_ref
+        record_details["policy_route_ref"] = policy_route_ref
+    if source_view_hash is not None:
+        receipt_details["source_view_hash"] = source_view_hash
+        record_details["source_view_hash"] = source_view_hash
+    if source_view_revision is not None:
+        receipt_details["source_view_revision"] = source_view_revision
+
     try:
-        contract = override_authority_contract_for_transition(action)
-        freshness_token = current_freshness_token(state, transition=action)
-        record = build_override_authority_record(
-            action,
+        wbc_evidence = validate_override_wbc_transition(
+            transition=action,
             plan_dir=plan_dir,
-            actor=actor,
-            role=role,
-            freshness_token=freshness_token,
-            expected_freshness_token=freshness_token,
-            details={
-                "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
-                "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
-                "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
-                **(dict(details) if details else {}),
-            },
+            state=state,
+            details=record_details,
         )
-        config = state.get("config")
-        project_dir = (
-            config.get("project_dir")
-            if isinstance(config, Mapping)
-            and isinstance(config.get("project_dir"), str)
-            and config.get("project_dir")
-            else None
-        )
-        receipt = BoundaryReceipt(
-            boundary_id=contract.boundary_id,
-            workflow_id=contract.workflow_id,
-            row_id=contract.row_id,
-            invocation_id=freshness_token,
-            artifact_refs=record.evidence_refs,
-            state_observation={
-                "current_state": state.get("current_state"),
-                "override_action": action,
-                "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
-            },
-            outcome=BoundaryOutcome.COMPLETE,
-            authority_records=(record,),
-            details={
-                "dispatch_surface": "workflow.native_policy",
-                "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
-                "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
-            },
-        )
-        write_boundary_receipt(
-            plan_dir,
-            receipt,
-            project_dir=project_dir,
-        )
-    except OverrideAuthorityError:
-        log.warning(
-            "override authority record build failed for %s",
-            action,
-            exc_info=True,
-        )
-    except Exception:
-        log.warning(
-            "override authority receipt emission failed for %s",
-            action,
-            exc_info=True,
-        )
+    except Exception as exc:  # pragma: no cover - failure path exercised via callers
+        raise OverrideAuthorityError(
+            f"override WBC validation failed for {action}: {exc}"
+        ) from exc
+
+    receipt_details["wbc_transition_evidence"] = wbc_evidence
+    record_details["wbc_transition_evidence"] = wbc_evidence
+
+    record = build_override_authority_record(
+        action,
+        plan_dir=plan_dir,
+        actor=actor,
+        role=role,
+        freshness_token=freshness_token,
+        expected_freshness_token=freshness_token,
+        details=record_details,
+    )
+    config = state.get("config")
+    project_dir = (
+        config.get("project_dir")
+        if isinstance(config, Mapping)
+        and isinstance(config.get("project_dir"), str)
+        and config.get("project_dir")
+        else None
+    )
+    receipt = BoundaryReceipt(
+        boundary_id=contract.boundary_id,
+        workflow_id=contract.workflow_id,
+        row_id=contract.row_id,
+        invocation_id=freshness_token,
+        artifact_refs=record.evidence_refs,
+        state_observation={
+            "current_state": state.get("current_state"),
+            "override_action": action,
+            "route_signal": route_signal,
+        },
+        outcome=BoundaryOutcome.COMPLETE,
+        authority_records=(record,),
+        details=receipt_details,
+    )
+    write_boundary_receipt(
+        plan_dir,
+        receipt,
+        project_dir=project_dir,
+    )
 
 
 def _event_payload(
@@ -411,6 +451,118 @@ def synthesize_artifacts(
     return binding.synthesize_artifacts(run_state, transition)
 
 
+_OVERRIDE_BYPASS_TARGETS: frozenset[str] = frozenset(
+    {
+        CONTROL_TARGET_FORCE_ADVANCE,
+        CONTROL_TARGET_RECOVER_FROM_STUCK,
+        CONTROL_TARGET_REROUTE,
+    }
+)
+
+
+def _check_override_acceptance_gate(
+    run_state: RunStateView | Mapping[str, Any],
+    transition: ControlTransition | ControlTransitionRequest,
+    binding_result: ControlTransitionResult,
+    *,
+    plan_dir: Path,
+) -> ControlTransitionResult | None:
+    """Check the acceptance gate for override transitions that could bypass chain completion.
+
+    In fail-closed (atomic/enforce) mode, override transitions like force_advance,
+    recover_from_stuck, and reroute must not bypass the acceptance gate.  When the
+    plan is in fail-closed mode and no committed acceptance transaction exists,
+    this function returns a typed blocker ``ControlTransitionResult`` with
+    ``accepted=False``.
+
+    Returns ``None`` when the gate is open / not applicable.
+    """
+    op = getattr(transition, "op", None)
+    target_id = getattr(transition, "target_id", None)
+    if op != "override" or not isinstance(target_id, str) or not target_id:
+        return None
+    if target_id not in _OVERRIDE_BYPASS_TARGETS:
+        return None
+
+    # ── Resolve plan state to check completion contract mode ──────────
+    raw_state: dict[str, Any] = {}
+    if isinstance(run_state, RunStateView):
+        raw_state = dict(run_state.raw_state) if isinstance(run_state.raw_state, Mapping) else {}
+    elif isinstance(run_state, Mapping):
+        raw_state = dict(run_state)
+
+    config = raw_state.get("config")
+    if not isinstance(config, Mapping):
+        return None
+    mode = str(config.get("completion_contract_mode") or "shadow")
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+        is_fail_closed_mode,
+    )
+
+    if not is_fail_closed_mode(mode):
+        return None  # shadow / warn / off — gate is always open
+
+    # ── Check for committed acceptance evidence ───────────────────────
+    has_acceptance_evidence = False
+    try:
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            list_committed_acceptance_transactions,
+        )
+
+        committed = list_committed_acceptance_transactions(plan_dir)
+        if committed:
+            has_acceptance_evidence = True
+    except Exception:
+        pass
+
+    if has_acceptance_evidence:
+        return None  # gate is open — acceptance evidence exists
+
+    # ── Gate is closed — emit typed blocker event ────────────────────
+    blocker_event = _event_payload(
+        "OVERRIDE_ACCEPTANCE_GATE_CLOSED",
+        run_state=(
+            run_state
+            if isinstance(run_state, RunStateView)
+            else RunStateView(
+                run_id=str(raw_state.get("name") or plan_dir.name),
+                outcome=None,
+                cursor=None,
+                metadata={},
+                raw_state=raw_state,
+            )
+        ),
+        transition=transition,
+        mutated=False,
+    )
+    blocker_event["predicate_kind"] = PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE
+    blocker_event["evidence_kind"] = "override_acceptance"
+    blocker_event["summary"] = (
+        f"override transition {target_id!r} blocked: plan is in fail-closed "
+        f"mode ({mode!r}) and no committed acceptance transaction exists; "
+        f"override cannot bypass the acceptance gate"
+    )
+    blocker_event["details"] = {
+        "target_id": target_id,
+        "completion_contract_mode": mode,
+        "plan_dir": str(plan_dir),
+    }
+
+    return ControlTransitionResult(
+        accepted=False,
+        mutated=False,
+        reason=(
+            f"override acceptance gate closed: plan in {mode!r} mode "
+            f"has no committed acceptance evidence; {target_id} blocked"
+        ),
+        artifacts=dict(binding_result.artifacts),
+        state_deltas=binding_result.state_deltas,
+        events=tuple(binding_result.events) + (blocker_event,),
+    )
+
+
 def apply_transition(
     run_state: RunStateView | Mapping[str, Any],
     transition: ControlTransition | ControlTransitionRequest,
@@ -435,8 +587,23 @@ def apply_transition(
     if not binding_result.accepted:
         return binding_result
 
+    # ── acceptance gate for override transitions ─────────────────────
+    override_blocker = _check_override_acceptance_gate(
+        run_state, transition, binding_result, plan_dir=Path(plan_dir)
+    )
+    if override_blocker is not None:
+        return override_blocker
+
     deltas = _extract_state_deltas(binding_result)
     if not deltas:
+        committed_artifacts = binding_result.artifacts
+        commit_artifacts = getattr(binding, "commit_artifacts", None)
+        if callable(commit_artifacts):
+            committed_artifacts = commit_artifacts(
+                run_state.raw_state,
+                transition,
+                binding_result.artifacts,
+            )
         events = tuple(binding_result.events) + (
             _event_payload(
                 "STATE_TRANSITION",
@@ -449,15 +616,16 @@ def apply_transition(
             accepted=True,
             mutated=False,
             reason=binding_result.reason,
-            artifacts=binding_result.artifacts,
+            artifacts=committed_artifacts,
             state_deltas=binding_result.state_deltas,
             events=events,
         )
 
     applied_state: dict[str, Any] | None = None
+    phase_wbc_reentry_invocation_id: str | None = None
 
     def _apply_control_deltas(current: dict[str, Any]) -> bool:
-        nonlocal applied_state
+        nonlocal applied_state, phase_wbc_reentry_invocation_id
         expected_versions = getattr(transition, "expected_versions", {}) or {}
         versions = current.get("_state_meta", {}).get("versions", {})
         if not isinstance(versions, Mapping):
@@ -467,9 +635,51 @@ def apply_transition(
             actual = actual if isinstance(actual, int) else 0
             if actual != expected:
                 raise StateDeltaConflict(key, expected, actual)
+        if transition.op == "override" and transition.target_id == "resume-clarify":
+            phase_wbc_reentry_invocation_id = (
+                resume_clarification_phase_wbc_if_present(
+                    state=current,
+                    plan_dir=Path(plan_dir),
+                    agent=str(
+                        getattr(transition, "actor", None)
+                        or "override:resume-clarify"
+                    ),
+                )
+            )
         next_state = dict(current)
         for delta in deltas:
             next_state, _ = apply_delta(next_state, delta)
+        if (
+            transition.op == "override"
+            and transition.target_id == "resume-clarify"
+            and phase_wbc_reentry_invocation_id is not None
+        ):
+            clear_phase_wbc_suspension(next_state, step="prep")
+            next_meta = next_state.get("meta")
+            next_overrides = (
+                next_meta.get("overrides")
+                if isinstance(next_meta, Mapping)
+                else None
+            )
+            if not isinstance(next_overrides, list) or not next_overrides:
+                raise RuntimeError(
+                    "resume-clarify transition is missing its durable override record"
+                )
+            latest_override = next_overrides[-1]
+            if (
+                not isinstance(latest_override, Mapping)
+                or latest_override.get("action") != "resume-clarify"
+            ):
+                raise RuntimeError(
+                    "resume-clarify transition has no matching durable override record"
+                )
+            persisted_meta = dict(next_meta)
+            persisted_overrides = [dict(entry) for entry in next_overrides]
+            persisted_overrides[-1][
+                "phase_wbc_reentry_invocation_id"
+            ] = phase_wbc_reentry_invocation_id
+            persisted_meta["overrides"] = persisted_overrides
+            next_state["meta"] = persisted_meta
         remove_keys = binding_result.artifacts.get("remove_state_keys", ())
         if isinstance(remove_keys, Sequence) and not isinstance(remove_keys, (str, bytes)):
             for key in remove_keys:
@@ -519,15 +729,62 @@ def apply_transition(
         )
 
     next_state = applied_state if applied_state is not None else persisted
+    committed_artifacts = binding_result.artifacts
+    commit_artifacts = getattr(binding, "commit_artifacts", None)
+    if callable(commit_artifacts):
+        committed_artifacts = commit_artifacts(
+            next_state,
+            transition,
+            binding_result.artifacts,
+        )
+    if phase_wbc_reentry_invocation_id is not None:
+        committed_artifacts = {
+            **dict(committed_artifacts),
+            "phase_wbc_reentry_invocation_id": (
+                phase_wbc_reentry_invocation_id
+            ),
+        }
     if (
         transition.op == "override"
         and isinstance(transition.target_id, str)
         and transition.target_id
     ):
+        # --- optionally bind the receipt to a source HumanGateView hash ----------
+        source_view_hash: str | None = None
+        source_view_revision: str | None = None
+        try:
+            from arnold_pipelines.megaplan.authority.views import derive_human_gate_view
+
+            meta = next_state.get("meta") if isinstance(next_state, Mapping) else None
+            plan_revision = (
+                meta.get("current_invocation_id")
+                if isinstance(meta, Mapping)
+                else None
+            )
+            override_signal: dict[str, Any] = {
+                "gate_type": "override",
+                "gate_reason": transition.target_id,
+                "source": f"control://override/{transition.target_id}",
+            }
+            if plan_revision and isinstance(plan_revision, str):
+                override_signal["plan_ref"] = plan_revision
+            if hasattr(transition, "actor") and transition.actor:
+                override_signal["actor"] = transition.actor
+            if hasattr(transition, "reason") and transition.reason:
+                override_signal["reason"] = transition.reason
+            view = derive_human_gate_view([override_signal], current_plan_revision=plan_revision)
+            source_view_hash = view.view_hash
+            if view.source_paths:
+                source_view_revision = view.source_paths[0]
+        except Exception:
+            pass  # source-view binding is best-effort; never block the receipt
+
         emit_override_authority_receipt(
             Path(plan_dir),
             next_state,
             transition.target_id,
+            source_view_hash=source_view_hash,
+            source_view_revision=source_view_revision,
         )
     events = tuple(binding_result.events) + (
         _event_payload(
@@ -549,7 +806,7 @@ def apply_transition(
         accepted=True,
         mutated=True,
         reason=binding_result.reason,
-        artifacts=binding_result.artifacts,
+        artifacts=committed_artifacts,
         state_deltas=binding_result.state_deltas,
         events=events,
     )

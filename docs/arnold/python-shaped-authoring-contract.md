@@ -1,7 +1,8 @@
 # Python-Shaped Workflow Authoring Contract
 
-This document is the authoritative contract for Python-shaped Arnold
-workflow source. The active grammar version is:
+This document records the currently implemented V1/V2 Python-shaped frontend
+and remains authoritative only for that legacy/current implementation
+baseline. The active implemented grammar version is:
 
 ```text
 arnold.workflow.authoring.v2
@@ -14,6 +15,14 @@ of V2. This document describes both the V1 linear core and the implemented V2
 composition extensions (nested workflow invocation, runtime-list fanout, typed
 loop outcomes, declared policy calls, stable literal-ID path identity, and
 wrapper rejection).
+
+> **Native Parity target amendment:** `docs/arnold/pype-authoring-contract.md`
+> is the sole normative future `.pype` contract. It requires exactly one
+> canonical workflow per `.pype`, permits only private file-local steps/helpers,
+> places reusable leaves in `.py`, makes ordinary `.py @workflow` preview-only,
+> and uses static canonical workflow imports plus path-independent logical
+> identity. The implemented V1/V2 rules below remain factual migration input;
+> they do not override or weaken that target.
 
 Python-shaped authoring is a source frontend over
 `arnold.workflow.dsl.Pipeline` and the serialized `WorkflowManifest`. It is not

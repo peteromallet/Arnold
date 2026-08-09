@@ -32,11 +32,25 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
+    is_superseded_recovered_phase_result,
     read_phase_result,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
+from arnold_pipelines.megaplan.workflows.events import (
+    resolve_workflow_source_phase,
+    workflow_cursor,
+)
 from arnold.runtime.outcome import RunOutcome
+import hashlib
+import time
+
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorDimension,
+    SourceCursorVector,
+)
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
     if not isinstance(timestamp, str) or not timestamp:
@@ -238,6 +252,7 @@ def _tasks_by_id(finalize_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def _phase_result_recovery_inputs(
     plan_dir: Path,
+    state: dict[str, Any],
 ) -> tuple[tuple[BlockedTask, ...], tuple[Any, ...]]:
     try:
         phase_result = read_phase_result(plan_dir)
@@ -246,6 +261,12 @@ def _phase_result_recovery_inputs(
     if phase_result is None:
         return (), ()
     if phase_result.exit_kind == ExitKind.success.value:
+        return (), ()
+    if is_superseded_recovered_phase_result(
+        phase=phase_result.phase,
+        exit_kind=phase_result.exit_kind,
+        state=state,
+    ):
         return (), ()
     return phase_result.blocked_tasks, phase_result.deviations
 
@@ -348,7 +369,54 @@ def _projected_valid_next(state: dict[str, Any]) -> list[str]:
     projected = _projected_target_ids(state, recovery=use_recovery)
     if projected or use_recovery:
         return projected
-    return infer_next_steps(state)
+    return []
+
+
+def _legacy_status_next_hints(state: dict[str, Any]) -> list[str]:
+    projected = _projected_valid_next(state)
+    if projected:
+        return projected
+    return [
+        step
+        for step in infer_next_steps(state)
+        if resolve_workflow_source_phase(step) is not None
+    ]
+
+
+def _observed_workflow_phase(
+    state: dict[str, Any],
+    *,
+    active_step: dict[str, Any] | None,
+    last_step: dict[str, Any] | None,
+) -> str | None:
+    if isinstance(active_step, dict):
+        active_phase = active_phase_name(active_step)
+        if isinstance(active_phase, str) and active_phase:
+            return active_phase
+    resume_cursor = state.get("resume_cursor")
+    if isinstance(resume_cursor, dict):
+        cursor_phase = resume_cursor.get("phase")
+        if isinstance(cursor_phase, str) and cursor_phase:
+            return cursor_phase
+    latest_failure = state.get("latest_failure")
+    if isinstance(latest_failure, dict):
+        failure_phase = latest_failure.get("phase")
+        if isinstance(failure_phase, str) and failure_phase:
+            return failure_phase
+    # History is only cursor authority when the recorded result actually
+    # completed a workflow transition.  Execute records ``partial`` and
+    # ``blocked`` entries while the state intentionally remains finalized so
+    # the pending batches can run again.  Treating either as a completed
+    # execute event fabricates a review cursor and contradicts that correct
+    # control projection.
+    if (
+        isinstance(last_step, dict)
+        and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+    ):
+        last_phase = last_step.get("step")
+        if isinstance(last_phase, str) and last_phase:
+            return last_phase
+    return None
 
 
 def _external_error_resume_command(state: dict[str, Any]) -> str | None:
@@ -393,7 +461,7 @@ def _build_blocker_recovery_context(
             "quality_blockers": [],
             "suggested_commands": [],
         }
-    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
+    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir, state)
     baseline_deviation_by_task: dict[str, Deviation] = {}
     if phase_blocked_tasks:
         from arnold_pipelines.megaplan.execute.batch import baseline_unavailable_checkpoint_deviations
@@ -802,6 +870,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 age_seconds=age_seconds,
                 lock_held=lock_held,
                 worker_pid=worker_pid,
+                active_step_record=details,
             )
         )
         last_activity_at = _parse_utc_timestamp(details.get("last_activity_at"))
@@ -874,6 +943,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 configured_timeout_seconds=configured_timeout_seconds,
                 lock_held=lock_held,
                 worker_pid=worker_pid,
+                active_step_record=details,
             )
         )
         if step in {"execute", "loop_execute"}:
@@ -885,37 +955,136 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
     return details
 
 
+def _build_source_cursor_for_status(
+    state: dict[str, Any],
+    *,
+    active_step: dict[str, Any] | None,
+    lock_held: bool,
+    observed_at_epoch_ms: float,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from the available status payload context.
+
+    Dimensions that cannot be determined from CLI-available state are
+    explicitly ``unknown`` — never defaulted to fresh or stale.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+
+    # Lifecycle: version = sha256 over (plan_name, current_state, iteration)
+    lifecycle_raw = (
+        f"{state.get('name', '')}\x00{state.get('current_state', '')}\x00"
+        f"{state.get('iteration', 0)}"
+    )
+    lifecycle_version = "sha256:" + hashlib.sha256(
+        lifecycle_raw.encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"lifecycle state={state.get('current_state', 'unknown')}",
+    )
+
+    # Liveness / process-correlation: from active_step worker_pid + lock status
+    worker_pid = None
+    if isinstance(active_step, dict):
+        raw_pid = active_step.get("worker_pid")
+        try:
+            worker_pid = int(raw_pid) if raw_pid is not None else None
+        except (TypeError, ValueError):
+            worker_pid = None
+    if worker_pid is not None:
+        pc_version = f"pid:{worker_pid}:lock_held:{lock_held}"
+        pc_detail = f"active worker pid={worker_pid}" if lock_held else f"stale worker pid={worker_pid} (lock not held)"
+        pc_state = "fresh" if lock_held else "stale"
+    elif lock_held:
+        pc_version = f"lock_held:true:no_pid"
+        pc_detail = "lock held but no worker PID visible"
+        pc_state = "stale"
+    else:
+        pc_version = "no_active_worker"
+        pc_detail = "no active worker or lock"
+        pc_state = "unknown"
+    pc_cursor = DimensionCursor(
+        dimension="process_correlation",
+        state=pc_state,  # type: ignore[arg-type]
+        version=pc_version,
+        observed_at=now_iso,
+        detail=pc_detail,
+    )
+
+    # Custody: unavailable from CLI status context
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody leases unavailable from CLI status view",
+    )
+
+    # Run Authority: unavailable from CLI status context
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority unavailable from CLI status view",
+    )
+
+    # Work ledger: unavailable from CLI status context
+    wl_cursor = DimensionCursor.unknown(
+        "work_ledger", observed_at=now_iso,
+        detail="work ledger unavailable from CLI status view",
+    )
+
+    # WBC: unavailable from CLI status context
+    wbc_cursor = DimensionCursor.unknown(
+        "wbc", observed_at=now_iso,
+        detail="WBC boundary evidence unavailable from CLI status view",
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
+
+
 def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse:
     projection_state = _recovery_projection_state(state, plan_dir=plan_dir)
-    next_steps = _projected_valid_next(projection_state) or infer_next_steps(projection_state)
-    if state.get("current_state") == STATE_BLOCKED:
-        last_gate = state.get("last_gate") or {}
-        preflight = last_gate.get("preflight_results") if isinstance(last_gate, dict) else None
-        failed = (
-            {name for name, passed in preflight.items() if not passed}
-            if isinstance(preflight, dict)
-            else set()
-        )
-        if (
-            isinstance(last_gate, dict)
-            and last_gate.get("recommendation") == "PROCEED"
-            and not last_gate.get("passed", False)
-            and failed
-            and failed <= {"claude_available", "codex_available"}
-        ):
-            next_steps = ["override force-proceed", "gate"]
+    next_steps = _legacy_status_next_hints(projection_state)
     notes = state.get("meta", {}).get("notes", [])
     lock_path = plan_dir / ".plan.lock"
     lock_file_present = lock_path.exists()
     lock_held = plan_lock_is_held(plan_dir)
     active_step = _build_active_step(state.get("active_step"), plan_dir=plan_dir)
     last_step = _build_last_step(state)
+    observed_phase = _observed_workflow_phase(
+        state,
+        active_step=active_step,
+        last_step=last_step,
+    )
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     anchors = anchor_summary(state, plan_dir)
-    summary = (
-        f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
+
+    # ── M9: build source-cursor vector for projection metadata ──
+    observed_at_epoch_ms = time.time() * 1000
+    source_cursor = _build_source_cursor_for_status(
+        state,
+        active_step=active_step,
+        lock_held=lock_held,
+        observed_at_epoch_ms=observed_at_epoch_ms,
     )
+    lifecycle_cursor = source_cursor.cursor("lifecycle")
+
+    presentation = plan_status_presentation(
+        state.get("current_state"),
+        active_step=active_step,
+        source_cursor=source_cursor,
+        lifecycle_cursor=lifecycle_cursor,
+        observed_at_epoch_ms=observed_at_epoch_ms,
+    )
+    summary = f"Plan '{state['name']}' is currently {presentation['display_state']}"
+    if presentation["display_state"] != state["current_state"]:
+        summary += f" (lifecycle state '{state['current_state']}')"
+    summary += "."
     if is_prose_mode(state):
         summary += f" Mode: {plan_mode}. Output: {plan_output_path}."
     if active_step:
@@ -947,10 +1116,17 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         "step": "status",
         "plan": state["name"],
         "state": state["current_state"],
+        **presentation,
         "iteration": state["iteration"],
         "summary": summary,
         "next_step": next_steps[0] if next_steps else None,
         "valid_next": next_steps,
+        "status_route_authority": "workflow_source_only",
+        "legacy_route_hints": {
+            "authority": "display_only_non_authoritative",
+            "next_step": next_steps[0] if next_steps else None,
+            "valid_next": list(next_steps),
+        },
         "artifacts": sorted(
             path.name
             for path in plan_dir.iterdir()
@@ -1009,6 +1185,11 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
                 # pre-execute quality diagnostics.
                 response["next_step"] = None
                 response["valid_next"] = []
+                response["legacy_route_hints"] = {
+                    "authority": "display_only_non_authoritative",
+                    "next_step": None,
+                    "valid_next": [],
+                }
                 plan_name = state.get("name")
                 if isinstance(plan_name, str) and plan_name:
                     response["suggested_recovery_commands"] = _unique_strings(
@@ -1039,6 +1220,9 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     )
     if runtime is not None:
         response["next_step_runtime"] = runtime
+    observed_cursor = workflow_cursor(observed_phase)
+    if observed_cursor is not None:
+        response["workflow_cursor"] = observed_cursor.to_dict()
     progress = (
         _build_progress_payload(plan_dir, state)
         if (plan_dir / "finalize.json").exists()
@@ -1106,7 +1290,28 @@ def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
             "plans": items,
         }
     plan_dir, state = cli_mod.load_plan(root, args.plan)
-    return _build_status_payload(plan_dir, state)
+    payload = _build_status_payload(plan_dir, state)
+
+    # Cloud callers need the same plan projection as every other status
+    # consumer, plus the resolver's identity-bound current-target record.  Do
+    # this inside the selected Megaplan runtime so a laptop-side observer never
+    # tries to interpret container-local PIDs or leases.  The extra arguments
+    # are intentionally hidden: they are a provider adapter contract, not a
+    # user-facing alternative status mode.
+    cloud_session = str(getattr(args, "cloud_session", "") or "").strip()
+    cloud_marker_dir = str(getattr(args, "cloud_marker_dir", "") or "").strip()
+    if cloud_session and cloud_marker_dir:
+        from arnold_pipelines.megaplan.cloud.current_target import (
+            resolve_current_target,
+        )
+
+        payload["current_target"] = resolve_current_target(
+            cloud_session,
+            marker_dir=Path(cloud_marker_dir),
+            repair_data_dir=Path(cloud_marker_dir) / "repair-data",
+            workspace_hint=root,
+        )
+    return payload
 
 
 def handle_audit(root: Path, args: argparse.Namespace) -> StepResponse:

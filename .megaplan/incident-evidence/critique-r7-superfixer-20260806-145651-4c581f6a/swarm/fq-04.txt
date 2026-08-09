@@ -1,0 +1,135 @@
+All identity checks complete — override.py at the pinned commit is byte-identical (9c9cfeb4…) to the source_record bound in the 14:03:37Z boundary receipt. Composing the report.
+
+```text
+FLASH REPORT
+1. question_id: fq-04
+2. verdict: supported
+3. investigated_claim: The canonical code path that writes meta.planner_repair, increments occurrences, opens the circuit, sets implementation_dispatch_allowed, and legally clears/resets/supersedes it after an engine-runtime repair is owned by the ordinary finalize phase handler — `record_rejected_candidate` (write/increment/open/set) and `clear_planner_repair` (clear) in `arnold_pipelines/megaplan/orchestration/graph_admission.py`, executed under the plan-lock publication CAS via a finalize re-entry; the external gate (`override recover-blocked`, Run Authority → Custody → WBC, action_type repair) owns only the re-entry admissibility boundary (blocked → gated predecessor) and performs no circuit mutation itself.
+4. vantage:
+   - hostname/container: managed resident subagent worker (hermes:deepseek:deepseek-v4-flash) on /workspace container
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 @ 234ac3524da29c1f630aee90ab1767a142a68a83 (tracked clean, 0 modified)
+   - investigator: deepseek-v4-flash (read-only; no producer invoked)
+5. utc_window:
+   - started: 2026-08-06T15:10Z
+   - ended: 2026-08-06T15:14Z
+6. artifacts:
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/planner_repair.json
+     exists: yes
+     type: persistence (planner-repair circuit record)
+     size_bytes: 535
+     mtime_utc: 2026-08-06T14:16:28.769Z
+     sha256: 31f7c10acb8b999ea53fd4af71ffb2bd30697749eec643654b3c0e54dc7f5087
+     role: persistence
+   - absolute_path: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/state.json
+     exists: yes
+     type: persistence (plan state; meta.planner_repair present: circuit_open true, occurrences 2, implementation_dispatch_allowed false, updated_at 14:16:28Z; meta.overrides[1] recover-blocked @14:03:37Z with phase_contract_repair binding repair_commit 234ac3524…, repair_scope engine_runtime, authority explicit_repair_commit_bound_to_engine_runtime)
+     size_bytes: 93599
+     mtime_utc: 2026-08-06T14:16:29.111Z
+     sha256: 2f7827e75ff6cef15c253b0397735d73793b22178b19fb65ade0f9571694a754
+     role: persistence
+   - absolute_path: .../.megaplan/plans/.chains/chain-880bd6e04632.json
+     exists: yes
+     type: persistence (chain state; milestone 0, last_state blocked, completed [])
+     size_bytes: 31335
+     mtime_utc: 2026-08-06T14:16:37.772Z
+     sha256: 4114151924cc9669c404ccc97c24331f833b6d3b893bab955e8cec36fe647466
+     role: persistence
+   - absolute_path: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/boundary_receipts/override_recover_blocked_authority.json
+     exists: yes
+     type: authority (Run Authority grant + fence + custody lease + WBC attempt + action_boundary repair, all satisfied @14:03:37Z; source_record override.py semantic_sha256 9c9cfeb4… @234ac3524)
+     size_bytes: 10534
+     mtime_utc: 2026-08-06T14:03:37Z
+     sha256: 837329eb76b98d70ddc67aea2565534fdc84ff07dab674fdc346b23fc19a4b0e
+     role: authority
+   - absolute_path: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/finalize_revise_feedback.json
+     exists: yes
+     type: persistence (finalized_task_feasibility_failed; next_step override recover-blocked; implementation_dispatch_allowed false)
+     size_bytes: (not captured)
+     mtime_utc: 2026-08-06T14:16:28Z
+     sha256: 12638269d6fa7fcd60f83d036348c423154501ae6aa4024d40d8b00ff89c8fa8
+     role: persistence
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/orchestration/graph_admission.py
+     exists: yes
+     type: policy (producer: record_rejected_candidate, clear_planner_repair; CIRCUIT_THRESHOLD=2)
+     size_bytes: 4345
+     mtime_utc: (git tree, not captured)
+     sha256: 5cfaaf9395737f2434fdec8c228c59371d733c8d8c35e0f2c7f5b4af2c4b6f41
+     role: policy
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/handlers/finalize.py
+     exists: yes
+     type: policy (call sites 1805-1816, 2082-2087, 2148-2153, clear at 2368-2372)
+     size_bytes: 101410
+     mtime_utc: (git tree, not captured)
+     sha256: 13efbdb7937bb73330f5aa4d19abeaf73904bea082d13cb0fbac650522695a4e
+     role: policy
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/handlers/override.py
+     exists: yes
+     type: policy (external gate _override_recover_blocked, lines 1194-1405; no planner_repair mutation)
+     size_bytes: 78462
+     mtime_utc: (git tree, not captured)
+     sha256: 9c9cfeb4bf0921834d5623d8d01b9ed5d78aef58cf0d1956aeebc268111e58bc
+     role: policy
+   - absolute_path: .../.megaplan/incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/raw/planner_repair.json
+     exists: yes
+     type: persistence (raw copy; byte-identical to live planner_repair.json)
+     size_bytes: 535
+     mtime_utc: (copy)
+     sha256: 31f7c10acb8b999ea53fd4af71ffb2bd30697749eec643654b3c0e54dc7f5087
+     role: persistence
+7. commands:
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: python3 -c 'import json; s=json.load(open(".megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/state.json")); ...' (state/meta dump)
+     started_utc: 2026-08-06T15:11Z
+     ended_utc: 2026-08-06T15:11Z
+     exit_code: 0
+     stdout_summary: current_state blocked; latest_failure null; resume_cursor null; meta.planner_repair {occurrences 2, circuit_open true, implementation_dispatch_allowed false, updated_at 14:16:28Z}; meta.overrides[1] recover-blocked @14:03:37Z with phase_contract_repair {repair_commit 234ac3524…, repair_scope engine_runtime, failure_fingerprint 4a772446…}
+     stderr_summary: (none)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: python3 -c 'import json; s=json.load(open(".../state.json")); [print(h.get("timestamp"),"|",h.get("result"),"|",(h.get("message") or "")[:120]) for h in s.get("history",[]) if h.get("step")=="finalize"]; ...chain dump'
+     started_utc: 2026-08-06T15:12Z
+     ended_utc: 2026-08-06T15:12Z
+     exit_code: 0
+     stdout_summary: finalize @14:13:57 planner_repair_required + error (dependency_unknown…); finalize @14:16:28 planner_repair_blocked + error; chain milestone 0, last_state blocked, completed []
+     stderr_summary: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     exact_command: GIT_OPTIONAL_LOCKS=0 git log --oneline -5 && GIT_OPTIONAL_LOCKS=0 git log --oneline -8 -- arnold_pipelines/megaplan/orchestration/graph_admission.py && GIT_OPTIONAL_LOCKS=0 git status --porcelain | wc -l
+     started_utc: 2026-08-06T15:12Z
+     ended_utc: 2026-08-06T15:12Z
+     exit_code: 0
+     stdout_summary: HEAD 234ac3524 fix(resident): bind managed hermes to approved runtime; graph_admission.py introduced by f72c9653d fix(megaplan): admit finalizer graphs before publication; porcelain count 0 (clean)
+     stderr_summary: (none)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: sha256sum …/planner_repair.json …/state.json …/chain-880bd6e04632.json …/raw/planner_repair.json && stat -c '%y %s %n' …
+     started_utc: 2026-08-06T15:12Z
+     ended_utc: 2026-08-06T15:12Z
+     exit_code: 0
+     stdout_summary: hashes as listed in field 6; live planner_repair.json == raw copy (31f7c10a…)
+     stderr_summary: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     exact_command: sha256sum …/graph_admission.py …/handlers/finalize.py …/handlers/override.py && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD && GIT_OPTIONAL_LOCKS=0 git status --porcelain | wc -l
+     started_utc: 2026-08-06T15:13Z
+     ended_utc: 2026-08-06T15:13Z
+     exit_code: 0
+     stdout_summary: 5cfaaf93… (graph_admission.py), 13efbdb7… (finalize.py), 9c9cfeb4… (override.py — matches boundary receipt source_record exactly); HEAD 234ac3524…; 0 modified
+     stderr_summary: (none)
+8. trace:
+   - producer: finalize phase handler (command `megaplan finalize --plan cl2-wbc-backed-ledger-20260805-2140`, driver-dispatched; modules graph_admission.py + handlers/finalize.py @234ac3524)
+     produced_value_or_key: candidate file finalize_candidates/36bcefaf…json, planner_repair.json, state.meta.planner_repair (occurrences, circuit_open, implementation_dispatch_allowed=false, prior_admitted_*_sha256), finalize_revise_feedback.json (result planner_repair_required|planner_repair_blocked, next_step finalize|override recover-blocked)
+     consumer: _route_finalize_task_feasibility_failure_to_revise (finalize.py:1803-1816 reads repair → routes), finalize success path (finalize.py:2368-2372 clear_planner_repair), driver/workflow (next_step dispatch), status/phase_result readers
+     consumed_value_or_key: repair.circuit_open (blocked projection + next_step "override recover-blocked"), repair absence → clear on admission; meta.planner_repair popped on success
+     persistence: planner_repair.json + state.json meta (atomic_write_json under plan lock)
+     persisted_value_or_key: {schema megaplan.planner_repair, candidate_id candidate:36bcefaf…, failure_fingerprint 382e25a2…, occurrences 2, circuit_open true, prior_state gated, prior_admitted_finalize_sha256 null, accepted_authority_preserved true, implementation_dispatch_allowed false, updated_at 2026-08-06T14:16:28Z} (sha 31f7c10a…)
+     policy: CIRCUIT_THRESHOLD=2 (graph_admission.py:22,100); same-fingerprint → +1, different fingerprint → reset to 1 (87-91); clear only after admission (finalize.py:2372); re-entry gate = override recover-blocked (override_wbc.py:99-107 required_capability override.recover_blocked, action_type repair; boundary receipt checks run_authority_grant/fence/custody_lease/wbc_attempt all satisfied, gate_result authorized, enforcement_enabled true; override.py:1198-1231 predicates: state==blocked, --reason required (cli/__init__.py:3691-3694), resume_cursor.phase required, deterministic_phase_failure+repair_phase_contract → validated_deterministic_phase_repair binds repair_commit/failure_fingerprint/repair_scope)
+     predicate_and_result: occurrences(1→2) >= 2 → circuit_open True (observed 14:16:28Z); same fingerprint 382e25a2… on both 14:13:57Z and 14:16:28Z attempts → occurrences 2; gate 14:03:37Z phase_contract_repair.failure_fingerprint 4a772446… ≠ circuit fingerprint 382e25a2… (gate never consults meta.planner_repair)
+9. adherence_classification: ADHERENCE
+10. missing_or_contradictory_structure: (a) `implementation_dispatch_allowed` is producer/persistence-only — written False by record_rejected_candidate (graph_admission.py:113) and echoed in finalize_revise_feedback.json (1844,1882); no reader/enforcer exists anywhere in the pinned runtime (searched arnold_pipelines: only finalize.py + graph_admission.py reference it; test asserts the response value False). It is a declarative signal, not an enforced dispatch gate. (b) clear_planner_repair pops only the in-memory state meta key; no code unlinks/removes planner_repair.json from disk — the file persists as history after a successful clear (no unlink/rmdir in graph_admission.py; sole references are atomic_write_json). (c) The 14:03:37Z gate's bound failure_fingerprint (4a772446…) differs from the circuit fingerprint that subsequently opened the circuit (382e25a2…) — the gate does not validate against meta.planner_repair, so a stale/different gate binding does not prevent a new fingerprint from opening the circuit on the next re-entry.
+11. evidence_supporting_verdict: (1) Producer identity: record_rejected_candidate (graph_admission.py:71-118) invoked from finalize handler at finalize.py:1805-1816 (fallback), 2082-2087 and 2148-2153 (feasibility rejection in _write_finalize_artifacts) — file sha 5cfaaf93…/13efbdb7… at HEAD 234ac3524 (clean). (2) Increment/open logic verified in source (occurrences +1 same fingerprint; circuit_open = occurrences >= 2) and observed in live state (occurrences 2, circuit_open true, updated_at 14:16:28Z). (3) History confirms the two-occurence sequence: planner_repair_required @14:13:57Z then planner_repair_blocked @14:16:28Z. (4) Clear is owned by ordinary finalize success: sole clear_planner_repair call site finalize.py:2372, reached only when _write_finalize_artifacts returns without TaskFeasibilityError (admission passed), before success projection. (5) Reset/supersede by different fingerprint is in-source (graph_admission.py:87-91 → occurrences 1, circuit_open false). (6) External gate does NOT mutate the circuit: _override_recover_blocked (override.py:1194-1405) only validates (blocked state, --reason, resume_cursor, validated_deterministic_phase_repair), projects to recovery predecessor (gated), pops latest_failure/active_step, archives phase_result, appends meta.overrides — no planner_repair reference; boundary receipt (sha 837329eb…) confirms Run Authority grant/fence 1253577917/custody lease epoch 1/WBC attempt satisfied with action_boundary gate_result authorized, action_type repair. (7) Plan lock is the publication CAS (graph_admission.py docstring; finalize.py:2337-2344 lock_held=True) — record_rejected_candidate and the clear both execute under it.
+12. evidence_against_verdict: (1) While circuit_open, the handler projects state to blocked with next_step "override recover-blocked" (finalize.py:1817-1826), so an ordinary finalize re-entry cannot occur spontaneously — the external gate is a hard prerequisite for re-entry admissibility; this could be read as "the external gate owns the transition". It does not: the gate only restores the predecessor state; the circuit record itself is cleared only by the finalize success path or superseded by a different fingerprint. (2) implementation_dispatch_allowed has no consumer (write-only), so nothing in the runtime enforces the dispatch block beyond the state projection — no contradicting producer, but no enforcing reader either. (3) No observed instance of an actual clear in this plan's history (no successful finalize has occurred), so the clear path is verified from source/call-graph only, not from a live occurrence.
+13. confidence: high
+14. confidence_basis: Full producer→consumer→persistence→policy chain identity-matched: runtime pinned at 234ac3524 tracked clean; override.py file sha (9c9cfeb4…) equals the boundary receipt's source_record semantic_sha256; live planner_repair.json byte-identical to raw copy; live state/chain history consistent with source logic; both rejection call sites and the sole clear call site read directly from the pinned source; gate authority receipt enumerates all four satisfied checks. Residual uncertainty limited to (a) the write-only nature of implementation_dispatch_allowed and (b) no observed live clear (source-verified only).
+15. immediate_decision_informed: Re-entry admissibility boundary: after the engine-runtime repair (rebind to 234ac3524), a further `override recover-blocked` gate (Run Authority grant + custody lease + WBC attempt, action_boundary repair) is required to move blocked→gated so finalize may re-run; the gate itself does not and cannot clear the open circuit. Once admitted, the ordinary finalize re-entry owns the outcome: admission success clears meta.planner_repair (finalize.py:2372); a rejection with the same fingerprint 382e25a2… increments occurrences to 3 and stays blocked (re-block, no auto-loop); a rejection with a different fingerprint resets occurrences to 1 and closes the circuit. The runner being dead means no re-entry is in flight — recovery action (gate) must be externally driven.
+16. durable_decision_informed: Circuit reset is owned repair work of the ordinary finalize re-entry (in-process, under plan-lock CAS), not an external gate; the external gate is the admissibility boundary only. Durable design implications: (1) implementation_dispatch_allowed is currently a dead signal — no execute-side admission consumer enforces it, so "circuit" enforcement rests solely on the blocked-state projection + next_step routing; (2) clear_planner_repair never removes planner_repair.json from disk, so readers must not treat file existence as circuit-open (state.meta is authoritative); (3) the recover-blocked gate's failure_fingerprint binding is not cross-validated against meta.planner_repair.failure_fingerprint, allowing gate/repair evidence to reference a different fingerprint than the one that opened the circuit.
+17. safety_observations: No producer invoked; all inspection read-only (rg/sed/stat/sha256sum/git with GIT_OPTIONAL_LOCKS=0). No state, lock, WBC, or chain file was written. The write-only implementation_dispatch_allowed means a downstream execute/aggregation consumer would not be stopped by this field itself — only by the blocked state projection and next_step gate; any repair must therefore re-verify circuit state via state.meta.planner_repair and the phase_result/blocker evaluation at gate time. The 14:03:37Z gate already ran once; a second gate for the same phase must re-satisfy all four authority checks (grant, fence, lease, WBC attempt) with fresh evidence for fingerprint 382e25a2… and repair_commit containing the splitter rewire — the prior gate's binding (4a772446…) does not cover it.
+18. unresolved_questions: (1) Does any external/cloud layer (repair_investigation.py recover-blocked path, chain_runner) ever reset meta.planner_repair outside the finalize handler? Bounded search of arnold_pipelines found no other writer, but cloud/repair_data stores were not exhaustively scanned. (2) Is a third same-fingerprint rejection after a repaired-runtime re-entry treated as a hard stop (occurrences 3) with no auto-recovery, or does a successful admission retroactively clear the file on disk? (3) Why does the 14:03:37Z override bind failure_fingerprint 4a772446… when the circuit fingerprint is 382e25a2… — was 4a772446… the pre-rebind fingerprint, and does the splitter-rewire fix need the gate re-run with 382e25a2… before finalize re-entry is admissible?
+```

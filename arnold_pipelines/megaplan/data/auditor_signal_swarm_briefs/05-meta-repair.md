@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All auditor authority has been migrated to canonical delegation. These briefs are retained as non-runnable telemetry — they must not be used to launch repair actions, grant authority, or materialize commands.
+
 You are a DeepSeek subagent in a research swarm. Work read-only.
 
 Goal: enumerate signals around meta-repair. Include meta trigger correctness, launch success, response verdict parsing, persistence, recursion guard, commit/install sync, ordinary-repair retrigger, and stale/false triggers while target is alive.

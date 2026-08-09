@@ -335,7 +335,7 @@ rows:
   proof_artifacts:
   - arnold_pipelines/megaplan/workflows/workflow.pypeline
   - tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml
-  - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
+  - tests/arnold_pipelines/megaplan/test_native_contract.py
 - id: handler-purity-audit
   status: implemented
   semantic_carrier: audited_pure_phase_body
@@ -378,16 +378,20 @@ rows:
   - tests/arnold_pipelines/megaplan/test_native_contract.py
 - id: behavior-parity
   status: implemented
+  deployed_proof_status: pending
   semantic_carrier: canonical_source
   carrier_evidence:
   - arnold_pipelines/megaplan/workflows/workflow.pypeline
   proof_categories:
   - golden_suite
-  - live_smoke
+  - deployed_live_canary_receipt
   - installed_wheel_conformance
   proof_artifacts:
   - arnold_pipelines/megaplan/workflows/workflow.pypeline
   - tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
+  - arnold_pipelines/megaplan/cloud/m11_workflow_canary.py
+  - tests/cloud/test_m11_workflow_canary.py
+  - docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md
 - id: source-readability
   status: implemented
   semantic_carrier: canonical_source

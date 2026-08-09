@@ -106,6 +106,49 @@ class TemplateRegistration:
     #: integration is deferred.  Used by parity tests.
     note: str = ""
 
+    # ── optional boundary template / contract references ────────────────
+    # These fields allow a TemplateRegistration to cross-reference the
+    # declarative boundary contract registry so that structured-output
+    # promotion, semantic-health checks, and receipt emission can read
+    # template/profile metadata without reaching into handler-private
+    # surfaces.
+
+    #: Optional reference to a typed boundary template id (e.g.
+    #: ``\"template.validation_boundary\"``).  When set, consumers can
+    #: retrieve the canonical :class:`BoundaryContract` template from
+    #: :data:`~arnold_pipelines.megaplan.workflows.boundary_contracts.TYPED_BOUNDARY_TEMPLATES_BY_ID`.
+    boundary_template_id: str | None = None
+
+    #: Optional version string for the referenced boundary template
+    #: (e.g. ``\"1.0\"``).  Paired with *boundary_template_id* for
+    #: compatibility-pinning checks.
+    boundary_template_version: str | None = None
+
+    #: Optional tuple of :class:`BoundaryContract` ``boundary_id`` values
+    #: that this registration satisfies or bridges (e.g.
+    #: ``(\"gate_to_revise\",)`` for the gate phase).  Used by
+    #: semantic-health to cross-reference template registrations with
+    #: boundary contracts.
+    boundary_contract_ids: tuple[str, ...] = ()
+
+    #: Optional compatibility classification when this registration
+    #: references a boundary template.  Uses the
+    #: :class:`~arnold.workflow.boundary_evidence.TemplateCompatibility`
+    #: enum values (``\"exact_match\"``, ``\"compatible_extension\"``, etc.).
+    compatibility: str | None = None
+
+    #: Strict schema hash for this phase's output contract (Step 7F).
+    #: When set, consumers MUST verify that produced output matches this
+    #: exact hash before accepting the phase as complete.  None for
+    #: phases that have no structured-output contract (markdown_exempt,
+    #: subloop_exempt) or whose handler integration is deferred.
+    schema_hash: str | None = None
+
+    #: Whether this phase contributes to supported C01-C04 counts (Step 7G).
+    #: Only file_fill and batch_assembly phases with a non-None schema_hash
+    #: and active handler integration are counted as supported.
+    supported_count: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Registry storage
@@ -172,7 +215,13 @@ for _reg in [
         mode="file_fill",
         scratch_filename="finalize_output.json",
         builder=_write_finalize_template_from_state,
-        note="File-fill template builder and handler promotion are wired.",
+        boundary_template_id="template.artifact_promotion",
+        boundary_template_version="1.0",
+        boundary_contract_ids=("finalize_artifacts", "finalize_fallback"),
+        compatibility="compatible_extension",
+        note="File-fill template builder and handler promotion are wired. "
+        "References template.artifact_promotion as its declarative boundary "
+        "template for artifact promotion semantics.",
     ),
     TemplateRegistration(
         phase_identity="critique",
@@ -195,7 +244,13 @@ for _reg in [
         mode="file_fill",
         scratch_filename="gate_output.json",
         builder=_write_gate_template_from_state,
-        note="File-fill template builder and reprompt scratch reuse are wired.",
+        boundary_template_id="template.validation_boundary",
+        boundary_template_version="1.0",
+        boundary_contract_ids=("gate_to_revise",),
+        compatibility="compatible_extension",
+        note="File-fill template builder and reprompt scratch reuse are wired. "
+        "References template.validation_boundary (ValidationBoundary) as its "
+        "declarative boundary template.",
     ),
     TemplateRegistration(
         phase_identity="critique_evaluator",
@@ -328,6 +383,46 @@ def _validate_builder_contracts() -> None:
 _validate_builder_contracts()
 
 
+# ── Step 7F: compute schema hashes for structured-output phases ────────
+def _compute_registry_schema_hashes() -> None:
+    """Compute and attach strict schema hashes to structured-output registrations.
+
+    Runs at import time so that get_supported_schema_phases() and
+    assert_no_bypassable_phases() operate on current data immediately.
+    Only file_fill and batch_assembly phases receive a computed hash;
+    deferred/markdown_exempt/subloop_exempt phases keep schema_hash=None.
+    """
+    import json as _json
+    import hashlib as _hashlib
+    from arnold_pipelines.megaplan.schemas import SCHEMAS as _SCHEMAS
+
+    for phase_id, reg in list(_TEMPLATE_REGISTRY.items()):
+        if reg.mode not in ("file_fill", "batch_assembly"):
+            continue
+        schema_key = f"{phase_id}.json"
+        schema = _SCHEMAS.get(schema_key)
+        if isinstance(schema, dict):
+            raw = _json.dumps(schema, sort_keys=True, separators=(",", ":"))
+            digest = _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            _TEMPLATE_REGISTRY[phase_id] = TemplateRegistration(
+                phase_identity=reg.phase_identity,
+                mode=reg.mode,
+                scratch_filename=reg.scratch_filename,
+                builder=reg.builder,
+                pre_populated=reg.pre_populated,
+                note=reg.note,
+                boundary_template_id=reg.boundary_template_id,
+                boundary_template_version=reg.boundary_template_version,
+                boundary_contract_ids=reg.boundary_contract_ids,
+                compatibility=reg.compatibility,
+                schema_hash=digest,
+                supported_count=True,
+            )
+
+
+_compute_registry_schema_hashes()
+
+
 # ---------------------------------------------------------------------------
 # Lookup helpers
 # ---------------------------------------------------------------------------
@@ -376,3 +471,58 @@ def get_phases_by_mode(mode: RegistryMode) -> frozenset[str]:
 def is_registered(phase_identity: str) -> bool:
     """Return ``True`` if *phase_identity* has a template registration."""
     return phase_identity in _TEMPLATE_REGISTRY
+
+
+# ── Step 7F / 7G: schema-hash enforcement and C01-C04 counts ────────────
+
+def get_supported_schema_phases() -> "frozenset[str]":
+    """Return the set of phases that contribute to C01-C04 supported counts.
+
+    A phase is supported only when it is registered in file_fill or
+    batch_assembly mode AND has a non-None schema_hash AND is marked
+    supported_count=True.  Deferred, markdown_exempt, and subloop_exempt
+    phases are always excluded.
+    """
+    return frozenset(
+        key
+        for key, reg in _TEMPLATE_REGISTRY.items()
+        if reg.mode in ("file_fill", "batch_assembly")
+        and reg.schema_hash is not None
+        and reg.supported_count
+    )
+
+
+def get_unsupported_deferred_phases() -> "frozenset[str]":
+    """Return the set of deferred phases that are excluded from C01-C04 counts.
+
+    A deferred phase is action-off until a handler integration and strict
+    schema hash exist.
+    """
+    return frozenset(
+        key
+        for key, reg in _TEMPLATE_REGISTRY.items()
+        if reg.mode == "deferred" or (reg.schema_hash is None and reg.mode in ("file_fill", "batch_assembly"))
+    )
+
+
+def get_supported_count() -> int:
+    """Return the count of C01-C04 supported structured-output phases."""
+    return len(get_supported_schema_phases())
+
+
+def assert_no_bypassable_phases() -> None:
+    """Raise ValueError if any file_fill or batch_assembly phase lacks a schema_hash.
+
+    This ensures no phase can bypass strict schema hash enforcement through
+    pre-populated files or undeclared contracts.
+    """
+    missing: list[str] = []
+    for key, reg in _TEMPLATE_REGISTRY.items():
+        if reg.mode in ("file_fill", "batch_assembly") and reg.schema_hash is None:
+            missing.append(key)
+    if missing:
+        raise ValueError(
+            f"Phases missing strict schema hash: {', '.join(sorted(missing))}. "
+            f"All file_fill and batch_assembly phases must declare a schema_hash "
+            f"(Step 7F). Pre-populated files cannot bypass parity."
+        )

@@ -42,22 +42,18 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     preflight_mutating_phase,
     preflight_phase,
 )
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    resume_clarification_phase_wbc_if_present,
+)
 from arnold_pipelines.megaplan._core import (
-    add_or_increment_debt,
     append_history,
-    extract_subsystem_tag,
-    find_command,
     infer_next_steps,
     latest_plan_path,
-    load_debt_registry,
-    load_flag_registry,
     load_plan,
     now_utc,
     read_json,
-    save_debt_registry,
     save_state_merge_meta,
     sha256_file,
-    unresolved_significant_flags,
     workflow_next,
 )
 from arnold_pipelines.megaplan._core import topology as _topology
@@ -66,24 +62,32 @@ from arnold_pipelines.megaplan.control_interface import (
     apply_transition,
     emit_override_authority_receipt,
 )
-from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.blocker_recovery import (
+    command_blocker_details,
+    evaluate_blocker_recovery,
+    validated_deterministic_phase_repair,
+)
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
-    build_gate_artifact,
-    failed_preflight_checks,
     has_high_complexity_unverifiable_checks,
     is_operational_unverifiable_check,
     only_agent_availability_preflight_failed,
-    run_gate_checks,
 )
-from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    apply_state_projection,
+)
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
     read_phase_result,
 )
-from arnold_pipelines.megaplan.replan_state import reset_replan_loop_state
-from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
+from arnold_pipelines.megaplan.replan_state import (
+    blocked_iterate_gate_replan_allowed,
+    invalidate_replan_derived_artifacts,
+    reset_replan_loop_state,
+)
+from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
@@ -120,6 +124,33 @@ def _route_signal_for_override_action(action: str) -> str | None:
     from arnold_pipelines.megaplan.workflows.override_matrix import ROUTE_SIGNAL_BY_ACTION
 
     return ROUTE_SIGNAL_BY_ACTION.get(action)
+
+
+def _archive_stale_phase_result_for_resume(plan_dir: Path) -> str | None:
+    """Move the terminal phase_result aside before resuming a blocked plan.
+
+    ``recover-blocked`` changes ``state.current_state`` back to the predecessor
+    phase. Keeping the old terminal ``phase_result.json`` in place makes status
+    and blocker-recovery read contradictory evidence from the superseded blocked
+    phase.
+    """
+
+    phase_result_path = plan_dir / "phase_result.json"
+    if not phase_result_path.exists():
+        return None
+    stamp = (
+        now_utc()
+        .replace("-", "")
+        .replace(":", "")
+        .replace(".", "")
+    )
+    backup_path = plan_dir / f"phase_result.recovered-{stamp}.json"
+    suffix = 1
+    while backup_path.exists():
+        backup_path = plan_dir / f"phase_result.recovered-{stamp}-{suffix}.json"
+        suffix += 1
+    phase_result_path.replace(backup_path)
+    return backup_path.name
 
 
 def _override_response_owns_next_step(action: str) -> bool:
@@ -250,6 +281,16 @@ def _build_override_action_output(
         extras: list[tuple[str, Any]] = []
         if warnings:
             extras.append(("warnings", warnings))
+        reentry_invocation_id = (artifacts or {}).get(
+            "phase_wbc_reentry_invocation_id"
+        )
+        if isinstance(reentry_invocation_id, str) and reentry_invocation_id:
+            extras.append(
+                (
+                    "phase_wbc_reentry_invocation_id",
+                    reentry_invocation_id,
+                )
+            )
         return OverrideActionOutput(
             summary="Prep clarification resolved; plan phase is now ready to run.",
             state=STATE_PREPPED,
@@ -289,7 +330,14 @@ def _build_override_action_output(
             state=state["current_state"],
             route_signal=route_signal,
             next_step=next_steps[0] if next_steps else None,
-            extras=(("previous_profile", previous_profile), ("profile", new_profile)),
+            extras=(
+                ("previous_profile", previous_profile),
+                ("profile", new_profile),
+                (
+                    "profile_refresh_receipt",
+                    (artifacts or {}).get("profile_refresh_receipt"),
+                ),
+            ),
         )
     if action in {"set-model", "set-vendor"}:
         meta = state.get("meta")
@@ -342,7 +390,11 @@ def _routed_override_response(
         "state": action_output.state,
     }
     if _override_response_owns_next_step(action) and action_output.next_step is not None:
-        response["next_step"] = action_output.next_step
+        apply_response_projection(
+            response,
+            route_signal=str(action_output.route_signal or action),
+            next_step=action_output.next_step,
+        )
     if action_output.route_signal is not None:
         response["route_signal"] = action_output.route_signal
     for key, value in action_output.extras:
@@ -511,15 +563,44 @@ def _handle_routed_override(
     state: PlanState,
     args: argparse.Namespace,
 ) -> StepResponse:
+    if args.override_action == "replan":
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            reconcile_canonical_source_for_replan,
+        )
+
+        reason = (
+            getattr(args, "reason", None)
+            or getattr(args, "note", None)
+            or "Re-entering planning loop"
+        )
+        reconcile_canonical_source_for_replan(plan_dir, state, reason=reason)
+        save_state_merge_meta(plan_dir, state)
+    if args.override_action == "cutover":
+        # CL5 Step 8c: the cutover reaches the SAME deferred cutover logic as
+        # the default-path _override_cutover handler (Step 8b). Combined
+        # authority (human-gate operator approval AND lifecycle mutation
+        # authority via repair_queue) is enforced fail-closed FIRST, then the
+        # deferred cutover orchestration runs before the control transition is
+        # constructed. The deferred import inside _invoke_cutover_orchestration
+        # keeps this special case Phase 1 safe (registration does not invoke
+        # the not-yet-built package); invocation is Phase 2+ only. Both paths
+        # therefore fail closed when either required authority is absent.
+        _enforce_cutover_combined_authority(state, args)
+        _invoke_cutover_orchestration(root, plan_dir, state, args)
     transition = ControlTransition(
         op="override",
         target_id=args.override_action,
         payload={
             "note": getattr(args, "note", None),
             "reason": getattr(args, "reason", None),
+            "repair_commit": getattr(args, "repair_commit", None),
+            "failure_fingerprint": getattr(args, "failure_fingerprint", None),
+            "repair_scope": getattr(args, "repair_scope", None),
             "source": getattr(args, "source", None),
             "robustness": getattr(args, "robustness", None),
             "profile": getattr(args, "profile", None),
+            "expected_profile_source": getattr(args, "expected_profile_source", None),
+            "expected_profile_sha256": getattr(args, "expected_profile_sha256", None),
             "phase": getattr(args, "phase", None),
             "model": getattr(args, "model", None),
             "effort": getattr(args, "effort", None),
@@ -549,14 +630,33 @@ def _handle_routed_override(
             )
         raise CliError("invalid_transition", result.reason or "routed override rejected")
     persisted_state = load_plan(root, args.plan)[1]
+    archived_phase_result: str | None = None
+    if args.override_action == "recover-blocked":
+        archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
+        if archived_phase_result is not None:
+            meta = persisted_state.get("meta")
+            overrides = meta.get("overrides") if isinstance(meta, dict) else None
+            if isinstance(overrides, list) and overrides:
+                latest_override = overrides[-1]
+                if (
+                    isinstance(latest_override, dict)
+                    and latest_override.get("action") == "recover-blocked"
+                ):
+                    latest_override["archived_phase_result"] = archived_phase_result
+                    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+                    write_plan_state(plan_dir, mode="replace", state=persisted_state)
     _emit_routed_override_events(args.override_action, plan_dir=plan_dir, state=persisted_state, args=args)
-    return _routed_override_response(
+    response = _routed_override_response(
         args.override_action,
         plan_dir=plan_dir,
         state=persisted_state,
         args=args,
         artifacts=dict(result.artifacts),
     )
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
+    return response
 
 
 def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
@@ -735,7 +835,7 @@ def _override_add_note(
 def _override_abort(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
-    state["current_state"] = STATE_ABORTED
+    apply_state_projection(state, STATE_ABORTED, route_signal="abort")
     _append_to_meta(
         state,
         "overrides",
@@ -870,7 +970,7 @@ def _override_adopt_execution(
     reason = args.reason or "Adopted complete execution artifact after post-worker recovery."
     timestamp = now_utc()
 
-    state["current_state"] = STATE_EXECUTED
+    apply_state_projection(state, STATE_EXECUTED, route_signal="adopt-execution")
     state.pop("resume_cursor", None)
     state.pop("active_step", None)
     adoption_record = {
@@ -939,157 +1039,13 @@ def _override_adopt_execution(
     return response
 
 
-def _override_force_proceed(
-    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
-) -> StepResponse:
-    # Strict-notes invariants. Off by default; on for plans initialized with
-    # --strict-notes (and auto-on for --mode metaplan/doc). Two checks:
-    #   (1) Reject if any user-source note has been attached after the most
-    #       recent absorption event (revise / structural-edit / replan).
-    #   (2) If the last gate ESCALATEd, require explicit --user-approved.
-    # Note: finalize is not an override path; strict-notes does not block it.
-    if state["config"].get("strict_notes", False):
-        unabsorbed = _unabsorbed_user_notes(plan_dir, state)
-        if unabsorbed:
-            raise CliError(
-                "unabsorbed_notes_exist",
-                (
-                    f"strict_notes: {len(unabsorbed)} note(s) attached after the last "
-                    "revise; run revise (or replan / step-edit) before force-proceed."
-                ),
-                extra={
-                    "unabsorbed_note_timestamps": [n["timestamp"] for n in unabsorbed]
-                },
-            )
-        last_recommendation = (state.get("last_gate") or {}).get("recommendation")
-        if last_recommendation == "ESCALATE" and not getattr(
-            args, "user_approved", False
-        ):
-            raise CliError(
-                "escalate_requires_user_approval",
-                (
-                    "strict_notes: gate escalated and requires --user-approved "
-                    "before force-proceed."
-                ),
-            )
-    if state["current_state"] == STATE_EXECUTED:
-        # Force-proceed from review loop: mark as done despite review issues
-        _append_to_meta(
-            state,
-            "overrides",
-            {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
-        )
-        state["current_state"] = STATE_DONE
-        save_state_merge_meta(plan_dir, state)
-        return {
-            "success": True,
-            "step": "override",
-            "summary": "Force-proceeded past review into done state.",
-            "state": STATE_DONE,
-        }
-    if state["current_state"] == STATE_BLOCKED:
-        if not (
-            _last_gate_is_agent_availability_preflight_block(state)
-            or _blocked_plan_has_operational_unverifiable_evidence(plan_dir, state)
-            or getattr(args, "user_approved", False)
-        ):
-            raise CliError(
-                "invalid_transition",
-                "force-proceed from blocked is only supported for recoverable gate blocks (pass --user-approved to override)",
-                valid_next=infer_next_steps(state),
-            )
-    elif state["current_state"] != STATE_CRITIQUED:
-        raise CliError(
-            "invalid_transition",
-            "force-proceed is only supported from critiqued, executed, or recoverable blocked state",
-            valid_next=infer_next_steps(state),
-        )
-    gate_checks = run_gate_checks(plan_dir, state, command_lookup=find_command)
-    hard_failed = [
-        name
-        for name in failed_preflight_checks(gate_checks["preflight_results"])
-        if name not in {"claude_available", "codex_available"}
-    ]
-    if hard_failed:
-        labels = {
-            "project_dir_exists": "project directory",
-            "project_dir_writable": "project directory writable",
-            "success_criteria_present": "success criteria",
-        }
-        readable = [labels.get(name, name) for name in hard_failed]
-        raise CliError(
-            "unsafe_override",
-            "force-proceed cannot bypass hard preflight failures: " + ", ".join(readable),
-        )
-    signals = build_gate_signals(plan_dir, state, root=root)
-    merged_signals = {
-        "robustness": signals["robustness"],
-        "signals": signals["signals"],
-        "warnings": signals.get("warnings", []),
-        "criteria_check": gate_checks["criteria_check"],
-        "preflight_results": gate_checks["preflight_results"],
-        "unresolved_flags": gate_checks["unresolved_flags"],
-    }
-    gate = build_gate_artifact(
-        merged_signals,
-        {
-            "recommendation": "PROCEED",
-            "rationale": args.reason or "User forced execution past the gate.",
-            "signals_assessment": "Forced proceed override applied by the orchestrator.",
-            "warnings": signals.get("warnings", []),
-        },
-        override_forced=True,
-        orchestrator_guidance="Force-proceed override applied. Proceed to finalize.",
-    )
-    _write_gate_json(plan_dir, gate)
-    flag_registry = load_flag_registry(plan_dir)
-    unresolved_flags = unresolved_significant_flags(flag_registry)
-    debt_registry = load_debt_registry(root)
-    for flag in unresolved_flags:
-        add_or_increment_debt(
-            debt_registry,
-            subsystem=extract_subsystem_tag(flag["concern"]),
-            concern=flag["concern"],
-            flag_ids=[flag["id"]],
-            plan_id=state["name"],
-        )
-    save_debt_registry(root, debt_registry)
-    state["current_state"] = STATE_GATED
-    state["meta"].pop("user_approved_gate", None)
-    state["last_gate"] = {}
-    _append_to_meta(
-        state,
-        "overrides",
-        {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
-    )
-    save_state_merge_meta(plan_dir, state)
-    try:
-        from arnold_pipelines.megaplan.observability.events import emit, EventKind
-        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "force-proceed", "reason": args.reason})
-    except Exception:
-        _warn_best_effort_emit_failure(
-            "M3A_WARN_EMIT_OVERRIDE_FORCE_PROCEED",
-            action="override-force-proceed",
-            plan_dir=plan_dir,
-            event_kind="override_applied",
-        )
-    response: StepResponse = {
-        "success": True,
-        "step": "override",
-        "summary": "Force-proceeded past gate judgment into gated state.",
-        "state": STATE_GATED,
-        "orchestrator_guidance": gate["orchestrator_guidance"],
-        "debt_entries_added": len(unresolved_flags),
-    }
-    return response
-
-
 def _override_replan(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     previous_state = state["current_state"]
-    if previous_state not in allowed:
+    blocked_gate_replan = blocked_iterate_gate_replan_allowed(state)
+    if previous_state not in allowed and not blocked_gate_replan:
         raise CliError(
             "invalid_transition",
             f"replan requires state {', '.join(sorted(allowed))}, got '{previous_state}'",
@@ -1111,6 +1067,21 @@ def _override_replan(
     )
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": timestamp, "note": args.note})
+    from arnold_pipelines.megaplan.planning.source_binding import (
+        reconcile_canonical_source_for_replan,
+    )
+
+    source_reconciliation = reconcile_canonical_source_for_replan(
+        plan_dir,
+        state,
+        reason=reason,
+    )
+    artifact_invalidation = invalidate_replan_derived_artifacts(
+        plan_dir,
+        timestamp=timestamp,
+        include_critique_epoch=True,
+        include_gate_epoch=True,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1131,6 +1102,10 @@ def _override_replan(
         "plan_file": str(plan_file),
         "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
     }
+    if source_reconciliation is not None:
+        response["canonical_source_binding"] = source_reconciliation
+    if artifact_invalidation is not None:
+        response["artifact_invalidation"] = artifact_invalidation
     return response
 
 
@@ -1143,6 +1118,15 @@ def _external_error_requires_resume(
     phase_result: Any | None,
 ) -> bool:
     latest_failure = state.get("latest_failure")
+    # Deterministic provider response-contract failures have their own
+    # commit/fingerprint-bound recovery gate below.  A generic provider resume
+    # would bypass that evidence and replay the same invalid request.
+    if (
+        isinstance(latest_failure, dict)
+        and latest_failure.get("kind") == "provider_contract_failure"
+        and resume_cursor.get("retry_strategy") == "repair_provider_contract"
+    ):
+        return False
     if (
         isinstance(latest_failure, dict)
         and latest_failure.get("kind") == "external_error"
@@ -1224,7 +1208,13 @@ def _blocked_plan_has_operational_unverifiable_evidence(
 def _override_recover_blocked(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
-    if state["current_state"] != STATE_BLOCKED:
+    latest_failure = state.get("latest_failure")
+    aborted_with_blocked_failure = (
+        state["current_state"] == STATE_ABORTED
+        and isinstance(latest_failure, dict)
+        and latest_failure.get("state") == STATE_BLOCKED
+    )
+    if state["current_state"] != STATE_BLOCKED and not aborted_with_blocked_failure:
         raise CliError(
             "invalid_transition",
             f"recover-blocked requires state '{STATE_BLOCKED}', got '{state['current_state']}'",
@@ -1253,7 +1243,6 @@ def _override_recover_blocked(
             f"recover-blocked does not know how to resume phase {phase!r}",
             extra={"resume_cursor": resume_cursor},
         )
-    latest_failure = state.get("latest_failure")
     if isinstance(latest_failure, dict) and latest_failure.get("kind") == "authority_divergence":
         plan_name = state.get("name") or getattr(args, "plan", None) or plan_dir.name
         rerun_command = f"megaplan {phase} --plan {plan_name}"
@@ -1299,21 +1288,76 @@ def _override_recover_blocked(
                 "suggested_recovery_commands": [resume_command],
             },
         )
-    if phase_result is None:
+    phase_repair_evidence: dict[str, str] | None = None
+    artifact_invalidation: dict[str, Any] | None = None
+    deterministic_phase_repair_required = bool(
+        isinstance(latest_failure, dict)
+        and (
+            (
+                latest_failure.get("kind") == "deterministic_phase_failure"
+                and resume_cursor.get("retry_strategy") == "repair_phase_contract"
+            )
+            or (
+                latest_failure.get("kind") == "provider_contract_failure"
+                and resume_cursor.get("retry_strategy") == "repair_provider_contract"
+            )
+        )
+    )
+    if deterministic_phase_repair_required:
+        # A deterministic phase failure is recorded specifically because the
+        # current phase did not emit a usable phase_result.  A plan directory
+        # can still contain phase_result.json from an earlier successful phase
+        # or attempt (the r5 incident retained `revise` while `critique`
+        # failed).  That stale artifact must not bypass the commit- and
+        # failure-fingerprint-bound repair gate.
+        phase_repair_evidence = validated_deterministic_phase_repair(
+            root,
+            state,
+            resume_cursor,
+            getattr(args, "repair_commit", None),
+            getattr(args, "failure_fingerprint", None),
+            getattr(args, "repair_scope", None),
+        )
+        if phase_repair_evidence is None:  # defensive: predicate above is exact
+            raise CliError("missing_phase_result", "deterministic repair evidence is missing")
+        blocker_details: list[dict[str, Any]] = []
+        blocker_ids: list[str] = []
+        # Re-entering a phase after a deterministic phase-contract repair
+        # collides with the immutable versioned artifacts (critique_custody_v*.json
+        # receipts for the critique phase, gate_v*.json projections for the gate
+        # phase) published by the superseded attempt at the same iteration.
+        # Archive the corresponding versioned phase family durably so the fresh
+        # run can publish new evidence; the create-once/immutable invariant
+        # still holds within the new planning epoch.
+        if phase == "critique":
+            artifact_invalidation = invalidate_replan_derived_artifacts(
+                plan_dir,
+                timestamp=now_utc(),
+                include_critique_epoch=True,
+            )
+        elif phase == "gate":
+            artifact_invalidation = invalidate_replan_derived_artifacts(
+                plan_dir,
+                timestamp=now_utc(),
+                include_gate_epoch=True,
+            )
+    elif phase_result is None:
         raise CliError(
             "missing_phase_result",
             "recover-blocked requires phase_result.json with current blocker details",
             extra={"resume_cursor": resume_cursor},
         )
-    evaluation = evaluate_blocker_recovery(
-        finalize_data,
-        state,
-        plan_dir=plan_dir,
-        blocked_tasks=phase_result.blocked_tasks,
-        deviations=phase_result.deviations,
-    )
-    blocker_details = command_blocker_details(evaluation)
-    if not evaluation.can_continue:
+    else:
+        evaluation = evaluate_blocker_recovery(
+            finalize_data,
+            state,
+            plan_dir=plan_dir,
+            blocked_tasks=phase_result.blocked_tasks,
+            deviations=phase_result.deviations,
+        )
+        blocker_details = command_blocker_details(evaluation)
+        blocker_ids = [blocker.blocker_id for blocker in evaluation.blockers]
+    if not deterministic_phase_repair_required and phase_result is not None and not evaluation.can_continue:
         unresolved_blockers = [
             blocker
             for blocker in blocker_details
@@ -1324,7 +1368,9 @@ def _override_recover_blocked(
             "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
             extra={
                 "resume_cursor": resume_cursor,
-                "phase_result_exit_kind": phase_result.exit_kind,
+                "phase_result_exit_kind": (
+                    phase_result.exit_kind if phase_result is not None else None
+                ),
                 "blocker_ids": [
                     blocker["blocker_id"] for blocker in unresolved_blockers
                 ],
@@ -1336,9 +1382,26 @@ def _override_recover_blocked(
         )
 
     previous_state = state["current_state"]
-    state["current_state"] = recovered_state
+    # Re-entering the critique or gate phase after ANY recover-blocked recovery
+    # collides with the immutable versioned artifacts (critique_custody_v*.json
+    # receipts for the critique phase, gate_v*.json projections for the gate
+    # phase) published by the superseded attempt at the same iteration.
+    # The deterministic-phase-repair branch above already archives them; the
+    # human-decision/gate-escalated branch (r7 CL2 gate escalation) must too,
+    # otherwise the fresh phase run fails on the create-once/immutable guard.
+    if artifact_invalidation is None and phase in {"critique", "gate"}:
+        artifact_invalidation = invalidate_replan_derived_artifacts(
+            plan_dir,
+            timestamp=now_utc(),
+            include_critique_epoch=(phase == "critique"),
+            include_gate_epoch=(phase == "gate"),
+        )
+    apply_state_projection(
+        state, recovered_state, route_signal="recover-blocked"
+    )
     state.pop("latest_failure", None)
     state.pop("active_step", None)
+    archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
     _append_to_meta(
         state,
         "overrides",
@@ -1349,9 +1412,30 @@ def _override_recover_blocked(
             "from_state": previous_state,
             "to_state": recovered_state,
             "resume_cursor": dict(resume_cursor),
-            "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+            "blocker_ids": blocker_ids,
+            "archived_phase_result": archived_phase_result,
+            **(
+                {"phase_contract_repair": phase_repair_evidence}
+                if phase_repair_evidence is not None
+                else {}
+            ),
+            **(
+                {"artifact_invalidation": artifact_invalidation}
+                if artifact_invalidation is not None
+                else {}
+            ),
         },
     )
+    if (
+        phase_repair_evidence is not None
+        and phase_repair_evidence.get("failure_kind")
+        == "provider_contract_failure"
+    ):
+        meta = state.setdefault("meta", {})
+        meta["provider_contract_repair_retry"] = {
+            **phase_repair_evidence,
+            "status": "available",
+        }
     save_state_merge_meta(plan_dir, state)
     response: StepResponse = {
         "success": True,
@@ -1366,7 +1450,16 @@ def _override_recover_blocked(
         "phase": phase,
         "resume_cursor": resume_cursor,
         "blockers": blocker_details,
+        **(
+            {"artifact_invalidation": artifact_invalidation}
+            if artifact_invalidation is not None
+            else {}
+        ),
     }
+    if phase_repair_evidence is not None:
+        response["phase_contract_repair"] = phase_repair_evidence
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
     return response
 
 
@@ -1436,14 +1529,18 @@ def _override_set_profile(
 ) -> StepResponse:
     from arnold_pipelines.megaplan.profiles import (
         _canonicalize_tier_models_for_json,
+        _resolve_prep_models_with_inheritance,
         _resolve_tier_models_with_inheritance,
+        _prep_flat_spec_from_profile,
         apply_depth_rewrite,
         apply_vendor_rewrite,
         load_profile_metadata,
         load_profiles,
+        resolve_prep_models,
         resolve_profile,
         profile_to_phase_models,
     )
+    from arnold_pipelines.megaplan.profiles.policy import _profile_has_premium_slots
 
     new_profile = getattr(args, "profile", None)
     if not new_profile:
@@ -1467,21 +1564,49 @@ def _override_set_profile(
         )
     except CliError:
         tier_models = {}
+    try:
+        inherited_prep_models = _resolve_prep_models_with_inheritance(
+            new_profile,
+            system_profiles=profiles,
+            system_metadata=metadata,
+            pipeline_local_profiles={},
+            pipeline_local_metadata={},
+        )
+    except CliError:
+        inherited_prep_models = {}
     vendor = effective_premium_vendor(config=state.get("config", {}))
-    resolved = apply_vendor_rewrite(resolved, vendor)
+    if _profile_has_premium_slots(resolved) or inherited_prep_models:
+        resolved = apply_vendor_rewrite(
+            resolved,
+            vendor,
+            prep_models=inherited_prep_models,
+        )
     depth = state["config"].get("depth")
     if depth is not None:
         resolved = apply_depth_rewrite(resolved, depth)
     phase_models = profile_to_phase_models(resolved)
+    prep_models, prep_trace = resolve_prep_models(
+        flat_prep_spec=_prep_flat_spec_from_profile(resolved),
+        prep_models=inherited_prep_models,
+    )
 
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
-    state["config"]["vendor"] = vendor
+    if _profile_has_premium_slots(resolved):
+        state["config"]["vendor"] = vendor
+    else:
+        state["config"].pop("vendor", None)
     if tier_models:
         state["config"]["tier_models"] = _canonicalize_tier_models_for_json(tier_models)
     else:
         state["config"].pop("tier_models", None)
+    if prep_models:
+        state["config"]["prep_models"] = prep_models
+        state["config"]["prep_model_resolver_trace"] = prep_trace
+    else:
+        state["config"].pop("prep_models", None)
+        state["config"].pop("prep_model_resolver_trace", None)
     exec_spec = next(
         (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
         "",
@@ -1883,12 +2008,25 @@ def _override_resume_clarify(
             "No answers found in notes; consider adding answers via "
             "'override add-note' before the plan phase."
         )
-    state["current_state"] = STATE_PREPPED
+    reentry_invocation_id = resume_clarification_phase_wbc_if_present(
+        state=state,
+        plan_dir=plan_dir,
+        agent=str(getattr(args, "actor", None) or "override:resume-clarify"),
+    )
+    apply_state_projection(state, STATE_PREPPED, route_signal="resume-clarify")
     state.pop("clarification", None)
     _append_to_meta(
         state,
         "overrides",
-        {"action": "resume-clarify", "timestamp": now_utc()},
+        {
+            "action": "resume-clarify",
+            "timestamp": now_utc(),
+            **(
+                {"phase_wbc_reentry_invocation_id": reentry_invocation_id}
+                if reentry_invocation_id is not None
+                else {}
+            ),
+        },
     )
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1904,6 +2042,180 @@ def _override_resume_clarify(
     }
     if warnings:
         response["warnings"] = warnings
+    if reentry_invocation_id is not None:
+        response["phase_wbc_reentry_invocation_id"] = reentry_invocation_id
+    return response
+
+
+def _override_reconcile_plan_ledger(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    """Append-only ledger repair for a drifted plan version (Sol Tier 1).
+
+    Records an audited reconciliation on plan_versions for the latest
+    recorded plan artifact whose on-disk content drifted from its attestation
+    (worker in-place mutation now forbidden by prompt contract).  Preserves
+    the original attestation; appends reconciliation metadata; requires the
+    current on-disk hash to equal the supplied replacement hash.
+    """
+    from arnold_pipelines.megaplan._core.plan_integrity import (
+        reconcile_drifted_plan_version,
+    )
+
+    version = getattr(args, "plan_version", None)
+    replacement_sha = getattr(args, "replacement_sha256", None)
+    reason = args.reason or "worker in-place mutation of plan artifact (prompt-fixed)"
+    repair_ref = getattr(args, "repair_ref", "") or ""
+    if not isinstance(version, int) or version < 1:
+        raise CliError(
+            "invalid_override",
+            "reconcile-plan-ledger requires --plan-version (int)",
+            valid_next=infer_next_steps(state),
+        )
+    if not isinstance(replacement_sha, str) or not replacement_sha.strip():
+        raise CliError(
+            "invalid_override",
+            "reconcile-plan-ledger requires --replacement-sha256",
+            valid_next=infer_next_steps(state),
+        )
+    result = reconcile_drifted_plan_version(
+        plan_dir=plan_dir,
+        state=state,
+        version=version,
+        replacement_sha256=replacement_sha.strip(),
+        expected_previous_sha256="",
+        reason=reason,
+        repair_ref=repair_ref,
+    )
+    from arnold_pipelines.megaplan.handlers.shared import save_state_merge_meta
+
+    save_state_merge_meta(plan_dir, state)
+    return {
+        "success": True,
+        "step": "override",
+        "override_action": "reconcile-plan-ledger",
+        "summary": (
+            f"reconciled plan_v{version} ledger attestation to on-disk "
+            f"content (append-only repair; previous hash preserved)"
+        ),
+        "reconciled": result,
+        "route_signal": "reconcile_plan_ledger",
+    }
+
+
+def _enforce_cutover_combined_authority(
+    state: PlanState, args: argparse.Namespace
+) -> None:
+    """Fail-closed combined-authority check for the legacy-to-canonical cutover.
+
+    The cutover (CL5) overrides the entire critique-loop architecture in one
+    all-at-once transition. Per the override matrix
+    ``workflow.route_binding`` combined-authority declaration (Step 8a) and the
+    cross-domain ownership boundary in ``source_to_owner_matrix.json``, it
+    requires BOTH owner domains to authorize dispatch before any cutover
+    orchestration runs:
+
+      * ``run_authority`` / human-gate operator approval
+        (``args.user_approved`` -- the operator explicitly approves the
+        destructive cutover), AND
+      * ``maintenance`` / ``repair_queue`` lifecycle mutation authority
+        (a validated lifecycle binding via ``args.repair_commit`` AND
+        ``args.failure_fingerprint``; ``--repair-scope`` binds the validated
+        cutover revision surface).
+
+    Missing EITHER authority fails closed with an explicit ``CliError`` so a
+    partially-authorized invocation can never reach the (not-yet-built) cutover
+    orchestration package. This check is shared by both the default dispatch
+    path (``_override_cutover``) and the control-routed special case in
+    ``_handle_routed_override`` (CL5 Step 8b/8c), so both override paths reach
+    the same authority logic.
+    """
+    if not bool(getattr(args, "user_approved", False)):
+        raise CliError(
+            "cutover_authority_missing",
+            "cutover requires combined authority: human-gate operator approval "
+            "(--user-approved) is absent; run_authority has not authorized the "
+            "legacy-to-canonical cutover.",
+        )
+    repair_commit = getattr(args, "repair_commit", None)
+    failure_fingerprint = getattr(args, "failure_fingerprint", None)
+    if not (isinstance(repair_commit, str) and repair_commit.strip()) or not (
+        isinstance(failure_fingerprint, str) and failure_fingerprint.strip()
+    ):
+        raise CliError(
+            "cutover_authority_missing",
+            "cutover requires combined authority: lifecycle mutation authority "
+            "via repair_queue (maintenance) is absent; supply --repair-commit and "
+            "--failure-fingerprint binding the validated cutover revision.",
+        )
+
+
+def _invoke_cutover_orchestration(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> dict[str, Any]:
+    """Deferred import + invocation of the legacy-to-canonical cutover.
+
+    The cutover orchestration package ``arnold.critique_ledger.cutover`` is
+    built in Steps 11-16 (Phase 2). The import is deferred to invocation time
+    (inside this function body, matching the ``_override_replan`` convention at
+    L1058/L567), so registering the handler in ``_OVERRIDE_ACTIONS`` and the
+    routed special-case branch is Phase 1 safe: the import does not execute at
+    registration time. Until the package exists, invoking this function raises
+    ``ImportError`` -- the expected Phase 1 state. The dispatch wiring is
+    verified by the Phase 3 dispatch tests (T31).
+
+    This is the single deferred cutover entry point reached by BOTH override
+    paths (CL5 Step 8b/8c): the default-path ``_override_cutover`` handler and
+    the control-routed special case in ``_handle_routed_override`` both call it
+    after the combined-authority check passes, so both paths reach the same
+    deferred cutover logic.
+    """
+    # Deferred import (Phase 2+ entry point): do NOT hoist to module scope.
+    from arnold.critique_ledger.cutover import run_cutover
+
+    return run_cutover(root=Path(root), plan_dir=plan_dir, state=state, args=args)
+
+
+def _override_cutover(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    """Default-dispatch-path cutover override handler (CL5 Step 8b).
+
+    Wires the legacy-to-canonical cutover onto the flag-off default dispatch
+    path so ``_OVERRIDE_ACTIONS.get('cutover')`` resolves to a handler instead
+    of raising ``CliError('invalid_override')``. The cutover requires COMBINED
+    authority (human-gate operator approval AND lifecycle mutation authority
+    via repair_queue), enforced fail-closed before the deferred cutover
+    orchestration runs.
+
+    See ``_enforce_cutover_combined_authority`` and
+    ``_invoke_cutover_orchestration`` for the shared deferred cutover logic
+    also reached by the control-routed special case in
+    ``_handle_routed_override`` (Step 8c).
+    """
+    _enforce_cutover_combined_authority(state, args)
+    cutover_result = _invoke_cutover_orchestration(root, plan_dir, state, args)
+    timestamp = now_utc()
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "cutover",
+            "timestamp": timestamp,
+            "reason": getattr(args, "reason", None),
+            "repair_commit": getattr(args, "repair_commit", None),
+            "user_approved": bool(getattr(args, "user_approved", False)),
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "override_action": "cutover",
+        "summary": "Legacy-to-canonical cutover executed.",
+        "state": state["current_state"],
+        "cutover_result": cutover_result,
+    }
     return response
 
 
@@ -1913,7 +2225,7 @@ _OVERRIDE_ACTIONS: dict[
     "add-note": _override_add_note,
     "abort": _override_abort,
     "adopt-execution": _override_adopt_execution,
-    "force-proceed": _override_force_proceed,
+    "cutover": _override_cutover,
     "replan": _override_replan,
     "recover-blocked": _override_recover_blocked,
     "resume-clarify": _override_resume_clarify,
@@ -1921,6 +2233,7 @@ _OVERRIDE_ACTIONS: dict[
     "set-profile": _override_set_profile,
     "set-model": _override_set_model,
     "set-vendor": _override_set_vendor,
+    "reconcile-plan-ledger": _override_reconcile_plan_ledger,
 }
 
 
@@ -1933,6 +2246,15 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
         preflight_mutating_phase(root=root, state=state, phase=f"override:{action}")
     else:
         preflight_phase(root=root, state=state, phase=f"override:{action}")
+    if action in {"force-proceed", "set-profile"}:
+        # These controls have one mutation owner: the CAS-backed control
+        # binding.  In particular, set-profile is also the recovery operation
+        # that refreshes persisted tier routing when the selected profile name
+        # is unchanged.  Letting it fall back to the legacy writer would omit
+        # the routing receipt and could race the paused cutover state.
+        # Preflight isolation metadata is carried in ``state`` and committed by
+        # that same CAS; do not persist an out-of-band pre-transition write.
+        return _handle_routed_override(root, plan_dir, state, args)
     save_state_merge_meta(plan_dir, state)
     if control_interface_routing_on() and action in _control_routed_override_actions():
         return _handle_routed_override(root, plan_dir, state, args)

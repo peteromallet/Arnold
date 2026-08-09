@@ -73,7 +73,6 @@ from arnold.runtime.semantic_replay import (  # noqa: F401 — re-export for con
     semantic_equivalent,
     semantic_replay_journal,
 )
-
 __all__: list[str] = [
     "ArnoldError",
     "BackendEventJournal",

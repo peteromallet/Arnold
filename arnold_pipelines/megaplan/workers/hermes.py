@@ -9,9 +9,10 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TextIO
+from typing import Any, TextIO
 
 import re
 
@@ -19,6 +20,7 @@ from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from arnold_pipelines.megaplan.prompts import create_hermes_prompt
 from arnold_pipelines.megaplan.prompts._projection import check_prompt_size
 from arnold_pipelines.megaplan.workers._impl import (
+    STEP_CAPTURE_SCHEMA_FILENAMES,
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _check_mock_safe,
@@ -29,7 +31,12 @@ from arnold_pipelines.megaplan.workers._impl import (
     mock_worker_output,
     session_key_for,
 )
-from arnold_pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
+from arnold_pipelines.megaplan._core import (
+    creative_form_id,
+    read_json,
+    schemas_root,
+    touch_active_step,
+)
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
     ModelBudgetError,
@@ -40,7 +47,6 @@ from arnold_pipelines.megaplan.model_seam import (
     render_prompt_for_dispatch,
     render_step_message,
 )
-from arnold_pipelines.megaplan.execute.status_constants import TERMINAL_TASK_STATUSES
 
 
 def _pre_dispatch_budget_check(
@@ -142,6 +148,92 @@ def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[
         normalized["reasoning_config"] = dict(reasoning_config)
 
     return normalized
+
+
+class HermesProviderCredentialError(CliError):
+    """Typed, deterministic failure for a direct Hermes route without a key.
+
+    ``AIAgent`` historically accepted an empty ``api_key`` and then selected
+    its default OpenAI-compatible client, producing a misleading OpenAI
+    credential error for requests explicitly pinned to another provider.  A
+    structured ``_external_error`` keeps the phase boundary provider-aware so
+    the orchestrator can stop/recover without retrying the same bad launch.
+    """
+
+    def __init__(self, *, provider: str, model: str, env_hints: tuple[str, ...]) -> None:
+        aliases = ", ".join(env_hints) or "the provider credential"
+        message = (
+            f"Hermes provider '{provider}' cannot run model '{model}': no API "
+            f"credential found. Set one of: {aliases}."
+        )
+        super().__init__(
+            "provider_credentials_missing",
+            message,
+            valid_next=[f"set one of {aliases}", f"rerun with a provider that has credentials"],
+            extra={
+                "provider": provider,
+                "model": model,
+                "credential_env": list(env_hints),
+                "_external_error": {
+                    "provider": provider,
+                    "error_kind": "auth",
+                    "message": message,
+                    "provider_error_code": "missing_credentials",
+                    "error_layer": "credential_preflight",
+                    "source": "hermes_worker",
+                    "deterministic": True,
+                    "nonretryable": True,
+                },
+            },
+            exit_code=7,
+        )
+
+
+def _hermes_route_provider(model: str | None, agent_kwargs: dict[str, str]) -> str | None:
+    """Resolve the actual provider selected by ``runtime.key_pool``.
+
+    Fireworks-hosted DeepSeek and MiniMax's intentional OpenRouter fallback
+    both rewrite the base URL, so classify those routes by their effective
+    URL rather than reporting the original prefix as if it owned the key.
+    """
+
+    raw = str(model or "").strip()
+    if raw.lower().startswith("hermes:"):
+        raw = raw.split(":", 1)[1]
+    if ":" not in raw:
+        return None
+    requested = raw.split(":", 1)[0].lower()
+    base_url = str(agent_kwargs.get("base_url") or "").lower()
+    if requested == "fireworks" and "api.deepseek.com" in base_url:
+        return "deepseek"
+    if requested == "minimax" and "openrouter.ai" in base_url:
+        return "openrouter"
+    return requested
+
+
+def _validate_hermes_provider_credentials(
+    model: str | None,
+    agent_kwargs: dict[str, str],
+    *,
+    resolved_model: str | None = None,
+) -> None:
+    """Fail closed before constructing ``AIAgent`` when a direct route is empty."""
+
+    provider = _hermes_route_provider(model, agent_kwargs)
+    if provider is None or str(agent_kwargs.get("api_key") or "").strip():
+        return
+    from arnold_pipelines.megaplan.runtime.key_pool import provider_credential_env_vars
+
+    env_hints = provider_credential_env_vars(provider)
+    if not env_hints:
+        # Unknown provider prefixes are rejected by resolve_model; do not turn
+        # an unrelated error into a guessed credential failure here.
+        return
+    raise HermesProviderCredentialError(
+        provider=provider,
+        model=str(resolved_model or model or ""),
+        env_hints=env_hints,
+    )
 
 
 def _import_hermes_runtime():
@@ -605,13 +697,27 @@ def _install_content_tool_call_normalizer(AIAgent) -> None:
     original_api_call = AIAgent._interruptible_api_call
     original_streaming_api_call = AIAgent._interruptible_streaming_api_call
 
+    def _without_null_tool_fields(api_kwargs: dict) -> dict:
+        """Omit optional tool fields set to ``None`` before provider calls."""
+        if not any(api_kwargs.get(key) is None for key in ("tools", "tool_choice")):
+            return api_kwargs
+        normalized = dict(api_kwargs)
+        for key in ("tools", "tool_choice"):
+            if normalized.get(key) is None:
+                normalized.pop(key, None)
+        return normalized
+
     def _api_call_with_content_tool_calls(self, api_kwargs: dict):
-        response = original_api_call(self, api_kwargs)
+        response = original_api_call(self, _without_null_tool_fields(api_kwargs))
         _normalize_response_content_tool_calls(response)
         return response
 
     def _streaming_api_call_with_content_tool_calls(self, api_kwargs: dict, *, on_first_delta: callable = None):
-        response = original_streaming_api_call(self, api_kwargs, on_first_delta=on_first_delta)
+        response = original_streaming_api_call(
+            self,
+            _without_null_tool_fields(api_kwargs),
+            on_first_delta=on_first_delta,
+        )
         _normalize_response_content_tool_calls(response)
         return response
 
@@ -707,8 +813,9 @@ def _emit_llm_start(
     model: str | None,
     prompt_hash: str | None,
     is_streaming: bool,
-) -> None:
+) -> str:
     """Emit an llm_call_start event."""
+    call_transaction_id = uuid.uuid4().hex
     try:
         from arnold_pipelines.megaplan.observability.events import emit, EventKind
 
@@ -723,10 +830,12 @@ def _emit_llm_start(
                 "prompt_hash": prompt_hash,
                 "streaming": is_streaming,
                 "request_id": None,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
         pass
+    return call_transaction_id
 
 
 def _emit_llm_end(
@@ -736,6 +845,7 @@ def _emit_llm_end(
     tokens_out: int,
     request_id: str | None,
     model: str | None = None,
+    call_transaction_id: str | None = None,
 ) -> None:
     """Emit an llm_call_end event."""
     try:
@@ -750,6 +860,7 @@ def _emit_llm_end(
                 "tokens_out": tokens_out,
                 "request_id": request_id,
                 "model": model,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
@@ -1327,37 +1438,6 @@ def _schema_allows_null(prop: dict) -> bool:
     return ptype == "null" or (isinstance(ptype, list) and "null" in ptype)
 
 
-def _schema_default(prop: dict) -> object:
-    """Return a schema-shaped default that passes structural audit.
-
-    OpenAI-strict materialized schemas require every property, including nested
-    object item properties that the model reasonably omits when they are empty
-    or nullable. Defaults should satisfy the transport schema while preserving
-    downstream semantics; nullable object fields default to None so finalize can
-    strip optional stance/stop fields before write-time validation.
-    """
-    enum = prop.get("enum")
-    if isinstance(enum, list) and enum:
-        return enum[0]
-
-    ptype = _preferred_schema_type(prop)
-    if ptype == "array":
-        return []
-    if ptype == "object":
-        if _schema_allows_null(prop):
-            return None
-        value: dict[str, object] = {}
-        _fill_schema_defaults(value, prop)
-        return value
-    if ptype == "boolean":
-        return False
-    if ptype in ("number", "integer"):
-        return 0
-    if ptype == "null":
-        return None
-    return ""
-
-
 def _build_output_template(step: str, schema: dict) -> str:
     """Build a JSON template from a schema for non-critique template-file phases."""
     return _schema_template(schema)
@@ -1503,27 +1583,6 @@ def parse_agent_output(
         payload = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
         if payload is not None:
             print(f"[hermes-worker] Reconstructed execute payload from tool calls", file=sys.stderr)
-
-    # Fallback: the model may have written the JSON to a different file location
-    if payload is None:
-        schema_filename = STEP_SCHEMA_FILENAMES.get(step, f"{step}.json")
-        for candidate in [
-            plan_dir / f"{step}_output.json",  # template file path
-            project_dir / schema_filename,
-            plan_dir / schema_filename,
-            project_dir / f"{step}.json",
-        ]:
-            if candidate.exists() and candidate != output_path:  # skip if already checked
-                try:
-                    candidate_text = candidate.read_text(encoding="utf-8")
-                    payload = json.loads(candidate_text)
-                    print(f"[hermes-worker] Read JSON from file written by model: {candidate}", file=sys.stderr)
-                    break
-                except json.JSONDecodeError as exc:
-                    parse_error = parse_error or exc
-                    repair_raw = candidate_text
-                except OSError:
-                    pass
 
     # Last resort for template-file phases: the model investigated and produced
     # text findings but didn't write valid JSON anywhere. Ask it to restructure
@@ -1684,6 +1743,30 @@ def parse_agent_output(
     return payload, raw_output
 
 
+_TERMINAL_STREAMING_TIMEOUT_MARKERS = (
+    "streaming deadline retry ceiling reached",
+    "streaming deadline hit again",
+)
+
+
+def _raise_for_terminal_provider_failure(result: dict, *, step: str) -> None:
+    """Surface exhausted provider streaming timeouts before output parsing."""
+
+    if result.get("failed") is not True:
+        return
+    reason = result.get("error")
+    if not isinstance(reason, str):
+        return
+    normalized = reason.strip().lower()
+    if not any(marker in normalized for marker in _TERMINAL_STREAMING_TIMEOUT_MARKERS):
+        return
+    raise CliError(
+        "streaming_timeout",
+        f"Hermes provider timeout exhausted for step '{step}': {reason.strip()}",
+        extra={"provider_failure_category": "timeout"},
+    )
+
+
 def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     """Normalize a parsed Hermes payload before validation."""
     # Some providers flatten the single plan success criterion to top-level
@@ -1701,10 +1784,6 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
             if isinstance(check, dict):
                 check.pop("guidance", None)
                 check.pop("prior_findings", None)
-
-    # Fill in missing required fields with safe defaults before validation.
-    # Models often omit empty arrays/strings that megaplan requires.
-    _fill_schema_defaults(payload, schema)
 
     # Normalize field aliases in nested arrays (e.g. critique flags use
     # "summary" instead of "concern", "detail" instead of "evidence").
@@ -1843,13 +1922,13 @@ def run_hermes_step(
 
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
-    from arnold_pipelines.megaplan.schemas import get_execution_schema_key
+    from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
     schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
         if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, STEP_SCHEMA_FILENAMES[step])
     )
-    schema = read_json(schemas_root(root) / schema_name)
+    schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     normalized_worker_options = _normalize_worker_options(worker_options)
     from arnold_pipelines.megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)
@@ -2036,15 +2115,27 @@ def run_hermes_step(
     try:
         check_prompt_size(prompt, phase=step)
     except CliError as error:
-        if step != "review" or error.code != "prompt_oversized":
+        if step not in ("review", "gate") or error.code != "prompt_oversized":
             raise
-        prompt = compact_review_prompt(
-            state,
-            plan_dir,
-            root,
-            prompt_size_error=error.extra,
-            projection_capabilities=projection_capabilities,
-        )
+        if step == "gate":
+            from arnold_pipelines.megaplan.prompts.gate import compact_gate_prompt
+
+            prompt = compact_gate_prompt(
+                state,
+                plan_dir,
+                root,
+                prompt_size_error=error.extra,
+            )
+        else:
+            from arnold_pipelines.megaplan.prompts.review import compact_review_prompt
+
+            prompt = compact_review_prompt(
+                state,
+                plan_dir,
+                root,
+                prompt_size_error=error.extra,
+                projection_capabilities=projection_capabilities,
+            )
         if output_path is not None:
             prompt += (
                 f"\n\nOUTPUT FILE: {output_path}\n"
@@ -2223,7 +2314,13 @@ def run_hermes_step(
             # Emit llm_call_start
             prompt_text = rendered_prompt or prompt_override or ""
             prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
-            _emit_llm_start(plan_dir, step, effective_resolved_model or resolved_model, prompt_hash, is_streaming)
+            call_transaction_id = _emit_llm_start(
+                plan_dir,
+                step,
+                effective_resolved_model or resolved_model,
+                prompt_hash,
+                is_streaming,
+            )
 
             # Heartbeat thread for streaming calls
             heartbeat_stop = threading.Event()
@@ -2329,6 +2426,8 @@ def run_hermes_step(
             if watchdog is not None and watchdog.tripped:
                 raise _raise_worker_stall(None)
 
+            _raise_for_terminal_provider_failure(current_result, step=step)
+
             try:
                 current_payload, current_raw_output = parse_agent_output(
                     current_agent,
@@ -2378,6 +2477,7 @@ def run_hermes_step(
                 tokens_out,
                 request_id,
                 model=effective_resolved_model or resolved_model,
+                call_transaction_id=call_transaction_id,
             )
 
             try:
@@ -2402,8 +2502,6 @@ def run_hermes_step(
                 reconstructed: dict | None = None
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
-                elif step == "gate":
-                    reconstructed = _reconstruct_gate_payload(plan_dir, current_payload)
                 if reconstructed is not None:
                     try:
                         capture_outcome = capture_step_output(
@@ -2448,6 +2546,14 @@ def run_hermes_step(
             f"{_MAX_EMPTY_RETRIES} attempts",
         )
 
+    # Validate the explicit provider route before AIAgent construction.  An
+    # empty key must never reach Hermes' provider auto-detection, which can
+    # silently fall through to OpenAI and obscure the real launch failure.
+    _validate_hermes_provider_credentials(
+        model,
+        agent_kwargs,
+        resolved_model=resolved_model,
+    )
     agent = _make_agent(resolved_model, agent_kwargs)
     # Don't set response_format when tools are enabled — many models
     # (Qwen, GLM-5) hang or produce garbage when both are active.
@@ -2599,6 +2705,18 @@ def run_hermes_step(
     except Exception:
         pass
 
+    effective_model = result.get("model") or effective_resolved_model or resolved_model
+    provider = (
+        str(effective_model).split(":", 1)[0]
+        if isinstance(effective_model, str) and effective_model
+        else "unknown"
+    )
+    auth_metadata = {
+        "worker_channel": "hermes",
+        "auth_channel": provider,
+        "provider": provider,
+        "resolved_model": effective_model,
+    }
     return WorkerResult(
         payload=payload,
         raw_output=raw_output,
@@ -2610,6 +2728,9 @@ def run_hermes_step(
         total_tokens=total_tokens,
         rendered_prompt=rendered_prompt,
         model_actual=result.get("model"),
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
     )
 
 
@@ -2639,6 +2760,75 @@ def _extract_json_from_reasoning(messages: list) -> dict | None:
                         if result is not None:
                             return result
     return None
+
+
+def _attribution_task_updates_from_files(
+    files_changed: set[str],
+    plan_dir: Path,
+    *,
+    mode: str,
+) -> list[dict[str, Any]]:
+    """Deterministically attribute landed file changes to finalize.json tasks.
+
+    Sol-adjudicated Tier 1 repair: when the executor produced the work via
+    tools but failed the JSON report contract, the reconstruction path may
+    populate ``task_updates`` for tasks whose claimed files are *unambiguously*
+    present in the execution's changed-file set.  This is bounded and
+    fail-closed:
+
+    * Only tasks with a non-empty ``files`` claim are considered.
+    * A task matches only when EVERY claimed file is in the changed set
+      (subset match).  Overlapping/partial claims never auto-match.
+    * Matched tasks are marked ``done`` with attribution
+      ``deterministic_reconstruction`` and an explicit executor note.  They
+      are NOT declared passed — quality validation still applies.
+    * Tasks with empty claims or no matching evidence are left untouched;
+      they remain pending and are re-dispatched.
+    """
+    if mode == "doc":
+        return []
+    import json as _json
+
+    try:
+        finalize = _json.loads((Path(plan_dir) / "finalize.json").read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError, TypeError, ValueError):
+        return []
+    tasks = finalize.get("tasks") if isinstance(finalize, dict) else None
+    if not isinstance(tasks, list):
+        return []
+    changed = {str(f).strip().lstrip("./") for f in files_changed if str(f).strip()}
+    if not changed:
+        return []
+    updates: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id") or task.get("task_id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            continue
+        claims = task.get("files") or task.get("files_changed") or task.get("targets") or []
+        if not isinstance(claims, list) or not claims:
+            continue
+        normalized = {str(c).strip().lstrip("./") for c in claims if isinstance(c, str) and c.strip()}
+        if not normalized:
+            continue
+        if not normalized.issubset(changed):
+            continue
+        updates.append({
+            "task_id": task_id,
+            "status": "done",
+            "attribution": "deterministic_reconstruction",
+            "executor_notes": (
+                "Attributed by deterministic reconstruction: every claimed "
+                "file for this task is present in the execution's changed-file "
+                "set after the model failed the JSON report contract. Pending "
+                "quality validation."
+            ),
+            "files_changed": sorted(normalized),
+            "commands_run": [],
+            "auto_attributed_files": True,
+        })
+    return updates
 
 
 def _reconstruct_execute_payload(
@@ -2723,121 +2913,15 @@ def _reconstruct_execute_payload(
     if not tool_calls and not files_changed:
         return None
 
-    def _batch_sort_key(path: Path, prefix: str) -> int:
-        stem = path.stem
-        try:
-            return int(stem[len(prefix) :])
-        except ValueError:
-            return -1
-
-    def _validated_task_updates(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return []
-        raw_updates = payload.get("task_updates")
-        if not isinstance(raw_updates, list):
-            return []
-        valid: list[dict[str, Any]] = []
-        for item in raw_updates:
-            if not isinstance(item, dict):
-                continue
-            task_id = item.get("task_id")
-            status = item.get("status")
-            executor_notes = item.get("executor_notes")
-            files_changed = item.get("files_changed")
-            commands_run = item.get("commands_run")
-            if not isinstance(task_id, str) or not task_id.strip():
-                continue
-            if status not in TERMINAL_TASK_STATUSES:
-                continue
-            if not isinstance(executor_notes, str) or not executor_notes.strip():
-                continue
-            if not isinstance(files_changed, list) or not isinstance(commands_run, list):
-                continue
-            valid.append(item)
-        return valid
-
-    def _validated_sense_check_acknowledgments(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return []
-        raw_acks = payload.get("sense_check_acknowledgments")
-        if not isinstance(raw_acks, list):
-            return []
-        valid: list[dict[str, Any]] = []
-        for item in raw_acks:
-            if not isinstance(item, dict):
-                continue
-            sense_check_id = item.get("sense_check_id")
-            executor_note = item.get("executor_note")
-            if not isinstance(sense_check_id, str) or not sense_check_id.strip():
-                continue
-            if not isinstance(executor_note, str) or not executor_note.strip():
-                continue
-            valid.append(item)
-        return valid
-
-    latest_batch_output_payload: dict[str, Any] | None = None
-    latest_batch_output_path: Path | None = None
-    batch_output_files = sorted(
-        plan_dir.glob("execute_batch_*_output.json"),
-        key=lambda path: _batch_sort_key(path, "execute_batch_"),
-        reverse=True,
-    )
-    for batch_output_path in batch_output_files:
-        try:
-            loaded = json.loads(batch_output_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(loaded, dict):
-            continue
-        latest_batch_output_payload = loaded
-        latest_batch_output_path = batch_output_path
-        break
-
+    # Recovery observes only the current worker messages and workspace.  It
+    # deliberately does not read any prior scratch/checkpoint artifact: a
+    # persisted row becomes authoritative only after a canonical batch replay
+    # validates its dispatch identity, result envelope, fence, and evidence.
     task_updates: list[dict[str, Any]] = []
     sense_check_acknowledgments: list[dict[str, Any]] = []
-    if latest_batch_output_payload is not None:
-        task_updates.extend(_validated_task_updates(latest_batch_output_payload))
-        sense_check_acknowledgments.extend(
-            _validated_sense_check_acknowledgments(latest_batch_output_payload)
-        )
-
-    # If the scratch output is missing OR it exists but contains no usable task
-    # updates, fall back to the latest audited checkpoint rather than
-    # reconstructing an empty batch and tripping authority divergence.
-    if not task_updates:
-        checkpoint_files = sorted(
-            plan_dir.glob("execution_batch_*.json"),
-            key=lambda path: _batch_sort_key(path, "execution_batch_"),
-            reverse=True,
-        )
-        for checkpoint_path in checkpoint_files:
-            try:
-                cp_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            checkpoint_updates = _validated_task_updates(cp_data)
-            if checkpoint_updates:
-                task_updates.extend(checkpoint_updates)
-                sense_check_acknowledgments.extend(
-                    _validated_sense_check_acknowledgments(cp_data)
-                )
-                break
-
-    output_text = (
-        latest_batch_output_payload.get("output")
-        if isinstance(latest_batch_output_payload, dict)
-        else None
-    )
-    if not isinstance(output_text, str) or not output_text.strip():
-        output_text = None
+    output_text = None
 
     extra_deviations: list[str] = []
-    if isinstance(latest_batch_output_payload, dict):
-        raw_deviations = latest_batch_output_payload.get("deviations")
-        if isinstance(raw_deviations, list):
-            extra_deviations.extend(
-                item for item in raw_deviations if isinstance(item, str) and item.strip()
-            )
 
     if mode == "doc":
         sections_written = sorted(
@@ -2865,24 +2949,16 @@ def _reconstruct_execute_payload(
         }
 
     files_list = sorted(files_changed)
-    if isinstance(latest_batch_output_payload, dict):
-        raw_files_changed = latest_batch_output_payload.get("files_changed")
-        if isinstance(raw_files_changed, list):
-            files_list = sorted(
-                {
-                    *files_list,
-                    *(
-                        item
-                        for item in raw_files_changed
-                        if isinstance(item, str) and item.strip()
-                    ),
-                }
-            )
-        raw_commands_run = latest_batch_output_payload.get("commands_run")
-        if isinstance(raw_commands_run, list):
-            for command in raw_commands_run:
-                if isinstance(command, str) and command and command not in commands_run:
-                    commands_run.append(command)
+    # Sol-adjudicated Tier 1: deterministically attribute landed files to
+    # finalize.json task claims so the quality gate sees executed tasks after
+    # a report-contract failure.  Only unambiguous subset matches are marked;
+    # everything else stays pending for re-dispatch.
+    if not task_updates:
+        task_updates = _attribution_task_updates_from_files(
+            files_changed,
+            plan_dir,
+            mode=mode,
+        )
     deviations = [
         "Execute response reconstructed from tool calls — model failed to produce JSON report."
     ]
@@ -2900,114 +2976,26 @@ def _reconstruct_execute_payload(
     }
 
 
-def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | None:
-    """Reconstruct a valid gate payload when the model leaves the scratch file empty.
+def _recover_plan_payload_from_raw_markdown(
+    payload: dict,
+    raw_markdown: str,
+) -> dict | None:
+    """Promote substantive raw plan markdown without inventing plan steps.
 
-    The Hermes/DeepSeek gate worker occasionally reads the scratch template but
-    never writes the filled JSON back. When that happens the promoted payload has
-    empty required fields and fails structural audit. This helper infers a safe,
-    conservative recommendation from the gate signals already computed by the
-    handler, builds a schema-valid payload, and returns it so the handler's own
-    normalization can refine it further.
+    Some workers return a valid implementation plan as their raw response but
+    leave only a summary in the structured ``plan`` field. Recovery is allowed
+    only when the raw text has both an implementation-plan heading and at least
+    one explicit step; otherwise the normal validation failure remains intact.
     """
-    import json as _json
 
-    signals_files = sorted(plan_dir.glob("gate_signals_v*.json"), reverse=True)
-    signals: dict = {}
-    for path in signals_files:
-        try:
-            data = _json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "signals" in data:
-                signals = data
-                break
-        except Exception:
-            continue
-
-    signals_inner = signals.get("signals", {}) if isinstance(signals, dict) else {}
-    preflight = signals.get("preflight_results", {}) if isinstance(signals, dict) else {}
-    preflight_passed = isinstance(preflight, dict) and all(preflight.values())
-    unresolved = signals.get("unresolved_flags", []) if isinstance(signals, dict) else []
-    has_significant = bool(
-        isinstance(unresolved, list)
-        and any(
-            isinstance(f, dict)
-            and f.get("severity") in ("significant", "likely-significant")
-            for f in unresolved
-        )
-    )
-
-    if has_significant:
-        recommendation = "ITERATE"
-        reason = "significant unresolved flags remain"
-    elif not preflight_passed:
-        recommendation = "ESCALATE"
-        reason = "preflight checks are still failing"
-    else:
-        recommendation = "PROCEED"
-        reason = "no significant unresolved flags and preflight passed"
-
-    reconstructed = dict(current_payload) if isinstance(current_payload, dict) else {}
-    reconstructed["recommendation"] = recommendation
-    if not str(reconstructed.get("rationale", "")).strip():
-        reconstructed["rationale"] = (
-            f"Auto-inferred {recommendation} because the gate worker returned an "
-            f"invalid/empty recommendation and {reason}."
-        )
-    if not str(reconstructed.get("signals_assessment", "")).strip():
-        reconstructed["signals_assessment"] = (
-            "No significant flags were raised by critique; proceeding to execution."
-            if recommendation == "PROCEED"
-            else "Critique signals require further attention before proceeding."
-        )
-    reconstructed.setdefault("warnings", [])
-    reconstructed.setdefault("settled_decisions", [])
-    reconstructed.setdefault("flag_resolutions", [])
-    reconstructed.setdefault("accepted_tradeoffs", [])
-    # Strip placeholder/empty tradeoff objects.
-    reconstructed["accepted_tradeoffs"] = [
-        item
-        for item in reconstructed["accepted_tradeoffs"]
-        if isinstance(item, dict)
-        and any(
-            str(value).strip()
-            for key, value in item.items()
-            if key in {"flag_id", "concern", "subsystem", "rationale"}
-        )
-    ]
-    return reconstructed
-
-
-def _fill_schema_defaults(payload: dict, schema: dict) -> None:
-    """Fill missing required fields with safe defaults based on schema types.
-
-    Models often omit empty arrays, empty strings, or optional-sounding fields
-    that the schema marks as required. Rather than rejecting the response,
-    fill them with type-appropriate defaults. This recurses into existing
-    nested objects and array items because strict response schemas commonly
-    promote item properties to required fields too.
-    """
-    required = schema.get("required", [])
-    properties = schema.get("properties", {})
-    for field in required:
-        if field in payload:
-            continue
-        prop = properties.get(field, {})
-        payload[field] = _schema_default(prop)
-
-    for field, value in list(payload.items()):
-        prop = properties.get(field)
-        if not isinstance(prop, dict):
-            continue
-        ptype = _preferred_schema_type(prop)
-        if ptype == "object" and isinstance(value, dict):
-            _fill_schema_defaults(value, prop)
-        elif ptype == "array" and isinstance(value, list):
-            items_schema = prop.get("items", {})
-            if not isinstance(items_schema, dict):
-                continue
-            for item in value:
-                if isinstance(item, dict) and _preferred_schema_type(items_schema) == "object":
-                    _fill_schema_defaults(item, items_schema)
+    markdown = str(raw_markdown or "").strip()
+    if not markdown.startswith("# Implementation Plan"):
+        return None
+    if not any(line.lstrip().startswith("### Step ") for line in markdown.splitlines()):
+        return None
+    recovered = dict(payload) if isinstance(payload, dict) else {}
+    recovered["plan"] = markdown
+    return recovered
 
 
 def _normalize_nested_aliases(payload: dict, schema: dict) -> None:
@@ -3089,6 +3077,25 @@ def _schema_template(schema: dict) -> str:
     return json.dumps(template, indent=2)
 
 
+def _deescape_double_encoded_json(raw: str) -> str | None:
+    """Return one decoded JSON-source layer for an escaped object response.
+
+    Some coding endpoints return an object-shaped JSON string without the
+    outer JSON-string quotes, for example ``{\"title\":\"Plan\"}``.  That
+    response is neither valid JSON nor ordinary prose.  Decode only this exact
+    shape and leave valid JSON, fenced output, and unrelated backslash-heavy
+    text untouched.
+    """
+    text = str(raw).strip()
+    if not (text.startswith("{") and text.endswith("}") and '\\"' in text):
+        return None
+    try:
+        decoded = json.loads(f'"{text}"')
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, str) else None
+
+
 def _parse_json_response(text: str) -> dict | None:
     """Extract a JSON object from a model response.
 
@@ -3104,7 +3111,12 @@ def _parse_json_response(text: str) -> dict | None:
     if not text:
         return None
 
-    for candidate in [text, _repair_json(text)]:
+    deescaped = _deescape_double_encoded_json(text)
+    candidates = [text, _repair_json(text)]
+    if deescaped is not None:
+        candidates[:0] = [deescaped, _repair_json(deescaped)]
+
+    for candidate in candidates:
         # Direct parse
         try:
             parsed = json.loads(candidate)

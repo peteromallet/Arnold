@@ -43,7 +43,15 @@ _PROVIDER_KEY_VARS = {
     "xai": "XAI_API_KEY",
 }
 _ENV_ALIASES = {
-    "ZHIPU_API_KEY": ("ZHIPU_API_KEY", "GLM_API_KEY"),
+    # Z.AI has used all three names in its Hermes/OpenAI-compatible
+    # integrations.  Keep the canonical name first, but accept the aliases
+    # everywhere the key pool is consulted (not just in user-facing hints).
+    "ZHIPU_API_KEY": (
+        "ZHIPU_API_KEY",
+        "GLM_API_KEY",
+        "ZAI_API_KEY",
+        "Z_AI_API_KEY",
+    ),
     "ZHIPU_BASE_URL": ("ZHIPU_BASE_URL", "GLM_BASE_URL"),
     "KIMI_API_KEY": ("KIMI_API_KEY", "MOONSHOT_API_KEY"),
     "KIMI_BASE_URL": ("KIMI_BASE_URL", "MOONSHOT_BASE_URL"),
@@ -51,6 +59,21 @@ _ENV_ALIASES = {
     "FIREWORKS_API_KEY": ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
     "FIREWORKS_BASE_URL": ("FIREWORKS_BASE_URL", "FIREWORKS_AI_BASE_URL"),
 }
+
+
+def provider_credential_env_vars(provider: str) -> tuple[str, ...]:
+    """Return the environment variable aliases for a provider's API key.
+
+    This is the single source of truth for provider-aware preflight and
+    runtime error messages.  Unknown providers return an empty tuple rather
+    than guessing (which would recreate the silent OpenRouter fallback this
+    helper is intended to prevent).
+    """
+
+    canonical = _PROVIDER_KEY_VARS.get(str(provider).strip().lower())
+    if canonical is None:
+        return ()
+    return tuple(_ENV_ALIASES.get(canonical, (canonical,)))
 _PROVIDER_BASE_URL_VARS = {
     "zhipu": "ZHIPU_BASE_URL",
     "kimi": "KIMI_BASE_URL",
@@ -364,4 +387,5 @@ __all__ = [
     "_ENV_ALIASES",
     "_PROVIDER_BASE_URL_VARS",
     "_PROVIDER_KEY_VARS",
+    "provider_credential_env_vars",
 ]

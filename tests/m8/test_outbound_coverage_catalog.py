@@ -119,7 +119,8 @@ def _discover_call_sites(root: Path) -> list[CallSite]:
     """Walk *root* and discover all call sites for tracked functions."""
     call_sites: list[CallSite] = []
     for filepath in sorted(root.rglob("*.py")):
-        if not _is_production_file(filepath):
+        rel_filepath = filepath.relative_to(root)
+        if not _is_production_file(rel_filepath):
             continue
         try:
             source = filepath.read_text(encoding="utf-8")
@@ -131,7 +132,7 @@ def _discover_call_sites(root: Path) -> list[CallSite]:
         except SyntaxError:
             continue
 
-        rel_path = str(filepath.relative_to(root))
+        rel_path = str(rel_filepath)
         visitor = _CallSiteVisitor(rel_path)
         visitor.visit(tree)
         call_sites.extend(visitor.sites)
@@ -257,21 +258,22 @@ def _parse_coverage_doc(doc_path: Path) -> dict[str, set[tuple[str, str]]]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="module")
+def call_sites() -> list[CallSite]:
+    """Discover all production call sites for tracked functions."""
+
+    return _discover_call_sites(_find_repo_root())
+
+
+@pytest.fixture(scope="module")
+def covered() -> dict[str, set[tuple[str, str]]]:
+    """Parse the coverage document."""
+
+    return _parse_coverage_doc(_find_repo_root() / COVERAGE_DOC)
+
+
 class TestOutboundCoverageCatalog:
     """Assert that every discovered production call site appears in the catalog."""
-
-    @pytest.fixture(scope="class")
-    def call_sites(self) -> list[CallSite]:
-        """Discover all production call sites for tracked functions."""
-        repo_root = _find_repo_root()
-        return _discover_call_sites(repo_root)
-
-    @pytest.fixture(scope="class")
-    def covered(self) -> dict[str, set[tuple[str, str]]]:
-        """Parse the coverage document."""
-        repo_root = _find_repo_root()
-        doc_path = repo_root / COVERAGE_DOC
-        return _parse_coverage_doc(doc_path)
 
     # ── validate_payload_against_schema ───────────────────────────────
 

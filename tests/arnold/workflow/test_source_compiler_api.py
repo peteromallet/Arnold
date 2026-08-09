@@ -62,7 +62,43 @@ M3_INVALID_FIXTURES = (
     "invalid_m3_single_handler_wrapper",
     "invalid_m3_nonliteral_path_construction",
     "invalid_m3_megaplan_helper_fanout",
+    "invalid_m3_tiebreaker_single_call_carrier",
 )
+M3_SPECIALIZED_INVALID_FIXTURES = (
+    "invalid_m3_single_handler_review_fanout",
+    "invalid_m3_handler_owned_review_cap",
+    "invalid_m3_hidden_finalize_fallback",
+)
+
+
+def _clone_step_component_with_metadata(
+    component: authoring.StepComponent,
+    metadata: Mapping[str, object],
+) -> authoring.StepComponent:
+    return authoring.StepComponent(
+        id=component.id,
+        provenance=component.provenance,
+        label=component.label,
+        step_type=component.step_type,
+        prompt=component.prompt,
+        policy=component.policy,
+        input_schema=component.input_schema,
+        output_schema=component.output_schema,
+        metadata=metadata,
+    )
+
+
+def _clone_workflow_component_with_metadata(
+    component: authoring.ComponentContract,
+    metadata: Mapping[str, object],
+) -> authoring.ComponentContract:
+    return authoring.ComponentContract(
+        id=component.id,
+        kind=component.kind,
+        provenance=component.provenance,
+        label=component.label,
+        metadata=metadata,
+    )
 
 
 def test_source_compiler_public_api_names_are_exported() -> None:
@@ -1017,7 +1053,11 @@ def test_source_compiler_m3_expectation_fixture_set_is_complete() -> None:
         for path in M3_FIXTURE_DIR.glob("*.expected.json")
     }
 
-    assert source_cases == set(M3_VALID_FIXTURES) | set(M3_INVALID_FIXTURES)
+    assert source_cases == (
+        set(M3_VALID_FIXTURES)
+        | set(M3_INVALID_FIXTURES)
+        | set(M3_SPECIALIZED_INVALID_FIXTURES)
+    )
     assert sidecar_cases == source_cases
 
 
@@ -1142,6 +1182,19 @@ def test_source_compiler_m3_negative_sidecars_pin_source_diagnostics(
             workflow.lower_workflow_file(source_path)
         except workflow.SourceCompileError as error:
             result = error
+
+    assert sidecar["outcome"] == "invalid"
+    assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
+
+
+@pytest.mark.parametrize("fixture_name", M3_SPECIALIZED_INVALID_FIXTURES)
+def test_source_compiler_m3_specialized_negative_sidecars_pin_s5_checker_diagnostics(
+    fixture_name: str,
+) -> None:
+    sidecar = _load_m3_sidecar(fixture_name)
+    source_path = M3_FIXTURE_DIR / f"{fixture_name}.py"
+
+    result = _check_specialized_m3_fixture(source_path)
 
     assert sidecar["outcome"] == "invalid"
     assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
@@ -2655,6 +2708,106 @@ def test_source_compiler_repeated_compiles_are_deterministic() -> None:
     assert len({manifest.to_json() for manifest in manifests}) == 1
 
 
+def test_source_compiler_megaplan_declared_step_interfaces_survive_metadata_stripping(
+    monkeypatch,
+) -> None:
+    from arnold_pipelines.megaplan.workflows import components as megaplan_components
+    from arnold_pipelines.megaplan.workflows import planning as megaplan_planning
+
+    source_path = megaplan_planning.AUTHORING_SOURCE_PATH
+    baseline_manifest = workflow.compile_workflow_file(source_path)
+    baseline_execute_contract = megaplan_planning.declared_workflow_topology_contract("execute_batch")
+    baseline_review_contract = megaplan_planning.declared_workflow_topology_contract("review_panel")
+    baseline_tiebreaker_contract = megaplan_planning.declared_workflow_topology_contract(
+        "tiebreaker_child"
+    )
+
+    stripped_exports = {
+        "AUTHORING_PREP": {"handler_ref"},
+        "AUTHORING_PLAN": {"handler_ref"},
+        "AUTHORING_CRITIQUE": {"handler_ref"},
+        "AUTHORING_GATE": {"handler_ref", "capability_requirements"},
+        "AUTHORING_REVISE": {"handler_ref", "capability_requirements"},
+        "AUTHORING_FINALIZE": {"handler_ref", "policy_refs"},
+        "AUTHORING_EXECUTE": {"handler_ref", "policy_refs", "capability_requirements"},
+        "AUTHORING_REVIEW": {"handler_ref", "policy_refs", "capability_requirements"},
+        "AUTHORING_HALT": {"terminal"},
+        "AUTHORING_OVERRIDE": {"handler_ref", "policy_refs", "override_actions"},
+        "TIEBREAKER_RESEARCHER": {"handler_ref"},
+        "TIEBREAKER_CHALLENGER": {"handler_ref"},
+        "TIEBREAKER_SYNTHESIS": {"handler_ref"},
+        "TIEBREAKER_DECISION": {"handler_ref", "capability_requirements"},
+    }
+
+    for export_name, stripped_keys in stripped_exports.items():
+        component = getattr(megaplan_components, export_name)
+        monkeypatch.setattr(
+            megaplan_components,
+            export_name,
+            _clone_step_component_with_metadata(
+                component,
+                {
+                    key: value
+                    for key, value in component.metadata.items()
+                    if key not in stripped_keys
+                },
+            ),
+        )
+
+    for export_name in (
+        "SOURCE_EXECUTE_BATCH_WORKFLOW",
+        "SOURCE_REVIEW_PANEL_WORKFLOW",
+        "SOURCE_TIEBREAKER_WORKFLOW",
+    ):
+        component = getattr(megaplan_components, export_name)
+        monkeypatch.setattr(
+            megaplan_components,
+            export_name,
+            _clone_workflow_component_with_metadata(
+                component,
+                {
+                    key: value
+                    for key, value in component.metadata.items()
+                    if key not in {"topology_contract", "fan_in_ref", "policy_refs"}
+                },
+            ),
+        )
+
+    pipeline = workflow.lower_workflow_file(source_path)
+    manifest = workflow.compile_workflow_file(source_path)
+    steps = {step.id: step for step in pipeline.steps}
+
+    assert steps["gate"].metadata["handler_ref"] == "arnold_pipelines.megaplan.handlers:handle_gate"
+    assert [(capability.id, capability.route, capability.required) for capability in steps["gate"].capabilities] == [("human:gate", "default", False)]
+    assert steps["finalize"].metadata["policy_refs"] == (
+        "megaplan:default",
+        "megaplan:finalize",
+        "megaplan:artifact-contract",
+    )
+    assert steps["override"].metadata["override_actions"] == (
+        "abort",
+        "add-note",
+        "adopt-execution",
+        "force-proceed",
+        "recover-blocked",
+        "replan",
+        "resume-clarify",
+        "set-model",
+        "set-profile",
+        "set-robustness",
+        "set-vendor",
+    )
+    assert steps["halt"].metadata["terminal"] is True
+    assert [(capability.id, capability.route, capability.required) for capability in steps["tiebreaker_decision"].capabilities] == [("megaplan:planning", "default", True)]
+    assert megaplan_planning.declared_workflow_topology_contract("execute_batch") == baseline_execute_contract
+    assert megaplan_planning.declared_workflow_topology_contract("review_panel") == baseline_review_contract
+    assert (
+        megaplan_planning.declared_workflow_topology_contract("tiebreaker_child")
+        == baseline_tiebreaker_contract
+    )
+    assert manifest.to_json() == baseline_manifest.to_json()
+
+
 def test_source_compiler_rejects_future_and_unknown_dataflow_with_precise_spans() -> None:
     source = (
         "from arnold.workflow.authoring import workflow\n"
@@ -3073,6 +3226,27 @@ def _diagnostic_payloads(result: workflow.CheckWorkflowSourceResult) -> list[dic
 def _load_m3_sidecar(fixture_name: str) -> dict[str, object]:
     with (M3_FIXTURE_DIR / f"{fixture_name}.expected.json").open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _check_specialized_m3_fixture(source_path: Path):
+    fixture_name = source_path.stem
+    original_topology_contract = source_compiler._megaplan_review_topology_contract
+    original_route_surface = source_compiler._megaplan_policy_route_surface
+    try:
+        if fixture_name == "invalid_m3_handler_owned_review_cap":
+            source_compiler._megaplan_review_topology_contract = lambda: {
+                "retry_and_cap": {"cap_thresholds": {"max_review_rework_cycles": 1}},
+            }
+        elif fixture_name == "invalid_m3_hidden_finalize_fallback":
+            source_compiler._megaplan_policy_route_surface = (
+                lambda export_name: {}
+                if export_name == "FINALIZE_POLICY"
+                else original_route_surface(export_name)
+            )
+        return workflow.check_workflow_file(source_path)
+    finally:
+        source_compiler._megaplan_review_topology_contract = original_topology_contract
+        source_compiler._megaplan_policy_route_surface = original_route_surface
 
 
 def _load_m0_sidecar(fixture_name: str) -> dict[str, object]:

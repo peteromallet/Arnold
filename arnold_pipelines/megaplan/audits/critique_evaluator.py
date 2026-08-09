@@ -272,13 +272,68 @@ class FlagVerification(TypedDict):
     rationale: str
 
 
+class DomainSelection(TypedDict):
+    """A CL3 evaluator-selected critique domain with an explicit reason.
+
+    Domains are authority-neutral routing targets; the evaluator records why a
+    domain is in scope for this run without changing reconciliation authority.
+    """
+
+    domain: str
+    why: str
+
+
+class DomainSkip(TypedDict):
+    """A CL3 evaluator-skipped critique domain with an explicit reason."""
+
+    domain: str
+    why: str
+
+
+class CritiqueBudgets(TypedDict):
+    """Token/latency/finding budgets the evaluator expects for this run.
+
+    All fields are optional; absence means the runtime default applies. Every
+    numeric budget is a non-negative upper bound that the runtime enforces
+    before silent truncation.
+    """
+
+    max_tokens: int
+    max_latency_seconds: int
+    max_findings: int
+
+
+class SelectionReason(TypedDict):
+    """A structured CL3 selection reason keyed by check_id or domain."""
+
+    target: str  # check_id or domain name
+    reason: str
+
+
 class EvaluatorVerdict(TypedDict, total=False):
-    """Schema for the critique evaluator's output payload."""
+    """Schema for the critique evaluator's output payload.
+
+    CL3 additive fields (``domain_selections``, ``domain_skips``,
+    ``critique_mode``, ``evidence_targets``, ``budgets``,
+    ``expected_revision``, ``expected_briefing_hash``, ``selection_reasons``,
+    ``input_set_hashes``) are all optional. Legacy verdicts that omit them
+    remain valid; the validator treats them as empty/absent.
+    """
 
     selections: list[CritiqueSelection]
     skipped: list[CritiqueSkip]
     evaluator_model: str
     flag_verifications: list[FlagVerification]
+    # ── CL3 additive evaluator routing contract ─────────────────────────
+    domain_selections: list[DomainSelection]
+    domain_skips: list[DomainSkip]
+    critique_mode: str  # "BLIND" | "HISTORY_AWARE"
+    evidence_targets: list[str]
+    budgets: CritiqueBudgets
+    expected_revision: str
+    expected_briefing_hash: str
+    selection_reasons: list[SelectionReason]
+    input_set_hashes: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +343,7 @@ class EvaluatorVerdict(TypedDict, total=False):
 
 def validate_evaluator_verdict(
     payload: dict[str, Any], *, evaluator_model: str, vendor: str | None = None,
+    accepted_context: dict[str, Any] | None = None,
 ) -> list[str]:
     """Validate a critique evaluator payload with hard-reject discipline.
 
@@ -565,6 +621,159 @@ def validate_evaluator_verdict(
                 )
             seen_fv.add(fid)
 
+    # ------------------------------------------------------------------
+    # CL3 additive routing contract. Each rule fires ONLY when its
+    # corresponding new payload field is present, so a legacy verdict that
+    # omits every new field passes through untouched. The seven existing
+    # per-lens rules above are unchanged. `accepted_context` carries the
+    # keyword-only accepted-context inputs (known domains, expected
+    # revision/hash, budget caps, known finding refs, allowed modes).
+    # ------------------------------------------------------------------
+    ctx = accepted_context or {}
+
+    domain_selections = payload.get("domain_selections")
+    domain_skips = payload.get("domain_skips")
+    if domain_selections is not None or domain_skips is not None:
+        sel_doms: set[str] = set()
+        skip_doms: set[str] = set()
+        for _label, _entries, _bucket in (
+            ("domain_selections", domain_selections, sel_doms),
+            ("domain_skips", domain_skips, skip_doms),
+        ):
+            if _entries is None:
+                continue
+            if not isinstance(_entries, list):
+                warnings.append(
+                    f"`{_label}` must be a list when present."
+                )
+                continue
+            for _i, _entry in enumerate(_entries, start=1):
+                if not isinstance(_entry, dict):
+                    warnings.append(f"{_label} {_i} must be an object.")
+                    continue
+                _dom = _entry.get("domain")
+                if not isinstance(_dom, str) or not _dom.strip():
+                    warnings.append(f"{_label} {_i} is missing a non-empty `domain`.")
+                _why = _entry.get("why")
+                if not isinstance(_why, str) or not _why.strip():
+                    warnings.append(
+                        f"{_label} {_i} ({_dom!r}) is missing a non-empty `why`."
+                    )
+                _bucket.add((_dom or "").strip())
+        _overlap = sel_doms & skip_doms
+        if _overlap:
+            warnings.append(
+                f"Overlap between domain_selections and domain_skips: "
+                f"{sorted(_overlap)}."
+            )
+        _known = ctx.get("known_domains")
+        if _known is not None:
+            _invalid = sorted((sel_doms | skip_doms) - set(_known))
+            if _invalid:
+                warnings.append(
+                    f"Unknown domains in domain_selections/domain_skips: "
+                    f"{_invalid}. Known: {sorted(_known)}"
+                )
+
+    critique_mode = payload.get("critique_mode")
+    if critique_mode is not None:
+        if not isinstance(critique_mode, str) or critique_mode not in {"BLIND", "HISTORY_AWARE"}:
+            warnings.append(
+                f"`critique_mode` must be BLIND or HISTORY_AWARE, got {critique_mode!r}."
+            )
+        _allowed = ctx.get("allowed_critique_modes")
+        if _allowed is not None and critique_mode not in set(_allowed):
+            warnings.append(
+                f"`critique_mode` {critique_mode!r} not permitted by "
+                f"accepted context {sorted(_allowed)}."
+            )
+
+    _exp_rev = payload.get("expected_revision")
+    if _exp_rev is not None:
+        _ctx_rev = ctx.get("expected_revision")
+        if _ctx_rev is not None and _exp_rev != _ctx_rev:
+            warnings.append(
+                f"expected_revision {_exp_rev!r} != accepted context {_ctx_rev!r}."
+            )
+    _exp_hash = payload.get("expected_briefing_hash")
+    if _exp_hash is not None:
+        _ctx_hash = ctx.get("expected_briefing_hash")
+        if _ctx_hash is not None and _exp_hash != _ctx_hash:
+            warnings.append(
+                f"expected_briefing_hash {_exp_hash!r} != accepted context {_ctx_hash!r}."
+            )
+
+    budgets = payload.get("budgets")
+    if budgets is not None:
+        if not isinstance(budgets, dict):
+            warnings.append("`budgets` must be an object when present.")
+        else:
+            for _key in ("max_tokens", "max_latency_seconds", "max_findings"):
+                _val = budgets.get(_key)
+                if _val is None:
+                    continue
+                if isinstance(_val, bool) or not isinstance(_val, int) or _val < 0:
+                    warnings.append(
+                        f"`budgets.{_key}` must be a non-negative integer, got {_val!r}."
+                    )
+            _cap = ctx.get("max_budget_findings")
+            _bf = budgets.get("max_findings")
+            if (
+                _cap is not None
+                and isinstance(_bf, int)
+                and not isinstance(_bf, bool)
+                and _bf > _cap
+            ):
+                warnings.append(
+                    f"`budgets.max_findings` {_bf} exceeds accepted cap {_cap}."
+                )
+
+    evidence_targets = payload.get("evidence_targets")
+    if evidence_targets is not None:
+        if not isinstance(evidence_targets, list):
+            warnings.append("`evidence_targets` must be a list when present.")
+        else:
+            _known_refs = ctx.get("known_finding_refs")
+            for _i, _tgt in enumerate(evidence_targets, start=1):
+                if not isinstance(_tgt, str) or not _tgt.strip():
+                    warnings.append(f"evidence_targets {_i} must be a non-empty string.")
+                elif _known_refs is not None and _tgt not in set(_known_refs):
+                    warnings.append(
+                        f"evidence_targets {_i}: unknown finding ref {_tgt!r}."
+                    )
+
+    selection_reasons = payload.get("selection_reasons")
+    if selection_reasons is not None:
+        if not isinstance(selection_reasons, list):
+            warnings.append("`selection_reasons` must be a list when present.")
+        else:
+            for _i, _entry in enumerate(selection_reasons, start=1):
+                if not isinstance(_entry, dict):
+                    warnings.append(f"selection_reasons {_i} must be an object.")
+                    continue
+                _tgt = _entry.get("target")
+                _reason = _entry.get("reason")
+                if not isinstance(_tgt, str) or not _tgt.strip():
+                    warnings.append(
+                        f"selection_reasons {_i} is missing a non-empty `target`."
+                    )
+                if not isinstance(_reason, str) or not _reason.strip():
+                    warnings.append(
+                        f"selection_reasons {_i} ({_tgt!r}) is missing a non-empty `reason`."
+                    )
+
+    input_set_hashes = payload.get("input_set_hashes")
+    if input_set_hashes is not None:
+        if not isinstance(input_set_hashes, list):
+            warnings.append("`input_set_hashes` must be a list when present.")
+        elif len(input_set_hashes) == 0:
+            warnings.append("`input_set_hashes` must be non-empty when present.")
+        else:
+            for _i, _h in enumerate(input_set_hashes, start=1):
+                if not isinstance(_h, str) or not _h.strip():
+                    warnings.append(
+                        f"input_set_hashes {_i} must be a non-empty string."
+                    )
     return warnings
 
 

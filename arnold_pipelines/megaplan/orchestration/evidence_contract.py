@@ -231,6 +231,12 @@ class TransitionDecision:
 
     M1 defines this durable shape without adding decision persistence or
     changing transition routing.
+
+    S2 extends this with boundary evidence provenance: ``boundary_id``,
+    ``checked_evidence_refs``, and ``authority_record_refs`` let
+    review-to-done decisions carry durable boundary contract and authority
+    references.  All three fields are optional so legacy serialized
+    decisions without them still deserialize cleanly.
     """
 
     decision_id: str
@@ -249,12 +255,15 @@ class TransitionDecision:
     code_hash: str | None = None
     routing_provider: str | None = None
     routing_provenance: dict[str, Any] = field(default_factory=dict)
+    boundary_id: str | None = None
+    checked_evidence_refs: tuple[str, ...] = ()
+    authority_record_refs: tuple[str, ...] = ()
     schema: str = TRANSITION_DECISION_SCHEMA
     schema_version: int = TRANSITION_DECISION_SCHEMA_VERSION
     evidence_contract_version: int = EVIDENCE_CONTRACT_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema": self.schema,
             "schema_version": self.schema_version,
             "evidence_contract_version": self.evidence_contract_version,
@@ -275,11 +284,20 @@ class TransitionDecision:
             "routing_provider": self.routing_provider,
             "routing_provenance": dict(self.routing_provenance),
         }
+        if self.boundary_id is not None:
+            payload["boundary_id"] = self.boundary_id
+        if self.checked_evidence_refs:
+            payload["checked_evidence_refs"] = list(self.checked_evidence_refs)
+        if self.authority_record_refs:
+            payload["authority_record_refs"] = list(self.authority_record_refs)
+        return payload
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "TransitionDecision":
         evidence = d.get("evidence")
         reasons = d.get("would_block_reasons")
+        checked = d.get("checked_evidence_refs")
+        authority = d.get("authority_record_refs")
         return cls(
             decision_id=str(d.get("decision_id", "")),
             subject=str(d.get("subject", "")),
@@ -305,6 +323,13 @@ class TransitionDecision:
             routing_provenance=dict(d.get("routing_provenance"))
             if isinstance(d.get("routing_provenance"), dict)
             else {},
+            boundary_id=_optional_str(d.get("boundary_id")),
+            checked_evidence_refs=tuple(str(ref) for ref in checked)
+            if isinstance(checked, list)
+            else (),
+            authority_record_refs=tuple(str(ref) for ref in authority)
+            if isinstance(authority, list)
+            else (),
             schema=str(d.get("schema", TRANSITION_DECISION_SCHEMA)),
             schema_version=_optional_int(d.get("schema_version")) or 0,
             evidence_contract_version=_optional_int(d.get("evidence_contract_version")) or 0,

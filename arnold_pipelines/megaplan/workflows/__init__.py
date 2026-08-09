@@ -2,6 +2,50 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import MutableSequence
+
+
+def _runtime_target_workflows_path(package_file: Path) -> Path | None:
+    """Locate target-authored workflows beside an isolated runtime mirror.
+
+    Cloud chains execute Megaplan from ``.megaplan/runtime/editable-engine`` so
+    target changes cannot mutate the running harness.  When the target repo is
+    Arnold itself, that isolation also hides *new* workflow modules which do
+    not exist in the pinned engine package.  Expose only the target workflow
+    directory as a fallback package location; engine-owned modules keep
+    precedence because the mirror path remains first.
+    """
+
+    resolved = package_file.resolve()
+    for parent in resolved.parents:
+        if (
+            parent.name == "editable-engine"
+            and parent.parent.name == "runtime"
+            and parent.parent.parent.name == ".megaplan"
+        ):
+            project_root = parent.parent.parent.parent
+            candidate = project_root / "arnold_pipelines" / "megaplan" / "workflows"
+            if candidate.is_dir() and candidate.resolve() != resolved.parent:
+                return candidate.resolve()
+            return None
+    return None
+
+
+def _extend_runtime_workflow_path(
+    package_paths: MutableSequence[str], package_file: Path
+) -> bool:
+    candidate = _runtime_target_workflows_path(package_file)
+    if candidate is None:
+        return False
+    rendered = str(candidate)
+    if rendered not in package_paths:
+        package_paths.append(rendered)
+    return True
+
+
+_extend_runtime_workflow_path(__path__, Path(__file__))
+
 from .components import (
     ALL_STEP_COMPONENTS,
     ARTIFACT_CONTRACT_POLICY,

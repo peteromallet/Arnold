@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from arnold_pipelines.megaplan.cloud.spec import SshSpec
+from arnold_pipelines.megaplan.cloud.spec import SshSpec, load_spec
+from arnold_pipelines.megaplan.types import CliError
 
 
 class TestSshSpecDefaults:
@@ -63,3 +66,54 @@ class TestSshSpecDefaults:
         spec = SshSpec(host="myhost")
         with pytest.raises(Exception):
             spec.workspace_dir = "/changed"  # type: ignore[misc]
+
+
+def test_reserved_resident_tmux_name_is_rejected_for_cloud_chain(tmp_path) -> None:
+    cloud_yaml = tmp_path / "cloud.yaml"
+    cloud_yaml.write_text(
+        "provider: ssh\n"
+        "repo:\n"
+        "  url: https://github.com/example/repo.git\n"
+        "  workspace: /workspace/repo\n"
+        "mode: idle\n"
+        "chain_session: megaplan-resident-discord\n"
+        "ssh:\n"
+        "  host: 192.0.2.10\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError, match="reserved for a supervised service"):
+        load_spec(cloud_yaml)
+
+
+@pytest.mark.parametrize(
+    "ssh_values",
+    [
+        {"host": "-oProxyCommand=decoy"},
+        {"host": "example.invalid\n-oProxyCommand=decoy"},
+        {"host": "root@example.invalid"},
+        {"host": "example.invalid", "user": "-oProxyCommand"},
+        {"host": "example.invalid", "user": "root user"},
+        {"host": "example.invalid", "port": True},
+        {"host": "example.invalid", "port": 65536},
+        {"host": "example.invalid", "identity_file": "-oProxyCommand=decoy"},
+        {"host": "example.invalid", "identity_file": "/key\n-oProxyCommand"},
+    ],
+)
+def test_ssh_transport_fields_reject_option_and_control_injection(
+    tmp_path, ssh_values: dict[str, object]
+) -> None:
+    cloud_yaml = tmp_path / "cloud.yaml"
+    cloud_yaml.write_text(
+        json.dumps(
+            {
+                "provider": "ssh",
+                "repo": {"url": "https://github.com/example/repo.git"},
+                "ssh": ssh_values,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError, match=r"ssh\."):
+        load_spec(cloud_yaml)

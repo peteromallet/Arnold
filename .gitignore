@@ -24,6 +24,7 @@ __pycache__/
 .megaplan/worker_tmp/
 .megaplan/.state-locks/
 .megaplan/cloud-chain.log
+.megaplan/cloud-chain-*.log
 .megaplan/m2-auto.log
 .megaplan/m6-test.log
 .megaplan/system_logs/
@@ -56,6 +57,7 @@ cloud.*.yaml
 chain.yaml
 !.megaplan/initiatives/**/chain.yaml
 plan.md
+!tests/fixtures/m5a_six_review_regression/04_stale_metadata/plan.md
 /plan_v*.md
 /.plan_v*.md
 planning-bot-spec.md
@@ -94,3 +96,9 @@ supabase/.temp/
 
 # Runtime mirror; not source
 .megaplan/runtime/editable-engine
+
+# CL2 delivery sidecar (post-commit delivery commit + tree hashes; never embedded
+# in the committed handoff). Created at CL2 finalization (Step 15.4) and captured
+# additionally as a `git notes` entry on the delivery commit. A commit/tree cannot
+# contain its own hash, so both post-commit values live only here + the git note.
+docs/critique-ledger/handoffs/.cl2_delivery_commit.txt

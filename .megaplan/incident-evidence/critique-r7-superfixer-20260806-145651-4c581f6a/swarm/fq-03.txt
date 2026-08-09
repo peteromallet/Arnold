@@ -1,0 +1,209 @@
+```text
+FLASH REPORT
+1. question_id: fq-03 — finalize graph mutations and non-dependency references
+2. verdict: supported
+3. investigated_claim: The exact fix boundary for the R7 splitter rewire is depends_on/dependency_reasons only; every other field that stores task IDs (critique_resolution_coverage, validation coverage, user-action fields) is either validated downstream such that split IDs require normalization there, or not validated at all — i.e., coverage/verification mutations add a second contract defect.
+4. vantage:
+   - hostname/container: e0740d2fcb36
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 @ 234ac3524da29c1f630aee90ab1767a142a68a83 (tracked clean; runtime content_sha256 a99e74e6c6f6a14c556b42deb9ab92e8f15538c52bf7e34e286c34d4a1df21de per evidence pack §1)
+   - investigator: hermes:deepseek:deepseek-v4-flash (read-only; GIT_OPTIONAL_LOCKS=0; no lifecycle commands)
+5. utc_window:
+   - started: 2026-08-06T15:10:00Z (approx)
+   - ended: 2026-08-06T15:25:00Z (approx)
+6. artifacts:
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/evidence-pack.md
+     exists: yes
+     type: markdown evidence pack (policy/evidence)
+     size_bytes: 15716
+     mtime_utc: 2026-08-06T15:05:35Z
+     sha256: 678b1cdf2e1e592b7cc56d207c95e8bd7c71df6f203a291abb446bff1f9360b7
+     role: policy
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/flash-report-contract.md
+     exists: yes
+     type: markdown contract
+     size_bytes: 2009
+     mtime_utc: 2026-08-06T15:09:36Z
+     sha256: 4b62706a8742340fce4d32f9cc95395b00130632eae85083f8333a528187847d
+     role: policy
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/.megaplan/worker_tmp/local-strict-artifacts/finalize-15274aaf2cb2445487647129704dcccd.candidate.json
+     exists: yes
+     type: json raw finalize candidate (pre-mutation model output)
+     size_bytes: 77557
+     mtime_utc: 2026-08-06T14:16:08Z
+     sha256: cfc7d701c18c070ba15679d5279cc943119ec9d4fa412b8ef4d02115a75c76c8
+     role: producer
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/finalize_candidates/36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07.json
+     exists: yes
+     type: json rejected-candidate record (record_rejected_candidate output)
+     size_bytes: 5944
+     mtime_utc: 2026-08-06T14:16:28Z
+     sha256: 79b727252945e58989f1631531b4fddf511df0e59b7ed629029d85cef7645bf5
+     role: persistence
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/critique_clearance.json
+     exists: yes
+     type: json critique clearance (custody input)
+     size_bytes: 71557
+     mtime_utc: 2026-08-06T14:14:06Z
+     sha256: 36c398c7d5cfc48be1b53e3b7622d6641a0a7862779bb854f0a5dacaaf44a574
+     role: authority
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/planner_repair.json
+     exists: yes
+     type: json planner repair circuit state
+     size_bytes: 535
+     mtime_utc: 2026-08-06T14:16:28Z
+     sha256: 31f7c10acb8b999ea53fd4af71ffb2bd30697749eec643654b3c0e54dc7f5087
+     role: persistence
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/raw/repro_splitter_feasibility.out.txt
+     exists: yes
+     type: text reproduction output
+     size_bytes: 2060
+     mtime_utc: 2026-08-06 (per pack §4)
+     sha256: 5b84e561242c93a4e35fe29e78306d1370c811920d08c67f4b24c6eac0e10669
+     role: log
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/handlers/finalize.py
+     exists: yes
+     type: python source (inspected)
+     size_bytes: 101410
+     mtime_utc: not captured
+     sha256: 13efbdb7937bb73330f5aa4d19abeaf73904bea082d13cb0fbac650522695a4e
+     role: producer
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/orchestration/task_splitter.py
+     exists: yes
+     type: python source (inspected)
+     size_bytes: 18065
+     mtime_utc: not captured
+     sha256: 851932dd007b2c9b3c7fa6f7092e08ad718f02a14e7a7c0cc9a98fadd1b3a462
+     role: producer
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/orchestration/task_feasibility.py
+     exists: yes
+     type: python source (inspected)
+     size_bytes: 22026
+     mtime_utc: not captured
+     sha256: c7932ece4baeab8f18a4deaea4331c30744c6adaa136db4586b28127907cd2a7
+     role: consumer
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/orchestration/critique_custody.py
+     exists: yes
+     type: python source (inspected)
+     size_bytes: 73707
+     mtime_utc: not captured
+     sha256: f6b1920c06762c02acc60d24eb73c7a32a2571cc4934fca45e649a488860e4ac
+     role: consumer
+   - absolute_path: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/orchestration/graph_admission.py
+     exists: yes
+     type: python source (inspected)
+     size_bytes: 4345
+     mtime_utc: not captured
+     sha256: 5cfaaf9395737f2434fdec8c228c59371d733c8d8c35e0f2c7f5b4af2c4b6f41
+     role: persistence
+7. commands:
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     exact_command: rg -n "_ensure_verification_task|_ensure_user_actions_pre_gate_task|_apply_programmatic_coverage|_normalize_task_complexity|_split_finalize_tasks|_write_finalize_artifacts|compile_task_feasibility|record_rejected_candidate" arnold_pipelines/megaplan/handlers/finalize.py
+     started_utc: 2026-08-06T15:11Z
+     ended_utc: 2026-08-06T15:11Z
+     exit_code: 0
+     stdout_summary: 25 matches locating all named functions (finalize.py lines 381, 629, 667, 1035, 2012, 2031, 2053-2159, 2338)
+     stderr_summary: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     exact_command: sed -n '757,845p' arnold_pipelines/megaplan/handlers/finalize.py
+     started_utc: 2026-08-06T15:13Z
+     ended_utc: 2026-08-06T15:13Z
+     exit_code: 0
+     stdout_summary: _ensure_user_actions_post_gate_task adds only rationale text; no task-ID fields
+     stderr_summary: (none)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: stat -c '%n | size=%s | mtime=%y' .megaplan/worker_tmp/local-strict-artifacts/finalize-15274aaf2cb2445487647129704dcccd.candidate.json finalize_candidates/36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07.json && sha256sum ...
+     started_utc: 2026-08-06T15:14Z
+     ended_utc: 2026-08-06T15:14Z
+     exit_code: 0
+     stdout_summary: raw candidate 77557 B sha256 cfc7d701… (matches pack); rejected record 5944 B sha256 79b72725…
+     stderr_summary: (none)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: jq -r '.tasks[] | "\(.id) complexity=\(.complexity) kind=\(.kind)"' … ; jq -c '.critique_resolution_coverage' … ; jq -c '.validation.plan_steps_covered' … ; jq -c '.user_actions' …
+     started_utc: 2026-08-06T15:15Z
+     ended_utc: 2026-08-06T15:15Z
+     exit_code: 0
+     stdout_summary: 19 tasks T0..T18; complexity>=7 = T1,T2,T3,T4,T5,T7,T10,T13,T16; coverage rows reference T0,T1,T3,T4,T5,T6,T7,T8,T10,T11,T12,T13,T15,T16,T17,T18; validation=null; user_actions=[]
+     stderr_summary: (none)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: jq '{candidate_id, admitted, failure_fingerprint, diag_codes: [.diagnostics[].code]|unique}' finalize_candidates/36bcefaf….json ; jq -c '.report|{admitted,task_count,edge_count,…}' …
+     started_utc: 2026-08-06T15:16Z
+     ended_utc: 2026-08-06T15:16Z
+     exit_code: 0
+     stdout_summary: admitted false; fingerprint 382e25a2…; 13 diagnostics (12 dependency_unknown + 1 dependency_graph_invalid); task_count 25, edge_count 33
+     stderr_summary: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     exact_command: sed -n '91,135p' arnold_pipelines/megaplan/orchestration/task_feasibility.py ; sed -n '60,90p' …
+     started_utc: 2026-08-06T15:17Z
+     ended_utc: 2026-08-06T15:17Z
+     exit_code: 0
+     stdout_summary: task_contract_hash/_stable_contract covers task_contract_version, tasks (13 fields), validation_jobs only — excludes critique_resolution_coverage and validation.plan_steps_covered
+     stderr_summary: (none)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/raw
+     exact_command: (read_file) repro_splitter_feasibility.out.txt
+     started_utc: 2026-08-06T15:18Z
+     ended_utc: 2026-08-06T15:18Z
+     exit_code: 0
+     stdout_summary: post-split count 25 = 19 + 6 splits (T1,T2,T3,T4,T5,T7); T10/T13/T16 rejected with split_mutating_validation and kept; 12 unknown-dep pairs byte-identical to recorded diagnostics
+     stderr_summary: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     exact_command: GIT_OPTIONAL_LOCKS=0 git -C /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 rev-parse HEAD
+     started_utc: 2026-08-06T15:20Z
+     ended_utc: 2026-08-06T15:20Z
+     exit_code: 0
+     stdout_summary: 234ac3524da29c1f630aee90ab1767a142a68a83 (matches pinned revision)
+     stderr_summary: (none)
+8. trace:
+   - producer: _apply_programmatic_coverage (finalize.py:381-421) — handler mutation, runs at finalize.py:2057 BEFORE _split_finalize_tasks (2059)
+     produced_value_or_key: payload["validation"]["plan_steps_covered"][*]["finalize_item_ids"] = pre-split task ids (raw candidate validation is null, so handler-generated coverage)
+     consumer: _reconcile_validation_after_mutation (finalize.py:265-284, runs 2141 post-split) — computes covered_ids from these pre-split ids, then orphan_tasks from post-split task set; _finalize_semantic_postcheck (570-589) validates only U-prefixed ids against user_actions
+     consumed_value_or_key: finalize_item_ids (no task-set validation; stale pre-split ids survive; split-derived ids inflate orphan_tasks)
+     persistence: published finalize.json / candidate artifacts (not reached in this run)
+     policy: none enforces task-set membership for finalize_item_ids
+     predicate_and_result: "id in task_ids" — NOT enforced → stale reference persists (data-integrity defect, not a rejection gate)
+   - producer: model-supplied critique_resolution_coverage (raw candidate references T0..T18 incl. split ids T1,T3,T4,T5,T7,T10,T13,T16)
+     produced_value_or_key: critique_resolution_coverage[*].task_ids
+     consumer: validate_finalize_resolution_coverage (critique_custody.py:1469-1521) — called pre-split at finalize.py:469 (passes) and post-split at bind finalize.py:2164 via bind_finalize_custody (critique_custody.py:1451)
+     consumed_value_or_key: task_ids ⊆ post-split task set; predicate "task_id not in task_ids → issue" (critique_custody.py:1508)
+     persistence: resolution_coverage_digest bound into payload["critique_custody"] (critique_custody.py:1462); re-checked by assert_finalize_custody at execute entry (1542)
+     policy: "Each row must name one or more real finalized task_ids" (prompts/finalize.py:117)
+     predicate_and_result: FAILS post-split for T1,T3,T4,T5,T7 (5 removed ids, many rows) → CritiqueCustodyError("finalize_critique_coverage_invalid") at bind → second rejection defect
+   - producer: split_high_complexity_tasks (task_splitter.py:461-507) via _split_finalize_tasks (finalize.py:2012) at 2059 and 2135
+     produced_value_or_key: removes original ids {T1,T2,T3,T4,T5,T7}; NO rewiring of any downstream reference (depends_on, dependency_reasons, coverage, plan_steps_covered); impl complexity ≤6, proof 3 ⇒ second invocation idempotent
+     consumer: compile_task_feasibility (task_feasibility.py:193-330+) at 2080/2146 — validates depends_on/dependency_reasons and task-level fields ONLY; never validates coverage or plan_steps_covered
+     consumed_value_or_key: depends_on vs id_set (line 305-306)
+     persistence: rejected → record_rejected_candidate (graph_admission.py:71-118) writes finalize_candidates/{hash}.json + planner_repair.json (circuit open at 2); admitted → atomic_write_json(task_feasibility.json) at 2156, contract.json 2165, publish_finalize_candidate 2172
+     policy: "only an admitted report may replace the authoritative execute-entry receipt" (task_feasibility.json written only on admission, finalize.py:2156)
+     predicate_and_result: admitted False (12× dependency_unknown + 1× dependency_graph_invalid; recorded 36bcefaf…, task_count 25) — primary blocker; coverage defect masked (bind unreached)
+   - producer: _ensure_verification_task (629-665), _ensure_user_actions_pre_gate_task (667-729), _ensure_user_actions_post_gate_task (757-769), _normalize_task_complexity (1035-1068)
+     produced_value_or_key: description suffix + baseline_test_note; gate task inserted at index 0 (id via _next_task_id) mutating only other tasks' depends_on (729); rationale text; complexity/justification coercion — NO task-ID fields outside depends_on introduced
+     consumer: none (no external ID references)
+     persistence: n/a
+     policy: n/a
+     predicate_and_result: gate/pre-gate mutation adds no second defect (user_actions == [] ⇒ gate task not injected in this candidate); verification mutation adds no defect
+9. adherence_classification: MISSING_STRUCTURE
+10. missing_or_contradictory_structure: The task-ID reference integrity contract outside depends_on/dependency_reasons has no complete edge: (a) validation.plan_steps_covered[].finalize_item_ids — producer (pre-split handler coverage) → consumer (feasibility/bind) has NO validation edge at all; stale pre-split ids persist into published artifacts. (b) critique_resolution_coverage[].task_ids — producer (model, pre-split) → consumer (post-split bind validation) is VALIDATED but against a mutated task set with no normalization step between, so the contract is contradictory across the two call sites (passes at 469, fails at 2164). The splitter mutation (task_splitter.py) is the un-accounted producer that invalidates both.
+11. evidence_supporting_verdict:
+    - finalize.py:2053-2059 mutation order: coverage runs pre-split; split at 2059 and again at 2135 (idempotent: impl complexity max(1,min(6,c-3)) ≤6, proof 3 — task_splitter.py:307,343).
+    - task_splitter.py:461-507: split_high_complexity_tasks replaces original ids with {id}_impl/{id}_proof and performs no downstream rewiring; _adjust_dependency_reasons (414-425) touches only the split task's own reasons.
+    - Repro (repro_splitter_feasibility.out.txt): post-split 25 tasks = 19+6 splits (T1,T2,T3,T4,T5,T7); T10/T13/T16 kept (split_mutating_validation); 12 unknown-dep pairs byte-identical to recorded diagnostics.
+    - Raw candidate (jq): coverage references removed ids T1,T3,T4,T5,T7 (T2 unreferenced); validation null (handler regenerates coverage pre-split); user_actions [] (no gate task).
+    - critique_custody.py:1469-1521: validate_finalize_resolution_coverage enforces task_ids ⊆ payload task ids (1508); called at finalize.py:469 (pre-split) and 2164 (post-split bind) — the latter is a deterministic rejection gate for the 5 removed ids.
+    - critique_clearance.json present (71557 B) ⇒ bind path (2162-2164) is live, so a depends_on-only fix converts the dependency_unknown blocker into finalize_critique_coverage_invalid at bind, AFTER task_feasibility.json is written (2156) and BEFORE publish (2172) — a partial write at the publication boundary.
+    - task_contract_hash/_stable_contract (task_feasibility.py:60-90,91-108) excludes coverage and plan_steps_covered; only resolution_coverage_digest binds coverage (critique_custody.py:1462,1542) — it proves byte-stability, not id validity.
+    - compile_task_feasibility (task_feasibility.py:193-330) validates only depends_on/dependency_reasons + task fields — neither coverage nor plan_steps_covered are admission inputs.
+    - _ensure_verification_task/_ensure_user_actions_pre/post_gate_task/_normalize_task_complexity introduce no task-ID fields outside depends_on (finalize.py:629-769, 1035-1068).
+    - Rejected record 36bcefaf…: admitted false, fingerprint 382e25a2…, 13 diagnostics, task_count 25, edge_count 33 — matches evidence pack §4.
+12. evidence_against_verdict:
+    - The recorded failure shows ONLY dependency_unknown/dependency_graph_invalid — no coverage diagnostic — because feasibility rejection precedes bind; the coverage defect is latent/unreached today (it becomes a hard blocker only after the depends_on rewire lands). Absent the fix, no second defect is observable in the current failure mode.
+    - plan_steps_covered[].finalize_item_ids staleness is not a rejection gate anywhere (no policy predicate), so calling it a "contract defect" is defensible only as data-integrity, not admission.
+13. confidence: high
+14. confidence_basis: Direct read of pinned-runtime source (finalize.py, task_splitter.py, task_feasibility.py, critique_custody.py, graph_admission.py, schemas/runtime.py), byte-verified candidate/rejected artifacts (sha256 matches evidence pack), reproduction output confirming exact split set and diagnostic parity, and jq enumeration of the actual candidate's ID-bearing fields. The only inference is the post-fix bind-time outcome, which follows deterministically from the validated code path (1508 predicate) given the verified removed ids {T1,T3,T4,T5,T7} referenced in coverage.
+15. immediate_decision_informed: Exact fix boundary for the R7 superfixer: the splitter rewire must normalize, in addition to downstream depends_on/dependency_reasons (original_id → impl_id), BOTH (a) critique_resolution_coverage[*].task_ids (original_id → impl_id) — otherwise bind_finalize_custody raises finalize_critique_coverage_invalid after task_feasibility.json is written but before finalize.json is published (partial-write state at the publication boundary); and (b) validation.plan_steps_covered[*].finalize_item_ids (original_id → impl_id) — otherwise stale pre-split ids persist into the published candidate and orphan_tasks is inflated. Verification mutation adds no defect; user-action gate mutation adds no defect (depends_on-only). Feasibility is not the right place to re-validate coverage (it is deliberately scoped to the task graph); the bind-time validator is the enforcing consumer, so normalization must occur in the splitter (or equivalently re-derive coverage post-split before bind).
+16. durable_decision_informed: The splitter is a shared mutation primitive whose contract ("removes an id") is unsafe for any external reference; a durable invariant is that post-split graphs must be reference-closed across ALL ID-bearing fields (depends_on, dependency_reasons, critique_resolution_coverage.task_ids, validation.plan_steps_covered.finalize_item_ids, user_actions.blocks_task_ids, stances.task_id), with a single normalization pass and a reference-closure assertion at the persistence boundary (before task_feasibility.json write at finalize.py:2156) rather than a late bind-time rejection after the admission write. Also consider reordering: run coverage derivation AFTER split (or re-derive it) so plan_steps_covered is born post-split.
+17. safety_observations: The 14:16:28Z candidate write (finalize_candidates/36bcefaf… + planner_repair.json) occurred with no live runner; circuit is open (occurrences 2) and implementation_dispatch_allowed false — no dispatch hazard. A depends_on-only engine fix would NOT unblock publication (coverage bind failure) and would leave a written-but-unpublished task_feasibility.json, so no partial fix should be dispatched as "sufficient". No lifecycle state was mutated by this investigation.
+18. unresolved_questions:
+    - Whether the intended coverage mapping for a split original task is original→impl_id only, or original→[impl_id, proof_id] (proof carries the verification evidence that several coverage rows cite; evidence pack inference says impl_id, but rows citing proof-style evidence (T13/T16 are test-kind and were NOT split in this candidate) may semantically warrant proof_id) — Sol to adjudicate.
+    - Whether user_actions[].blocks_task_ids (schema-typed only, no finalize-time validation) should be included in the reference-closure invariant despite being empty in this candidate.
+    - Whether re-deriving validation.plan_steps_covered post-split (instead of rewriting ids) is preferred for orphan_tasks correctness.
+```

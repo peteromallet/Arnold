@@ -1,0 +1,88 @@
+{
+  "evidence": {
+    "fan_custody_receipt": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/fan-child-custody-receipt.json",
+    "pack": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/evidence-pack.md",
+    "prior_repair_attempt": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/repair-producer-attempt.json",
+    "prior_sol_stage2": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/sol-stage2.md",
+    "prior_swarm_index": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/swarm-index.json",
+    "reproduction": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/repro_finalize_sweep.py",
+    "sol_stage1": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/sol-stage1.md",
+    "sol_stage2": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/sol-stage2.md"
+  },
+  "handoff_hash_basis": "sha256 of UTF-8 canonical JSON (sorted keys, separators comma/colon) with handoff_id omitted",
+  "handoff_id": "sha256:0e3c1467d6f0b1484168d1bca455171b28f8587754d4d763d6843c4e69599e06",
+  "horizon_a": {
+    "agent_actionable": true,
+    "canonical_owner": "Megaplan critique-custody/finalize contract; F01 attempt owner is megaplan.phase_wbc.finalize in plan-local .phase_wbc_attempts.sqlite3",
+    "deployment_or_rebind_proof": [
+      "runtime_provenance ok=true; source_revision/editable_revision equal TARGET_REV; imports and editable root equal the named runtime root",
+      "chain runtime_binding.current_identity.content_sha256 equals TARGET_CONTENT_SHA256 and exactly one new runtime_rebind event names the old and new digests",
+      "validator and accepted task/result envelopes name the same runtime identity, request, grant, claim epoch, fence, WBC attempt, and occurrence digest",
+      "state no longer has the blocked finalize cursor and chain milestone 0 is completed or current_milestone_index is greater than 0"
+    ],
+    "external_gate": null,
+    "focused_tests": [
+      "PYTHONPATH=/workspace/runtime-candidates/arnold-r7-fresh-child-20260805 python .megaplan/incident-evidence/critique-r7-superfixer-20260806-130215-69f23ad9/repro_finalize_sweep.py; expected failures=0 and 95/95 resolved",
+      "python -m pytest -q tests/orchestration/test_critique_custody.py; expected pass, including test_clearance_accepts_carried_tradeoff_with_traceable_plan_mutation",
+      "Focused tests for any repaired phase-attempt/recovery producer seam: complete F01, append-only retry/dedupe, stale fence/lease rejection, and no direct finalize effect before authority"
+    ],
+    "iteration_loop": {
+      "edit_test_observe_until": "validator success plus authoritative cursor/milestone advancement",
+      "editable_runtime_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+      "hard_budget": null,
+      "on_failed_iteration": "append an evidence delta, preserve the same logical occurrence digest, repair the named internal seam, rerun focused tests and the idempotent producer; return to Sol only for a new conflict or external gate"
+    },
+    "operations": [
+      "Create the approved descendant in /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 with: git switch -c recovery/critique-r7-v4-14834310; git cherry-pick 77b76e3a487809a2d1c89ea6785aac473c8931c8; record TARGET_REV=$(git rev-parse HEAD)",
+      "Install the exact descendant with: python -m pip install -e /workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+      "Emit identity and receipt with: env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=/workspace/runtime-candidates/arnold-r7-fresh-child-20260805 python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 --expected-revision $TARGET_REV --emit-receipt --identity-out $RUNTIME_IDENTITY_JSON --receipt-out $RUNTIME_PROVENANCE_JSON; require ok=true and capture TARGET_CONTENT_SHA256",
+      "CAS-rebind without moving the cursor: run_mp chain runtime-rebind --spec .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml --project-dir /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold --from-runtime-sha256 e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6 --to-runtime-sha256 $TARGET_CONTENT_SHA256 --expected-current-milestone cl2-ledger-replay --expected-current-plan cl2-wbc-backed-ledger-20260805-2140 --direction cutover --reason occurrence-v4-14834310-critique-custody-fix --actor arnold-recovery --runtime-identity $RUNTIME_IDENTITY_JSON --runtime-provenance-receipt $RUNTIME_PROVENANCE_JSON",
+      "Through the supported recovery producer, allocate a new finalize invocation and call custody.phase_wbc.activate_phase_wbc(state, plan_dir, step='finalize', agent='ordinary-fixer'); use its append-only attempt_id from .phase_wbc_attempts.sqlite3 as CustodyTargetKey.attempt. If blocked state cannot enter this API, repair that control-plane seam in the same approved runtime and rerun focused tests; never invent the value or edit SQLite/state JSON directly",
+      "Call cloud.repair_requests.build_normalized_repair_identity and enqueue_occurrence_bound_repair_request (or the equivalent enqueue_bound_repair_request wrapper) with the complete F01 target, exact logical occurrence, run revision/incarnation, coordinator attempt, fence, WBC attempt reference, grant, lease, and custody epoch",
+      "Run Authority persists one occurrence-scoped allow/deny decision; on allow, Custody claim_singleton_occurrence creates exactly one claim/lease/epoch bound to that grant and digest",
+      "WBC reserves and starts exactly one recovery attempt and one effect key; cloud.wrappers.repair_delegation.delegate_to_simple_fixer invokes the CanonicalRunner/ordinary fixer, which re-enters only resume_cursor.phase=finalize",
+      "Finalize calls write_critique_clearance and the real finalize validator, admits task/result envelopes, commits publication under WBC/CAS, terminalizes WBC success, releases Custody, and lets the chain driver advance the plan cursor and milestone"
+    ],
+    "preconditions": [
+      "Fingerprint is unchanged: chain blocked at milestone 0/current plan cl2-wbc-backed-ledger-20260805-2140, resume_cursor.phase=finalize, gate v5 sha256 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b, and exactly the two named unresolved findings",
+      "No live runner, fresh lease, repair claim, finalize repair request, WBC recovery attempt/effect, or notification intent/effect exists",
+      "Pinned runtime worktree is clean and its HEAD remains an A-lineage descendant; the proven 77b76e3a4 change applies without semantic conflict",
+      "Operator charge for this v4 occurrence remains the authority basis; no external gate is required"
+    ],
+    "return_condition": "One accepted finalize result for the logical occurrence; 95/95 custody sweep; matching runtime/request/grant/claim/WBC identities; custody released; WBC terminal success; plan cursor past finalize and chain milestone advanced beyond index 0",
+    "route": "repair_control_plane_then_migrate"
+  },
+  "horizon_b": {
+    "agent_actionable": false,
+    "canonical_owner": "Megaplan critique-custody contract spanning flags/evaluator, gate carry, orchestration/critique_custody.py, handlers/finalize.py, phase WBC, and recovery admission",
+    "category_closure_proof": [
+      "Replay R7 and critique-ledger-bigbang fixtures through the real validator under each supported runtime-policy version",
+      "For each logical recovery prove exactly one occurrence, one Custody claim/epoch, one WBC attempt/effect reservation, one terminal result, and at most one deduplicated notification effect",
+      "Crash/retry at producer, gate, rebind, request, authority, claim, WBC start, finalize publish, release, notification intent, and notification effect; prove no orphaned or duplicate authority/effects"
+    ],
+    "epic_slug": "critique-ledger-accountability-v3-r7-20260805",
+    "epic_update_required": true,
+    "first_broken_contract": "accepted_tradeoff plus a traceable fixed-plan mutation was persisted without the gate_resolution/carry envelope required by finalize, while finalize lacked the equivalent fixed_claim resolution branch",
+    "missed_backstop": "Gate/runtime admission did not validate that persisted finding resolution state was consumable by the exact bound finalize policy, and the repair backstop could not canonically mint the missing finalize F01 attempt",
+    "ticket_or_crosswalk": "Add CL2 resolution-envelope/gate-carry, finalize-attempt recovery, Run Authority/Custody/WBC admission, runtime-rebind history, notification custody, and category-replay workstreams to README.md, NORTHSTAR.md, UNFINISHED_WORK.md, and the CL2 brief"
+  },
+  "notification_key": "critique-ledger-accountability-v3-r7-launch-20260805:occ_critique_r7_superfixer_retry_20260806_v4_14834310cdddb1f2b0eed77e:terminal",
+  "schema": "arnold.superfixer.recovery_handoff.v1",
+  "stop_gates": [
+    "Any change to occurrence digest, chain/spec/plan/gate hashes, milestone/current plan, or failure family",
+    "Dirty or non-descendant runtime, provenance failure, stale/forged receipt, rebind CAS refusal, or runtime identity mismatch",
+    "Any live runner/lease/claim, duplicate request/claim/WBC key, stale fence/epoch/grant, or existing unaccounted finalize/notification effect",
+    "Failure to obtain a canonical phase-WBC finalize attempt_id; never substitute labels, logs, PIDs, or a fabricated value",
+    "Focused regression not green, custody sweep not 95/95, validator rejection, repeated critique_finding_unresolved, new error family, or absent phase terminal evidence",
+    "Cursor or milestone fails to advance after accepted finalize; preserve evidence and re-enter the internal repair loop"
+  ],
+  "target": {
+    "chain_state": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/.chains/chain-880bd6e04632.json",
+    "logical_occurrence_digest": "sha256:14834310cdddb1f2b0eed77efb40585bd2d7ce1e73cd64497bad74246bd5c856",
+    "milestone": "cl2-ledger-replay",
+    "occurrence": "occ_critique_r7_superfixer_retry_20260806_v4_14834310cdddb1f2b0eed77e",
+    "plan": "cl2-wbc-backed-ledger-20260805-2140",
+    "session": "critique-ledger-accountability-v3-r7-launch-20260805",
+    "workspace": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold"
+  }
+}

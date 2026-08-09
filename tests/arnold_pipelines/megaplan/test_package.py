@@ -126,6 +126,7 @@ def test_compiler_smoke_build_and_compile() -> None:
 
 _DELETED_SUBMODULE_IMPORTS = (
     "arnold_pipelines.megaplan._pipeline",
+    "arnold_pipelines.megaplan._pipeline._bridge",
     "arnold_pipelines.megaplan._pipeline.builder",
     "arnold_pipelines.megaplan._pipeline.runtime",
     "arnold_pipelines.megaplan._pipeline.dispatch",
@@ -203,3 +204,23 @@ def test_deleted_stage_classes_not_exposed() -> None:
         assert not hasattr(pipeline_mod, cls_name), (
             f"pipeline.{cls_name} must not exist"
         )
+
+
+def test_deleted_pipeline_facade_symbols_not_exposed() -> None:
+    """The current facade must not re-export retired runtime or builder symbols."""
+    import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+    removed_symbols = (
+        "build_legacy_pipeline",
+        "compile_planning_pipeline",
+        "WorkflowManifest",
+        "run_pipeline",
+        "InProcessHandlerStep",
+        "HandlerStep",
+        "Stage",
+        "build_planning_pipeline",
+    )
+    for name in removed_symbols:
+        assert not hasattr(pipeline_mod, name)
+        with pytest.raises(AttributeError):
+            getattr(pipeline_mod, name)

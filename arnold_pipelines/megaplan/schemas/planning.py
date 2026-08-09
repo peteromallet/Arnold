@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from arnold_pipelines.megaplan.north_star_actions import NorthStarAction
 from arnold_pipelines.megaplan.types import FlagRecord, SettledDecision
 
 
@@ -25,6 +26,9 @@ class GatePayload(TypedDict):
     signals_assessment: str
     warnings: list[str]
     settled_decisions: list[SettledDecision]
+    flag_resolutions: list[dict[str, Any]]
+    accepted_tradeoffs: list[dict[str, str]]
+    north_star_actions: list[NorthStarAction]
 
 
 class GateArtifact(TypedDict, total=False):
@@ -37,10 +41,13 @@ class GateArtifact(TypedDict, total=False):
     signals_assessment: str
     warnings: list[str]
     settled_decisions: list[SettledDecision]
+    flag_resolutions: list[dict[str, Any]]
+    accepted_tradeoffs: list[dict[str, str]]
     override_forced: bool
     orchestrator_guidance: str
     robustness: str
     signals: dict[str, Any]
+    north_star_actions: list[NorthStarAction]
 
 
 class GateSignals(TypedDict, total=False):

@@ -1,0 +1,271 @@
+{
+  "checks": [
+    {
+      "check": "current_head",
+      "head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
+      "status": "PASS"
+    },
+    {
+      "bound_artifacts_count": 13,
+      "check": "m5_final_attestation",
+      "detail": "3 bound artifact(s) missing or mismatched",
+      "missing_bound_artifacts": [
+        ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+        ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+        ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json"
+      ],
+      "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json",
+      "repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+      "retirement_status": "completed",
+      "schema": "m5.final-attestation.v2",
+      "status": "INCOHERENT"
+    },
+    {
+      "check": "m5_bound_head_vs_current_head",
+      "current_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
+      "detail": "M5 bound head does not match current HEAD, but is an ancestor. HEAD has advanced past the M5 attestation point. Downstream M6 handoff must not be marked complete.",
+      "exact_match": false,
+      "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+      "m5_is_ancestor_of_head": true,
+      "status": "INCOHERENT"
+    },
+    {
+      "check": "m5_milestone_attestation",
+      "milestone_count": 3,
+      "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/attestation.json",
+      "schema": "m5.milestone-range-attestation.v1",
+      "status": "PASS"
+    },
+    {
+      "check": "m5_reconciliation_artifacts",
+      "missing": [],
+      "present": [
+        ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/completion-receipt-reconciliation.json",
+        ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/chain-verify-reconciliation.json",
+        ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/full-suite-reconciliation.json",
+        ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/selector-path-reconciliation.json",
+        ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/m5-review-suite-reconciliation.json"
+      ],
+      "status": "PASS",
+      "unparseable": []
+    },
+    {
+      "actual_parents": [
+        "7644f55dd9be75632670f990268e045d3ee1c2f7",
+        "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
+      ],
+      "check": "wbc_merge_evidence",
+      "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
+      "integration_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+      "is_merge_commit": true,
+      "path": ".megaplan/initiatives/workflow-boundary-contracts/handoff/consolidation-20260714/wbc-merge-evidence.md",
+      "second_parent": "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70",
+      "status": "PASS"
+    },
+    {
+      "check": "wbc_ancestry",
+      "current_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
+      "first_parent_is_ancestor": true,
+      "parents_from_evidence": {
+        "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
+        "second_parent": "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
+      },
+      "second_parent_is_ancestor": true,
+      "status": "PASS"
+    },
+    {
+      "check": "wbc_package_metadata",
+      "detail": "Package metadata recorded; activation receipt evidence is evaluated separately. Editable install alone is not proof of WBC activation.",
+      "editable_matches_repo_root": false,
+      "editable_project_location": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+      "import_resolves_to": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold/__init__.py",
+      "install_location": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+      "is_editable": true,
+      "package_name": "arnold",
+      "repo_root": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+      "status": "UNKNOWN",
+      "version": "0.23.0"
+    },
+    {
+      "boundary_category": {
+        "files": [
+          {
+            "current_sha256": "953d5afaed51de199990f2159a49568e4a34685b5b7626b1d7b8d8ee35c4e16e",
+            "merge_missing": false,
+            "merge_sha256": "953d5afaed51de199990f2159a49568e4a34685b5b7626b1d7b8d8ee35c4e16e",
+            "path": "arnold/workflow/boundary_compatibility.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "753a325cf46f06bf71c01b0f900d1ac8798ca46f2f95d310e8dfd171b993343d",
+            "merge_missing": false,
+            "merge_sha256": "753a325cf46f06bf71c01b0f900d1ac8798ca46f2f95d310e8dfd171b993343d",
+            "path": "arnold/workflow/boundary_conformance.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "cca8cefa761f80d31fca781a218af61d97c588a5d5f8afc63d632f262d9f68ed",
+            "merge_missing": false,
+            "merge_sha256": "cca8cefa761f80d31fca781a218af61d97c588a5d5f8afc63d632f262d9f68ed",
+            "path": "arnold/workflow/boundary_evidence.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "b1e5cd65f5d64b858536680a4140dabc306e4f78e68e4da966d487aef88fb2f7",
+            "merge_missing": false,
+            "merge_sha256": "b1e5cd65f5d64b858536680a4140dabc306e4f78e68e4da966d487aef88fb2f7",
+            "path": "arnold/workflow/boundary_templates.py",
+            "status": "match"
+          }
+        ],
+        "label": "boundary",
+        "summary": {
+          "matched": 4,
+          "mismatched": 0,
+          "missing_current": 0,
+          "missing_merge": 0,
+          "total": 4
+        }
+      },
+      "check": "wbc_file_hashes",
+      "detail": "All 13 WBC files match between current tree and WBC merge commit 7cf0cab2",
+      "integration_commit": "7cf0cab28c59d40614b9548fa4348ed7f062f52c",
+      "runtime_category": {
+        "files": [
+          {
+            "current_sha256": "1837f03cf1ad3500f50d4a5b3faa422c252314484566dfb96796747a53d6484d",
+            "merge_missing": false,
+            "merge_sha256": "1837f03cf1ad3500f50d4a5b3faa422c252314484566dfb96796747a53d6484d",
+            "path": "arnold/workflow/execution_attempt_ledger.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "154288bb5a27aefa241aebeb8b6d24943196adc68c013f0fb3915bd46ff3aa15",
+            "merge_missing": false,
+            "merge_sha256": "154288bb5a27aefa241aebeb8b6d24943196adc68c013f0fb3915bd46ff3aa15",
+            "path": "arnold/workflow/durable_refs.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "fec763c0c0b220fa2af510b5a6919a8830d6f4a5e2dd585856921bf5e3ae5047",
+            "merge_missing": false,
+            "merge_sha256": "fec763c0c0b220fa2af510b5a6919a8830d6f4a5e2dd585856921bf5e3ae5047",
+            "path": "arnold/workflow/payload_policy.py",
+            "status": "match"
+          }
+        ],
+        "label": "runtime",
+        "summary": {
+          "matched": 3,
+          "mismatched": 0,
+          "missing_current": 0,
+          "missing_merge": 0,
+          "total": 3
+        }
+      },
+      "schema_category": {
+        "files": [
+          {
+            "current_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+            "merge_missing": false,
+            "merge_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+            "path": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
+            "status": "match"
+          },
+          {
+            "current_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+            "merge_missing": false,
+            "merge_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+            "path": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+            "status": "match"
+          },
+          {
+            "current_sha256": "6fb1be40aee7373b2ca335e69f4fe4838b60662aa2dcde186a0c64481ccab82c",
+            "merge_missing": false,
+            "merge_sha256": "6fb1be40aee7373b2ca335e69f4fe4838b60662aa2dcde186a0c64481ccab82c",
+            "path": "arnold_pipelines/megaplan/workflows/support_manifest.json",
+            "status": "match"
+          }
+        ],
+        "label": "schema",
+        "summary": {
+          "matched": 3,
+          "mismatched": 0,
+          "missing_current": 0,
+          "missing_merge": 0,
+          "total": 3
+        }
+      },
+      "status": "PASS",
+      "summary": {
+        "matched": 13,
+        "mismatched": 0,
+        "missing_current": 0,
+        "missing_merge": 0,
+        "total_files": 13
+      },
+      "support_category": {
+        "files": [
+          {
+            "current_sha256": "cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7",
+            "merge_missing": false,
+            "merge_sha256": "cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7",
+            "path": "arnold_pipelines/megaplan/workflows/boundary_contracts.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "4747e3efb4bc9fdc925477f54f8fe4537fb267ebba64d609a5c5ed8b36a0384c",
+            "merge_missing": false,
+            "merge_sha256": "4747e3efb4bc9fdc925477f54f8fe4537fb267ebba64d609a5c5ed8b36a0384c",
+            "path": "arnold/workflow/source_compiler.py",
+            "status": "match"
+          },
+          {
+            "current_sha256": "dac3175af043806d9052a76a37fc62f2b47b91dad3127b8d4dadcac893cd42a6",
+            "merge_missing": false,
+            "merge_sha256": "dac3175af043806d9052a76a37fc62f2b47b91dad3127b8d4dadcac893cd42a6",
+            "path": "docs/arnold/workflow-boundary-contracts.md",
+            "status": "match"
+          }
+        ],
+        "label": "support",
+        "summary": {
+          "matched": 3,
+          "mismatched": 0,
+          "missing_current": 0,
+          "missing_merge": 0,
+          "total": 3
+        }
+      }
+    },
+    {
+      "check": "activation_receipt_evidence",
+      "detail": "Activation receipt evidence file found and parsed, but repo-local verifier cannot cryptographically prove the activation chain. This remains UNKNOWN until a content-addressed handoff receipt is produced by the activation authority.",
+      "expected_path": "/workspace/.megaplan/consolidation-evidence/arnold-20260714/activation-evidence.md",
+      "landed_main_sha": "1fc545cc0c95c933a88fbf5b2556b479d76a31bd",
+      "mentions_editable_install": true,
+      "mentions_restart_receipt": true,
+      "mentions_runtime_provenance": true,
+      "receipt_merge_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+      "receipt_present": true,
+      "receipt_sha256": "62a21a8e442b5458d8b65e4ad96774f78e58e6b3fe5a2370502fdf76828540bf",
+      "receipt_size_bytes": 4943,
+      "status": "UNKNOWN"
+    }
+  ],
+  "generated_at": "2026-08-08T17:42:26.279093+00:00",
+  "notes": [
+    "M6 is observe-only: this verifier reads git/files but writes only to the evidence artifact.",
+    "INCOHERENT or BLOCKED overall status means downstream M6 handoff artifacts must not be marked complete.",
+    "Re-run this tool whenever the working tree changes to get a fresh evaluation."
+  ],
+  "overall_status": "INCOHERENT",
+  "schema": "m6.prerequisite-verification.v1",
+  "summary": {
+    "blocked": 0,
+    "incoherent": 2,
+    "pass": 6,
+    "total": 10,
+    "unknown": 2
+  }
+}

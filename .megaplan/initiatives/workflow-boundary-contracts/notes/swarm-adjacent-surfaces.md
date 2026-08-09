@@ -1,5 +1,8 @@
 # Swarm Adjacent Surfaces
 
+> Historical research input. Its architectural findings remain relevant, but
+> immediate sequencing is superseded by the prerequisite-gated C1-C6 chain.
+
 This note records the July 4, 2026 swarm findings and the judgment calls made
 from them. It is input to the epic, not a requirement dump.
 

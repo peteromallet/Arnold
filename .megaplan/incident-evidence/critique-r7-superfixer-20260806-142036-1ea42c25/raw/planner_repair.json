@@ -1,0 +1,14 @@
+{
+  "schema": "megaplan.planner_repair",
+  "schema_version": 1,
+  "candidate_id": "candidate:36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07",
+  "failure_fingerprint": "382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df",
+  "occurrences": 2,
+  "circuit_open": true,
+  "prior_state": "gated",
+  "prior_admitted_finalize_sha256": null,
+  "prior_admitted_feasibility_sha256": null,
+  "accepted_authority_preserved": true,
+  "implementation_dispatch_allowed": false,
+  "updated_at": "2026-08-06T14:16:28Z"
+}

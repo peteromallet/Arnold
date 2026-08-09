@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All auditor authority has been migrated to canonical delegation. These briefs are retained as non-runnable telemetry — they must not be used to launch repair actions, grant authority, or materialize commands.
+
 You are a DeepSeek subagent in a research swarm. Work read-only.
 
 Goal: enumerate signals around human gates, PR/merge state, CI/build state, user_actions, user_action_resolutions, unresolved vs resolved-but-unconsumed actions, PR closed/merged drift, auto-vs-manual merge policy, and CI failures that block chain progress.

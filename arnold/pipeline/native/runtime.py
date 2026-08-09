@@ -16,6 +16,12 @@ Parity with graph executor
 - Schema-registry-backed handoff via ``StepIOContractContext``.
 - ``state["__contract_results__"]`` publication matching executor shape.
 - Telemetry-sink handling via ``telemetry_path``.
+
+Ownership:
+    The runtime executes topology owned by ``.pypeline`` modules and named
+    native subworkflows.  Boundary contracts and boundary receipts are
+    durable-effect declarations and checks consumed during execution — they
+    do not define or alter the runtime execution path.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from arnold.pipeline.native.checkpoint import (
 )
 from arnold.pipeline.native.context import require_native_runtime
 from arnold.pipeline.native.hooks import (
+    NativeWbcHooks,
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
@@ -72,6 +79,29 @@ from arnold.supervisor.cancellation import (
     cancellation_result_payload,
     cancelled_contract_result,
 )
+from arnold.kernel.native_wbc import (
+    NativeWbcAttempt,
+    begin_native_wbc_attempt,
+)
+
+def _trace_hooks_in_chain(hooks: Any) -> Any:
+    """Walk the wrapper ``_inner`` chain to find a ``NativeTraceHooks``.
+
+    The runtime may wrap user hooks in ``NativeWbcHooks`` (and then
+    ``NativeTraceHooks``), so a bare ``(_trace_h := _trace_hooks_in_chain(_hooks)) is not None``
+    no longer suffices.  This helper traverses the ``_inner`` chain and
+    returns the first ``NativeTraceHooks`` found, or ``None``.
+    """
+    current = hooks
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, NativeTraceHooks):
+            return current
+        seen.add(id(current))
+        current = getattr(current, "_inner", None)
+    return None
+
+
 
 _MAX_SUBPIPELINE_DEPTH = PACK_CLOSURE_MAX_DEPTH
 _DEFAULT_PHASE_MAX_ATTEMPTS = 1
@@ -879,9 +909,30 @@ def run_native_pipeline(
         _persistence_backend if persistence_backend is not None else None
     )
 
+    _runtime_wbc: NativeWbcAttempt = begin_native_wbc_attempt(
+        artifact_root,
+        producer_family="arnold_native",
+        surface="runtime",
+        run_id=getattr(initial_envelope, "run_id", "") or "",
+        plugin_id=getattr(initial_envelope, "plugin_id", "") or "",
+        manifest_hash=getattr(initial_envelope, "manifest_hash", "") or "",
+        subject={"program": program.name, "resume": resume, "run_path": current_run_path},
+        metadata={"trace_run_kind": _trace_run_kind},
+        start_payload={"artifact_root": str(artifact_root), "resume": resume},
+    )
+
     # Resolve hooks — always have a hooks instance so the runtime never
     # needs None-guards around callback invocations.
     _hooks: NativeRuntimeHooks = hooks if hooks is not None else NullNativeRuntimeHooks()
+    _wbc_hooks = NativeWbcHooks(
+        _hooks,
+        artifact_root=artifact_root,
+        program_name=program.name,
+        run_id=getattr(initial_envelope, "run_id", "") or "",
+        plugin_id=getattr(initial_envelope, "plugin_id", "") or "",
+        manifest_hash=getattr(initial_envelope, "manifest_hash", "") or "",
+    )
+    _hooks = _wbc_hooks
 
     # ── Wrap with trace hooks when trace_dir is set ────────────────
     if trace_dir is not None:
@@ -898,18 +949,39 @@ def run_native_pipeline(
 
     instructions = program.instructions
     if not instructions:
+        # Close the empty-program early return so the WBC evidence path always
+        # emits a terminal record — both the runtime attempt and the hooks
+        # wrapper already emitted ``started`` events above and must be balanced
+        # with a terminal record before returning.
+        _empty_payload = {
+            "pc": 0,
+            "stages_completed": len(stages),
+            "run_path": current_run_path,
+        }
+        _runtime_wbc.terminal(
+            status="completed",
+            outcome="result",
+            payload=_empty_payload,
+        )
+        _empty_close = getattr(_wbc_hooks, "close", None)
+        if callable(_empty_close):
+            _empty_close(
+                status="completed",
+                outcome="result",
+                payload=_empty_payload,
+            )
         return NativeExecutionResult(state=state, stages=stages, pc=0, envelope=envelope)
 
     trace_status = "running"
-    if isinstance(_hooks, NativeTraceHooks):
-        record_run_init = getattr(_hooks, "record_run_init", None)
+    if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+        record_run_init = getattr(_trace_h, "record_run_init", None)
         if callable(record_run_init):
             record_run_init(
                 program,
                 run_path=trace_run_path,
                 pack_provenance=pack_provenance,
             )
-        _hooks.on_run_enter(
+        _trace_h.on_run_enter(
             program,
             run_path=trace_run_path,
             parent_run_path=trace_parent_run_path,
@@ -1002,7 +1074,7 @@ def run_native_pipeline(
                         current_run_path = _normalize_run_path(saved_run_path)
                         trace_run_path = current_run_path
                     path_stack = _deserialize_path_stack(resume_cursor_data.get("path_stack"))
-                    if isinstance(_hooks, NativeTraceHooks):
+                    if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
                         resumed_step_path = None
                         resumed_pc = (
                             composite_resume["parent"]["pc"]
@@ -1014,8 +1086,8 @@ def run_native_pipeline(
                                 current_run_path,
                                 instructions[resumed_pc],
                             )
-                        _hooks.seed_stage_sequence(stages)
-                        _hooks.emit_pipeline_resumed(
+                        _trace_h.seed_stage_sequence(stages)
+                        _trace_h.emit_pipeline_resumed(
                             reason=(
                                 "child_suspended"
                                 if composite_resume is not None
@@ -1041,6 +1113,17 @@ def run_native_pipeline(
             _native = resume_cursor_data.get("native", {})
             if isinstance(_native, dict) and _native.get("suspension_kind") == "human_gate":
                 _human_gate_resume = True
+            _runtime_wbc.effect(
+                "resume_cursor_restored",
+                {
+                    "suspension_kind": (
+                        _native.get("suspension_kind")
+                        if isinstance(_native, dict)
+                        else None
+                    ),
+                    "pc": start_pc,
+                },
+            )
         if _cursor_id is None:
             _cursor_id = uuid4().hex
 
@@ -1270,8 +1353,8 @@ def run_native_pipeline(
                         extra={**_phase_path_metadata, **_phase_extra},
                     )
                     _hooks.on_checkpoint(_phase_cursor, dict(state))
-                    if isinstance(_hooks, NativeTraceHooks):
-                        _hooks.emit_pipeline_suspended(
+                    if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                        _trace_h.emit_pipeline_suspended(
                             reason="phase_suspended",
                             run_path=current_run_path,
                             step_path=current_step_path,
@@ -1360,8 +1443,8 @@ def run_native_pipeline(
                         extra=_suspension_path_metadata,
                     )
                     _hooks.on_checkpoint(_cursor, dict(state))
-                    if isinstance(_hooks, NativeTraceHooks):
-                        _hooks.emit_pipeline_suspended(
+                    if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                        _trace_h.emit_pipeline_suspended(
                             reason="max_phases",
                             run_path=current_run_path,
                             step_path=_cursor.get("step_path"),
@@ -1565,8 +1648,16 @@ def run_native_pipeline(
                         extra={**_hg_path_metadata, **_hg_cursor_extra},
                     )
                     _hooks.on_checkpoint(_hg_cursor, dict(_pause_state))
-                    if isinstance(_hooks, NativeTraceHooks):
-                        _hooks.emit_pipeline_suspended(
+                    _runtime_wbc.effect(
+                        "human_gate_checkpoint_written",
+                        {
+                            "stage": _hg_name,
+                            "choices": list(_hg_choices),
+                            "checkpoint": str(_checkpoint_path),
+                        },
+                    )
+                    if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                        _trace_h.emit_pipeline_suspended(
                             reason="human_gate",
                             run_path=current_run_path,
                             step_path=_hg_cursor.get("step_path"),
@@ -1636,7 +1727,15 @@ def run_native_pipeline(
                         state.pop("_pipeline_paused_stage", None)
                         state.pop("awaiting_user", None)
                         _human_gate_resume = False
-    
+                        _runtime_wbc.effect(
+                            "human_gate_resume_selected",
+                            {
+                                "stage": instr.name,
+                                "label": _resume_label,
+                                "source": _resume_source,
+                            },
+                        )
+
                         if target_pc is not None:
                             _maybe_count_loop_iteration(
                                 instr=instr,
@@ -1973,8 +2072,8 @@ def run_native_pipeline(
                     current_run_path,
                     *instr.call_site_path,
                 )
-                if isinstance(_hooks, NativeTraceHooks):
-                    _hooks.on_parallel_map_enter(
+                if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                    _trace_h.on_parallel_map_enter(
                         instr,
                         run_path=current_run_path,
                         path=parallel_map_path,
@@ -2079,16 +2178,16 @@ def run_native_pipeline(
                             ),
                             "call_site_path": item_path,
                         }
-                        if isinstance(_hooks, NativeTraceHooks):
-                            _hooks.trace_only_step_start(mapper_instr, ctx)
+                        if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                            _trace_h.trace_only_step_start(mapper_instr, ctx)
                         try:
                             result = mapper(ctx)
                         except BaseException as exc:
-                            if isinstance(_hooks, NativeTraceHooks):
-                                _hooks.trace_only_step_error(mapper_instr, ctx, exc)
+                            if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                                _trace_h.trace_only_step_error(mapper_instr, ctx, exc)
                             raise
-                        if isinstance(_hooks, NativeTraceHooks):
-                            _hooks.trace_only_step_end(mapper_instr, ctx)
+                        if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                            _trace_h.trace_only_step_end(mapper_instr, ctx)
                         outputs, _ = _normalize_phase_result(result, parallel_block.name or instr.name)
                         item_result = dict(outputs)
                         item_result.update(_extract_state_patch(result))
@@ -2097,8 +2196,8 @@ def run_native_pipeline(
                             mapper_envelope,
                             getattr(result, "envelope", None),
                         )
-                        if isinstance(_hooks, NativeTraceHooks):
-                            _hooks.trace_only_stage_complete(mapper_instr, ctx)
+                        if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                            _trace_h.trace_only_stage_complete(mapper_instr, ctx)
                     else:
                         assert compiled_mapper_program is not None
                         child_program = compiled_mapper_program
@@ -2221,8 +2320,8 @@ def run_native_pipeline(
                                 },
                             )
                             _hooks.on_checkpoint(_child_cursor, dict(state))
-                            if isinstance(_hooks, NativeTraceHooks):
-                                _hooks.emit_pipeline_suspended(
+                            if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                                _trace_h.emit_pipeline_suspended(
                                     reason="child_suspended",
                                     run_path=current_run_path,
                                     step_path=item_path,
@@ -2275,8 +2374,8 @@ def run_native_pipeline(
                     owned_keys,
                 )
                 envelope = _hooks.join_envelope(instr, envelope, mapper_envelope)
-                if isinstance(_hooks, NativeTraceHooks):
-                    _hooks.on_parallel_map_exit(
+                if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                    _trace_h.on_parallel_map_exit(
                         instr,
                         run_path=current_run_path,
                         path=parallel_map_path,
@@ -2430,8 +2529,8 @@ def run_native_pipeline(
                             pack_provenance=pack_provenance,
                         )
                         _hooks.on_checkpoint(_child_suspended_cursor, dict(state))
-                        if isinstance(_hooks, NativeTraceHooks):
-                            _hooks.emit_pipeline_suspended(
+                        if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+                            _trace_h.emit_pipeline_suspended(
                                 reason="child_suspended",
                                 run_path=current_run_path,
                                 step_path=_step_path_for_instr(current_run_path, instr),
@@ -2593,9 +2692,9 @@ def run_native_pipeline(
         if callable(record_cancellation):
             record_cancellation(payload, state=dict(state))
         _hooks.on_checkpoint(cancel_cursor, dict(state))
-        if isinstance(_hooks, NativeTraceHooks):
-            _hooks.emit_pipeline_cancelled(payload)
-            _hooks.emit_pipeline_suspended(
+        if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+            _trace_h.emit_pipeline_cancelled(payload)
+            _trace_h.emit_pipeline_suspended(
                 reason="cancelled",
                 run_path=current_run_path,
                 step_path=payload.get("step_path"),
@@ -2610,9 +2709,55 @@ def run_native_pipeline(
             cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
             envelope=envelope,
         )
+    except BaseException as exc:
+        trace_status = "failed"
+        raise
     finally:
-        if isinstance(_hooks, NativeTraceHooks):
-            _hooks.on_run_exit(program, run_path=trace_run_path, status=trace_status)
+        terminal_payload = {
+            "pc": locals().get("pc", 0),
+            "stages_completed": len(stages),
+            "run_path": current_run_path,
+        }
+        if trace_status == "completed":
+            _runtime_wbc.terminal(
+                status="completed",
+                outcome="result",
+                payload=terminal_payload,
+            )
+        elif trace_status == "suspended":
+            _runtime_wbc.terminal(
+                status="suspended",
+                outcome="checkpoint",
+                payload=terminal_payload,
+            )
+        elif trace_status == "cancelled":
+            _runtime_wbc.terminal(
+                status="cancelled",
+                outcome="cancelled",
+                payload=terminal_payload,
+            )
+        else:
+            _runtime_wbc.terminal(
+                status="failed",
+                outcome="error",
+                payload=terminal_payload,
+            )
+        close_wbc = getattr(_wbc_hooks, "close", None)
+        if callable(close_wbc):
+            if trace_status == "completed":
+                close_wbc(status="completed", outcome="result", payload=terminal_payload)
+            elif trace_status == "suspended":
+                close_wbc(status="suspended", outcome="checkpoint", payload=terminal_payload)
+            elif trace_status == "cancelled":
+                close_wbc(
+                    status="cancelled",
+                    outcome="cancelled",
+                    payload=terminal_payload,
+                )
+            else:
+                close_wbc(status="failed", outcome="error", payload=terminal_payload)
+        if (_trace_h := _trace_hooks_in_chain(_hooks)) is not None:
+            _trace_h.on_run_exit(program, run_path=trace_run_path, status=trace_status)
 
 
 # ── helpers ───────────────────────────────────────────────────────────

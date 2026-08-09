@@ -36,16 +36,19 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 
 from arnold.kernel.effect import EffectDescriptor, EffectKind
 from arnold.kernel.effect_ledger import EffectLedger, EffectRecordState
 from arnold.pipeline.native.ir import NativeInstruction
+from arnold.kernel.native_wbc import NativeWbcAttempt, begin_native_wbc_attempt
 
 __all__ = [
     "DuplicateFulfilledAction",
     "EffectLedgerHooks",
     "NativeRuntimeHooks",
+    "NativeWbcHooks",
     "NullNativeRuntimeHooks",
 ]
 
@@ -300,15 +303,6 @@ class NullNativeRuntimeHooks:
     ) -> None:
         pass
 
-    def record_cancellation(
-        self,
-        cancellation: dict[str, Any],
-        *,
-        state: dict[str, Any] | None = None,
-    ) -> None:
-        del cancellation, state
-        return None
-
 
 class EffectLedgerHooks:
     """Hook wrapper that tracks side-effect lifecycle in an EffectLedger."""
@@ -320,6 +314,9 @@ class EffectLedgerHooks:
         inner: NativeRuntimeHooks | None = None,
         *,
         duplicate_fulfilled_action: DuplicateFulfilledAction = "skip",
+        effect_protocol: Any = None,
+        artifact_root: str | Path | None = None,
+        program_name: str = "",
     ) -> None:
         if duplicate_fulfilled_action not in _VALID_DUPLICATE_ACTIONS:
             raise ValueError(
@@ -333,6 +330,21 @@ class EffectLedgerHooks:
         self._active_effect_metadata: dict[str, Any] | None = None
         self._last_effect_metadata: dict[str, Any] | None = None
         self.halt_reason = None
+        # Step 9A: optional WBC effect-protocol adapter for durable
+        # intent persistence and gated dispatch.
+        self._effect_protocol = effect_protocol
+        # Tracking counters for test verification (Step 9A).
+        self.wbc_intents_persisted: int = 0
+        self.wbc_dispatches: int = 0
+        self.wbc_zero_call_blocks: int = 0
+        # Step 4: durable effect-ledger WBC evidence surface.
+        self._wbc: NativeWbcAttempt = begin_native_wbc_attempt(
+            artifact_root,
+            producer_family="arnold_native",
+            surface="effect_ledger_hooks",
+            subject={"program": program_name},
+            start_payload={"program": program_name},
+        )
 
     def _build_effect_descriptor(self, instr: NativeInstruction) -> EffectDescriptor | None:
         if not instr.operation or not instr.idempotency_key:
@@ -371,6 +383,39 @@ class EffectLedgerHooks:
             return None
         return dict(self._last_effect_metadata)
 
+    def _persist_wbc_durable_intent(
+        self,
+        instr: NativeInstruction,
+        descriptor: EffectDescriptor,
+        ctx: dict[str, Any],
+    ) -> None:
+        """Step 9A: persist durable intent through the WBC protocol.
+
+        Called from ``on_step_start`` when a protocol is attached.
+        If this raises, the caller propagates the error — the inner
+        handler and instruction func are never invoked (zero-call-on-
+        failure).
+        """
+        if self._effect_protocol is None:
+            return
+        intent_payload = {
+            "effect_id": descriptor.effect_id,
+            "kind": descriptor.kind.value,
+            "target": descriptor.target,
+            "idempotency_key": descriptor.idempotency_key,
+            "step_path": ctx.get("step_path"),
+            "operation": instr.operation,
+        }
+        try:
+            self._effect_protocol.persist_durable_intent(
+                idempotency_key=descriptor.idempotency_key,
+                intent_payload=intent_payload,
+            )
+            self.wbc_intents_persisted += 1
+        except Exception:
+            self.wbc_zero_call_blocks += 1
+            raise
+
     def on_step_start(
         self,
         instr: NativeInstruction,
@@ -381,6 +426,21 @@ class EffectLedgerHooks:
         if descriptor is None:
             self._active_effect_metadata = None
             return ctx
+
+        # Step 9A: persist durable intent through the WBC protocol before
+        # the step executes.  If this raises, the inner handler and the
+        # instruction func are never invoked (zero-call-on-failure).
+        self._persist_wbc_durable_intent(instr, descriptor, ctx)
+
+        # Step 4: durable effect_intent WBC evidence.
+        self._wbc.effect_intent(
+            descriptor.effect_id,
+            payload={
+                "idempotency_key": descriptor.idempotency_key,
+                "target": descriptor.target,
+                "operation": instr.operation,
+            },
+        )
 
         prerecorded = self._ledger.prerecord(descriptor)
         record = self._ledger.get_record(descriptor.idempotency_key)
@@ -393,6 +453,15 @@ class EffectLedgerHooks:
                     self._duplicate_fulfilled_action
                     if record.state is EffectRecordState.FULFILLED
                     else "retry"
+                )
+                # Step 4: durable reconciliation WBC evidence for duplicates.
+                self._wbc.reconciliation(
+                    descriptor.effect_id,
+                    outcome=duplicate_action,
+                    payload={
+                        "idempotency_key": descriptor.idempotency_key,
+                        "lifecycle_state": lifecycle_state,
+                    },
                 )
 
         metadata = self._build_effect_metadata(
@@ -413,6 +482,12 @@ class EffectLedgerHooks:
         result: Any,
     ) -> Any:
         result = self._inner.on_step_end(instr, ctx, result)
+        effect_ctx = ctx.get("effect")
+        if isinstance(effect_ctx, dict) and effect_ctx.get("duplicate_action") is not None:
+            if self._active_effect_metadata is not None:
+                self._last_effect_metadata = dict(self._active_effect_metadata)
+            self._active_effect_metadata = None
+            return result
         if self._active_effect_metadata is not None and instr.idempotency_key:
             self._ledger.mark_fulfilled(instr.idempotency_key)
             self._active_effect_metadata["lifecycle_state"] = (
@@ -420,6 +495,19 @@ class EffectLedgerHooks:
             )
             self._last_effect_metadata = dict(self._active_effect_metadata)
             self._active_effect_metadata = None
+            # Step 9A: record COMPLETED outcome through protocol if attached.
+            if self._effect_protocol is not None:
+                self.wbc_dispatches += 1
+                self._effect_protocol.record_outcome(
+                    idempotency_key=instr.idempotency_key,
+                    outcome="COMPLETED",
+                )
+            # Step 4: durable effect_outcome WBC evidence.
+            self._wbc.effect_outcome(
+                instr.operation or instr.name or "step",
+                status="COMPLETED",
+                payload={"idempotency_key": instr.idempotency_key},
+            )
         return result
 
     def on_step_error(
@@ -429,6 +517,12 @@ class EffectLedgerHooks:
         exc: BaseException,
     ) -> None:
         self._inner.on_step_error(instr, ctx, exc)
+        effect_ctx = ctx.get("effect")
+        if isinstance(effect_ctx, dict) and effect_ctx.get("duplicate_action") is not None:
+            if self._active_effect_metadata is not None:
+                self._last_effect_metadata = dict(self._active_effect_metadata)
+            self._active_effect_metadata = None
+            return
         if self._active_effect_metadata is not None and instr.idempotency_key:
             self._ledger.mark_failed(instr.idempotency_key)
             self._active_effect_metadata["lifecycle_state"] = (
@@ -436,6 +530,19 @@ class EffectLedgerHooks:
             )
             self._last_effect_metadata = dict(self._active_effect_metadata)
             self._active_effect_metadata = None
+            # Step 9A: record FAILED outcome through protocol if attached.
+            if self._effect_protocol is not None:
+                self._effect_protocol.record_outcome(
+                    idempotency_key=instr.idempotency_key,
+                    outcome="FAILED",
+                    detail={"error": str(exc)},
+                )
+            # Step 4: durable effect_outcome WBC evidence.
+            self._wbc.effect_outcome(
+                instr.operation or instr.name or "step",
+                status="FAILED",
+                payload={"idempotency_key": instr.idempotency_key, "error": str(exc)},
+            )
 
     def merge_state(
         self,
@@ -496,3 +603,184 @@ class EffectLedgerHooks:
         callback = getattr(self._inner, "record_cancellation", None)
         if callable(callback):
             callback(cancellation, state=state)
+
+
+class NativeWbcHooks:
+    """Delegating ``NativeRuntimeHooks`` wrapper that emits durable WBC evidence.
+
+    Wraps an inner ``NativeRuntimeHooks`` and records start, step-effect,
+    checkpoint, error, and terminal/close events under
+    ``<artifact_root>/.native_wbc/arnold_native/hooks`` while delegating the
+    actual hook work to the inner instance.
+
+    ``close`` is idempotent — calling it more than once is a safe no-op.
+    """
+
+    halt_reason: str | None
+
+    def __init__(
+        self,
+        inner: NativeRuntimeHooks | None = None,
+        *,
+        artifact_root: str | Path | None = None,
+        program_name: str = "",
+        run_id: str = "",
+        plugin_id: str = "",
+        manifest_hash: str = "",
+    ) -> None:
+        self._inner: NativeRuntimeHooks = (
+            inner if inner is not None else NullNativeRuntimeHooks()
+        )
+        self._wbc: NativeWbcAttempt = begin_native_wbc_attempt(
+            artifact_root,
+            producer_family="arnold_native",
+            surface="hooks",
+            run_id=run_id,
+            plugin_id=plugin_id,
+            manifest_hash=manifest_hash,
+            subject={"program": program_name},
+            start_payload={"program": program_name},
+        )
+        self._closed: bool = False
+        self.halt_reason: str | None = None
+
+    # ── NativeRuntimeHooks delegation + WBC evidence ───────────────
+
+    def on_step_start(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        ctx = self._inner.on_step_start(instr, ctx)
+        self._wbc.effect(
+            "on_step_start",
+            {"op": instr.op, "name": instr.name},
+        )
+        return ctx
+
+    def on_step_end(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        result = self._inner.on_step_end(instr, ctx, result)
+        self._wbc.effect(
+            "on_step_end",
+            {"op": instr.op, "name": instr.name},
+        )
+        return result
+
+    def on_step_error(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        exc: BaseException,
+    ) -> None:
+        self._inner.on_step_error(instr, ctx, exc)
+        self._wbc.effect(
+            "on_step_error",
+            {"op": instr.op, "name": instr.name, "error": str(exc)},
+        )
+
+    def merge_state(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        outputs: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> tuple[dict[str, Any], frozenset[str]]:
+        return self._inner.merge_state(instr, state, outputs, owned_keys)
+
+    def join_envelope(
+        self,
+        instr: NativeInstruction,
+        current_envelope: Any,
+        step_envelope: Any,
+    ) -> Any:
+        return self._inner.join_envelope(instr, current_envelope, step_envelope)
+
+    def should_suspend(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        result: Any,
+    ) -> tuple[bool, str | None]:
+        return self._inner.should_suspend(instr, state, result)
+
+    def should_halt_loop(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        iteration: int,
+    ) -> tuple[bool, str | None]:
+        return self._inner.should_halt_loop(instr, state, iteration)
+
+    def on_stage_complete(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+        state: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> None:
+        self._inner.on_stage_complete(instr, ctx, result, state, owned_keys)
+
+    def on_checkpoint(
+        self,
+        cursor: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        self._inner.on_checkpoint(cursor, state)
+        self._wbc.effect("on_checkpoint", {})
+
+    def record_cancellation(
+        self,
+        cancellation: dict[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_cancellation", None)
+        if callable(callback):
+            callback(cancellation, state=state)
+        payload = dict(cancellation) if isinstance(cancellation, Mapping) else {}
+        self._wbc.effect("record_cancellation", payload)
+
+    def record_run_init(
+        self,
+        program: Any,
+        *,
+        run_path: str,
+        pack_provenance: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Preserve optional run-provenance callbacks through the wrapper."""
+        callback = getattr(self._inner, "record_run_init", None)
+        if callable(callback):
+            callback(
+                program,
+                run_path=run_path,
+                pack_provenance=pack_provenance,
+            )
+
+    # ── Idempotent close ───────────────────────────────────────────
+
+    def close(
+        self,
+        *,
+        status: str = "completed",
+        outcome: str = "result",
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Emit the terminal record for this hooks surface.
+
+        Idempotent: a second call is a silent no-op.  Also delegates to the
+        inner hook's ``close`` (if any) so that chained wrappers flush their
+        own evidence.
+        """
+        if self._closed:
+            return
+        self._wbc.terminal(status=status, outcome=outcome, payload=payload or {})
+        inner_close = getattr(self._inner, "close", None)
+        if callable(inner_close):
+            inner_close(status=status, outcome=outcome, payload=payload)
+        self._closed = True

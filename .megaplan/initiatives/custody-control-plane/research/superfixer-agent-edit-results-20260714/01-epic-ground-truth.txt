@@ -1,0 +1,45 @@
+## FORENSIC VERDICT
+
+### Classification: **IMPLEMENTATION TASK — agent budget exhaustion, NOT external/human dependency**
+
+---
+
+### EVIDENCE
+
+**1. Chain State** — `/workspace/agent-edit-verifiable-transaction-spine/vibecomfy/.megaplan/plans/.chains/chain-e2e81558e8a3.json`
+- `last_state: "blocked"`, `pr_number: 141`, `pr_state: "open"`
+- `completed: []`, `completion_contract_mode: "shadow"`, `full_suite_backstop_mode: "shadow"`
+- Timestamp (reconciled_at): `2026-07-13T21:50:08Z`
+
+**2. Phase Result** — `phase_result.json` (path: `sprint-1-authority-20260713-2150/phase_result.json`)
+- `phase: "execute"`, `exit_kind: "blocked_by_prereq"`
+- **Root cause**: "Blocked on tool-calling iteration budget exhaustion" (T12)
+- The agent fully scoped the 4-step implementation plan but ran out of 90-iteration budget
+- All partial changes to `session.py` were reverted; `authority_receipts.py` never created
+- **Zero files changed in final state**
+
+**3. Cloud Chain Log** — lines 2460–2472
+- `⚠️ Reached maximum iterations (90). Requesting summary...`
+- Chain pushed commit `95b8aab` to PR #141 on branch `megaplan/agent-edit-verifiable-transaction-spine/sprint-1`
+- `execute result=blocked` — system properly surfaced T12 and pending tasks T13–T18
+
+**4. Repair Queue** — `requests/3a0d366f...json` + `decisions/20260713T235255Z-...json`
+- Created: `2026-07-13T23:52:55Z`
+- `failure_kind: "execution_blocked"`, classified source as `"lifecycle_failure"`
+- Decision: **accepted** (`"reason": "queued"`) — system treats this as mechanically repairable
+
+**5. Runauthority-Epic (separate, completed)** — `completion-manifest.json`
+- All 3 milestones (`m1-foundation`, `m2-enforcement`, `m3-consumers`) marked `"done"`
+- This prior epic delivered the foundational authority infrastructure — the current task is wiring it into the agent-edit transaction spine
+
+### CONTRADICTIONS & KEY FINDINGS
+
+| Assertion | Reality |
+|---|---|
+| "Awaiting external evidence receipt" | No external/human gate exists; `completion_contract_mode` is `"shadow"` |
+| "Human dependency/approval" | The repair queue auto-accepted the repair; no `awaiting_pr_merge` or human-gate state |
+| "Missing authority contract" | The `runauthority-epic` already completed; the contract manifests exist at `completion-manifest.json` |
+
+### VERDICT
+
+**The "authority receipt/evidence contract" is a derived label for an incomplete implementation task.** The agent correctly identified the 4 concrete steps (create `authority_receipts.py`, wire `session.py`, create schema, stamp metadata in `executor_durable.py`) but exhausted its 90-iteration tool-calling budget before executing. The PR (#141, open) has only init + execute commits (`5862806` → `95b8aab`). A rerun with fresh iteration budget (already queued in repair at `2026-07-13T23:52:55Z`) should complete the implementation without external intervention.

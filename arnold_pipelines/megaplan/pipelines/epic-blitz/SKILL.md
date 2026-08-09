@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: epic-blitz
 description: Three-round adversarial critique of epic drafts (high / mid / low abstraction) with revision after each round. Produces a chain-ready revised epic.

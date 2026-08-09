@@ -14,7 +14,7 @@ T11 (Step 10) to ``classify_repair_dispatch``:
 * raw failure kinds outside the old whitelist become machine-actionable through
   canonical state — proving the resolver unlocks repair for shapes the legacy
   whitelist would route to humans;
-* an active repair defers enforcement L1 dispatch to avoid double-dispatch; and
+* provisional process liveness does not mint repair custody; and
 * additive canonical custody metadata is attached under ARNOLD_RESOLVER_OBSERVE
   and absent otherwise.
 
@@ -281,7 +281,7 @@ class TestAwf018EnforcementDispatch:
         assert decision.request_id == "req-awf018-001"
         assert "resolver enforcement" in decision.rationale[0]
 
-    def test_returns_no_action_without_active_request(self, tmp_path: Path) -> None:
+    def test_without_active_request_returns_no_action(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
             canonical_run_state=resolve_run_state(_awf018_target()),
             event_plan_dir=_event_plan_dir(tmp_path),
@@ -293,8 +293,8 @@ class TestAwf018EnforcementDispatch:
         assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
         assert decision.request_id == ""
 
-    def test_defers_to_active_repair(self, tmp_path: Path) -> None:
-        """An active repair must suppress enforcement L1 to avoid double-dispatch."""
+    def test_provisional_process_liveness_does_not_suppress_dispatch(self, tmp_path: Path) -> None:
+        """A running-process observation is not a durable claim or lock."""
         decision = classify_repair_dispatch(
             canonical_run_state=resolve_run_state(_awf018_target()),
             event_plan_dir=_event_plan_dir(tmp_path),
@@ -302,8 +302,7 @@ class TestAwf018EnforcementDispatch:
             current_target=_awf018_target(),
             custody_projection=_custody(request_id="req-awf018-002", active_repair=True),
         )
-        # Enforcement returns None (defers), legacy active-repair check catches it.
-        assert decision.decision != DISPATCH_DECISION_L1
+        assert decision.decision == DISPATCH_DECISION_L1
 
 
 # ===========================================================================
@@ -326,7 +325,7 @@ class TestRetryableEnforcementDispatch:
         assert decision.dispatch_intent == DISPATCH_INTENT_L1
         assert decision.request_id == "req-budget-001"
 
-    def test_returns_no_action_without_active_request(self, tmp_path: Path) -> None:
+    def test_without_active_request_returns_no_action(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
             canonical_run_state=resolve_run_state(_budget_target()),
             event_plan_dir=_event_plan_dir(tmp_path),
@@ -369,6 +368,68 @@ class TestBrokenStateMachineEnforcementDispatch:
         )
         assert decision.decision != DISPATCH_DECISION_L1
         assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
+
+
+# ===========================================================================
+# STALE_DERIVED_STATE enforcement dispatch (live worker beats stale label)
+# ===========================================================================
+
+
+class TestStaleDerivedStateEnforcementDispatch:
+    """A live worker with a stale derived label is trusted, never escalated.
+
+    Regression: STALE_DERIVED_STATE is produced only for a *live* worker
+    (``running=True``, ``next_action=trust_live_worker_suppress_stale_label``),
+    yet the canonical dispatch mapping escalated it to broken_superfixer,
+    labelling a healthy live run as a broken fixer and feeding the repair
+    backstop's false ``broken_superfixer`` drift diagnostics.
+    """
+
+    @staticmethod
+    def _stale_derived_target(**overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "tmux_process": {
+                "live_status": "alive",
+                "pid": 12345,
+                "pid_live": True,
+                "session_live": True,
+            },
+            "plan_state": {
+                "current_state": "executing",
+                "fingerprint": "plan-live-rc",
+                "mtime": 1.0,
+            },
+            "chain_state": {
+                "last_state": "blocked",
+                "current_plan_name": "demo-plan",
+                "fingerprint": "chain-stale-rc",
+                "mtime": 1.0,
+            },
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "plan_current_state": "executing",
+            },
+            "authoritative_source": "plan_state",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_live_worker_stale_label_is_no_action(self, tmp_path: Path) -> None:
+        target = self._stale_derived_target()
+        canonical = resolve_run_state(target)
+        assert canonical.canonical_state.name == "STALE_DERIVED_STATE"
+        assert canonical.running is True
+
+        decision = classify_repair_dispatch(
+            canonical_run_state=canonical,
+            event_plan_dir=_event_plan_dir(tmp_path),
+            plan_state=_plan_state(),
+            current_target=target,
+            custody_projection=_custody(request_id="req-stale-001"),
+        )
+        assert decision.decision == DISPATCH_DECISION_NO_ACTION
+        assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
+        assert "trust_live_worker_suppress_stale_label" in decision.rationale[0]
 
 
 # ===========================================================================
@@ -528,9 +589,11 @@ def _custody_projection(
     """Build a real custody projection with a queued repair request."""
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
     marker_dir.mkdir(parents=True, exist_ok=True)
     repair_data_dir.mkdir(parents=True, exist_ok=True)
     enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -552,7 +615,7 @@ def _custody_projection(
                 "latest_failure": {"kind": "blocked_recovery_not_resolved"},
             },
             current_target=target or _awf018_target(),
-            marker_dir=marker_dir,
+            queue_root=queue_root,
             repair_data_dir=repair_data_dir,
         )
     )

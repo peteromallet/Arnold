@@ -23,6 +23,15 @@ def _ctx(tmp_path: Path, inputs: dict[str, Any] | None = None) -> StepContext:
     )
 
 
+def _artifact_path(result: StepResult) -> Path:
+    """Return the canonical ContractResult artifact reference."""
+
+    assert result.outputs == {}
+    assert result.contract_result is not None
+    assert result.contract_result.payload["label"] == "markdown"
+    return Path(result.contract_result.payload["artifact_path"])
+
+
 # ---------------------------------------------------------------------------
 # WorkerFn type annotation
 # ---------------------------------------------------------------------------
@@ -77,7 +86,7 @@ def test_non_string_result_coerced_to_str(
     result = step.run(ctx)
 
     assert isinstance(result, StepResult)
-    output_path = Path(result.outputs["check"])
+    output_path = _artifact_path(result)
     assert output_path.exists(), f"output file not created: {output_path}"
     assert output_path.read_text(encoding="utf-8") == expected_text
 
@@ -91,5 +100,5 @@ def test_string_result_unchanged(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     result = step.run(ctx)
 
-    output_path = Path(result.outputs["str_check"])
+    output_path = _artifact_path(result)
     assert output_path.read_text(encoding="utf-8") == "hello"

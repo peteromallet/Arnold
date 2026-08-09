@@ -1,0 +1,209 @@
+All evidence gathered. Here is the 18-field FLASH REPORT.
+
+```
+FLASH REPORT
+1. question_id: fq-05
+2. verdict: supported
+3. investigated_claim: A canonical, supported blocked->gated finalize re-entry producer exists and is fully
+   specified through Run Authority -> Custody -> WBC (occurrence identity, F01 attempt ownership, resume
+   cursor, empty-attempt -> zero_authority_rejected, idempotency/CAS, and completion evidence), per the v4
+   handoff operations and the pinned runtime code/tests; the 14:03:37Z recover-blocked override is its
+   demonstrated instance, and the current state's preconditions are determinable contract facts.
+4. vantage:
+   - hostname/container: read-only evidence investigator (resident managed subagent; no mutation)
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 @ 234ac3524da29c1f630aee90ab1767a142a68a83
+     (chain runtime_binding.current_identity.content_sha256 a99e74e6c6f6a14c556b42deb9ab92e8f15538c52bf7e34e286c34d4a1df21de;
+     rebind_events[0] 14:00:39Z cutover e8b12504... -> a99e74e6...)
+   - investigator: hermes:deepseek:deepseek-v4-flash (fq-05)
+5. utc_window:
+   - started: 2026-08-06T15:12:40Z
+   - ended: 2026-08-06T15:18:20Z
+6. artifacts:
+   - /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/evidence-pack.md
+     exists: yes | type: markdown | size_bytes: 15716 | mtime_utc: 2026-08-06T14:56Z (dir) | sha256: 678b1cdf2e1e592b7cc56d207c95e8bd7c71df6f203a291abb446bff1f9360b7 | role: policy
+   - .../flash-report-contract.md exists: yes | type: markdown | size_bytes: 2009 | sha256: not-computed | role: policy
+   - .../critique-r7-superfixer-20260806-130215-69f23ad9/recovery-handoff.json
+     exists: yes | type: JSON | size_bytes: 11127 | sha256: 536a486bbefea032cc1e7f52071ed692f14b87c59a21f3588563a183d2398074 | role: policy (canonical producer operations 4-8, preconditions, return_condition, route repair_control_plane_then_migrate)
+   - .../critique-r7-superfixer-20260806-093148-0d3c3bc5/repair-producer-attempt.json
+     exists: yes | type: JSON | size_bytes: 1269 | sha256: 66fa0788e112a58814f3757845be45eebb3bcfc1fb42ed8e0b8ff183193958a6 | role: producer (outcome zero_authority_rejected; attempt field empty)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/boundary_receipts/override_recover_blocked_authority.json
+     exists: yes | type: JSON | size_bytes: 10534 | mtime_utc: 2026-08-06T14:03:37Z | sha256: 837329eb76b98d70ddc67aea2565534fdc84ff07dab674fdc346b23fc19a4b0e | role: authority
+     (run_authority_grant 'recover-blocked:cl2-wbc-backed-ledger-20260805-2140:9d5418d618d54e9b:grant' satisfied;
+     coordinator_fence 1253577917 satisfied; custody_lease lease:recover-blocked:... epoch 1 owner override-wbc pid 0 satisfied;
+     wbc_attempt override:recover-blocked:... satisfied (observed status "unknown"); action_boundary gate_result authorized,
+     action_type repair; fixture_safety.authorized false; source_record override.py semantic_sha256 9c9cfeb4... git_revision 234ac3524)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/state.json
+     exists: yes | type: JSON | size_bytes: 90023 (live read) | mtime_utc: 2026-08-06T14:16:28Z | sha256: 2f7827e75ff6cef15c253b0397735d73793b22178b19fb65ade0f9571694a754 | role: persistence
+     (current_state blocked; iteration 5; latest_failure null; resume_cursor null; active_step null;
+     meta.current_invocation_id 79bfce4d64e74c15; meta.overrides[0] action recover-blocked @14:03:37Z from blocked to gated,
+     resume_cursor {phase: finalize, retry_strategy: repair_phase_contract}, phase_contract_repair {failure_kind
+     deterministic_phase_failure, phase finalize, repair_commit 234ac3524, failure_fingerprint 4a772446... (v4-era),
+     repair_scope engine_runtime}; meta.planner_repair {fingerprint 382e25a2..., occurrences 2, circuit_open true,
+     implementation_dispatch_allowed false, prior_admitted_finalize_sha256 null, updated_at 14:16:28Z}; _state_meta null)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/planner_repair.json
+     exists: yes | type: JSON | size_bytes: 535 | sha256: 31f7c10acb8b999ea53fd4af71ffb2bd30697749eec643654b3c0e54dc7f5087 | role: persistence (circuit_open, occurrences 2, prior_state gated, implementation_dispatch_allowed false)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/finalize_candidates/36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07.json
+     exists: yes | type: JSON | size_bytes: 5944 | sha256: 79b727252945e58989f1631531b4fddf511df0e59b7ed629029d85cef7645bf5 | role: persistence
+     (admitted false; fingerprint 382e25a2...; 12x dependency_unknown + 1x dependency_graph_invalid; observed_at 14:16:28Z)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/.phase_wbc_attempts.sqlite3
+     exists: yes | type: SQLite | size_bytes: 270336 | mtime_utc: 2026-08-06T14:16:29Z | sha256: not-computed (binary, read-only) | role: persistence
+     (finalize attempts 36889f91-b1a7-55cf-b493-a2a72a332266 [invocation bd1e9b2903164dd4, ordinal 1, started 14:05:52Z,
+     completed 14:13:57Z outcome succeeded, artifact_hash sha256:a34f2cabc88e..., promotion_mode action_off, artifacts []]
+     and cc65bd5d-9be6-5fde-8935-e81eb7183609 [invocation 79bfce4d64e74c15, ordinal 3, started 14:14:06Z, completed
+     14:16:28Z outcome succeeded, artifact_hash sha256:12638269d6fa...]; writer megaplan.phase_wbc.finalize; grant phase-wbc:finalize;
+     idempotency_key <attempt_id>:started/<attempt_id>:completed; global_effect_reservations/outcomes/quarantine 0 rows)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/phase_result.json
+     exists: yes | type: JSON | size_bytes: 3745 | sha256: a3224b621a2fad51bf2b051fa6b7c386e267e7b1d47c68f9ecac2e0955850b3d | role: persistence
+     (phase finalize; invocation 79bfce4d64e74c15; exit_kind success; artifacts_written [planner_repair.json, finalize_revise_feedback.json])
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/critique_clearance.json
+     exists: yes | type: JSON | size_bytes: 71557 | mtime_utc: 2026-08-06T14:14:06Z | sha256: not-computed | role: consumer
+     (schema megaplan-critique-clearance-v1; produced_at 14:14:06Z; source_receipts critique_custody_v1..v5) — written BEFORE splitter rejection
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/finalize_output.json
+     exists: yes | type: JSON | size_bytes: 200 | mtime_utc: 2026-08-06T14:14:07Z | role: consumer (empty shell: tasks [], validation_jobs [] ...)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/task_feasibility.json exists: no | role: persistence (written only on admission, finalize.py:2156)
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/finalize.json / contract.json / final.md / user_actions.md exists: no | role: persistence
+   - .../plans/cl2-wbc-backed-ledger-20260805-2140/gate.json
+     exists: yes | type: JSON | size_bytes: 184379 | sha256: 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b | role: persistence (PROCEED; unchanged; v4-handoff precondition hash)
+   - .../plans/.chains/chain-880bd6e04632.json
+     exists: yes | type: JSON | size_bytes: 31335 (live) | sha256: 4114151924cc9669c404ccc97c24331f833b6d3b893bab955e8cec36fe647466 | role: authority
+     (current_milestone_index 0; last_state blocked; completed []; runtime binding content_sha256 a99e74e6...; rebind_events[0] 14:00:39Z;
+     ground_truth_reconciliation 14:05:49Z current_state gated, last_gate PROCEED)
+   - /workspace/.../.megaplan/authority/run-authority.sqlite3
+     exists: yes | type: SQLite | size_bytes: 36864 | mtime_utc: 2026-08-05T21:40:57Z | role: authority
+     (6 rows only: fresh_child_admission evidence/coordinator_fence/capability_grant/subject_attempt/claim/decision; NO recover-blocked grant/decision record)
+   - /workspace/.../.megaplan/authority/custody/
+     exists: yes | type: dir | role: authority (only fresh_child_admission lease files @21:40:57Z; NO lease:recover-blocked:... file)
+   - /workspace/.../.megaplan/authority/wbc.sqlite3
+     exists: yes | type: SQLite | size_bytes: 102400 | mtime_utc: 2026-08-05T21:40:57Z | role: authority
+     (only fresh-child attempt reservation/effect; attempt_events 0; no override attempt)
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/cloud/wrappers/repair_delegation.py
+     exists: yes | type: python | role: policy (RepairDelegationOutcome incl. zero_authority_rejected; delegate_to_simple_fixer requires
+     normalized repair identity; F01 fields must be non-empty strings from canonical owners)
+   - .../cloud/repair_requests.py exists: yes | type: python | role: policy (build_normalized_repair_identity; normalize_repair_identity;
+     enqueue_occurrence_bound_repair_request -> zero_authority_rejected on partial identity)
+   - .../custody/phase_wbc.py exists: yes | type: python | role: policy (PhaseWbcSpec step=finalize writer megaplan.phase_wbc.finalize;
+     activate_phase_wbc mints uuid5 attempt_id from plan_dir::step::invocation_id; idempotent per active phase_wbc_state)
+   - .../custody/override_wbc.py exists: yes | type: python | role: policy (_synthetic_boundary_materialization: deterministic fence
+     via _stable_token, grant_id transition:subject:invocation_id:grant, lease owner ("override-wbc","0","override-wbc") epoch 1,
+     in-memory _SyntheticLeaseStore/_SyntheticOutbox; validate_override_wbc_transition)
+   - .../handlers/override.py exists: yes | type: python | role: policy (_override_recover_blocked requires current_state blocked +
+     stored state.resume_cursor dict + --reason; deterministic_phase_repair_required requires latest_failure.kind ==
+     deterministic_phase_failure + resume_cursor.retry_strategy == repair_phase_contract; validated_deterministic_phase_repair)
+   - .../blocker_recovery.py exists: yes | type: python | role: policy (validated_deterministic_phase_repair: failure_kind/phase match,
+     --failure-fingerprint must equal compact_failure_identity(latest_failure) fingerprint, --repair-commit must equal actual
+     engine-runtime HEAD, repair_scope engine_runtime for engine repairs)
+   - .../handlers/finalize.py exists: yes | type: python | role: policy (handle_finalize require_state STATE_GATED; order:
+     write_critique_clearance -> ... -> _write_finalize_artifacts; task_feasibility.json written only on admission line 2156)
+   - .../orchestration/finalize_authority.py exists: yes | type: python | role: policy (current_finalize_token (finalize_sha256, version);
+     _publish_locked CAS FinalizeCASMismatch; same-content no-op; os.link immutable publish)
+   - .../control_interface.py exists: yes | type: python | role: policy (emit_override_authority_receipt -> validate_override_wbc_transition
+     -> write_boundary_receipt; CAS expected_versions vs _state_meta.versions)
+   - tests: .../tests/arnold_pipelines/megaplan/test_override_wbc_transitions.py (recover-blocked -> action_type repair; receipts include
+     wbc_transition_evidence) and test_phase_wbc_resume_lifecycle.py (activate/complete lifecycle; promotion_mode action_off) exist: yes | role: policy
+7. commands: (all read-only; no mutation)
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: python3 -c "<load state.json; print current_state/iteration/latest_failure/resume_cursor/active_step/meta.current_invocation_id/overrides/planner_repair/_state_meta; sha256>"
+     started_utc: 15:13:10Z | ended_utc: 15:13:12Z | exit_code: 0 | stdout_summary: current_state blocked; latest_failure null; resume_cursor null;
+     recover-blocked override count 1 @14:03:37Z with resume_cursor {phase: finalize, retry_strategy: repair_phase_contract}; _state_meta null | stderr_summary: (none)
+   - cwd: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: python3 -c "<sqlite3 read-only queries: schema; attempt_events grouped by attempt_id; finalize events; source_cursors; global_effect_*; _store_metadata>"
+     started_utc: 15:13:40Z | ended_utc: 15:14:05Z | exit_code: 0 | stdout_summary: 25 attempts; finalize attempts 36889f91 (ordinal 1, inv bd1e9b29, 14:05:52Z->14:13:57Z) and
+     cc65bd5d (ordinal 3, inv 79bfce4d, 14:14:06Z->14:16:28Z) both started+completed outcome succeeded, promotion_mode action_off, artifacts [],
+     grant phase-wbc:finalize; global_effect_reservations/outcomes/quarantine 0 rows | stderr_summary: (none)
+   - cwd: .../.megaplan/authority
+     exact_command: python3 -c "<read-only queries on run-authority.sqlite3 and wbc.sqlite3>"
+     started_utc: 15:14:10Z | ended_utc: 15:14:20Z | exit_code: 0 | stdout_summary: run-authority 6 rows all fresh_child_admission; no recover-blocked grant/fence/decision;
+     wbc.sqlite3 only fresh-child attempt reservation + 1 effect reservation | stderr_summary: (none)
+   - cwd: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: sha256sum gate.json boundary_receipts/override_recover_blocked_authority.json ; python3 -c "<parse phase_result.json, critique_clearance.json, finalize_output.json>"
+     started_utc: 15:15:00Z | ended_utc: 15:15:15Z | exit_code: 0 | stdout_summary: gate.json 9df95825...; boundary receipt sha 837329eb... identical to v5 raw copy;
+     phase_result finalize exit_kind success invocation 79bfce4d; clearance written 14:14:06Z; finalize_output empty shell | stderr_summary: (none)
+   - cwd: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: python3 -c "<read-only queries on .worker_dispatch_wbc_attempts.sqlite3>"
+     started_utc: 15:15:30Z | ended_utc: 15:15:40Z | exit_code: 0 | stdout_summary: 100 attempt events / 50 reservations (subprocess worker dispatch, e.g. prep:subprocess:...);
+     no effect rows | stderr_summary: (none)
+   - cwd: /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan
+     exact_command: sed/rg read-only over repair_delegation.py, repair_requests.py, phase_wbc.py, override_wbc.py, override.py, blocker_recovery.py, finalize.py,
+     finalize_authority.py, control_interface.py, custody/contracts.py; tests test_override_wbc_transitions.py, test_phase_wbc_resume_lifecycle.py
+     started_utc: 15:12:40Z | ended_utc: 15:17:30Z | exit_code: 0 | stdout_summary: producer/attempt/CAS semantics as reported | stderr_summary: (none)
+   - cwd: .../.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140
+     exact_command: find /workspace/.megaplan/cloud-sessions/repair-data -newermt '2026-08-06 14:00' ; ls requests/decisions/attempts/occurrence-claims
+     started_utc: 15:17:40Z | ended_utc: 15:17:50Z | exit_code: 0 | stdout_summary: no repair-data files since 14:00Z; no request/decision/attempt/claim dirs | stderr_summary: (none)
+8. trace:
+   - producer: Run Authority (M7 action validator) -> Custody -> WBC for the 14:03:37Z override; per v4 handoff the migrated-child producer is
+     build_normalized_repair_identity -> enqueue_occurrence_bound_repair_request -> Run Authority allow/deny -> Custody claim_singleton_occurrence
+     -> WBC reserve/start one recovery attempt + effect key -> delegate_to_simple_fixer -> CanonicalRunner/ordinary fixer
+     produced_value_or_key: boundary receipt override_recover_blocked_authority.json (837329eb...) with grant
+     recover-blocked:cl2-wbc-backed-ledger-20260805-2140:9d5418d618d54e9b:grant, fence 1253577917, lease lease:recover-blocked:... epoch 1,
+     WBC attempt override:recover-blocked:...; state transition blocked->gated; meta.overrides[0] with resume_cursor and phase_contract_repair
+   - consumer: chain driver / ordinary fixer -> finalize (handle_finalize require_state STATE_GATED; re-entered at 14:05:52Z and 14:14:06Z
+     producing phase-WBC attempts 36889f91/cc65bd5d); consumed_value_or_key: state=gated (post-override), gate.json PROCEED 9df95825...,
+     resume_cursor {phase: finalize, retry_strategy: repair_phase_contract}
+   - persistence: state.json (override entry, then re-blocked at 14:16:28Z with latest_failure null, resume_cursor null); .phase_wbc_attempts.sqlite3
+     (2 finalize attempts completed outcome succeeded, action_off, artifacts []); planner_repair.json + finalize_candidates/36bcefaf...
+     (admitted false, circuit_open, fingerprint 382e25a2); critique_clearance.json 14:14:06Z; phase_result.json (exit_kind success, artifacts
+     planner_repair.json/finalize_revise_feedback.json); persisted_value_or_key: no task_feasibility.json / finalize.json / contract.json / final.md;
+     global_effect_reservations/outcomes 0 rows; run-authority.sqlite3 6 rows (fresh-child only); custody/ fresh-child lease only
+   - policy: repair_delegation.py (F01 all-fields-non-empty; normalized repair identity required; zero_authority_rejected on partial/empty,
+     e.g., empty attempt); phase_wbc.py (finalize writer megaplan.phase_wbc.finalize; deterministic attempt_id); override_wbc.py
+     (synthetic grant/fence/lease/attempt materialization — in-memory lease/outbox); blocker_recovery.py (repair gate binds exact current
+     fingerprint + actual engine HEAD); finalize.py (require_state GATED; task_feasibility only on admission); finalize_authority.py
+     (token CAS + os.link immutable publish); predicate_and_result: recover-blocked override executed and state reached gated = TRUE
+     (receipt 837329eb..., override entry, two finalize re-entries); finalize admission/publish = FALSE (candidate rejected, no finalize.json,
+     no feasibility artifact); durable authority records for the override grant/fence/lease/attempt = ABSENT (synthetic materialization);
+     current recover-blocked preconditions = NOT MET (latest_failure null, resume_cursor null)
+9. adherence_classification: MISSING_STRUCTURE
+10. missing_or_contradictory_structure:
+    - Durable authority limb absent: the boundary receipt declares run_authority_grant / coordinator_fence / custody_lease / wbc_attempt
+      "satisfied" at 14:03:37Z, but run-authority.sqlite3 (6 rows), authority/custody/ (fresh-child lease only), and wbc.sqlite3 (fresh-child
+      effect only) contain NO record for grant recover-blocked:...:9d5418d618d54e9b:grant, fence 1253577917, lease:recover-blocked:...,
+      or attempt override:recover-blocked:... . The checks are satisfied against SYNTHETIC in-memory materialization
+      (override_wbc.py _synthetic_boundary_materialization: deterministic fence from _stable_token, grant_id transition:subject:invocation_id,
+      lease owner ("override-wbc","0","override-wbc") epoch 1, _SyntheticLeaseStore/_SyntheticOutbox; receipt itself records
+      fixture_safety.authorized=false and wbc_attempt observed status "unknown"). This is designed and tested (test_override_wbc_transitions.py),
+      but means the v4-handoff migrated-child limb "Run Authority persists one occurrence-scoped allow/deny decision" has NO durable
+      journal record for this occurrence.
+    - Completion-evidence limb absent for this occurrence: both finalize WBC attempts "completed" with outcome=succeeded at the phase-harness
+      level (promotion_mode action_off, artifacts []) while the planner candidate was rejected (planner_repair.json occurrences 2, circuit_open
+      true, fingerprint 382e25a2, admitted false). task_feasibility.json (admission-only, finalize.py:2156), finalize.json, contract.json,
+      final.md all absent; WBC global_effect_* 0 rows; chain still milestone 0, completed [], last_state blocked. Harness WBC success !=
+      finalize publication success.
+    - Current state no longer satisfies recover-blocked preconditions: live state.json has latest_failure=null AND resume_cursor=null
+      (cleared/consumed after the 14:16:28Z re-block), so a fresh `override recover-blocked` would fail "missing_resume_cursor"
+      (override.py:1213-1217) and the deterministic repair gate (blocker_recovery.validated_deterministic_phase_repair) cannot bind the
+      CURRENT fingerprint 382e25a2 (the 14:03:37Z phase_contract_repair bound the OLD fingerprint 4a772446 / critique_finding_unresolved
+      family, repair_commit 234ac3524 which is the un-fixed splitter HEAD).
+    - State-level CAS not populated: _state_meta is null in state.json, so control_interface expected_versions CAS is code-present but not
+      affirmatively active; finalize publication CAS (finalize_authority._publish_locked) is unexercised (no finalize.json ever published;
+      token (None, 0)); phase-WBC idempotency_key is attempt-scoped (<attempt_id>:started/<attempt_id>:completed, deterministic uuid5 of plan_dir::step::invocation_id), not occurrence-scoped — no persisted occurrence-level finalize idempotency key exists.
+11. evidence_supporting_verdict:
+    - v4 recovery-handoff (536a486b...) specifies the exact canonical producer: activate_phase_wbc(step='finalize', agent='ordinary-fixer') -> use its append-only attempt_id as CustodyTargetKey.attempt -> build_normalized_repair_identity + enqueue_occurrence_bound_repair_request -> Run Authority allow/deny -> Custody claim_singleton_occurrence -> WBC reserve/start one attempt+effect -> delegate_to_simple_fixer -> fixer re-enters only resume_cursor.phase=finalize -> admission/CAS publication -> terminalize WBC -> release custody -> chain advance (return_condition: cursor past finalize, milestone beyond index 0).
+    - v1 repair-producer-attempt.json (66fa0788...) affirmatively proves empty-attempt behavior: attempt="" -> delegation not built -> outcome zero_authority_rejected ("every F01 field must be a non-empty string from a canonical owner; labels/liveness/projection are not authority"). F01_REPAIR_OCCURRENCE_FIELDS (custody/contracts.py:90-101) includes attempt; canonical owner is megaplan.phase_wbc.finalize in .phase_wbc_attempts.sqlite3.
+    - The 14:03:37Z override (receipt 837329eb..., byte-identical to v5 raw copy) demonstrates the blocked->gated seam executed end-to-end: state transitioned to gated (meta.overrides[0] to_state gated), resume_cursor {phase finalize, retry_strategy repair_phase_contract} persisted, phase_contract_repair bound to repair_commit 234ac3524/engine_runtime; two finalize re-entries followed (14:05:52Z, 14:14:06Z), and gate.json PROCEED (9df95825...) is unchanged — the v4-handoff precondition hash.
+    - Pinned runtime implements and tests the seams: override_wbc.py synthetic materialization (recover-blocked -> action_type repair; test_override_wbc_transitions.py), phase_wbc.py finalize writer/activate/complete lifecycle (test_phase_wbc_resume_lifecycle.py; promotion_mode action_off), repair_delegation.py zero_authority_rejected vocabulary, finalize_authority.py token CAS + os.link immutable publish, blocker_recovery.py fingerprint+commit-bound repair gate.
+    - Negative recovery-in-flight: no repair-data request/decision/attempt/claim files since 14:00Z; no WBC effect rows; no live custody lease beyond fresh-child — no competing producer.
+12. evidence_against_verdict:
+    - Durable Run Authority/Custody/WBC stores contain NO records for the override's declared grant/fence/lease/attempt — the override authority limb is synthetic/in-memory (fixture_safety.authorized=false; wbc_attempt observed status "unknown" in the receipt), so the "Run Authority persists one occurrence-scoped decision" claim is not durable-verified for this occurrence.
+    - Current live state (latest_failure null, resume_cursor null, current_state blocked) does NOT satisfy the recover-blocked preconditions; the repair gate is bound to the previous fingerprint (4a772446) not the live one (382e25a2), and engine HEAD 234ac3524 still contains the un-fixed splitter — so re-entry under the current binding would deterministically fail again.
+    - WBC harness "completed/succeeded" events exist for both finalize attempts despite candidate rejection (action_off, artifacts [], 0 effect rows) — WBC terminal events alone are NOT proof the finalize producer completed publication; admission evidence (task_feasibility.json) and publication evidence (finalize.json/contract.json/final.md) are absent, and the chain has not advanced (milestone 0, completed []).
+    - State-level CAS versions (_state_meta) null and finalize publication CAS unexercised — idempotency/CAS is mechanism + code, not observed dedup for this occurrence.
+13. confidence: high
+14. confidence_basis: HIGH on all contract-fact limbs: canonical producer identity and ordering (v4 handoff ops 4-8 + pinned source), F01 attempt ownership (megaplan.phase_wbc.finalize ledger), resume-cursor contract (override.py + blocker_recovery.py + live meta.overrides[0]), empty-attempt -> zero_authority_rejected (v1 attempt + repair_delegation.py), synthetic override authority (override_wbc.py + absent durable records), completion-evidence requirements (finalize.py admission-only feasibility, finalize_authority CAS, chain advance), and current-state precondition failure (live state.json fields). No conflicting evidence found; the MISSING_STRUCTURE limbs are themselves affirmative absence facts (durable records, admission artifacts, effect rows).
+15. immediate_decision_informed: Stage-2 re-entry-route adjudication and mandatory negative tests: (a) do NOT treat the 14:03:37Z boundary receipt's "satisfied" checks as durable Run Authority/Custody/WBC records — they are synthetic override materializations; negative tests should assert run-authority.sqlite3 has no recover-blocked grant/decision and custody/ has no lease:recover-blocked file; (b) do NOT treat the two phase-WBC "completed/succeeded" finalize events as finalize completion — negative tests must assert task_feasibility.json/finalize.json absent, global_effect_* empty, milestone still 0; (c) the current state fails recover-blocked preconditions (resume_cursor null, latest_failure null, fingerprint mismatch 4a772446 vs 382e25a2, engine HEAD un-fixed) — negative tests must assert missing_resume_cursor / phase_repair_fingerprint_mismatch / phase_repair_commit_mismatch paths; (d) any supported re-entry must mint/bind a canonical phase-WBC finalize attempt_id (36889f91.../cc65bd5d... exist but are consumed harness attempts; a new occurrence needs activate_phase_wbc) — empty attempt must keep returning zero_authority_rejected.
+16. durable_decision_informed: The blocked->gated finalize re-entry contract is: operator recover-blocked override (Run Authority synthetic grant/fence + Custody synthetic lease + WBC override attempt, all materialized per override_wbc.py, receipted) restores gated + resume_cursor, then the ordinary fixer re-enters finalize only via the repair-delegation producer whose F01 attempt is the canonical phase-WBC finalize attempt_id; admission requires task_feasibility.json (finalize.py:2156) + finalize_authority CAS publication (os.link immutable; FinalizeCASMismatch on stale token; same-content no-op), then WBC terminalize, custody release, and chain cursor/milestone advance — that is the only evidence set proving completion. Durable remediation should repair the task_splitter rewiring (dependency_unknown root cause) in the pinned engine and re-bind via a CAS runtime rebind, then re-drive the same seam with a fingerprint-382e25a2-bound phase_contract_repair; same-occurrence CAS/idempotency cannot be claimed affirmatively until _state_meta versions are populated and a publication CAS fires.
+17. safety_observations:
+    - No mutation performed: only read-only python (sqlite3 URI mode=ro), sha256sum, stat, sed/rg, find; no lifecycle/launch/resume/rebind/enqueue/claim/notify commands; GIT_OPTIONAL_LOCKS=0 not needed (no git invoked).
+    - No credentials/tokens read or printed.
+    - The override custody lease owner is synthetic (override-wbc, pid 0) — it must never be treated as a live process; recovery-in-flight checks must use durable stores, not the receipt.
+    - WBC harness "succeeded" events (promotion_mode action_off) are phase-wrapper telemetry, not committed finalize effects — do not use them as completion evidence.
+    - The -shm/-wal mtimes on run-authority.sqlite3/wbc.sqlite3 (14:17:34Z) indicate read/open activity only; main db mtimes remain 21:40:57Z with zero new rows.
+18. unresolved_questions:
+    - Which process/mechanism clears state.resume_cursor and latest_failure when the driver re-blocks after planner_repair — and is re-populating them part of the supported chain seam or a repair-producer duty (currently absent)?
+    - Whether a NEW recover-blocked override for fingerprint 382e25a2 requires an engine runtime whose HEAD differs from 234ac3524 (i.e., a CAS rebind first), and whether the 14:03:37Z override's phase_contract_repair (fingerprint 4a772446) remains valid authority for any further same-occurrence retry of the old failure family.
+    - Whether `megaplan resume` (vs override recover-blocked) is a supported blocked->gated path for deterministic_phase_failure — the v1 FQ-05 and evidence-pack §5 indicate the override seam is the supported one; not adjudicated here.
+    - Why the two finalize phase-WBC attempts carry ordinals 1 and 3 (ordinal 2 missing) and whether an interrupted 00:53:46Z-era attempt (v5, no phase_end) left an unwritten ordinal — relevant to exactly-once attempt accounting.
+    - Whether worker_dispatch_wbc_attempts.sqlite3 (100 events) has any finalize worker-dispatch rows that must be reconciled before a new ordinary-fixer dispatch (bounded check found none with effect rows).
+```
+
+**Bottom line:** The canonical producer and preconditions ARE established as contract facts (v4 handoff + pinned runtime + v1 `zero_authority_rejected` + the 14:03:37Z override receipt), so the claim is **supported** — but the full identity-matched producer→consumer→persistence→policy trace for a *completed* re-entry is **MISSING_STRUCTURE**: the override's authority checks are synthetic (no durable grant/fence/lease/attempt records), both re-entries ended in harness-level WBC "success" with zero admission/effect/milestone evidence, and the live state no longer satisfies the recover-blocked preconditions (resume_cursor null, latest_failure null, fingerprint mismatch). No route is chosen; both same-occurrence and migrated-child seams are reported as contract facts only.

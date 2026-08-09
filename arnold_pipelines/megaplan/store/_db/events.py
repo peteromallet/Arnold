@@ -258,6 +258,11 @@ def _stored_from_envelope(
         seq=envelope.get("seq") if isinstance(envelope.get("seq"), int) else None,
         run_id=envelope.get("run_id") if isinstance(envelope.get("run_id"), str) else None,
         source=str(envelope.get("store_method") or source),
+        transaction_id=(
+            envelope.get("transaction_id")
+            if isinstance(envelope.get("transaction_id"), str)
+            else None
+        ),
     )
 
 

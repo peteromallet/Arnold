@@ -3,13 +3,16 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
 import pytest
 
-import arnold_pipelines.megaplan as megaplan
+from arnold_pipelines.megaplan._core.io import plans_root
 from arnold_pipelines.megaplan.cli import build_parser
+from arnold_pipelines.megaplan.handlers.init import handle_init
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
@@ -53,27 +56,45 @@ def load_state(plan_dir: Path) -> dict[str, Any]:
     return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
 
 
-@pytest.fixture
-def plan_fixture(tmp_path: Path) -> PlanFixture:
-    """Create a temporary megaplan plan and expose its directories/args helper."""
-
-    root = tmp_path / "root"
-    root.mkdir()
-    project_dir = tmp_path / "project"
+def _make_plan_fixture_with_robustness(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    robustness: str,
+) -> PlanFixture:
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    project_dir = root / "project"
     project_dir.mkdir()
     make_args = make_args_factory(project_dir)
-    response = megaplan.handle_init(
+    response = handle_init(
         root,
-        make_args(idea="fixture plan", name="fixture-plan", robustness="standard"),
+        make_args(
+            idea="fixture plan",
+            name="fixture-plan",
+            robustness=robustness,
+        ),
     )
     plan_name = response["plan"]
-    plan_dir = megaplan.plans_root(root) / plan_name
     return PlanFixture(
         root=root,
         project_dir=project_dir,
         plan_name=plan_name,
-        plan_dir=plan_dir,
+        plan_dir=plans_root(root) / plan_name,
         make_args=make_args,
+    )
+
+
+@pytest.fixture
+def plan_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlanFixture:
+    """Create a temporary megaplan plan and expose its directories/args helper."""
+
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    root = tmp_path / "root"
+    root.mkdir()
+    return _make_plan_fixture_with_robustness(
+        root,
+        monkeypatch,
+        robustness="standard",
     )
 
 
@@ -96,6 +117,57 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Record native golden trace fixtures to disk (multi-file directory format).",
     )
+
+
+@pytest.fixture
+def db_store_factory(request: pytest.FixtureRequest):
+    """Create a real DB store when the explicit DB test profile is selected."""
+
+    backend = request.config.getoption("--backend", default=None)
+    if backend != "db":
+        pytest.skip("--backend db not passed")
+    dsn = os.environ.get("SUPABASE_DB_URL")
+    if not dsn:
+        pytest.skip("SUPABASE_DB_URL not set")
+
+    from arnold_pipelines.megaplan.store import DBStore, deterministic_idempotency_key
+
+    actor_id = f"ci-actor-{uuid.uuid4().hex[:12]}"
+    bootstrap = DBStore(actor_id=None, dsn=dsn)
+    try:
+        bootstrap.create_automation_actor(
+            actor_id=actor_id,
+            name="CI Contract Actor",
+            granted_epic_ids="*",
+            actor_kind="cli",
+            idempotency_key=deterministic_idempotency_key(
+                "db-store-fixture", actor_id, "create_actor"
+            ),
+        )
+    finally:
+        bootstrap.close()
+    return lambda: DBStore(actor_id=actor_id, dsn=dsn)
+
+
+@pytest.fixture
+def editorial_store(request: pytest.FixtureRequest, tmp_path: Path):
+    """Provide the selected real editorial store without DB-to-file fallback."""
+
+    backend = request.config.getoption("--backend", default=None)
+    if backend == "db":
+        return request.getfixturevalue("db_store_factory")()
+
+    from arnold_pipelines.megaplan.store import FileStore
+
+    return FileStore(tmp_path / "store")
+
+
+@pytest.fixture
+def editorial_backend_name(request: pytest.FixtureRequest) -> str:
+    """Expose the actual backend selected by ``editorial_store``."""
+
+    backend = request.config.getoption("--backend", default=None)
+    return "db" if backend == "db" else "file"
 
 
 def read_json(path: Path) -> dict:

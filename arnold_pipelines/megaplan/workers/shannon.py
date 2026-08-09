@@ -68,12 +68,14 @@ from arnold_pipelines.megaplan.model_seam import (
     capture_step_output,
     coerce_plan_markdown_payload,
     render_compact_review_prompt,
+    render_compact_gate_prompt,
     render_prompt_for_dispatch,
     render_step_message,
 )
 from arnold_pipelines.megaplan.prompts import create_claude_prompt
 from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
 from arnold_pipelines.megaplan.workers._impl import (
+    STEP_CAPTURE_SCHEMA_FILENAMES,
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _activity_callback_for_state,
@@ -1381,8 +1383,14 @@ def _apply_file_fallback(
     }
     if step not in file_fallback:
         return payload
-    fallback_name, sentinel_key = file_fallback[step]
-    fallback_path = Path(output_path) if output_path is not None else plan_dir / fallback_name
+    _, sentinel_key = file_fallback[step]
+    # Shannon is an inline structured-output worker.  Only an exact path
+    # explicitly supplied by its caller may participate in capture; discovering
+    # a conventional scratch filename would silently adopt stale or unrelated
+    # state outside the response contract.
+    if output_path is None:
+        return payload
+    fallback_path = Path(output_path)
     if not fallback_path.exists():
         return payload
     try:
@@ -2415,6 +2423,9 @@ def run_shannon_step(
     auth_metadata = {
         "worker_channel": "tmux",
         "auth_channel": "subscription",
+        "provider": "claude",
+        "resolved_model": model,
+        "session_agent": session_agent,
     }
     session_key = session_key_for(
         step,
@@ -2446,7 +2457,7 @@ def run_shannon_step(
     schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
         if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, STEP_SCHEMA_FILENAMES[step])
     )
     schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     schema_text = json.dumps(schema)
@@ -2468,23 +2479,39 @@ def run_shannon_step(
             **(prompt_kwargs or {}),
         )
     except ModelBudgetError as error:
-        if step != "review":
+        if step not in ("review", "gate"):
             raise
-        rendered_step = render_compact_review_prompt(
-            "claude",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            worker=session_agent,
-            model=model,
-            normalized_model=model,
-            tier=ModelTier.NON_ENFORCED,
-            schema=schema,
-            prompt_size_error={"message": str(error)},
-            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
-            projection_capabilities=projection_capabilities,
-        )
+        if step == "gate":
+            rendered_step = render_compact_gate_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error={"message": str(error)},
+                contract_context=(prompt_kwargs or {}).get("contract_context"),
+            )
+        else:
+            rendered_step = render_compact_review_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error={"message": str(error)},
+                pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+                projection_capabilities=projection_capabilities,
+            )
     base_prompt = rendered_step.prompt
     if output_path is not None:
         output_path = Path(output_path)
@@ -2493,23 +2520,39 @@ def run_shannon_step(
     try:
         check_prompt_size(prompt, phase=step)
     except CliError as error:
-        if step != "review" or error.code != "prompt_oversized":
+        if step not in ("review", "gate") or error.code != "prompt_oversized":
             raise
-        compacted = render_compact_review_prompt(
-            "claude",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            worker=session_agent,
-            model=model,
-            normalized_model=model,
-            tier=ModelTier.NON_ENFORCED,
-            schema=schema,
-            prompt_size_error=error.extra,
-            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
-            projection_capabilities=projection_capabilities,
-        )
+        if step == "gate":
+            compacted = render_compact_gate_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error=error.extra,
+                contract_context=(prompt_kwargs or {}).get("contract_context"),
+            )
+        else:
+            compacted = render_compact_review_prompt(
+                "claude",
+                step,
+                state,
+                plan_dir,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
+                prompt_size_error=error.extra,
+                pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+                projection_capabilities=projection_capabilities,
+            )
         base_prompt = compacted.prompt
         prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
         check_prompt_size(prompt, phase=step)
@@ -2994,6 +3037,7 @@ def run_shannon_step(
     if not read_only:
         _verify_engine_after_mutating_worker(step, state, root, execution_env)
 
+    auth_metadata["session_strategy"] = plan.kind
     shannon_plan = _serialize_session_plan(plan)
     shannon_plan["worker_channel"] = auth_metadata["worker_channel"]
     shannon_plan["auth_channel"] = auth_metadata["auth_channel"]

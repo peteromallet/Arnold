@@ -1,0 +1,17 @@
+{
+  "id": "codebase_1f5e35eae0fd",
+  "owner": "peteromallet",
+  "name": "arnold",
+  "repo_url": null,
+  "repo_workspace": null,
+  "default_branch": "main",
+  "scope": "epic_specific",
+  "group_name": null,
+  "associated_epic_id": "epic_7569bba081cb",
+  "added_at": "2026-07-14T01:19:38.365951Z",
+  "added_via": "manual",
+  "last_accessed_at": null,
+  "verified_accessible_at": null,
+  "notes": null,
+  "root_commit_sha": "c8c968cfac8fa66477d29ca597671b0586740038"
+}

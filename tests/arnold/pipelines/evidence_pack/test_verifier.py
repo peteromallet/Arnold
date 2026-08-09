@@ -23,7 +23,14 @@ from typing import Any
 
 import pytest
 
+from arnold.pipeline.contract_validation import validate_payload_against_schema
+from arnold.pipelines.evidence_pack.steps import (
+    _ARTIFACT_KIND_BY_STAGE,
+    _NATIVE_PHASE_ORDER,
+    EvidencePackStep,
+)
 from arnold.pipelines.evidence_pack.verifier import (
+    _VALIDATOR_KINDS,
     ATTESTATION_SCHEMA,
     CHECKPOINT_SCHEMA,
     CHECKPOINT_STATUS_FAILED,
@@ -46,7 +53,6 @@ from arnold.pipelines.evidence_pack.verifier import (
     VERIFIER_ARTIFACT_EVIDENCE_PACK,
     VERIFIER_ARTIFACT_VERDICT,
     Verdict,
-    _VALIDATOR_KINDS,
     make_attestation_payload,
     make_checkpoint_payload,
     make_evidence_pack_payload,
@@ -54,15 +60,6 @@ from arnold.pipelines.evidence_pack.verifier import (
     read_json_artifact,
     write_json_artifact,
 )
-
-from arnold.pipelines.evidence_pack.steps import (
-    EvidencePackStep,
-    _ARTIFACT_KIND_BY_STAGE,
-    _NATIVE_PHASE_ORDER,
-)
-
-from arnold.pipeline.contract_validation import validate_payload_against_schema
-
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -798,7 +795,7 @@ class TestEvidencePackStep:
 
     def test_default_kind(self) -> None:
         step = EvidencePackStep(name="test", next_label="halt")
-        assert step.kind == "verify"
+        assert step.kind == "native_phase"
 
     def test_run_returns_halt(self) -> None:
         from arnold.pipeline.types import StepContext

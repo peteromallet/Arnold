@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -91,8 +93,25 @@ def test_workflow_public_api_has_no_banned_authoring_surfaces() -> None:
 
     assert workflow.PUBLIC_EXPORTS == ("Pipeline", "Step", "Route", "Input", "Output", "Capability")
     assert banned.isdisjoint(set(workflow.__all__))
-    for name in banned:
-        assert not hasattr(workflow, name)
+    # Importing a compatibility submodule such as ``arnold.workflow.builder``
+    # makes Python attach that module to its parent package.  Validate the
+    # public root-import surface in a fresh interpreter so this contract is
+    # independent of test collection/import order.
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import arnold.workflow as workflow; "
+                f"banned = {sorted(banned)!r}; "
+                "raise SystemExit(1 if any(hasattr(workflow, name) for name in banned) else 0)"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
 
     assert not hasattr(Pipeline, "builder")
     assert not hasattr(Pipeline, "add_step")

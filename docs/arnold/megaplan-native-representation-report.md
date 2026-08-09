@@ -1,5 +1,13 @@
 # Megaplan Native Python and Reusable Workflow Platform Representation Report
 
+> **Sequencing amendment — 2026-07-30.** This report's older milestone totals
+> and migration graph are superseded for execution by
+> `docs/arnold/completion-spec-sequencing-and-ownership.md`. The active order is
+> Custody M11 → milestone-gate bootstrap → twelve-milestone Native Parity with
+> C1/C2 between S2F and S2R → seven-milestone Platformization. Preserve this
+> report as architectural evidence; do not use its old counts to rewrite the
+> chain sources.
+
 ## 1. Executive summary
 
 In this report, "native" means more than "the workflow is authored in
@@ -101,14 +109,19 @@ Workflow Platformization ticket, and the independent standardization review.
 - Native Parity execution plan:
   `docs/arnold/megaplan-native-parity-corrective-plan.md`
 - Native Parity composition oracle:
-  `.megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md`
+  `.megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md`
 - Workflow Platformization ticket:
   `.megaplan/tickets/01KY2DWSJG0B9YKAJRYA0107XE-build-a-reusable-native-workflow-pattern-platform-after-megaplan-parity.md`
+- Prepared Workflow Platformization contract and chain:
+  `.megaplan/initiatives/native-workflow-platformization/decisions/PLATFORM_CONTRACT.md`
+  and `.megaplan/initiatives/native-workflow-platformization/chain.yaml`
 - Independent standardization review:
   `.tmp/workflow-standardization-gap/final-report.md`
 - Holistic contract-stack audit:
   `.tmp/workflow-standardization-gap/holistic-context-audit.md`
-- Python-shaped source grammar:
+- Adopted `.pype` target contract:
+  `docs/arnold/pype-authoring-contract.md`
+- Implemented/legacy Python-shaped migration baseline:
   `docs/arnold/python-shaped-authoring-contract.md`
 - Generated workflow manifest contract:
   `docs/arnold/workflow-manifest.md`
@@ -124,7 +137,7 @@ Workflow Platformization ticket, and the independent standardization review.
 | Snapshot | Source of truth | What is proven |
 | --- | --- | --- |
 | Current state | Python source plus builder/component/handler/runtime carriers | Useful native syntax exists, but product route and policy authority remain split |
-| Post-Native-Parity | `workflow.pypeline`, named native subworkflows, declared policies, pure phase bodies | Megaplan semantics are readable, source-authoritative, identity-safe, fenced, durable, and proven across checkout/wheel/cloud |
+| Post-Native-Parity | `workflow.pype`, named `.pype` subworkflows, declared policies, pure phase bodies | Megaplan semantics are readable, source-authoritative, identity-safe, fenced, durable, and proven across checkout/wheel/cloud |
 | Post-Platformization | Qualified component descriptors and locked reusable pattern packages consumed by product workflows | Components can be independently installed, validated, recomposed, upgraded, and substituted within declared compatibility ranges |
 
 ### 1.3 Contract stack and source-of-truth map
@@ -155,9 +168,18 @@ quarantined. Re-serializing old coordinates under a new schema without a
 declared conservation mapping is forbidden, and mixed-version workers must
 prove identical admitted coordinates before sharing a run.
 
+The Post-Native-Parity source model is one workflow per `.pype`, as frozen in
+`pype-authoring-contract.md`. Every durable root or child workflow has its own
+file; a `.pype` may also contain only private local steps and pure helpers.
+Reusable steps/effects/schemas/policies/helpers live in `.py`, while ordinary
+`.py @workflow` is explicit non-durable preview only. Static canonical imports
+compose workflows without executing source. Logical identity is distribution
+plus workflow name; paths are provenance, and behavior/shape changes require
+explicit compatibility or migration disposition.
+
 | Layer / contract | Authored or generated | Owns | Does not own or authorize | Current/future anchor |
 | --- | --- | --- | --- | --- |
-| Python-shaped authoring contract | Authored source under a restricted grammar | Product topology, calls, closed decisions, loops, fanout, stable semantic keys, local policy/effect references | Runtime grants, leases, WBC history, live state, arbitrary Python escape hatches | `python-shaped-authoring-contract.md`, grammar `arnold.workflow.authoring.v2` |
+| `.pype` authoring contract | Authored source under the adopted restricted grammar | Product topology, canonical workflow imports, closed decisions, loops, fanout, stable semantic keys, private/shared boundaries, local policy/effect references | Runtime grants, leases, WBC history, live state, arbitrary Python escape hatches | `pype-authoring-contract.md`; `python-shaped-authoring-contract.md` v2 is current/legacy migration input only |
 | Component export/descriptor | Authored typed declaration; richer Stage 2 descriptor is generated/validated with package metadata | Kind, ports, closed outcomes, state schema, dependencies, capabilities, policies, effects, suspension, extension points | Product route decisions outside the component; runtime permission | Current `arnold.workflow.authoring.ComponentContract`; Stage 2 `ComponentDescriptor` in this report is illustrative future API |
 | `WorkflowManifest` | Generated compiler output | Stable nodes/edges/refs, policy slots, capabilities, manifest/topology hashes, replay coordinate | Editable product truth, RA decisions, custody, runtime journal | `arnold.workflow.manifest.v1`; `docs/arnold/workflow-manifest.md` |
 | Megaplan Plan Contract | Authored/generated product artifact | Inter-milestone `provides`, `assumes`, interface paths/signatures, and `pre_existing` task declarations | Workflow topology, permission, custody, WBC completion, effect truth, terminal acceptance | `arnold_pipelines/megaplan/orchestration/plan_contracts.py` |
@@ -507,6 +529,15 @@ Native topology should model these as named human/control transitions, not as on
 The recurring pattern is clear: the graph has phase labels, while handlers are mini-orchestrators. A true native pipeline would lift those mini-orchestrators into named, inspectable topology.
 
 ## 5. Stage 1 target: source-authoritative native Megaplan
+
+> **Format note:** the following monolithic `planning_native.py` listing is a
+> semantic/topology sketch retained from the earlier design, not the adopted
+> file grammar. Implementation splits each shown pipeline/subworkflow region
+> into its own one-workflow `.pype` (`workflow.pype`,
+> `plan_quality/{cycle,critique,gate,tiebreaker}.pype`, and
+> `delivery/{cycle,execute,execute_batch,review}.pype`) and places reusable
+> leaves in adjacent `.py` files. Read `@subworkflow` below as “canonical
+> workflow invoked as a child,” not a second authored decorator.
 
 Below is an aspirational
 `arnold_pipelines/megaplan/workflows/planning_native.py`. It is intentionally
@@ -1019,7 +1050,7 @@ This file is the Stage 1 semantic authority. It is not itself the shared
 pattern package. Native Parity must first prove that its authored occurrences,
 lowered nodes, accepted Run Authority decisions, Custody histories, WBC
 attempt/effect histories, and terminals describe the same run under the
-`GOLDEN_TRACE_CONTRACT.md` oracle. Platformization may then extract only the
+`validation/GOLDEN_TRACE_CONTRACT.md` oracle. Platformization may then extract only the
 control structures that have a stable cross-product boundary.
 
 ### 5.1 The admitted action envelope
@@ -1384,6 +1415,11 @@ proves they are product-required. Stage 1 retains only the deterministic joins
 its actual topology needs.
 
 ## 6. Stage 2 target: contracted, composable workflow components
+
+The Stage 2 snippets below likewise illustrate component semantics, not a
+multi-workflow `.py` or `.pype` authoring surface. Every durable workflow shown
+would be a canonical workflow in its own `.pype`; shared steps and descriptors
+would live in `.py`; ordinary `.py @workflow` remains preview-only.
 
 The platformized representation adds a component boundary around proven
 primitives and patterns. A component is not merely an importable callable. It
@@ -2009,6 +2045,9 @@ A source-mapped debugger should let an author inspect:
 - effective policy and its source/precedence;
 - remaining retry, loop, token, cost, and deadline budgets;
 - declared effect intents/outcomes and model/tool attempt identity;
+- the platform agent session, model/tool calls, usage/cost and protected
+  log/transcript artifacts for the exact workflow/step attempt, with reverse
+  navigation to owning source and any consuming decision/terminal;
 - checkpoint and suspension cursor;
 - the next legal transitions and why an illegal one was rejected.
 
@@ -2200,19 +2239,30 @@ Completing the four source/runtime gaps above produces a correct native
 Megaplan, but it does not by itself produce a reusable component platform. The
 remaining platform gap is a missing normative boundary contract:
 
-- one execution lifecycle for step, subworkflow, and workflow components;
+- one exact-one `.pype` authoring/linking model, including canonical imports,
+  private local definitions, shared `.py` leaves, package-owned optional
+  default selection, path-independent identity/migrations, import provenance,
+  and cycle/recursion/collision rejection without executing author source;
+- ordinary Python/third-party import freedom inside shared step bodies under
+  exact dependency/environment/feature/plugin pins and declared effect
+  boundaries;
+- one execution lifecycle for steps and workflows, including workflows hosted
+  as subworkflows;
 - composition rules for ports, typed outcomes, retry, suspension,
   cancellation, deadline, failure, compensation, and terminal propagation;
 - durable state, checkpoint, artifact, identity, effect, and namespace
   isolation for multiple component instances;
-- explicit dependency/policy/effect/capability binding with deterministic
-  precedence and no ambient mutable route authority;
+- one immutable typed policy envelope with kind/schema, canonical values,
+  attachment, provenance, precedence/override and digest, plus explicit
+  dependency/effect/capability binding and no ambient mutable route authority;
 - canonical serialized port/outcome/state compatibility rather than Python
   annotations alone;
 - qualified component identity, content-addressed transitive dependency locks,
   mixed-version rejection, and active-checkpoint evolution rules;
 - generic static composition validation;
-- portable causal evidence and black-box conformance certification;
+- portable causal evidence with bidirectional occurrence/attempt ↔
+  agent/model/tool/effect/cost/log-artifact joins, rebuildable indexes, and
+  black-box conformance certification;
 - one source-mapped diagnostic/debugging model and fast deterministic local
   harness across manifest/native execution planes;
 - complete prompt/model/tool identity, budget, memoization, replay, and
@@ -2271,20 +2321,31 @@ The work should:
    stale-worker rejection, no-dual-write effects, and composed causal
    explanation from one same-run history.
 
-The controlling chain is eight two-week milestones. `S3` is split at the
-critique/gate boundary so the dense gate/revise owner does not share a cutover
-with tiebreaker/finalize and mixed-version human reentry:
+Before the product chain starts, the one-milestone
+`megaplan-chain-milestone-gates` bootstrap must add content-addressed
+intermediate gates that run before merge and rebind their result to merge HEAD.
+It also adds the only legal authority-changing lifecycle: readiness validation
+on merge HEAD → declared typed receipt-consuming transition → independent
+post-transition verification. The bootstrap itself is certified from an
+externally reviewed, CI-verified, manually merged implementation attestation;
+it cannot self-authorize through the old local/no-PR runner.
+The Native Parity chain then has ten busy milestones. `S2` is split between the
+authoring-format/compiler proof and the durable runtime substrate; `S3` is split
+at the critique/gate boundary; and `S5` separates non-authoritative, per-effect-
+class proof from the first live delivery cutover:
 
 | Ordinal | Milestone | Blocking scope |
 | --- | --- | --- |
-| 1 | `s1-custody-capability-admission-semantic-contract` | Executable M11 probes; identities/rows; durable-store ownership; independent golden/source-oracle and raw mutation contracts; known-red baseline. Production runtime integration is deferred. |
-| 2 | `s2-control-primitives-writer-registration` | Generic durable constructs, neutral runtime, all-plane generic admission adapter, independent trace integration, restore drills; **GO-0**. |
-| 3 | `s3a-prep-plan-critique-native-cutover` | Digest-bound execution-plane selection and shared resume gate; producer relocation; typed seam to legacy gate; **GO-1A**. |
-| 4 | `s3b-gate-revise-front-half-cutover` | Gate/revise/planning cycle, named-loop exit semantics, remaining front-carrier removal, typed seam to legacy tiebreaker/finalize; `NP-GT-001/002`; **GO-1B**, closing GO-1. |
-| 5 | `s4-tiebreaker-finalize-durable-reentry` | Per-run migration decisions, duplicate-human arbitration, consume the resume gate, replace the S3B seam with finalize-to-delivery seam; `NP-GT-003`. |
-| 6 | `s5-reusable-delivery-cycle` | Named-exit unwind, cancellation/effect ambiguity, execute/review/rework; replace the S4 seam with delivery-to-control seam; `NP-GT-004/005`; **GO-2**. |
-| 7 | `s6-override-auto-control-adoption` | Repair-validation classification, complete reachable arbitration index, remove the S5 seam; **GO-3**. |
-| 8 | `s7-native-topology-conformance` | Independent raw proof hardening, complete durable-store restore coverage, zero route-capable seams, and Platformization handoff manifest; **GO-4**. |
+| 1 | `s1-custody-admission-semantic-preservation` | Executable M11 probes; staged `.pypeline` → `.pype` inventory while the current authoring path remains selected; exact-one format/identity contract and expected-red corpus; identities/rows; durable-store ownership; independent golden/source-oracle and raw mutation contracts. Production runtime integration is deferred. |
+| 2 | `s2f-pype-compiler-identity-converter` | Exact-one compiler/linker, converter, conservative executable-closure identity, descriptor/package correspondence, minimal preview and exact-pinned legacy proof; readiness validation, receipt-consuming suffix/admission transition, post-transition **GO-FORMAT**. |
+| 3 | `s2r-durable-control-primitives-custody-binding` | Generic durable constructs, neutral runtime, all-plane admission adapter, independent trace integration, store-capability enforcement and restore drills; reconsume GO-FORMAT and close **GO-0**. |
+| 4 | `s3a-prep-plan-critique-native-cutover` | Digest-bound execution-plane selection and shared resume gate; land producer relocation and typed legacy-gate seam non-authoritatively; readiness → typed transition → post-transition **GO-1A**. |
+| 5 | `s3b-gate-revise-front-half-cutover` | Gate/revise/planning cycle, finite named route discriminants and schema-change comparability; transition producer/seam/fence ownership, then verify remaining front-carrier/scaffold removal; `NP-GT-001/002`; post-transition **GO-1B**, closing GO-1. |
+| 6 | `s4-tiebreaker-finalize-durable-reentry` | Per-run migration decisions and duplicate-human arbitration; keep the old path/seam authoritative through merge; readiness → atomic typed producer/seam/fence transition → post-transition verification; `NP-GT-003`. |
+| 7 | `s5a-delivery-shadow-effect-class-proof` | Build execute/review/rework topology in non-authoritative shadow mode; make the complete future-live `NP-GT-004/005` behavior matrix green; inventory every external-effect protocol class and prove each class directly or through an independently accepted equivalence; close **GO-2** without live effects. |
+| 8 | `s5b-live-delivery-cutover-review-rework` | Validate current readiness, then make one typed live-delivery transition consuming both that receipt and S5A GO-2; post-verify writer fences, named-exit unwind, cancellation/effect ambiguity, review/rework and reconciliation; `NP-GT-004/005`. |
+| 9 | `s6-override-auto-control-adoption` | Validate GO-3 readiness, transition control authority once, then post-verify repair validation, the reachable arbitration index, retained-carrier inertness and final-seam removal. |
+| 10 | `s7-native-topology-conformance` | Independent raw proof hardening, complete durable-store restore coverage, zero route-capable seams, validator self-mutations, governed allowlist closure, and a completion-manifest-bound Platformization handoff; **GO-4**. |
 
 GO-1 is a composite binary gate. Failure of GO-1A leaves old prep/plan/
 critique authoritative. After GO-1A succeeds, GO-1B failure leaves only gate/
@@ -2302,8 +2363,9 @@ Each slice follows one binary handoff:
 ```text
 land the authored producer and generated bindings
   -> run behaviorally inert dual-read comparison
-  -> pass the slice receipt
-  -> relocate WBC/action producer and cut authority exactly once
+  -> pass merge-HEAD readiness validation
+  -> run the typed transition: relocate WBC/action producer and cut authority exactly once
+  -> pass independent post-transition verification
   -> migrate downstream consumers
   -> prove the old producer inert
   -> hard-fence/delete after installed and cross-host proof
@@ -2316,7 +2378,7 @@ reconciliation, and old-writer inertness; then authority cuts once.
 
 | Surface | Before cut | During comparison | End state |
 | --- | --- | --- | --- |
-| `.pypeline` and generated manifest | Detailed candidate source; not fully load-bearing | New slice executes behind binary gate | Only product-topology authority; manifest is generated runtime coordinate |
+| `.pypeline` source, target `.pype`, and generated manifest | Detailed `.pypeline` candidate source; not fully load-bearing | Rename to `.pype`; new slices execute behind binary gates while pinned legacy artifacts remain explicit | `.pype` is the only live product-topology source; manifest is a generated runtime coordinate |
 | Builder/components/handlers | May still construct routes or return route hints | Old producer remains authoritative until receipt, then becomes inert | Pure bodies/adapters or deleted; cannot select behavior |
 | WBC producer | Often handler/component adjacent | Relocated at the exact semantic cut | Canonical lowered node/child boundary |
 | `_core`, CLI, auto-drive | May read/mutate route-like state | Consumers migrate only after authority cut | Typed requests, scheduling, compatibility or observation only |
@@ -2395,21 +2457,32 @@ unproven candidate, or Megaplan-specific behavior. Its S7 handoff binds the
 candidate/dependency inventory; exact typed port, outcome, policy, effect, and
 state contract snapshots; source/runtime golden adapters; generic primitives'
 zero-Megaplan-import proof; coupling evidence; exclusions; and classification
-rationale. The five-stage Platformization work consumes this evidence but
-independently freezes, implements, challenges, and certifies the generic
-contract. No sixth Platformization sprint is implied by this handoff.
+rationale. The seven-milestone Platformization work consumes this evidence but
+independently freezes, implements, productizes, challenges, and certifies the
+generic contract.
 
-The five Platformization stages remain: S1 freezes the two-layer result,
-lifecycle, total root-host/human-timeout/join/resource/trace contracts and
-invalid corpus; S2 implements and fault-tests them; S3 proves the first pattern
-set; S4 forces an unrelated consumer to vary those declared policies and prove
-substitution; S5 publishes capability profiles and content-addressed stable
-conformance manifests. The new Oracle resolutions fit those existing owners.
+The milestones are: S1 freezes the candidate result/lifecycle/composition/
+proof contract and invalid corpus; S2A implements and fault-tests the
+product-neutral runtime/admission/authority substrate; S2B productizes the
+adopted `.pype` compiler/linker, package correspondence, identity-aware
+converter, and transactional refactors; S3 completes the CLI/editor,
+format/lint/navigation/topology/preview/test surface and proves unfamiliar-
+author usability; S4 proves the first extracted pattern set; S5 forces an
+unrelated consumer to vary declared policies/shapes and prove substitution plus
+separate new-instance/resume evolution; S6 alone publishes capability profiles
+and content-addressed stable conformance manifests.
+
+S1 through S5 each have pre-merge/post-merge stage gates. S2A's canonical
+runtime selection and S4's active Megaplan binding/lock migration remain
+non-authoritative through merge, execute only in their typed transitions, and
+must pass separate post-transition gates. S6 alone runs cumulative readiness
+certification, executes stable publication as a typed transition, and reruns
+final conformance against the published state.
 
 The S1 “freeze” is a candidate/experimental standard, not a stable public
-compatibility promise. It may become stable only after the unrelated S4
+compatibility promise. It may become stable only after the unrelated S5
 consumer has exercised the same contract under materially different bindings
-and S5 certification has accepted the corresponding conformance manifest.
+and S6 certification has accepted the corresponding conformance manifest.
 Failure of that evidence narrows or revises the candidate; it is not papered
 over by declaring the first Megaplan-shaped version stable.
 
@@ -2436,10 +2509,10 @@ second real consumer demonstrates the abstraction.
 
 ## 10. Standardization closure contract
 
-Platformization is incomplete unless all ten clauses are true:
+Platformization is incomplete unless all eleven clauses are true:
 
-1. **Descriptor:** every exported step, subworkflow, and workflow has a
-   qualified, versioned descriptor declaring its kind, typed input/output/
+1. **Descriptor:** every exported step and workflow—including a workflow hosted
+   as a subworkflow—has a qualified, versioned descriptor declaring its kind, typed input/output/
    state schemas, business outcomes with conditions/evidence/emission modes,
    applicable lifecycle/control terminals, hostability, dependencies,
    capabilities, policies,
@@ -2454,12 +2527,12 @@ Platformization is incomplete unless all ten clauses are true:
    reserved contract-violation lifecycle terminal. Human gates use this same
    durable protocol and a total timeout graph rather than an out-of-band wait
    path. Only the root-host adapter may propose a root product terminal.
-3. **Composition:** all bindings and control propagation are explicit; port,
-   outcome, named-loop exit, reconfiguration, same-child retry/new generation,
-   durable parent-loop state, total child-result join classification, exact
-   success/impossibility results, scope, deadline, cancellation, resource
-   settlement, budget, and namespace rules are statically checkable for every
-   supported shape.
+3. **Composition:** module exports, logical roots, static imports, bindings and
+   control propagation are explicit; port, outcome, named-loop exit,
+   reconfiguration, same-child retry/new generation, durable parent-loop state,
+   total child-result join classification, exact success/impossibility results,
+   scope, deadline, cancellation, resource settlement, budget, and namespace
+   rules are statically checkable for every supported shape.
 4. **Isolation:** component instances own disjoint state, checkpoint, artifact,
    identity, custody, and effect namespaces unless an explicit shared-resource
    port declares otherwise; no ambient mutable route or authority exists.
@@ -2491,6 +2564,10 @@ Platformization is incomplete unless all ten clauses are true:
 10. **Variability:** domain meaning, policy values, implementations, and storage
     remain consumer-owned only through declared bindings; they cannot mutate
     shared internals or hidden global defaults.
+11. **Execution modes:** preview, durable sandbox, comparison, admitted
+    production, and certification share one compiler/lifecycle/event model but
+    retain explicit claim boundaries; working-tree edits are easy fresh
+    experiments and can never impersonate admitted history.
 
 ### 10.1 Minimum acceptance suite
 
@@ -2728,9 +2805,9 @@ to independently verified runtime evidence.
 | Concern | Controlling source | Audit use |
 |---|---|---|
 | Holistic target representation | This report | Defines the combined product, execution, authority, proof, and platform endpoint. |
-| Stage 1 native parity | `megaplan-native-parity-corrective-plan.md` and `GOLDEN_TRACE_CONTRACT.md` | Controls parity gates and the minimum observable trace contract. |
-| Stage 2 reusable platform | Platformization ticket, until promoted to an approved epic | Defines intended extraction and qualification scope; it is not yet a complete execution plan. |
-| Python authoring and manifest boundaries | `python-shaped-authoring-contract.md` and `workflow-manifest.md` | Constrains authored syntax, lowering, validation, and manifest identity. |
+| Stage 1 native parity | `megaplan-native-parity-corrective-plan.md` and `validation/GOLDEN_TRACE_CONTRACT.md` | Controls parity gates and the minimum observable trace contract. |
+| Stage 2 reusable platform | Prepared Platformization `decisions/PLATFORM_CONTRACT.md`, milestone briefs, and `chain.yaml`; ticket retained as provenance | Controls the seven-milestone S1/S2A/S2B/S3/S4/S5/S6 runtime, authoring-core, developer-tooling, extraction, challenge, and certification sequence. |
+| Python authoring and manifest boundaries | `pype-authoring-contract.md` and `workflow-manifest.md`; `python-shaped-authoring-contract.md` is migration baseline | Constrains target authored syntax, lowering, validation, identity, packaging, migration, and generated-manifest identity. |
 | Execution authority and workflow boundaries | `runauthority-main-plan.md`, Workflow Boundary Contracts north star, and `state-authority-migration.md` | Constrains action admission, leases, evidence, state ownership, and migration. |
 | Current implementation | Cited source/compiler/runtime files and accepted completion artifacts | Establishes feasibility and actual behavior; source citations are descriptive unless a normative source adopts them. |
 | Adversarial audit | Oracle packet and companion audit artifacts | Supplies challenges, omissions, and matrices. It cannot itself authorize execution or declare conformance. |
@@ -2831,10 +2908,10 @@ The final proof map must consume every row. A proof generator cannot certify a
 fact merely because its own prose, fixture, hash, or predeclared status says the
 fact is implemented.
 
-`GOLDEN_TRACE_CONTRACT.md` is the human-reviewed normative scenario/invariant
+`validation/GOLDEN_TRACE_CONTRACT.md` is the human-reviewed normative scenario/invariant
 contract, not an executable route table. An independent static source oracle
 derives semantic occurrences, source spans, named policies, and structured-
-control relations from canonical `.pypeline` source and scenario inputs without
+control relations from canonical `.pype` source and scenario inputs without
 calling the production lowerer or treating runtime output as expected output.
 Runtime adapters export raw primary-store facts. Before semantic comparison, a
 separately implemented raw verifier proves cursor continuity and multiset

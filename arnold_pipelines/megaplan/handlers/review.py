@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -24,10 +27,16 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
 from arnold_pipelines.megaplan.orchestration.transition_policy import (
     TRANSITION_DECISION_REVIEW_DONE_FILENAME,
     TransitionPolicy,
+    TransitionPolicyDecision,
     TransitionWriter,
+)
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_state_projection,
+    dispatch_review_panel,
 )
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
+from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
 from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion, normalize_robustness
 from arnold_pipelines.megaplan.types import (
@@ -47,6 +56,9 @@ from arnold_pipelines.megaplan.planning.state import (
 from arnold.pipeline.step_io_contract import StepIOOperation
 from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
+from arnold_pipelines.megaplan.schema_projection import schema_property_names
+from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.workflows import REVIEW_POLICY
 from arnold_pipelines.megaplan.workers import (
     WorkerResult,
     warn_if_work_dir_differs_from_project_dir,
@@ -63,6 +75,7 @@ from arnold_pipelines.megaplan._core import (
     get_effective,
     is_prose_mode,
     is_creative_mode,
+    latest_plan_meta_path,
     load_plan_locked,
     make_history_entry,
     now_utc,
@@ -79,6 +92,7 @@ from arnold_pipelines.megaplan._core import (
 from .shared import (
     _attach_next_step_runtime,
     _active_step_fallback_fields,
+    _emit_named_boundary_receipt,
     _agent_mode_parts,
     _emit_phase_notice,
     _emit_receipt,
@@ -91,6 +105,7 @@ from .shared import (
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result
 from arnold_pipelines.megaplan.orchestration.phase_result import Deviation as _PhaseDeviation
 from arnold_pipelines.megaplan.receipts.extractors import review_metrics
+from arnold_pipelines.megaplan.custody.phase_wbc import complete_phase_wbc, fail_phase_wbc, phase_wbc_state
 
 """Review handler — post-execute implementation-evidence pass.
 
@@ -103,22 +118,109 @@ judges the *work product*.  Do not rename or conflate them.
 
 log = logging.getLogger(__name__)
 
-# ── T11: Review-scoped scratch promotion known keys ───────────────────────
-# The model produces only these keys in the scratch template; unknown
-# top-level keys injected by the model are stripped before promotion.
-_REVIEW_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
-    {
-        "review_verdict",
-        "review_completion_status",
-        "criteria",
-        "issues",
-        "rework_items",
-        "summary",
-        "task_verdicts",
-        "sense_check_verdicts",
+# M8A: Maximum number of review rework waves before the circuit opens.
+# The configured ``max_review_rework_cycles`` may be lower but never higher.
+_MAX_REWORK_WAVES: int = 5
+
+
+# ── M11 Step 23: Runtime provenance for review routing ──────────────────
+
+#: Prefix for synthetic review-only task IDs.  These are NOT runnable
+#: finalize task IDs — they are review-scoped concern markers that must
+#: not be routed to execute as generic runnable tasks.
+_SYNTHETIC_REVIEW_TASK_PREFIX: str = "REVIEW-"
+
+
+def _verify_attach_next_step_runtime() -> dict[str, Any]:
+    """Prove ``_attach_next_step_runtime`` exists in the loaded runtime.
+
+    Returns a provenance record confirming the function is importable,
+    callable, and bound to the expected module.  Raises
+    :class:`RuntimeError` if the function cannot be resolved — review
+    routing outcomes cannot be bound to runtime provenance without it.
+    """
+    from arnold_pipelines.megaplan.handlers.shared import _attach_next_step_runtime as _fn
+
+    if not callable(_fn):
+        raise RuntimeError(
+            "M11 review routing: _attach_next_step_runtime is not callable in the loaded runtime"
+        )
+    return {
+        "function": "_attach_next_step_runtime",
+        "module": _fn.__module__,
+        "qualname": getattr(_fn, "__qualname__", "_attach_next_step_runtime"),
+        "callable": True,
+        "present": True,
     }
+
+
+def _is_synthetic_review_task_id(task_id: str) -> bool:
+    """Return True when *task_id* is a synthetic review-only concern marker.
+
+    Synthetic REVIEW-{check_id} task IDs are created when review checks
+    omit ``concerned_task_ids``.  They are NOT runnable finalize targets
+    and must never be routed as generic executable task IDs.
+    """
+    return isinstance(task_id, str) and task_id.startswith(_SYNTHETIC_REVIEW_TASK_PREFIX)
+
+
+def _reject_runnable_review_ids(task_ids: list[str]) -> list[str]:
+    """Replace synthetic REVIEW-{check_id} entries with non-runnable markers.
+
+    Returns a copy of *task_ids* where every synthetic REVIEW- prefix
+    is replaced with ``r:`` (review-scoped) so downstream routing never
+    treats them as generic runnable finalize task IDs.
+    """
+    sanitized: list[str] = []
+    for tid in task_ids:
+        if _is_synthetic_review_task_id(tid):
+            sanitized.append(f"r:{tid}")
+        else:
+            sanitized.append(tid)
+    return sanitized
+
+
+def _bind_review_routing_provenance(
+    response: StepResponse,
+    *,
+    verify_runtime: bool = True,
+) -> None:
+    """Bind review routing outcomes to runtime provenance.
+
+    Proves ``_attach_next_step_runtime`` is present (when *verify_runtime*
+    is True) and attaches a runtime provenance receipt to the response.
+    The receipt proves the routing decision was made under a known runtime.
+    """
+    provenance: dict[str, Any] = {
+        "review_routing_provenance": {
+            "schema": "arnold.megaplan.review_routing_provenance.v1",
+        }
+    }
+    if verify_runtime:
+        try:
+            rt_proof = _verify_attach_next_step_runtime()
+            provenance["review_routing_provenance"]["_attach_next_step_runtime"] = rt_proof
+        except RuntimeError:
+            provenance["review_routing_provenance"]["_attach_next_step_runtime"] = {
+                "function": "_attach_next_step_runtime",
+                "present": False,
+                "callable": False,
+                "error": "function not resolvable in loaded runtime",
+            }
+    response["review_routing_provenance"] = provenance["review_routing_provenance"]
+
+_REVIEW_SCRATCH_EXTENSION_FIELDS: frozenset[str] = frozenset(
+    {"review_completion_status"}
 )
-# ────────────────────────────────────────────────────────────────────────────
+
+
+def _review_scratch_known_keys() -> frozenset[str]:
+    """Project every review-schema field plus one handler control field."""
+
+    return schema_property_names(
+        SCHEMAS["review.json"],
+        contract="review scratch promotion",
+    ) | _REVIEW_SCRATCH_EXTENSION_FIELDS
 
 
 def _build_review_blocked_message(
@@ -652,7 +754,7 @@ def _promote_authoritative_review_output(
     if raw.get("review_verdict") not in {"approved", "needs_rework"}:
         return False
 
-    promoted = {key: raw[key] for key in _REVIEW_SCRATCH_KNOWN_KEYS if key in raw}
+    promoted = {key: raw[key] for key in _review_scratch_known_keys() if key in raw}
     payload.clear()
     payload.update(promoted)
     payload["raw_review_output_promoted"] = True
@@ -985,11 +1087,330 @@ def _force_proceed_blockers(
     return blockers
 
 
+def _normalize_failed_detail_rows(
+    evidence: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Normalize evidence rows into ``failed: <detail>`` quality-block signatures.
+
+    Returns *(normalized_rows, malformed_rows)*.  Each normalized row carries
+    *command*, *criterion*, and content-addressed *artifact_hash*.  Rows that
+    cannot be resolved to a deterministic quality-block signature are typed
+    *unknown* and returned separately.
+    """
+    normalized: list[dict[str, Any]] = []
+    malformed: list[dict[str, Any]] = []
+    for row in evidence:
+        if not isinstance(row, dict):
+            malformed.append({"kind": "unknown", "reason": "non-dict evidence row"})
+            continue
+        command = str(row.get("command") or "").strip()
+        criterion = str(row.get("issue") or row.get("criterion") or row.get("id") or "").strip()
+        if not command:
+            malformed.append(
+                {
+                    "kind": "unknown",
+                    "reason": "missing command",
+                    "task_id": row.get("task_id", ""),
+                    "partial_criterion": criterion or None,
+                }
+            )
+            continue
+        # Content-addressed artifact hash: command + baseline_status + post_status
+        fingerprint = json.dumps(
+            {
+                "command": command,
+                "baseline_status": str(row.get("baseline_status", "")).strip(),
+                "post_status": str(row.get("post_status", "")).strip(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        artifact_hash = hashlib.sha256(fingerprint).hexdigest()
+        normalized.append(
+            {
+                "kind": "failed",
+                "detail": criterion or "unspecified criterion",
+                "command": command,
+                "criterion": criterion,
+                "artifact_hash": artifact_hash,
+                "task_id": str(row.get("task_id") or ""),
+                "baseline_status": str(row.get("baseline_status") or ""),
+                "post_status": str(row.get("post_status") or ""),
+                "issue": str(row.get("issue") or ""),
+            }
+        )
+    return normalized, malformed
+
+
+def _deterministic_review_block_evidence(
+    rework_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return structured failing checks that a repair worker can reproduce.
+
+    Each evidence row is a ``failed: <detail>`` quality-block signature with
+    command, criterion, and content-addressed artifact hash.  Rows missing a
+    deterministic command are preserved as typed *unknown*.
+    """
+
+    raw_evidence: list[dict[str, Any]] = []
+    for item in rework_items or []:
+        if not isinstance(item, dict) or not _rework_item_is_blocker(item):
+            continue
+        raw_checks: list[Mapping[str, Any]] = []
+        check = item.get("deterministic_check")
+        if isinstance(check, Mapping):
+            raw_checks.append(check)
+        checks = item.get("deterministic_checks")
+        if isinstance(checks, list):
+            raw_checks.extend(value for value in checks if isinstance(value, Mapping))
+        for raw in raw_checks:
+            command = str(raw.get("command") or "").strip()
+            baseline = str(raw.get("baseline_status") or "").strip().lower()
+            post = str(raw.get("post_status") or "").strip().lower()
+            if not command or not ({baseline, post} & {"fail", "failed", "error"}):
+                continue
+            raw_evidence.append(
+                {
+                    "command": command,
+                    "baseline_status": baseline or "unknown",
+                    "post_status": post or "unknown",
+                    "task_id": str(item.get("task_id") or ""),
+                    "issue": str(item.get("issue") or item.get("flag_id") or ""),
+                }
+            )
+    normalized, malformed = _normalize_failed_detail_rows(raw_evidence)
+    # Attach malformed rows as typed unknown so they are preserved
+    result: list[dict[str, Any]] = list(normalized)
+    for row in malformed:
+        result.append(row)
+    return result
+
+
+def _review_quality_block_failure(
+    *,
+    state: PlanState,
+    blockers: list[str],
+    rework_items: list[dict[str, Any]] | None,
+    review_artifact_hash: str,
+) -> dict[str, Any]:
+    deterministic_evidence = _deterministic_review_block_evidence(rework_items)
+    fingerprint_payload = {
+        "blockers": sorted(blockers),
+        "deterministic_evidence": deterministic_evidence,
+        "review_artifact_hash": review_artifact_hash,
+    }
+    digest = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cursor = {
+        "history_index": len(state.get("history", [])),
+        "review_artifact_hash": review_artifact_hash,
+    }
+    deterministic = bool(deterministic_evidence)
+    blocked_task_ids = sorted(
+        {
+            str(item.get("task_id") or "").strip()
+            for item in deterministic_evidence
+            if str(item.get("task_id") or "").strip()
+        }
+    )
+    return {
+        "kind": "quality_gate_blocked" if deterministic else "review_quality_blocked_unknown",
+        "message": "review rework budget exhausted with unresolved quality blockers",
+        "phase": "review",
+        "state": STATE_BLOCKED,
+        "recorded_at": now_utc(),
+        "last_artifact": "review.json",
+        "suggested_action": (
+            "Dispatch one bounded automatic repair using the recorded deterministic checks."
+            if deterministic
+            else "Collect structured deterministic evidence before selecting a recovery action."
+        ),
+        "blocker_ids": [f"quality:review:{digest}"],
+        "evidence_cursor": cursor,
+        "metadata": {
+            "repairability": "deterministic_machine" if deterministic else "unknown",
+            "deterministic": deterministic,
+            "deterministic_evidence": deterministic_evidence,
+            "blocking_reasons": list(blockers),
+            "blocked_task_ids": blocked_task_ids,
+            "evidence_cursor": cursor,
+        },
+    }
+
+
 @dataclass(frozen=True)
 class ReviewRouteDecision:
-    result: str
+    result: ReviewDecisionResult
     next_state: str
-    route_signal: str
+    route_signal: ReviewOutcome
+
+
+def _require_review_policy_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    raise AssertionError(f"REVIEW_POLICY.{context} must be a mapping")
+
+
+def _review_route_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        REVIEW_POLICY.metadata.get("route_surface"),
+        context="metadata.route_surface",
+    )
+
+
+def _review_retry_and_cap_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("retry_and_cap"),
+        context="metadata.route_surface.retry_and_cap",
+    )
+
+
+def _review_cap_threshold_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("cap_thresholds"),
+        context="metadata.route_surface.cap_thresholds",
+    )
+
+
+def _review_rework_cycle_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("rework_cycle"),
+        context="metadata.route_surface.rework_cycle",
+    )
+
+
+def _review_force_proceed_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("force_proceed_authority"),
+        context="metadata.route_surface.force_proceed_authority",
+    )
+
+
+def _review_human_verification_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("human_verification"),
+        context="metadata.route_surface.human_verification",
+    )
+
+
+def _review_outcome_from_surface(
+    surface: Mapping[str, Any],
+    *,
+    context: str,
+) -> ReviewOutcome:
+    raw_route_signal = surface.get("route_signal")
+    if not isinstance(raw_route_signal, str) or not raw_route_signal:
+        raise AssertionError(f"REVIEW_POLICY.{context}.route_signal must be a non-empty string")
+    return ReviewOutcome(raw_route_signal)
+
+
+def _review_state_from_surface(
+    surface: Mapping[str, Any],
+    *,
+    context: str,
+) -> str:
+    raw_state_ref = surface.get("state_ref")
+    if not isinstance(raw_state_ref, str) or not raw_state_ref:
+        raise AssertionError(f"REVIEW_POLICY.{context}.state_ref must be a non-empty string")
+    return raw_state_ref
+
+
+def _review_route_decision_from_surface(
+    *,
+    result: ReviewDecisionResult,
+    surface: Mapping[str, Any],
+    context: str,
+) -> ReviewRouteDecision:
+    return ReviewRouteDecision(
+        result=result,
+        next_state=_review_state_from_surface(surface, context=context),
+        route_signal=_review_outcome_from_surface(surface, context=context),
+    )
+
+
+def _review_infrastructure_retry_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.BLOCKED,
+        surface=_require_review_policy_mapping(
+            _review_retry_and_cap_surface().get("infrastructure_retry"),
+            context="metadata.route_surface.retry_and_cap.infrastructure_retry",
+        ),
+        context="metadata.route_surface.retry_and_cap.infrastructure_retry",
+    )
+
+
+def _review_cap_exhausted_blocked_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.BLOCKED,
+        surface=_require_review_policy_mapping(
+            _review_retry_and_cap_surface().get("cap_exhausted_with_blockers"),
+            context="metadata.route_surface.retry_and_cap.cap_exhausted_with_blockers",
+        ),
+        context="metadata.route_surface.retry_and_cap.cap_exhausted_with_blockers",
+    )
+
+
+def _review_force_proceeded_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.FORCE_PROCEEDED,
+        surface=_review_force_proceed_surface(),
+        context="metadata.route_surface.force_proceed_authority",
+    )
+
+
+def _review_rework_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.NEEDS_REWORK,
+        surface=_review_rework_cycle_surface(),
+        context="metadata.route_surface.rework_cycle",
+    )
+
+
+def _review_deferred_human_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.SUCCESS,
+        surface=_review_human_verification_surface(),
+        context="metadata.route_surface.human_verification",
+    )
+
+
+def _review_pass_decision(
+    state: PlanState,
+    *,
+    force_done: bool = False,
+) -> ReviewRouteDecision:
+    with_feedback = state.get("config", {}).get("with_feedback", False)
+    return ReviewRouteDecision(
+        result=ReviewDecisionResult.SUCCESS,
+        next_state=STATE_DONE if force_done else (STATE_REVIEWED if with_feedback else STATE_DONE),
+        route_signal=ReviewOutcome.PASS,
+    )
+
+
+def _review_rework_cap_config_key(robustness: str) -> str:
+    rework_cycles = _require_review_policy_mapping(
+        _review_cap_threshold_surface().get("rework_cycles"),
+        context="metadata.route_surface.cap_thresholds.rework_cycles",
+    )
+    default_key = rework_cycles.get("default_config_key")
+    robust_key = rework_cycles.get("robust_config_key")
+    if not isinstance(default_key, str) or not default_key:
+        raise AssertionError(
+            "REVIEW_POLICY.metadata.route_surface.cap_thresholds.rework_cycles.default_config_key "
+            "must be a non-empty string"
+        )
+    if not isinstance(robust_key, str) or not robust_key:
+        raise AssertionError(
+            "REVIEW_POLICY.metadata.route_surface.cap_thresholds.rework_cycles.robust_config_key "
+            "must be a non-empty string"
+        )
+    robustness_levels = {
+        level
+        for level in rework_cycles.get("robustness_levels", ())
+        if isinstance(level, str) and level
+    }
+    return robust_key if robustness in robustness_levels else default_key
 
 
 def _resolve_review_outcome(
@@ -1016,7 +1437,7 @@ def _resolve_review_outcome(
         or bool(missing_evidence)
     )
     if blocked:
-        return ReviewRouteDecision("blocked", STATE_EXECUTED, "blocked")
+        return _review_infrastructure_retry_decision()
 
     rework_requested = review_verdict == "needs_rework"
     if rework_requested:
@@ -1024,16 +1445,16 @@ def _resolve_review_outcome(
             stop_data = _maker_requested_stop(plan_dir)
             if stop_data is not None:
                 _record_maker_stop(state, plan_dir, defense=stop_data.get("defense", ""))
-                return ReviewRouteDecision("success", STATE_DONE, "pass")
-        cap_key = (
-            "max_robust_review_rework_cycles"
-            if robustness in {"thorough", "extreme"}
-            else "max_review_rework_cycles"
+                return _review_pass_decision(state, force_done=True)
+        cap_key = _review_rework_cap_config_key(robustness)
+        max_review_rework_cycles = min(
+            get_effective("execution", cap_key),
+            _MAX_REWORK_WAVES,
         )
-        max_review_rework_cycles = get_effective("execution", cap_key)
         prior_rework_count = sum(
             1 for entry in state.get("history", [])
-            if entry.get("step") == "review" and entry.get("result") == "needs_rework"
+            if entry.get("step") == "review"
+            and entry.get("result") == ReviewDecisionResult.NEEDS_REWORK.value
         )
         if prior_rework_count >= max_review_rework_cycles:
             blockers = _force_proceed_blockers(criteria, rework_items)
@@ -1047,14 +1468,14 @@ def _resolve_review_outcome(
                     f"{blocker_list}{more}. Resolve them and resume review, or "
                     "`override recover-blocked`/`force-proceed` after operator review to ship anyway."
                 )
-                return ReviewRouteDecision("blocked", STATE_BLOCKED, "blocked")
+                return _review_cap_exhausted_blocked_decision()
             issues.append(
                 f"Max review rework cycles ({max_review_rework_cycles}) reached. "
                 "Force-proceeding to done despite unresolved review issues "
                 "(all remaining items are non-blocking/cosmetic)."
             )
-            return ReviewRouteDecision("force_proceeded", STATE_DONE, "force_proceeded")
-        return ReviewRouteDecision("needs_rework", STATE_FINALIZED, "rework")
+            return _review_force_proceeded_decision()
+        return _review_rework_decision()
 
     if criteria:
         has_deferred_must = any(
@@ -1068,16 +1489,18 @@ def _resolve_review_outcome(
             # because the user still needs to verify. Feedback scaffolding is deferred
             # until the plan actually reaches done (via the existing interactive
             # 'megaplan feedback edit' path after verification).
-            return ReviewRouteDecision("success", STATE_AWAITING_HUMAN_VERIFY, "deferred_human")
+            return _review_deferred_human_decision()
 
-    with_feedback = state.get("config", {}).get("with_feedback", False)
-    return ReviewRouteDecision("success", STATE_REVIEWED if with_feedback else STATE_DONE, "pass")
+    return _review_pass_decision(state)
 
 
 def _compat_next_step_for_review_route(decision: ReviewRouteDecision) -> str | None:
-    if decision.route_signal == "rework":
+    if decision.route_signal == ReviewOutcome.REWORK:
         return "execute"
-    if decision.route_signal == "blocked":
+    if (
+        decision.route_signal == ReviewOutcome.BLOCKED
+        and decision.next_state == STATE_EXECUTED
+    ):
         return "review"
     return None
 
@@ -1101,6 +1524,58 @@ def _format_review_success_summary(criteria: list[dict[str, Any]]) -> str:
             f"({', '.join(details)})."
         )
     return f"Review complete: {passed}/{total} success criteria passed."
+
+
+def _review_boundary_ids_for_outcome(
+    *,
+    result: ReviewDecisionResult,
+    next_state: str,
+) -> tuple[str, ...]:
+    if next_state == STATE_AWAITING_HUMAN_VERIFY:
+        return ("review_human_verification",)
+    if result == ReviewDecisionResult.NEEDS_REWORK:
+        return ("review_rework_effects",)
+    if result == ReviewDecisionResult.FORCE_PROCEEDED:
+        return ("review_cap_authority",)
+    if result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED:
+        return ("review_cap_authority",)
+    if result == ReviewDecisionResult.SUCCESS and next_state in {STATE_DONE, STATE_REVIEWED}:
+        return ("review_reducer_promotion",)
+    return ()
+
+
+def _emit_review_route_boundary_receipts(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    result: ReviewDecisionResult,
+    next_state: str,
+    response: StepResponse,
+    artifact_hash: str,
+    strict: bool,
+) -> tuple[str, ...]:
+    emitted_ids: list[str] = []
+    for boundary_id in _review_boundary_ids_for_outcome(result=result, next_state=next_state):
+        receipt = _emit_named_boundary_receipt(
+            boundary_id=boundary_id,
+            plan_dir=plan_dir,
+            state=state,
+            step="review",
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            artifacts=["review.json", "finalize.json", "final.md"],
+            output_file="review.json",
+            artifact_hash=artifact_hash,
+            response=response,
+            strict=strict,
+        )
+        if receipt is not None:
+            emitted_ids.append(receipt.boundary_id)
+    return tuple(emitted_ids)
 
 
 def _wrap_parallel_review_worker(
@@ -1174,11 +1649,18 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
                 or not all(isinstance(task_id, str) and task_id for task_id in concerned_task_ids)
             ):
                 log.warning(
-                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic REVIEW-%s task id.",
+                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic r:REVIEW-%s task id.",
                     check_id,
                     check_id,
                 )
-                concerned_task_ids = [f"REVIEW-{check_id}"]
+                concerned_task_ids = [f"r:REVIEW-{check_id}"]
+            else:
+                # M11 Step 23: reject generic runnable REVIEW IDs — replace
+                # any synthetic REVIEW- prefixed entries with r: prefix so
+                # downstream routing never treats them as executable tasks.
+                concerned_task_ids = _reject_runnable_review_ids(
+                    [str(c) for c in concerned_task_ids if isinstance(c, str) and c]
+                )
             task_ids = [str(candidate) for candidate in concerned_task_ids if isinstance(candidate, str) and candidate]
             for task_id in concerned_task_ids:
                 item = {
@@ -1216,6 +1698,74 @@ def _review_done_evidence_refs(review_evidence: dict[str, Any]) -> tuple[Evidenc
     )
 
 
+def _review_north_star_closeout_blockers(
+    plan_dir: Path,
+    state: PlanState,
+) -> list[str]:
+    """Return hard denial reasons for unresolved carried blocking North Star actions.
+
+    This is the review→done closeout pre-check (SD3). It runs BEFORE
+    ``TransitionPolicy.evaluate_review_done`` so a milestone cannot be marked
+    complete while a carried blocking North Star action remains unresolved.
+    It is intentionally a *separate* pre-check: the transition policy keeps
+    its existing concerns (evidence freshness, completion status) and this
+    gate stays focused on North Star closeout. Denials are routed through the
+    existing denial path via :meth:`TransitionPolicyDecision.merge_denial_reasons`.
+
+    Fail-closed (SD1): absent, malformed, or incomplete
+    ``north_star_actions_addressed[]`` metadata in the latest revise step is
+    treated as every carried blocker being unresolved.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import (
+        blocking_north_star_actions,
+        find_unresolved_blocking_actions,
+        read_carried_north_star_actions,
+    )
+
+    carried = read_carried_north_star_actions(plan_dir)
+    carried_blocking = blocking_north_star_actions(carried)
+    if not carried_blocking:
+        return []
+
+    # Read the latest revise metadata for north_star_actions_addressed[].
+    # When the plan has never been revised the metadata is absent → fail-closed
+    # (every carried blocker is reported as unresolved), mirroring the finalize
+    # guard and _post_revise_gate_allowed.
+    meta_path = latest_plan_meta_path(plan_dir, state)
+    meta: dict[str, Any] | None = None
+    if meta_path.exists():
+        try:
+            meta = read_json(meta_path)
+        except Exception:
+            meta = None
+
+    addressed: list[dict[str, Any]] | None = None
+    if isinstance(meta, dict):
+        raw_addressed = meta.get("north_star_actions_addressed")
+        if isinstance(raw_addressed, list):
+            addressed = raw_addressed
+
+    unresolved = find_unresolved_blocking_actions(
+        carried_blocking=carried_blocking,
+        addressed=addressed,
+    )
+    if not unresolved:
+        return []
+
+    reasons: list[str] = []
+    for action in unresolved:
+        aid = action.get("id")
+        action_type = action.get("action_type")
+        reason = action.get("reason")
+        reasons.append(
+            f"unresolved blocking North Star action {aid} "
+            f"(type={action_type}, reason={reason}): milestone cannot be "
+            "marked complete until this action is concretely addressed in a "
+            "revise pass with concrete plan_refs and the matching action_type marker"
+        )
+    return reasons
+
+
 def _persist_review_done_transition_decision(
     *,
     plan_dir: Path,
@@ -1224,7 +1774,7 @@ def _persist_review_done_transition_decision(
     next_state: str,
     review_payload: dict[str, Any],
 ) -> Any | None:
-    if result != "success" or next_state != STATE_DONE:
+    if result != ReviewDecisionResult.SUCCESS or next_state != STATE_DONE:
         return None
 
     review_evidence_path = plan_dir / "review_evidence.json"
@@ -1232,6 +1782,15 @@ def _persist_review_done_transition_decision(
     if not isinstance(review_evidence, dict):
         review_evidence = {}
     project_dir = Path(str(state.get("config", {}).get("project_dir", "")))
+
+    # ── T9: North Star closeout blocker pre-check (SD3) ──────────────────
+    # Fail-closed: unresolved carried blocking North Star actions MUST deny
+    # the review→done transition ahead of the normal policy. This is a
+    # separate pre-check (not a TransitionPolicy concern); the denial is
+    # merged into the policy decision so it routes through the existing
+    # denial path with no TransitionPolicy signature change.
+    north_star_denial_reasons = _review_north_star_closeout_blockers(plan_dir, state)
+
     policy_decision = TransitionPolicy.evaluate_review_done(
         result=result,
         next_state=next_state,
@@ -1239,11 +1798,85 @@ def _persist_review_done_transition_decision(
         review_evidence=review_evidence,
         project_dir=project_dir if str(project_dir) else None,
     )
+    if north_star_denial_reasons:
+        # Force the transition denied via the existing denial path. The merged
+        # decision carries the North Star reasons on top of the policy's own
+        # reasons so the written transition decision and downstream denial
+        # routing both surface the unresolved blockers.
+        policy_decision = policy_decision.merge_denial_reasons(north_star_denial_reasons)
     meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
     invocation_id = meta.get("current_invocation_id")
     if not isinstance(invocation_id, str) or not invocation_id:
         invocation_id = review_evidence.get("invocation_id")
     iteration = state.get("iteration")
+
+    # ── S2 T11: Build checked evidence refs and authority record refs ─────
+    evidence_refs = _review_done_evidence_refs(review_evidence)
+    checked_evidence_refs: tuple[str, ...] = tuple(
+        f"evidence:{ref.kind}" for ref in evidence_refs
+    )
+    # Gather execution authority decisions for authority_record_refs
+    authority_record_refs: tuple[str, ...] = ()
+    has_waiver: bool = False
+    provider_errors: bool = False
+    if project_dir and str(project_dir):
+        try:
+            from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                effective_execute_completed_task_ids,
+            )
+            finalize_path = plan_dir / "finalize.json"
+            if finalize_path.exists():
+                finalize_data = read_json(finalize_path)
+                if isinstance(finalize_data, dict):
+                    tasks = [
+                        t for t in finalize_data.get("tasks", []) or []
+                        if isinstance(t, dict) and (t.get("id") or t.get("task_id"))
+                    ]
+                    if tasks:
+                        decisions: dict = {}
+                        effective_execute_completed_task_ids(
+                            tasks,
+                            plan_dir=plan_dir,
+                            project_dir=project_dir if str(project_dir) else None,
+                            state=state,
+                            decisions=decisions,
+                        )
+                        if decisions:
+                            authority_record_refs = tuple(
+                                f"authority:execute:{tid}"
+                                for tid in sorted(decisions.keys())
+                            )
+                        # ── S2 T12: Detect waiver / degraded signals ─────
+                        for t in tasks:
+                            raw_status = str(t.get("status") or "").lower()
+                            if raw_status == "waived":
+                                has_waiver = True
+                        # ──────────────────────────────────────────────────
+        except Exception:
+            pass
+    # Detect provider errors from review evidence
+    provider_diagnostics = review_evidence.get("provider_diagnostics")
+    if isinstance(provider_diagnostics, dict):
+        for _provider, diagnostic in provider_diagnostics.items():
+            if isinstance(diagnostic, dict) and diagnostic.get("ok") is False:
+                provider_errors = True
+                break
+    # ──────────────────────────────────────────────────────────────────────
+
+    # ── S2 T12: Classify authority state for structured provenance ─────────
+    from arnold.workflow.boundary_evidence import classify_authority_state
+
+    authority_state = classify_authority_state(
+        allowed=policy_decision.allowed,
+        authority_record_refs=authority_record_refs,
+        checked_evidence_refs=checked_evidence_refs,
+        advisory=policy_decision.advisory,
+        has_waiver=has_waiver,
+        provider_errors=provider_errors,
+        denial_reasons=policy_decision.reasons,
+    )
+    # ──────────────────────────────────────────────────────────────────────
+
     decision = TransitionDecision(
         decision_id=f"review-done-{invocation_id or iteration or 'unknown'}",
         subject=f"plan:{state.get('name', '')}",
@@ -1251,7 +1884,7 @@ def _persist_review_done_transition_decision(
         to_state=next_state,
         action="allow_transition" if policy_decision.allowed else "deny_transition",
         status="allowed" if policy_decision.allowed else "denied",
-        evidence=_review_done_evidence_refs(review_evidence),
+        evidence=evidence_refs,
         would_block_reasons=policy_decision.reasons,
         invocation_id=invocation_id if isinstance(invocation_id, str) else None,
         phase="review",
@@ -1264,6 +1897,9 @@ def _persist_review_done_transition_decision(
             "policy": "review_done",
             "advisory": list(policy_decision.advisory),
         },
+        boundary_id="megaplan.review_done",
+        checked_evidence_refs=checked_evidence_refs,
+        authority_record_refs=authority_record_refs,
     )
     TransitionWriter.write_review_done(
         plan_dir,
@@ -1276,6 +1912,7 @@ def _persist_review_done_transition_decision(
             if policy_decision.allowed
             else "Review-to-done transition denied by policy."
         ),
+        authority_state=authority_state,
     )
     return policy_decision
 
@@ -1418,11 +2055,11 @@ def _finalize_review_outcome(
             "transition_decision": TRANSITION_DECISION_REVIEW_DONE_FILENAME,
         }
         worker.payload["outcome"] = {
-            "result": "policy_denied",
+            "result": ReviewDecisionResult.POLICY_DENIED,
             "review_verdict": review_verdict,
             "state": STATE_EXECUTED,
             "next_step": "review",
-            "route_signal": "blocked",
+            "route_signal": ReviewOutcome.BLOCKED,
             "policy_denial": denial_metadata,
         }
         write_plan_artifact_json(
@@ -1432,15 +2069,16 @@ def _finalize_review_outcome(
                 explicit_root=plan_dir,
             ),
         )
-        state["current_state"] = STATE_EXECUTED
-        clear_active_step(state)
+        apply_state_projection(
+            state, STATE_EXECUTED, route_signal=str(ReviewOutcome.BLOCKED)
+        )
         apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
         append_history(
             state,
             make_history_entry(
                 "review",
                 duration_ms=worker.duration_ms, cost_usd=worker.cost_usd,
-                result="policy_denied",
+                result=ReviewDecisionResult.POLICY_DENIED,
                 worker=worker, agent=agent, mode=mode,
                 output_file="review.json",
                 prompt_tokens=worker.prompt_tokens,
@@ -1461,9 +2099,8 @@ def _finalize_review_outcome(
             phase="review",
             output_file="review.json",
             artifact_hash=sha256_file(plan_dir / "review.json"),
-            verdict="policy_denied",
+            verdict=ReviewDecisionResult.POLICY_DENIED,
         )
-        save_state_merge_meta(plan_dir, state)
         summary = "Review-to-done transition denied by policy. Re-run review after addressing the policy evidence."
         deviations = tuple(_PhaseDeviation.from_string(reason) for reason in policy_decision.reasons)
         _emit_phase_result(
@@ -1489,22 +2126,79 @@ def _finalize_review_outcome(
             "warnings": list(policy_decision.reasons),
             "_phase_outcome": "blocked_by_quality",
         }
+        if phase_wbc_state(state, step="review") is not None:
+            fail_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "failed",
+                    "failure_stage": "transition_policy",
+                    "phase_result_ref": "phase_result.json",
+                    "error_class": "ReviewPolicyDenied",
+                    "message": summary,
+                },
+            )
+        clear_active_step(state)
+        save_state_merge_meta(plan_dir, state)
+        _bind_review_routing_provenance(response)
         _attach_next_step_runtime(response)
         attach_agent_fallback(response, args)
         return response
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
-    force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
+    criteria = worker.payload.get("criteria", [])
+    force_proceed_blocked = (
+        result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED
+    )
     if force_proceed_blocked:
+        raw_rework_items = worker.payload.get("rework_items")
+        blocked_rework_items = (
+            [item for item in raw_rework_items if isinstance(item, dict)]
+            if isinstance(raw_rework_items, list)
+            else []
+        )
+        blocker_reasons = _force_proceed_blockers(
+            criteria if isinstance(criteria, list) else None,
+            blocked_rework_items,
+        )
+        review_artifact_hash = sha256_file(plan_dir / "review.json")
+        state["latest_failure"] = _review_quality_block_failure(
+            state=state,
+            blockers=blocker_reasons,
+            rework_items=blocked_rework_items,
+            review_artifact_hash=review_artifact_hash,
+        )
         state["resume_cursor"] = {
             "phase": "review",
             "retry_strategy": "manual_review",
+            "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
         }
-    state["current_state"] = next_state
-    if result != "blocked" and next_state != STATE_BLOCKED:
+    apply_state_projection(
+        state, next_state, route_signal=str(decision.route_signal)
+    )
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
+
+        emit_transition_activity(
+            plan_dir,
+            phase="review",
+            transition="review_outcome",
+            from_state=STATE_EXECUTED,
+            to_state=next_state,
+            metadata={
+                "result": result,
+                "review_verdict": review_verdict,
+                "route_signal": str(decision.route_signal),
+            },
+        )
+    except Exception:
+        log.debug("Work ledger review transition event emission skipped", exc_info=True)
+    if result != ReviewDecisionResult.BLOCKED and next_state != STATE_BLOCKED:
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
 
-    clear_active_step(state)
     apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
     append_history(
         state,
@@ -1532,11 +2226,8 @@ def _finalize_review_outcome(
         phase="review",
         output_file="review.json",
         artifact_hash=sha256_file(plan_dir / "review.json"),
-        verdict=result if result == "force_proceeded" else review_verdict,
+        verdict=result if result == ReviewDecisionResult.FORCE_PROCEEDED else review_verdict,
     )
-    save_state_merge_meta(plan_dir, state)
-
-    criteria = worker.payload.get("criteria", [])
     if force_proceed_blocked:
         summary = next(
             (
@@ -1546,22 +2237,22 @@ def _finalize_review_outcome(
             "Review rework cap reached with unresolved blockers — escalated to "
             "recoverable blocked instead of force-proceeding to done.",
         )
-    elif result == "blocked":
+    elif result == ReviewDecisionResult.BLOCKED:
         summary = _build_review_blocked_message(
             verdict_count=verdict_count, total_tasks=total_tasks,
             check_count=check_count, total_checks=total_checks,
             missing_reviewer_evidence=missing_evidence,
             infrastructure_failure=infrastructure_failure,
         )
-    elif result == "needs_rework":
+    elif result == ReviewDecisionResult.NEEDS_REWORK:
         summary = "Review requested another execute pass. Re-run execute using the review findings as context."
-    elif result == "force_proceeded":
+    elif result == ReviewDecisionResult.FORCE_PROCEEDED:
         summary = "Review force-proceeded after the rework cap with only non-blocking review issues unresolved."
     else:
         summary = _format_review_success_summary(criteria if isinstance(criteria, list) else [])
 
     response: StepResponse = {
-        "success": result in {"success", "force_proceeded"},
+        "success": result in {ReviewDecisionResult.SUCCESS, ReviewDecisionResult.FORCE_PROCEEDED},
         "step": "review",
         "summary": summary,
         "artifacts": ["review.json", "finalize.json", "final.md"],
@@ -1583,7 +2274,7 @@ def _finalize_review_outcome(
             exit_kind="blocked_by_quality",
             deviations=(_PhaseDeviation.from_string(summary),),
         )
-    elif result == "force_proceeded":
+    elif result == ReviewDecisionResult.FORCE_PROCEEDED:
         force_deviations = [issue for issue in issues if "Force-proceeding" in issue]
         response["deviations"] = force_deviations
         response["warnings"] = force_deviations
@@ -1601,6 +2292,58 @@ def _finalize_review_outcome(
             plan_dir=plan_dir,
             exit_kind="success",
         )
+    review_artifact_hash = sha256_file(plan_dir / "review.json")
+    strict_review_receipts = phase_wbc_state(state, step="review") is not None
+    emitted_boundary_ids = _emit_review_route_boundary_receipts(
+        plan_dir=plan_dir,
+        state=state,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        result=result,
+        next_state=next_state,
+        response=response,
+        artifact_hash=review_artifact_hash,
+        strict=strict_review_receipts,
+    )
+    if strict_review_receipts:
+        if emitted_boundary_ids:
+            complete_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "completed",
+                    "summary": summary,
+                    "next_step": response.get("next_step"),
+                    "phase_result_ref": "phase_result.json",
+                    "boundary_receipt_id": emitted_boundary_ids[0],
+                    "boundary_receipt_ids": list(emitted_boundary_ids),
+                    "artifacts_written": ["review.json", "finalize.json", "final.md"],
+                    "output_file": "review.json",
+                    "artifact_hash": review_artifact_hash,
+                },
+            )
+        else:
+            fail_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "failed",
+                    "failure_stage": "result_evidence",
+                    "phase_result_ref": "phase_result.json",
+                    "error_class": "MissingBoundaryReceipt",
+                    "message": "review route did not produce a required durable boundary receipt",
+                },
+            )
+    clear_active_step(state)
+    save_state_merge_meta(plan_dir, state)
+    _bind_review_routing_provenance(response)
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     return response
@@ -1650,6 +2393,31 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 read_only=True,
             )
 
+            # --- M9: work ledger — review/proof inference event ---
+            try:
+                from arnold_pipelines.megaplan.observability.work_ledger import (
+                    WorkClass,
+                    emit_worker_inference,
+                )
+
+                emit_worker_inference(
+                    plan_dir,
+                    phase="review",
+                    worker=worker,
+                    work_class=WorkClass.REVIEW_PROOF,
+                    task_id=None,  # plan-scoped
+                    batch_id=None,
+                    attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                    agent=agent,
+                    metadata={
+                        "robustness": robustness,
+                        "boundary": "review_worker",
+                    },
+                )
+            except Exception:
+                log.debug("Work ledger review event emission skipped", exc_info=True)
+            # --- end work ledger ---
+
             # ── T11: Scratch promotion for review (single-worker) ──
             # Prefer valid filled review_output.json over worker.payload;
             # fall back to worker.payload when scratch is missing/unmodified;
@@ -1675,7 +2443,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             _, _promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
-                _REVIEW_SCRATCH_KNOWN_KEYS,
+                _review_scratch_known_keys(),
                 worker,
                 seed_json=_seed_json,
                 file_fill_instructed=_file_fill_instructed,
@@ -1700,6 +2468,23 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     explicit_root=plan_dir,
                 ),
             )
+
+            # Step 7B: persist review schema hash
+            from arnold_pipelines.megaplan.handlers.schema_parity import (
+                canonical_schema_hash,
+            )
+            from arnold_pipelines.megaplan.schemas import SCHEMAS as _review_schemas
+
+            _review_contract = _review_schemas.get("review.json")
+            if isinstance(_review_contract, dict):
+                _review_hash = canonical_schema_hash(_review_contract)
+                _review_hash_path = plan_dir / "review_schema_hash.json"
+                atomic_write_json(_review_hash_path, {
+                    "schema_hash": _review_hash,
+                    "phase": "review",
+                    "iteration": state.get("iteration", 0),
+                    "produced_at": now_utc(),
+                })
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
             agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)
@@ -1713,6 +2498,31 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     resolved=(agent_type, mode, refreshed, model),
                     read_only=True,
                 )
+
+                # --- M9: work ledger — review/proof inference event (extreme path) ---
+                try:
+                    from arnold_pipelines.megaplan.observability.work_ledger import (
+                        WorkClass,
+                        emit_worker_inference,
+                    )
+
+                    emit_worker_inference(
+                        plan_dir,
+                        phase="review",
+                        worker=worker,
+                        work_class=WorkClass.REVIEW_PROOF,
+                        task_id=None,
+                        batch_id=None,
+                        attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                        agent=agent,
+                        metadata={
+                            "robustness": robustness,
+                            "boundary": "review_worker_extreme",
+                        },
+                    )
+                except Exception:
+                    log.debug("Work ledger review event emission skipped", exc_info=True)
+                # --- end work ledger ---
 
                 # ── T11: Scratch promotion for review (single-worker, extreme) ──
                 from arnold_pipelines.megaplan.handlers.structured_output import (
@@ -1734,7 +2544,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _, _promoted = promote_scratch(
                     plan_dir,
                     _scratch_filename,
-                    _REVIEW_SCRATCH_KNOWN_KEYS,
+                    _review_scratch_known_keys(),
                     worker,
                     seed_json=_seed_json,
                     file_fill_instructed=_file_fill_instructed,
@@ -1782,7 +2592,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _emit_phase_notice("review")
                 save_state_merge_meta(plan_dir, state)
                 checks = review_checks.checks_for_robustness("extreme")
-                parallel_result = _pkg.run_parallel_review(
+                parallel_result = dispatch_review_panel(
                     state,
                     plan_dir,
                     root=root,
@@ -1790,6 +2600,32 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     checks=checks,
                     pre_check_flags=pre_check_flags,
                 )
+                # --- M9: work ledger — review/proof inference event (parallel extreme) ---
+                try:
+                    from arnold_pipelines.megaplan.observability.work_ledger import (
+                        WorkClass,
+                        emit_worker_inference,
+                    )
+
+                    emit_worker_inference(
+                        plan_dir,
+                        phase="review",
+                        worker=parallel_result,
+                        work_class=WorkClass.REVIEW_PROOF,
+                        task_id=None,
+                        batch_id=None,
+                        attempt_id=run_id,
+                        agent=agent_type,
+                        model_calls=len(checks) if checks else 1,
+                        metadata={
+                            "robustness": robustness,
+                            "parallel_checks": len(checks) if checks else 0,
+                            "boundary": "parallel_review",
+                        },
+                    )
+                except Exception:
+                    log.debug("Work ledger parallel review event emission skipped", exc_info=True)
+                # --- end work ledger ---
                 criteria_payload = parallel_result.payload.get("criteria_payload")
                 if not isinstance(criteria_payload, dict):
                     raise CliError("worker_parse_error", "Parallel review did not return a criteria payload object")

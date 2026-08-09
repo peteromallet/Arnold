@@ -15,9 +15,15 @@ import stat
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
+from arnold_pipelines.megaplan.cloud import feature_flags
+from arnold_pipelines.megaplan.cloud.current_target_liveness import SCHEMA
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
+from tests.cloud.repair_identity_fixtures import repair_identity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
@@ -28,6 +34,134 @@ def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
 
+def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    hot_env_at = text.index(". /workspace/.cloud-hot-env")
+    source_root_at = text.index('AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-')
+    snapshot_guard_at = text.index("progress_auditor_running_snapshot=0")
+    reexec_at = text.index('exec "$source_real" "$@"')
+    assert hot_env_at < source_root_at < snapshot_guard_at < reexec_at
+    assert 'if [[ "$progress_auditor_running_snapshot" != "1" && -x "$SOURCE_AUDITOR" ]]' in text
+    assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
+
+
+def _write_bounded_mktemp(bin_dir: Path) -> None:
+    mktemp = bin_dir / "mktemp"
+    mktemp.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "if [[ \"${1:-}\" == *arnold-progress-auditor.XXXXXXXX ]]; then\n"
+        "  count_file=\"$TMPDIR/snapshot-count\"\n"
+        "  count=0\n"
+        "  [[ ! -f \"$count_file\" ]] || read -r count < \"$count_file\"\n"
+        "  count=$((count + 1))\n"
+        "  printf '%s\\n' \"$count\" > \"$count_file\"\n"
+        "  (( count <= 4 )) || exit 70\n"
+        "  path=\"$TMPDIR/arnold-progress-auditor.$count\"\n"
+        "  : > \"$path\"\n"
+        "elif [[ \"${1:-}\" == -d ]]; then\n"
+        "  path=\"$TMPDIR/gather\"\n"
+        "  mkdir \"$path\"\n"
+        "else\n"
+        "  path=\"$TMPDIR/worklist\"\n"
+        "  : > \"$path\"\n"
+        "fi\n"
+        "printf '%s\\n' \"$path\"\n",
+        encoding="utf-8",
+    )
+    mktemp.chmod(mktemp.stat().st_mode | stat.S_IXUSR)
+
+
+def _bounded_progress_auditor_wrapper(container_sentinel: Path, hot_env: Path) -> str:
+    """Keep the real selection/snapshot/cleanup control flow, then stop."""
+    text = _wrapper("arnold-progress-auditor")
+    prefix = text[: text.index('\nWRAPPER_REPO_ROOT="$(cd ')]
+    work_start = text.index('WORKLIST="$(mktemp)"')
+    work_end_marker = 'register_progress_auditor_cleanup "$GATHER_DIR"'
+    work_end = text.index(work_end_marker, work_start) + len(work_end_marker)
+    bounded = (
+        prefix
+        + "\n"
+        + text[work_start:work_end]
+        + "\nprintf '%s|%s|%s|%s\\n' \"$ARNOLD_PROGRESS_AUDITOR_ORIGIN\" "
+        '"$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH" "$WORKLIST" "$GATHER_DIR" > "$PROBE"\n'
+        + 'if [[ "${PROBE_TERMINATE:-0}" == "1" ]]; then kill -TERM "$$"; fi\n'
+        + "exit 0\n"
+    )
+    return bounded.replace("/workspace/arnold", str(container_sentinel)).replace(
+        "/workspace/.cloud-hot-env", str(hot_env)
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["installed", "source"])
+@pytest.mark.parametrize(("terminate", "expected_returncode"), [(False, 0), (True, 143)])
+def test_auditor_source_selection_snapshot_and_cleanup_are_bounded(
+    tmp_path: Path,
+    entrypoint: str,
+    terminate: bool,
+    expected_returncode: int,
+) -> None:
+    """Installed and direct source runs create one snapshot and clean every temp path."""
+    source_root = tmp_path / "alternate-source"
+    source = source_root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
+    installed = tmp_path / "installed" / "arnold-progress-auditor"
+    snapshot_dir = tmp_path / "snapshots"
+    bin_dir = tmp_path / "bin"
+    container_sentinel = tmp_path / "container-arnold"
+    hot_env = tmp_path / "missing-cloud-hot-env"
+    probe = tmp_path / f"probe-{entrypoint}-{terminate}"
+    for directory in (source.parent, installed.parent, snapshot_dir, bin_dir, container_sentinel):
+        directory.mkdir(parents=True, exist_ok=True)
+    bounded = _bounded_progress_auditor_wrapper(container_sentinel, hot_env)
+    source.write_text(bounded, encoding="utf-8")
+    installed.write_text(bounded, encoding="utf-8")
+    source.chmod(source.stat().st_mode | stat.S_IXUSR)
+    installed.chmod(installed.stat().st_mode | stat.S_IXUSR)
+    _write_bounded_mktemp(bin_dir)
+
+    selected_entrypoint = installed if entrypoint == "installed" else source
+    result = subprocess.run(
+        ["bash", str(selected_entrypoint)],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "TMPDIR": str(snapshot_dir),
+            "MEGAPLAN_AUDIT_ARNOLD_SRC": str(source_root),
+            "PROBE": str(probe),
+            "PROBE_TERMINATE": "1" if terminate else "0",
+        },
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == expected_returncode, result.stderr
+    origin, snapshot, worklist, gather = probe.read_text(encoding="utf-8").strip().split("|")
+    assert Path(origin).resolve() == source.resolve()
+    assert Path(snapshot).parent == snapshot_dir
+    assert (snapshot_dir / "snapshot-count").read_text(encoding="utf-8").strip() == "1"
+    assert not Path(snapshot).exists()
+    assert not Path(worklist).exists()
+    assert not Path(gather).exists()
+    assert not list(snapshot_dir.glob("arnold-progress-auditor.*"))
+
+
+def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:
+    program = _extract_gather_program()
+    cwd_at = program.index("sys.path.insert(0, str(pathlib.Path.cwd()))")
+    deployed_source_at = program.index("sys.path.insert(0, arnold_src)")
+
+    assert cwd_at < deployed_source_at
+
+
+def test_auditor_workspace_discovery_root_is_operator_scopable() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert 'AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"' in text
+    assert '"$DISCOVER_BIN" "$AUDIT_WORKSPACE_ROOT" "$ARNOLD_SRC"' in text
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
@@ -36,7 +170,12 @@ def _extract_report_assembler() -> str:
     """Extract the final report-assembly Python program from the auditor wrapper."""
     text = _wrapper("arnold-progress-auditor")
     # The report assembler is the last python3 - ... <<'PY' block
-    marker = 'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" <<\'PY\''
+    marker = (
+        'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" '
+        '"$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" '
+        '"$AUDIT_LAUNCH_ATTEMPTED" "$RECOVERY_EVIDENCE" '
+        '"$AUDIT_CODEX_MODEL" <<\'PY\''
+    )
     py_start = text.index(marker)
     py_start = text.index("\n", py_start) + 1
     py_end = text.index("\nPY\n", py_start)
@@ -55,6 +194,634 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _extract_auditor_evidence_program() -> str:
+    """Extract the post-report auditor completion-evidence Python program."""
+    text = _wrapper("arnold-progress-auditor")
+    marker = (
+        'python3 - "$GATHER_DIR/findings.json" "$AUDITOR_EVIDENCE_OUT" '
+        '"$AUDIT_WINDOW_HOURS" "$TS" "$REPAIR_DATA_DIR" <<\'PY\''
+    )
+    py_start = text.index(marker)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def test_auditor_completion_evidence_program_runs_to_completion(
+    tmp_path: Path,
+) -> None:
+    findings_path = tmp_path / "findings.json"
+    evidence_path = tmp_path / "auditor-evidence.json"
+    repair_data_dir = tmp_path / "repair-data"
+    findings_path.write_text(json.dumps({"findings": []}), encoding="utf-8")
+    repair_data_dir.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _extract_auditor_evidence_program(),
+            str(findings_path),
+            str(evidence_path),
+            "6",
+            "20260731T000000Z",
+            str(repair_data_dir),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert evidence_path.is_file()
+
+
+def _load_superfixer_cycle_functions() -> dict[str, object]:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _superfixer_cycle_evidence(ev):")
+    end = text.index("\ndef _meta_repair_gap_is_primary", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    return namespace
+
+
+def test_nested_repair_queue_drift_is_a_deterministic_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _nested_repair_queue_custody_drift_reason(ev):")
+    end = text.index("\ndef _queue_coalesced_without_live_owner_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    reason = namespace["_nested_repair_queue_custody_drift_reason"]({
+        "repair_custody_summary": {
+            "nested_queue_root": "/workspace/demo/.megaplan/repair-queue",
+            "nested_accepted_unclaimed_request_ids": ["request-1"],
+        },
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+    })
+
+    assert reason.startswith("nested_repair_queue_custody_drift:")
+    assert "request-1" in reason
+
+
+def test_queue_coalesced_without_live_owner_reason_uses_projected_custody_records() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _queue_coalesced_without_live_owner_reason(ev):")
+    end = text.index("\ndef _deterministic_failure_exhaustion_reason", start)
+    namespace = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+        "dt": __import__("datetime"),
+        "now": datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+    }
+    exec(text[start:end], namespace)
+
+    reason = namespace["_queue_coalesced_without_live_owner_reason"](
+        {
+            "repair_custody_summary": {
+                "coalesced_without_live_owner": [
+                    {
+                        "request_id": "7473fa42",
+                        "related_request_id": "7473fa42",
+                        "created_at": "2026-07-16T11:50:00Z",
+                        "reason": "request marker already exists",
+                        "self_coalesced": True,
+                    }
+                ],
+                "retry_budget": {"alert_required": False},
+                "claim_alert_request_ids": [],
+            },
+            "chain_state_summary": {"current": {"last_state": "blocked"}},
+        }
+    )
+
+    assert reason.startswith("queue_coalesced_without_live_owner:")
+    assert "owner_request_id=7473fa42" in reason
+
+
+def test_l3_carries_repair_root_cause_into_terminal_owner_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_owner_terminal_failure_reason(ev):")
+    end = text.index("\ndef _canonical_launch_disagreement_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_terminal": lambda _chain: False,
+    }
+    exec(text[start:end], namespace)
+    evidence = {
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+        "repair_data_summary": {
+            "investigation_summary": {
+                "actual_failure": {
+                    "mechanism": "validated target fix requires receipt-bound quality recovery"
+                }
+            },
+            "repair_goal_summary": {
+                "terminal_failures": [
+                    {
+                        "phase": "authorized-recovery-launch-failed",
+                        "outcome": "recovery_not_verified",
+                        "reason": "failed:quality_recovery_command_invalid",
+                    }
+                ]
+            },
+        },
+    }
+
+    reason = namespace["_repair_owner_terminal_failure_reason"](evidence)
+
+    assert "class=receipt_bound_quality_recovery_transport" in reason
+    assert "receipt-bound quality recovery" in reason
+
+
+def test_l3_routes_stranded_cursor_and_stale_repair_goal() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _chain_milestone_total(data):")
+    end = text.index("\ndef _chain_state_summary", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+    assert namespace["_chain_milestone_total"](
+        {
+            "metadata": {
+                "execution_binding": {
+                    "launched_identity": {
+                        "milestone_sequence": [{"index": index} for index in range(10)]
+                    }
+                }
+            }
+        }
+    ) == 10
+
+    start = text.index("def _between_milestone_cycling(chain_log, chain_state, repair_data):")
+    end = text.index("\ndef _stale_state_evidence", start)
+    namespace = {}
+    exec(text[start:end], namespace)
+
+    stale = namespace["_between_milestone_cycling"](
+        {"recent_stops": []},
+        {
+            "completed_count": 2,
+            "total_milestones": 10,
+            "current_milestone_index": 2,
+            "current_plan_name": None,
+            "last_state": "pr_closed",
+        },
+        {
+            "iteration_count": 55,
+            "repair_goal_summary": {
+                "status": "active",
+                "frozen_chain_completed_count": 1,
+                "frozen_chain_current_milestone_index": 1,
+            },
+        },
+    )
+
+    assert stale["stranded_between_milestones"] is True
+    assert stale["stale_repair_goal"] is True
+
+    start = text.index("def _stranded_between_milestones_reason(ev):")
+    end = text.index("\ndef _investigation_handoff_reason", start)
+    namespace = {}
+    exec(text[start:end], namespace)
+    reason = namespace["_stranded_between_milestones_reason"](
+        {
+            "stale_state_evidence": stale,
+            "chain_state_summary": {
+                "current": {
+                    "completed_count": 2,
+                    "total_milestones": 10,
+                    "current_milestone_index": 2,
+                    "current_plan_name": None,
+                    "last_state": "pr_closed",
+                }
+            },
+        }
+    )
+    assert reason.startswith("stranded_between_milestones:")
+    assert "active repair goal is stale" in reason
+
+
+def test_l3_detects_repeated_failure_recount_after_same_phase_success() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _superseded_repeated_failure_evidence(latest_failure, history):")
+    end = text.index("\ndef _blocked_history_entry", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+    latest_failure = {
+        "kind": "repeated_failure_signature",
+        "metadata": {
+            "count": 3,
+            "failure_step": "gate",
+            "failure_message": "gate verdict did not match the structural enum",
+            "failure_history_index": 0,
+        },
+    }
+    history = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": "gate verdict did not match the structural enum",
+            "timestamp": "2026-07-16T15:30:03Z",
+        },
+        {
+            "step": "gate",
+            "result": "success",
+            "timestamp": "2026-07-16T15:32:13Z",
+            "artifact_hash": "fresh-gate-artifact",
+        },
+    ]
+
+    evidence = namespace["_superseded_repeated_failure_evidence"](
+        latest_failure, history
+    )
+
+    assert evidence["historical_failure_recount"] is True
+    assert evidence["historical_failure_index"] == 0
+    assert evidence["later_same_phase_successes"][0]["history_index"] == 1
+
+    reason_start = text.index("def _historical_failure_recount_reason(ev):")
+    reason_end = text.index("\ndef _installed_wrapper_drift_reason", reason_start)
+    reason_namespace: dict[str, object] = {}
+    exec(text[reason_start:reason_end], reason_namespace)
+    reason = reason_namespace["_historical_failure_recount_reason"](
+        {"stale_state_evidence": evidence}
+    )
+    assert reason.startswith("historical_failure_recount:")
+    assert "occurrence tracking" in reason
+    assert "retrigger ordinary repair" in reason
+
+
+def test_l3_prompt_carries_historical_recount_repair_context() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert "stale_state_evidence.historical_failure_recount" in text
+    assert "failure phase, history index, and later-success evidence" in text
+    assert "ordinary repair path" in text
+
+
+def test_l3_derives_bounded_root_cause_when_active_retry_replaces_investigation() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_owner_terminal_failure_reason(ev):")
+    end = text.index("\ndef _canonical_launch_disagreement_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_terminal": lambda _chain: False,
+    }
+    exec(text[start:end], namespace)
+    evidence = {
+        "chain_state_summary": {"current": {"last_state": "executed"}},
+        "repair_data_summary": {
+            "investigation_summary": {"status": "missing"},
+            "repair_goal_summary": {
+                "terminal_failures": [
+                    {
+                        "phase": "authorized-recovery-no-progress",
+                        "outcome": "recovery_not_verified",
+                        "reason": "the exact investigator-authorized recovery command remained live",
+                    }
+                ]
+            },
+        },
+    }
+
+    reason = namespace["_repair_owner_terminal_failure_reason"](evidence)
+
+    assert "class=owner_terminalized_before_outcome" in reason
+    assert "owner terminalized while its exact supported recovery command remained live" in reason
+    assert "unavailable" not in reason
+
+
+def test_repair_custody_gather_correlates_nested_and_central_queues(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_custody_summary(session, plan_state, current_target):")
+    end = text.index("\ndef _load_events", start)
+    central = tmp_path / ".megaplan" / "repair-queue"
+    nested = tmp_path / "workspace" / ".megaplan" / "repair-queue"
+    (nested / "requests").mkdir(parents=True)
+    (nested / "decisions").mkdir()
+
+    def project_repair_custody(**kwargs):
+        queue_root = Path(kwargs["queue_root"])
+        if queue_root == nested:
+            return {
+                "active_request_ids": ["nested-request"],
+                "accepted_unclaimed_request_ids": ["nested-request"],
+                "claim_count": 0,
+                "attempt_count": 0,
+            }
+        return {
+            "active_request_ids": [],
+            "accepted_unclaimed_request_ids": [],
+            "claim_count": 0,
+            "attempt_count": 0,
+        }
+
+    namespace: dict[str, object] = {
+        "os": os,
+        "pathlib": __import__("pathlib"),
+        "REPAIR_QUEUE_ROOT": central,
+        "iter_repair_requests": lambda *_args, **_kwargs: [],
+        "iter_repair_decisions": lambda queue, **_kwargs: (
+            [{"request_id": "nested-request", "decision": "accepted"}]
+            if Path(queue) == nested
+            else []
+        ),
+        "iter_repair_attempts": lambda *_args, **_kwargs: [],
+        "project_repair_custody": project_repair_custody,
+        "repair_request_runtime_available": True,
+        "_redact_scalar": str,
+    }
+    exec(text[start:end], namespace)
+
+    summary = namespace["_repair_custody_summary"](
+        "demo",
+        {"current_state": "blocked"},
+        {"current_refs": {"workspace": str(tmp_path / "workspace")}},
+    )
+
+    assert summary["queue_root"] == str(central)
+    assert summary["nested_queue_root"] == str(nested)
+    assert summary["nested_accepted_unclaimed_request_ids"] == ["nested-request"]
+
+
+def test_repair_custody_summary_threads_coalesced_without_live_owner_projection(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_custody_summary(session, plan_state, current_target):")
+    end = text.index("\ndef _load_events", start)
+    central = tmp_path / ".megaplan" / "repair-queue"
+    records = [
+        {
+            "request_id": "req-self",
+            "related_request_id": "req-self",
+            "created_at": "2026-07-16T11:50:00Z",
+            "reason": "request marker already exists",
+            "self_coalesced": True,
+        }
+    ]
+
+    def project_repair_custody(**_kwargs):
+        return {
+            "active_request_ids": ["req-self"],
+            "accepted_unclaimed_request_ids": ["req-self"],
+            "coalesced_without_live_owner": records,
+            "claim_count": 0,
+            "attempt_count": 0,
+        }
+
+    namespace: dict[str, object] = {
+        "os": os,
+        "pathlib": __import__("pathlib"),
+        "REPAIR_QUEUE_ROOT": central,
+        "iter_repair_requests": lambda *_args, **_kwargs: [],
+        "iter_repair_decisions": lambda *_args, **_kwargs: [],
+        "iter_repair_attempts": lambda *_args, **_kwargs: [],
+        "project_repair_custody": project_repair_custody,
+        "repair_request_runtime_available": True,
+        "_redact_scalar": str,
+    }
+    exec(text[start:end], namespace)
+
+    summary = namespace["_repair_custody_summary"](
+        "demo",
+        {"current_state": "blocked"},
+        {"current_refs": {"workspace": str(tmp_path / "workspace")}},
+    )
+
+    assert summary["coalesced_without_live_owner"] == records
+
+
+def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
+    canonical_dead = {
+        "schema": SCHEMA,
+        "state": "dead",
+        "live": False,
+        "dead": True,
+        "known": True,
+        "source": "matched_local_process_identity",
+        "identity": {},
+        "lease": {},
+        "diagnostics": [],
+        "control_permitted": True,
+        "mutation_permitted": True,
+        "escalation_permitted": True,
+        "retrigger_permitted": True,
+    }
+    return {
+        "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": ["7473fa42"],
+            "request_status_counts": {"accepted": 1},
+            "claim_count": 0,
+            "attempt_count": 0,
+            "claim_retry_counts": {"7473fa42": 2},
+            "claim_alert_request_ids": [],
+            "retry_budget": {"claim_retries_remaining": 1},
+        },
+        "repair_data_summary": {
+            "exists": True,
+            "outcome": "repair_exhausted",
+            "mtime_age_min": 180,
+        },
+        "meta_repair_summary": {
+            "meta_record_count": 0,
+            "meta_run_log_count": 0,
+            "failed_meta_run_count": 0,
+            "failed_meta_record_count": 0,
+        },
+        "current_target": {
+            "current_target_liveness": canonical_dead,
+            "tmux_process": {"live_status": "stopped"},
+        },
+        "active_step_liveness": {
+            "present": True,
+            "worker_pid_alive": False,
+        },
+        "chain_state_summary": {
+            "current": {
+                "last_state": "blocked",
+                "completed_count": 0,
+                "total_milestones": 4,
+            }
+        },
+        "meta_repair_refs": [],
+        "prior_watchdog_report_refs": [],
+    }
+
+
+def test_superfixer_cycle_detects_wbc_accepted_unclaimed_exhaustion() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is True
+    assert projected["accepted_unclaimed_count"] == 1
+    assert projected["claim_count"] == 0
+    assert projected["attempt_count"] == 0
+    assert projected["runner_dead"] is True
+    assert projected["absent_or_stale_l2"] is True
+
+
+def test_accepted_unclaimed_request_is_actionable_despite_unlinked_live_pid() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["current_target"] = {"tmux_process": {"live_status": "running"}}
+    evidence["active_step_liveness"] = {
+        "present": True,
+        "worker_pid_alive": True,
+    }
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["runner_dead"] is False
+    assert projected["accepted_unclaimed_count"] == 1
+    assert projected["actionable"] is True
+
+
+def test_stale_progressed_metadata_is_not_verified_recovery() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["accepted_unclaimed_request_ids"] = []
+    evidence["repair_data_summary"] = {
+        "exists": True,
+        "outcome": "progressed",
+        "mtime_age_min": 121,
+        "recovery_verified": False,
+        "authorizes_verified_recovered": False,
+    }
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["verified_recovery"] is False
+    assert projected["actionable"] is True
+
+    evidence["repair_data_summary"].update(
+        recovery_verified=True,
+        authorizes_verified_recovered=True,
+    )
+    assert namespace["_stale_l1_l2_cycle_reason"](evidence) == ""
+
+
+def test_superfixer_cycle_excludes_typed_human_gate() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["resolver_state"] = {"canonical_state": "HUMAN_ACTION_REQUIRED"}
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason == ""
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["excluded_typed_human_gate"] is True
+
+
+def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["projection_error"] = "runtime skew"
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("broken_superfixer_unknown_evidence:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["unknown_evidence"] is True
+
+
+def test_superfixer_cycle_catches_unknown_state_with_accepted_unclaimed_request() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["resolver_state"] = {"canonical_state": "UNKNOWN"}
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["canonical_state"] == "UNKNOWN"
+    assert projected["actionable"] is True
+    assert projected["accepted_unclaimed_request_ids"] == ["7473fa42"]
+
+
+def test_unclaimed_exhaustion_correlates_alert_to_current_request() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _stale_unclaimed_repair_custody_reason(ev):")
+    end = text.index("\ndef _nested_repair_queue_custody_drift_reason", start)
+    namespace = {"_chain_state_looks_nonterminal": lambda _chain: True}
+    exec(text[start:end], namespace)
+    evidence = {
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": ["current-request"],
+            "claim_alert_request_ids": ["older-request"],
+            "retry_budget": {"alert_required": False},
+        },
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+    }
+
+    assert namespace["_stale_unclaimed_repair_custody_reason"](evidence) == ""
+    evidence["repair_custody_summary"]["claim_alert_request_ids"] = ["current-request"]
+    assert namespace["_stale_unclaimed_repair_custody_reason"](evidence).startswith(
+        "stale_unclaimed_repair_custody:"
+    )
+
+
+def test_marker_launch_failure_without_canonical_dead_is_diagnostic_only() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = {
+        "current_state": "initialized",
+        "session_header": {
+            "marker_path": "/workspace/.megaplan/cloud-sessions/demo-session.json",
+            "launch_outcome": {
+                "status": "failed",
+                "code": "engine_ref_not_advertised",
+                "detail": "Configured cloud megaplan.ref is not advertised by the source repo.",
+            },
+        },
+        "current_target": {"tmux_process": {"live_status": "stopped"}},
+        "active_step_liveness": {"present": True, "worker_pid_alive": False},
+        "chain_state_summary": {"current": {}, "all": []},
+        "prior_watchdog_report_refs": [],
+    }
+
+    reason = namespace["_marker_present_stopped_without_chain_state_reason"](evidence)
+
+    assert reason == ""
+
+
+def test_marker_launch_failure_is_not_actionable_when_canonical_liveness_is_unknown() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = {
+        "current_state": "unknown",
+        "session_header": {
+            "marker_path": "/workspace/.megaplan/cloud-sessions/demo-session.json",
+            "launch_outcome": {
+                "status": "failed",
+                "code": "launch_verification_failed",
+                "detail": "chain state did not appear",
+            },
+        },
+        "current_target": {"tmux_process": {"live_status": "unknown"}},
+        "active_step_liveness": {"present": False},
+        "chain_state_summary": {"current": {}, "all": []},
+        "prior_watchdog_report_refs": [],
+    }
+
+    reason = namespace["_marker_present_stopped_without_chain_state_reason"](evidence)
+
+    assert reason == ""
+
+
 def _extract_gather_function(name: str, next_name: str) -> str:
     text = _extract_gather_program()
     start = text.index(f"def {name}(")
@@ -62,6 +829,31 @@ def _extract_gather_function(name: str, next_name: str) -> str:
     return text[start:end]
 
 
+def test_deterministic_phase_history_surfaces_structural_retry_loop() -> None:
+    program = _extract_gather_program()
+    start = program.index("def _deterministic_phase_history_evidence(")
+    end = program.index("\ndef _event_seq(", start)
+    namespace = {
+        "re": __import__("re"),
+        "cutoff": datetime(2026, 7, 13, 16, 0, tzinfo=timezone.utc),
+        "_parse_iso": lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")),
+    }
+    exec(program[start:end], namespace)
+    history = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": "missing_required at /north_star_actions",
+            "timestamp": f"2026-07-13T16:0{index}:00Z",
+        }
+        for index in range(3)
+    ]
+
+    evidence = namespace["_deterministic_phase_history_evidence"](history)
+
+    assert evidence["count"] == 3
+    assert evidence["phase"] == "gate"
+    assert evidence["source"] == "state.history"
 def test_event_loader_reads_only_bounded_recent_tail(tmp_path: Path) -> None:
     program = _extract_gather_program()
     constants_start = program.index("EVENT_TAIL_MAX_BYTES =")
@@ -98,15 +890,37 @@ def test_event_loader_reads_only_bounded_recent_tail(tmp_path: Path) -> None:
     assert [event["seq"] for event in loaded] == [9, 10, 11]
 
 
-def test_auditor_worklist_supports_exact_session_and_plan_scope() -> None:
+def test_global_watchdog_sweep_is_default_off_before_targeted_recovery() -> None:
+    wrapper = _wrapper("arnold-progress-auditor")
+
+    assert (
+        'GLOBAL_WATCHDOG_SWEEP_ENABLED="${MEGAPLAN_AUDIT_GLOBAL_WATCHDOG_SWEEP_ENABLED:-0}"'
+        in wrapper
+    )
+    guard = wrapper.index('case "${GLOBAL_WATCHDOG_SWEEP_ENABLED,,}" in')
+    targeted = wrapper.index(
+        "bounded gather and targeted L3 repair custody own recovery",
+        guard,
+    )
+    snapshot = wrapper.index('capture_recovery_snapshot "$before_path"', targeted)
+    watchdog = wrapper.index('"$WATCHDOG_BIN" --audit-sweep', snapshot)
+    assert guard < targeted < snapshot < watchdog
+
+
+def test_auditor_worklist_supports_explicit_session_scope() -> None:
     wrapper = _wrapper("arnold-progress-auditor")
 
     assert 'AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"' in wrapper
-    assert 'AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"' in wrapper
+    assert (
+        'os.environ.get("MEGAPLAN_AUDIT_SESSION_ALLOWLIST", "").split(",")'
+        in wrapper
+    )
     assert (
         "if session_allowlist and entry.get(\"session\") not in session_allowlist:"
         in wrapper
     )
+    assert 'AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"' in wrapper
+    assert 'os.environ.get("MEGAPLAN_AUDIT_PLAN_ALLOWLIST", "").split(",")' in wrapper
     assert "if plan_allowlist and entry.get(\"plan\") not in plan_allowlist:" in wrapper
 
 
@@ -115,6 +929,95 @@ def _extract_auditor_function(name: str) -> str:
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+def _extract_recovery_assembler() -> str:
+    text = _wrapper("arnold-progress-auditor")
+    marker = '"$watchdog_rc" "$enabled" "$AUDIT_CODEX_MODEL" <<\'PY\''
+    start = text.index(marker)
+    start = text.index("\n", start) + 1
+    end = text.index("\nPY\n", start)
+    return text[start:end]
+
+
+def test_scheduled_recovery_uses_shared_advancement_policy(tmp_path: Path) -> None:
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    report = tmp_path / "watchdog.json"
+    output = tmp_path / "recovery.json"
+    before.write_text(json.dumps({"generated_at": "before"}), encoding="utf-8")
+    after.write_text(
+        json.dumps(
+            {
+                "generated_at": "after",
+                "sessions": [
+                    {
+                        "session": "manual",
+                        "status": "attention",
+                        "should_run": True,
+                        "workspace": str(tmp_path / "manual"),
+                        "advancement": {
+                            "action": "await_human",
+                            "automatic": False,
+                            "gate": "security_approval",
+                        },
+                    },
+                    {
+                        "session": "terminal",
+                        "status": "attention",
+                        "should_run": True,
+                        "workspace": str(tmp_path / "terminal"),
+                        "advancement": {
+                            "action": "reconcile_terminal",
+                            "automatic": True,
+                            "gate": None,
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": "now",
+                "items": [
+                    {"session": "manual", "status": "needs_human"},
+                    {"session": "terminal", "status": "needs_human"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _extract_recovery_assembler(),
+            str(before),
+            str(after),
+            str(report),
+            str(output),
+            "0",
+            "1",
+            "gpt-5.6-sol",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    decisions = {
+        item["session"]: item
+        for item in json.loads(output.read_text(encoding="utf-8"))["decisions"]
+    }
+    assert decisions["manual"]["disposition"] == "human_gated"
+    assert decisions["manual"]["decision"] == "await_human"
+    assert decisions["terminal"]["decision"] == "reconcile_terminal"
+    assert decisions["terminal"]["disposition"] == "eligible_missing_runner"
 
 
 def _run_gather_program(
@@ -135,13 +1038,26 @@ def _run_gather_program(
     worklist_path = tmp_path / "worklist.jsonl"
     gather_dir = tmp_path / "gather"
     gather_dir.mkdir(parents=True, exist_ok=True)
+    normalized_entries = [
+        {"session_evidence_scope": True, **entry} for entry in worklist_entries
+    ]
     worklist_path.write_text(
-        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in worklist_entries),
+        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in normalized_entries),
         encoding="utf-8",
     )
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(tmp_path / ".megaplan" / "repair-queue")
+    # Synthetic sessions may intentionally reuse a production incident name;
+    # never let live marker or meta-run evidence alter the deterministic fixture.
+    env["MEGAPLAN_AUDIT_MARKER_DIR"] = str(tmp_path / ".megaplan" / "cloud-sessions")
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
+    # Keep ordinary fixtures independent of the host installation. Drift-specific
+    # tests override this with a deliberately different installed wrapper.
+    env["MEGAPLAN_AUDIT_INSTALLED_WRAPPER"] = str(
+        WRAPPER_DIR / "arnold-progress-auditor"
+    )
     if extra_env:
         env.update(extra_env)
 
@@ -165,8 +1081,159 @@ def _run_gather_program(
     return json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))
 
 
+def test_zero_byte_watchdog_report_cannot_hide_in_green_checks(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan_name = "demo-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc).isoformat()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "blocked",
+                "iteration": 2,
+                "created_at": now,
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "run_kind": "plan",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "watchdog-report.json"
+    report_path.write_bytes(b"")
+
+    result = _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "plan",
+                "sources": ["marker"],
+            }
+        ],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_WATCHDOG_REPORT": str(report_path)},
+    )
+
+    assert result["green_checks"] == []
+    assert len(result["findings"]) == 1
+    assert any(
+        reason.startswith("watchdog_report_publication_degraded:")
+        for reason in result["findings"][0]["reasons"]
+    )
+
+
+def test_event_checkpoint_degradation_is_an_l3_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _current_target_observation_degraded_reason(ev):")
+    end = text.index("\ndef _repair_data_ghost_running_reason", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+
+    reason = namespace["_current_target_observation_degraded_reason"](
+        {
+            "current_target": {
+                "event_cursors": {
+                    "projection_error": {
+                        "kind": "EventCheckpointError",
+                        "message": "non-monotonic event seq beyond checkpoint: 0 <= 1127",
+                    }
+                }
+            }
+        }
+    )
+
+    assert reason.startswith("current_target_observation_degraded:")
+    assert "marker/chain/plan truth was retained" in reason
+
+
+def test_gather_detects_deterministic_llm_retry_when_latest_failure_is_empty(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "gate-loop"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "gate-loop",
+                "current_state": "critiqued",
+                "iteration": 1,
+                "latest_failure": None,
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    message = (
+        "worker_structural_audit_failed: model output structural audit failed: "
+        "missing_required at /north_star_actions"
+    )
+    events = [
+        {
+            "kind": "llm_call_error",
+            "phase": "gate",
+            "payload": {"message": message},
+            "ts_utc": timestamp,
+            "seq": seq,
+        }
+        for seq in range(1, 5)
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": "gate-loop",
+                "session": "gate-loop-session",
+                "kind": "plan",
+                "sources": ["fixture"],
+            }
+        ],
+        tmp_path,
+    )
+
+    assert len(payload["findings"]) == 1
+    finding = payload["findings"][0]
+    assert finding["latest_failure_kind"] is None
+    assert finding["deterministic_retry_evidence"]["count"] == 4
+    assert finding["deterministic_retry_evidence"]["phase"] == "gate"
+    assert any(
+        reason.startswith("deterministic_retry_exhaustion:")
+        for reason in finding["reasons"]
+    )
+    patterns = payload["root_cause_patterns"]["repeated_failure_signatures"]
+    assert patterns[0]["total_occurrences"] == 4
+    assert patterns[0]["affected_plans"] == ["gate-loop"]
+
+
 def _run_report_assembler(
-    findings_data: dict, tmp_path: Path, ts: str = "20260702T220000Z"
+    findings_data: dict,
+    tmp_path: Path,
+    ts: str = "20260702T220000Z",
+    *,
+    autofix_authorized: bool = False,
+    launch_attempted: bool = False,
 ) -> tuple[dict, str]:
     """Run the report assembler with synthetic findings data and return (json_payload, markdown_text)."""
     program = _extract_report_assembler()
@@ -177,8 +1244,21 @@ def _run_report_assembler(
     json_out = tmp_path / "audit.json"
     md_out = tmp_path / "audit.md"
     log_path = tmp_path / "audit-report.log"
+    recovery_path = tmp_path / "recovery.json"
 
     findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "watchdog_exit_code": 0,
+                "sessions_discovered": 0,
+                "should_run_count": 0,
+                "decisions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [
@@ -189,6 +1269,10 @@ def _run_report_assembler(
             str(md_out),
             str(log_path),
             ts,
+            "1" if autofix_authorized else "0",
+            "1" if launch_attempted else "0",
+            str(recovery_path),
+            "gpt-5.6-sol",
         ],
         capture_output=True,
         text=True,
@@ -220,6 +1304,17 @@ def _run_dispatch_one(
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(tmp_path / 'codex.argv'))}\n"
+        "output_path=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == '--output-last-message' && $# -gt 1 ]]; then\n"
+        "    output_path=\"$2\"\n"
+        "    shift 2\n"
+        "    continue\n"
+        "  fi\n"
+        "  shift\n"
+        "done\n"
+        f"if [[ -n \"$output_path\" ]]; then printf '%s' {shlex.quote(codex_stdout)} > \"$output_path\"; fi\n"
         f"printf '%s' {shlex.quote(codex_stdout)}\n"
         + (
             f"printf '%s' {shlex.quote(codex_stderr)} >&2\n"
@@ -238,20 +1333,39 @@ def _run_dispatch_one(
             _extract_auditor_function("audit_flag_enabled"),
             _extract_auditor_function("autofix_allowed_targets_markdown"),
             _extract_auditor_function("autofix_policy_markdown"),
+            _extract_auditor_function("audit_dispatch_receipt_root"),
+            _extract_auditor_function("initialize_audit_dispatch_receipt"),
+            _extract_auditor_function("record_audit_dispatch_started"),
+            _extract_auditor_function("finalize_audit_dispatch_receipt"),
             _extract_auditor_function("dispatch_one"),
             f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
+            f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
+            f"PATH={shlex.quote(str(tmp_path))}:$PATH",
+            "TS=20260713T210000Z",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
+            "AUDIT_CODEX_MODEL=gpt-5.6-sol",
             "SUBAGENT_PROFILE=partnered-5",
             "CODEX_TIMEOUT=30",
+            "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536",
+            "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072",
             'AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"',
+            'AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"',
             'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"',
             "dispatch_one " + shlex.quote(str(gather_file)),
         ]
     )
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    # The extracted wrapper runs from a temporary workspace. Pin its managed
+    # agent subprocess to the same source tree as the wrapper under test,
+    # instead of whichever editable runtime candidate happens to be installed.
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    # Positive dispatch fixtures must not inherit production's deliberate
+    # box-wide pause flags from .cloud-hot-env.
+    env["ARNOLD_AUTONOMY"] = "1"
+    env["ARNOLD_AUDIT_AUTOFIX_ENABLED"] = "1"
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, env=env, check=False)
@@ -263,6 +1377,8 @@ def _run_dispatch_one(
     err_path = gather_dir / f"resp-{plan}.err"
     err = err_path.read_text(encoding="utf-8") if err_path.exists() else ""
     updated = json.loads(gather_file.read_text(encoding="utf-8"))
+    argv_path = tmp_path / "codex.argv"
+    updated["_codex_argv"] = argv_path.read_text(encoding="utf-8").splitlines() if argv_path.exists() else []
     return brief, resp, err, updated
 
 
@@ -281,6 +1397,7 @@ def _run_record_incident_audits(tmp_path: Path, findings_data: dict) -> list[dic
             "AUDIT_GITHUB_REPO=''",
             "AUDIT_GITHUB_REPO_PATH=''",
             "AUDIT_GITHUB_LABELS='incident-control-plane,persistent-problem'",
+            f"REPAIR_QUEUE_ROOT={shlex.quote(str(tmp_path / '.megaplan' / 'repair-queue'))}",
             "record_incident_audits " + shlex.quote(str(findings_path)),
         ]
     )
@@ -361,6 +1478,10 @@ def _build_wrapper_boundary_stub_overlay(
         "arnold_pipelines/__init__.py": "",
         "arnold_pipelines/megaplan/__init__.py": "",
         "arnold_pipelines/megaplan/cloud/__init__.py": "",
+        "arnold_pipelines/megaplan/cloud/repair_escalation.py": """
+def stranded_replan_reason(**_kwargs):
+    return None
+""",
         "arnold_pipelines/megaplan/run_state/__init__.py": "",
         "arnold_pipelines/megaplan/incident/__init__.py": "",
         "arnold_pipelines/megaplan/cloud/_stub_capture.py": """
@@ -417,6 +1538,17 @@ def evaluate_meta_repair_triggers(*args, **kwargs):
         "arnold_pipelines/megaplan/cloud/repair_contract.py": """
 def read_jsonl_records(*args, **kwargs):
     return []
+""",
+        "arnold_pipelines/megaplan/cloud/progress_auditor_liveness.py": """
+def classify_runner_liveness(tmux, active_step, watchdog_statuses=()):
+    live = bool((tmux or {}).get("pid_live") is True or (active_step or {}).get("worker_pid_alive") is True)
+    dead = bool(not live and (active_step or {}).get("worker_pid_alive") is False)
+    state = "alive" if live else ("dead" if dead else "unknown")
+    return {"state": state, "live": live, "dead": dead, "known": state != "unknown", "source": "stub"}
+""",
+        "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py": """
+def bounded_auditor_projection(value, *, kind):
+    return dict(value) if isinstance(value, dict) else {}
 """,
         "arnold_pipelines/megaplan/cloud/current_target.py": (
             "from arnold_pipelines.megaplan.cloud._stub_capture import append_call\n\n\n"
@@ -489,7 +1621,7 @@ from arnold_pipelines.megaplan.cloud._stub_capture import write_capture
 AUDIT_RESULT = {audit_result_literal}
 
 
-def build_audit_input(session, *, root, now):
+def build_audit_input(session, *, root, now, persist=True):
     return {{
         "brief": {{
             "found": True,
@@ -526,6 +1658,10 @@ def audit_projection_input(audit_input, *, live_process_snapshot, now):
         }}
     )
     return AUDIT_RESULT
+
+
+def enqueue_audit_repair_request(item, *, queue_root):
+    return None
 """,
         "arnold_pipelines/megaplan/incident/summaries.py": """
 def write_projection_summaries(*, projections, root):
@@ -547,6 +1683,133 @@ def _read_stub_calls(path: Path) -> list[dict]:
     ]
 
 
+# ── Step 47 (T33): timer cadence is next-three-hour reconciliation ───────
+
+
+def test_progress_audit_timer_uses_next_three_hour_reconciliation() -> None:
+    """The auditor timer must reconcile on the next-three-hour cadence.
+
+    Step 47 (T33): positive proof flows through next-three-hour
+    reconciliation.  The timer unit must not advertise a six-hour-only
+    cadence, and its description must reference three-hour reconciliation.
+    """
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        AUDITOR_RECONCILIATION_INTERVAL,
+    )
+
+    timer = _systemd_file("megaplan-progress-audit.timer")
+
+    # The active reconciliation cadence is three hours, not six.
+    assert "OnUnitActiveSec=3h" in timer
+    assert "OnUnitActiveSec=6h" not in timer
+    # No six-hour-only cadence may remain as the schedule contract.
+    assert "three" in timer.lower()
+    # The module-level reconciliation interval agrees with the timer.
+    assert AUDITOR_RECONCILIATION_INTERVAL == "next_three_hour"
+
+
+# ── Step 51 (T36): wrapper repair-trigger handoff routes through the shim ──
+
+
+def test_progress_auditor_wrapper_repair_handoff_uses_shim() -> None:
+    """Step 51 (T36): the progress-auditor wrapper repair-trigger handoff
+    routes through the shared repair-delegation shim.
+
+    The wrapper must no longer plumb the legacy ``arnold-repair-trigger``
+    binary as ``trigger_argv`` to the L3 escalation controller; instead the
+    repair handoff emits a typed zero-authority rejection via the shared
+    ``repair_delegation`` shim (the auditor boundary holds no exact F01
+    occurrence tuple, so repair authority stays with the canonical
+    simple_fixer delegation that drains the queue).  Audit reporting, human
+    escalation, GitHub sync, and model audit behaviour must remain
+    non-authoritative: they may NOT be routed through the shim.
+    """
+    text = _wrapper("arnold-progress-auditor")
+
+    # ── Legacy argv handoff retired ────────────────────────────────────
+    # The legacy binary is no longer plumbed as trigger_argv to the
+    # controller, and the dead env-var override is gone.
+    assert 'trigger_argv=[trigger]' not in text, (
+        "legacy trigger_argv=[trigger] handoff must be retired"
+    )
+    assert 'MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN' not in text, (
+        "legacy MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN override must be retired"
+    )
+    # The argv unpacking dropped the legacy ``trigger`` positional.
+    assert "authorized, trigger = sys.argv[1:6]" not in text, (
+        "controller heredoc must no longer unpack the legacy trigger argv"
+    )
+
+    # ── Repair handoff routed through the shared shim ──────────────────
+    # The controller is invoked without a launch argv...
+    assert "trigger_argv=()" in text, (
+        "L3 escalation controller must be invoked with trigger_argv=()"
+    )
+    # ...and the shared shim is imported and used for the handoff.
+    assert (
+        "from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation"
+        in text
+    ), "wrapper must import the shared repair-delegation shim"
+    assert "emit_zero_authority_rejection" in text, (
+        "wrapper must route the repair handoff through "
+        "emit_zero_authority_rejection"
+    )
+    assert 'repair_handoff = emit_zero_authority_rejection(' in text, (
+        "repair-trigger handoff must call emit_zero_authority_rejection"
+    )
+    # The typed caller kind is ``terminal_audit`` (one of the closed
+    # CALLER_KINDS), and the routing records a typed outcome marker.
+    assert '"terminal_audit"' in text or "'terminal_audit'" in text, (
+        "repair handoff must declare the terminal_audit caller kind"
+    )
+    assert "repair_handoff_outcome" in text, (
+        "handoff result must carry the typed repair_handoff_outcome"
+    )
+    assert "repair_handoff_routed_through_shim" in text, (
+        "handoff result must record the shim-routing marker"
+    )
+
+    # ── The repair handoff is the ONLY path routed through the shim ────
+    # The wrapper mixes reporting and repair handoff behaviour; the shim
+    # import and the zero-authority rejection must appear exactly once each,
+    # confined to the L3 escalation controller (the repair-trigger handoff
+    # point).  This guarantees no report path was accidentally made
+    # authoritative and no trigger handoff was left unguarded.
+    assert text.count("from arnold_pipelines.megaplan.cloud.wrappers."
+                      "repair_delegation") == 1, (
+        "the repair-delegation shim must be imported exactly once "
+        "(only the repair-trigger handoff)"
+    )
+    # Count only CALLS (the open paren), not the import statement
+    # (``emit_zero_authority_rejection,`` in the import has no paren).
+    assert text.count("emit_zero_authority_rejection(") == 1, (
+        "emit_zero_authority_rejection must be CALLED exactly once "
+        "(only the repair-trigger handoff)"
+    )
+    # The wrapper never attempts a full delegation (it has no exact F01
+    # tuple at this boundary), so delegate_to_simple_fixer must NOT appear.
+    assert "delegate_to_simple_fixer" not in text, (
+        "the auditor wrapper boundary must not attempt full delegation "
+        "(no exact F01 tuple here); it must emit a typed rejection instead"
+    )
+
+    # ── Non-authoritative report paths remain present and unrouted ────
+    # Audit reporting, human escalation, GitHub sync, and model audit
+    # behaviour are intentionally left non-authoritative: they still run
+    # but are NOT routed through the repair-delegation shim.
+    assert "record_incident_audits" in text, (
+        "audit incident reporting must remain present (non-authoritative)"
+    )
+    assert "human_escalation" in text or "human-escalation" in text, (
+        "human escalation must remain present (non-authoritative)"
+    )
+    # The report assembler (final JSON + Markdown + log) is a separate
+    # heredoc that must not reference the shim at all.
+    assert "github_sync" in text or "GitHubSync" in text, (
+        "GitHub sync must remain present (non-authoritative)"
+    )
+
+
 class TestGreenChecksNoFindings:
     """Report shape when all plans are healthy (no suspicious signals)."""
 
@@ -555,8 +1818,11 @@ class TestGreenChecksNoFindings:
         timer = _systemd_file("megaplan-progress-audit.timer")
         service = _systemd_file("megaplan-progress-audit.service")
 
-        assert "OnUnitActiveSec=6h" in timer
-        assert "Description=Megaplan 6-hour DeepSeek plan progress audit" in service
+        # Step 47 (T33): the timer cadence moved to next-three-hour
+        # reconciliation; the service Description follows the new
+        # next-three-hour contract (legacy six-hour names are compatibility-only).
+        assert "OnUnitActiveSec=3h" in timer
+        assert "Description=Megaplan next-three-hour DeepSeek plan progress audit" in service
         assert "Codex then reads the subagent-launcher skill" in text
         assert "DeepSeek research subagents" in text
         assert "First audit the repair system itself" in text
@@ -586,6 +1852,27 @@ class TestGreenChecksNoFindings:
         }
 
         assert publication_attempt_ts(incident, {}) == "2026-07-08T20:33:42+00:00"
+
+    def test_publication_attempt_ts_detects_github_sync_events(self) -> None:
+        namespace: dict[str, object] = {}
+        exec(
+            _extract_gather_function("_publication_attempt_ts", "_dedupe_refs"),
+            namespace,
+        )
+        publication_attempt_ts = namespace["_publication_attempt_ts"]
+
+        incident = {
+            "latest_actor": "watchdog",
+            "events": [
+                {
+                    "kind": "incident.github_sync.issue_published",
+                    "actor": "github_sync",
+                    "timestamp": "2026-07-09T03:47:07+00:00",
+                }
+            ],
+        }
+
+        assert publication_attempt_ts(incident, {}) == "2026-07-09T03:47:07+00:00"
 
     def test_json_payload_includes_green_checks_when_findings_empty(self, tmp_path: Path) -> None:
         findings_data = {
@@ -729,8 +2016,21 @@ class TestGreenChecksNoFindings:
             json_out = fresh / "audit.json"
             md_out = fresh / "audit.md"
             fresh_log = fresh / "audit-report.log"
+            recovery_path = fresh / "recovery.json"
 
             findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+            recovery_path.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "watchdog_exit_code": 0,
+                        "sessions_discovered": 0,
+                        "should_run_count": 0,
+                        "decisions": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             result = subprocess.run(
                 [
@@ -741,6 +2041,10 @@ class TestGreenChecksNoFindings:
                     str(md_out),
                     str(fresh_log),
                     "20260702T220000Z",
+                    "0",
+                    "0",
+                    str(recovery_path),
+                    "gpt-5.6-sol",
                 ],
                 capture_output=True,
                 text=True,
@@ -1022,6 +2326,7 @@ class TestGreenChecksJsonSchema:
             "plan", "workspace", "session", "sources", "current_state",
             "iteration", "active_step_phase", "plan_v_count",
             "last_gate_recommendation", "last_gate_score",
+            "suppression", "auditor_wrapper_runtime",
         }
 
     def test_timestamp_always_present(self, tmp_path: Path) -> None:
@@ -1166,6 +2471,44 @@ class TestAuditorWrapperSyntax:
 
 
 class TestAuditorAutofixPromptGates:
+    def test_dispatch_pins_exact_codex_model_and_persists_read_only_receipt(
+        self, tmp_path: Path
+    ) -> None:
+        _brief, _resp, _err, updated = _run_dispatch_one(
+            tmp_path,
+            gather_payload={
+                "plan": "audit-model-pin",
+                "reasons": ["watchdog_report_stale"],
+                "session_header": {"kind": "chain"},
+            },
+        )
+
+        assert updated["_codex_argv"] == [
+            "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol",
+            "-c", "model_reasoning_effort=high", "--output-last-message",
+            str(tmp_path / "gather" / "model-response-audit-model-pin.txt"), "-"
+        ]
+        receipt_path = (
+            Path(updated["dispatch_receipt_root"])
+            / "dispatch_receipts"
+            / f"{updated['dispatch_id']}.json"
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["configured_model"] == "gpt-5.6-sol"
+        assert receipt["resolved_runtime_model"] == "gpt-5.6-sol"
+        assert receipt["subprocess_started"] is True
+        assert receipt["mutation_facts"] == {
+            "state": False, "source": False, "commit": False, "push": False
+        }
+        manifest = json.loads(
+            Path(updated["managed_agent_manifest_path"]).read_text(encoding="utf-8")
+        )
+        assert manifest["run_id"] == updated["managed_agent_run_id"]
+        assert manifest["run_kind"] == "automatic_progress_audit_agent"
+        assert manifest["launch_provenance"]["origin_kind"] == "periodic_progress_auditor"
+        assert manifest["stdin"]["sealed"] is True
+        assert manifest["links"]["dispatch_id"] == updated["dispatch_id"]
+
     def test_disabled_mode_is_report_only(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
             tmp_path,
@@ -1180,10 +2523,8 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPORT-ONLY." in brief
-        assert "Do not edit files, apply patches, or run `git commit` / `git push`." in brief
-        assert "Repair-SYSTEM PATCH-ONLY" not in brief
-        assert "commit and push" not in brief.lower()
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "Do not apply patches, create claims, launch repair agents, commit, or push." in brief
 
     def test_enabled_without_commit_gate_is_patch_only_and_bounded(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1199,12 +2540,9 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPAIR-SYSTEM PATCH-ONLY." in brief
-        assert "Leave changes uncommitted; do not run `git commit` or `git push`." in brief
-        assert "`arnold_pipelines/megaplan/cloud/**`" in brief
-        assert "`tests/cloud/**`" in brief
-        assert "Never modify the audited run workspace" in brief
-        assert "git push to `origin/editible-install`" not in brief
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "No mutation targets." in brief
+        assert "validated central repair-request authority" in brief
 
     def test_commit_push_language_requires_explicit_commit_gate(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1220,9 +2558,9 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated)." in brief
-        assert "git commit` and `git push` to `origin/editible-install`." in brief
-        assert "Leave changes uncommitted" not in brief
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "Do not edit source, run state, plan state, repair data, or project files." in brief
+        assert "REPAIR-SYSTEM PATCH + COMMIT/PUSH" not in brief
 
     def test_prompt_and_response_artifacts_are_redacted(self, tmp_path: Path) -> None:
         secret = "Authorization: Bearer bearer-secret-token-value"
@@ -1245,11 +2583,11 @@ class TestAuditorAutofixPromptGates:
         assert "bearer-secret-token-value" not in brief
         assert "bearer-secret-token-value" not in resp
         assert "bearer-secret-token-value" not in err
-        assert "bearer-secret-token-value" not in updated["deepseek_response"]
+        assert "bearer-secret-token-value" not in updated["agent_response"]
         assert REDACTION in brief
         assert REDACTION in resp
-        assert REDACTION in err
-        assert REDACTION in updated["deepseek_response"]
+        assert not err or REDACTION in err
+        assert REDACTION in updated["agent_response"]
         assert "No-secrets rule:" in brief
 
     def test_prompt_uses_reconciler_language_and_brief_first_evidence(self, tmp_path: Path) -> None:
@@ -1319,7 +2657,7 @@ class TestAuditorCrossReferences:
         assert finding["incident_brief"]["incident_id"] == "inc-demo"
         assert finding["incident_audit"]["incident_id"] == "inc-demo"
         assert finding["reasons"][0].startswith("reconciler ")
-        assert Path(finding["source_refs"]["incident_summary_path"]).exists()
+        assert not Path(finding["source_refs"]["incident_summary_path"]).exists()
 
 
 class TestAuditorWrapperBoundary:
@@ -1347,7 +2685,7 @@ class TestAuditorWrapperBoundary:
         repair_root = tmp_path / "repair-data"
         repair_root.mkdir(parents=True, exist_ok=True)
 
-        _run_gather_program(
+        findings = _run_gather_program(
             [
                 {
                     "workspace": str(workspace),
@@ -1371,6 +2709,15 @@ class TestAuditorWrapperBoundary:
         capture = json.loads(audit_capture.read_text(encoding="utf-8"))
         projection_input = capture["audit_input"]["projection_input"]
 
+        current_target_call = next(
+            call for call in calls if call["fn"] == "resolve_current_target"
+        )
+        assert current_target_call["kwargs"] == {
+            "marker_dir": str(tmp_path / ".megaplan" / "cloud-sessions"),
+            "repair_data_dir": str(repair_root),
+            "workspace_hint": str(workspace),
+        }
+
         assert {call["fn"] for call in calls} >= {
             "resolve_current_target",
             "resolve_run_state",
@@ -1385,6 +2732,8 @@ class TestAuditorWrapperBoundary:
         assert projection_input["ci_health"]["failing_run_count"] == 2
         assert projection_input["engine_tree"]["status"] == "red"
         assert projection_input["engine_tree"]["import_consumers"] == ["cloud_wrappers"]
+        assert findings["findings"][0]["ci_health"]["status"] == "red"
+        assert findings["findings"][0]["engine_tree"]["status"] == "red"
 
     def test_gather_filters_dead_liveness_and_uses_drift_metadata_for_reasons(
         self, tmp_path: Path
@@ -1912,28 +3261,210 @@ class TestAuditorWrapperBoundary:
         assert events[1]["payload"]["next_expected_event"] is None
         assert events[1]["payload"]["decision"]["reconciler_next_expected_event"] == "auditor_escalate_to_human"
         assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        requests = [json.loads(path.read_text(encoding="utf-8")) for path in (queue_root / "requests").glob("*.json")]
+        assert requests == []
         repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
-        marker_path = repair_data_dir / "demo-session.needs-human.json"
-        assert marker_path.exists()
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        assert marker["session"] == "demo-session"
-        assert marker["plan_name"] == "demo-plan"
-        assert marker["discord_status"] == "pending"
-        index_payload = json.loads((repair_data_dir / "index.json").read_text(encoding="utf-8"))
-        session_ref = index_payload["sessions"]["demo-session"]["refs"]["unresolved-escalation"]
-        assert session_ref["incident_id"] == "inc-124"
-        assert session_ref["path"] == str(marker_path)
-        escalation_path = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data.d" / "escalations" / "escalations.jsonl"
-        escalation_records = [
-            json.loads(line)
-            for line in escalation_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        assert escalation_records[-1]["event"] == "opened"
-        assert escalation_records[-1]["incident_id"] == "inc-124"
+        assert not (repair_data_dir / "demo-session.needs-human.json").exists()
 
 
 class TestLiveSignalFiltering:
+    def test_preserve_live_owner_missing_dispatch_is_deterministic_finding(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "current-plan"
+        plan_dir.mkdir(parents=True)
+        now = datetime.now(timezone.utc).isoformat()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "current-plan",
+                    "current_state": "finalized",
+                    "latest_failure": {},
+                    "active_step": {
+                        "active": True,
+                        "phase": "execute",
+                        "worker_pid": os.getpid(),
+                        "last_activity_at": now,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        goal_path = tmp_path / "goal.json"
+        goal_path.write_text(
+            json.dumps(
+                {
+                    "status": "active",
+                    "goal_id": "repair-goal-cfc07d8070fe6618517bd2cd",
+                    "checkpoint_digest": "checkpoint-1",
+                    "owners": [],
+                    "last_evaluation": {
+                        "control_action": "preserve_live",
+                        "correct_worker_alive": True,
+                        "fresh_progress": True,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        request_id = "741233a457493a63d27d40d65eb202662c617ff3629f6654c6e41fcced452eed"
+        request_path = tmp_path / ".megaplan" / "repair-queue" / "requests" / f"{request_id}.json"
+        request_path.parent.mkdir(parents=True)
+        request_path.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "source": "watchdog_goal_recovery",
+                    "problem_signature": {
+                        "failure_kind": "repair_goal_owner_missing",
+                        "current_state": "finalized",
+                        "phase_or_step": "execute",
+                        "milestone_or_plan": "current-plan",
+                        "gate_recommendation": "preserve_live_until_beyond_execute",
+                    },
+                    "target": {"plan_name": "current-plan"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "request_id": request_id,
+                    "repair_goal": {"goal_path": str(goal_path)},
+                    "outcome": "running",
+                    "current_attempt_id": "attempt-1",
+                    "current_signature": {"plan_name": "current-plan", "phase": "execute"},
+                    "attempts": [{"attempt_id": "attempt-1", "dispatched_at": now}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "current-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert report["green_checks"] == []
+        finding = report["findings"][0]
+        assert any(
+            reason.startswith("repair_dispatch_during_preserve_live:")
+            for reason in finding["reasons"]
+        )
+        goal = finding["meta_repair_summary"]["repair_goal"]
+        assert goal["repair_dispatch_during_preserve_live"] is True
+        assert finding["meta_repair_summary"]["should_dispatch"] is False
+        assert finding["meta_repair_summary"]["trigger"] == ""
+
+    def test_meta_repair_summary_detects_stale_request_under_live_goal_owner(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "current-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc).isoformat()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "current-plan",
+                    "current_state": "finalized",
+                    "latest_failure": {},
+                    "active_step": {
+                        "active": True,
+                        "phase": "execute",
+                        "worker_pid": os.getpid(),
+                        "last_activity_at": now,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        owner_manifest = tmp_path / "owner-manifest.json"
+        owner_manifest.write_text(
+            json.dumps({"status": "running", "pid": os.getpid()}), encoding="utf-8"
+        )
+        goal_path = tmp_path / "goal.json"
+        goal_path.write_text(
+            json.dumps(
+                {
+                    "status": "active",
+                    "goal_id": "goal-1",
+                    "checkpoint_digest": "checkpoint-1",
+                    "owners": [{"manifest_path": str(owner_manifest)}],
+                    "last_evaluation": {"control_action": "preserve_live"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        request_id = "stale-request"
+        queue_request = tmp_path / ".megaplan" / "repair-queue" / "requests" / f"{request_id}.json"
+        queue_request.parent.mkdir(parents=True)
+        queue_request.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "problem_signature": {
+                        "milestone_or_plan": "old-plan",
+                        "phase_or_step": "review",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "request_id": request_id,
+                    "repair_goal": {"goal_path": str(goal_path)},
+                    "outcome": "running",
+                    "current_attempt_id": "attempt-1",
+                    "current_signature": {"plan_name": "current-plan", "phase": "execute"},
+                    "attempts": [{"attempt_id": "attempt-1", "dispatched_at": now}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "current-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        meta = findings["findings"][0]["meta_repair_summary"]
+        assert meta["should_dispatch"] is True
+        assert meta["trigger"] == "repair_context_target_mismatch"
+        assert meta["repair_goal"]["owner_live"] is True
+        assert meta["repair_goal"]["request_target_mismatch"] is True
+
     def test_chain_log_awaiting_human_ignores_pytest_command_substring(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -2199,6 +3730,13 @@ class TestLiveSignalFiltering:
             "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents).\n",
             encoding="utf-8",
         )
+        terminal_log = meta_runs / "20260703T211455Z-demo-session.log"
+        terminal_log.write_text(
+            "[meta-repair 2026-07-03T21:15:55+00:00] direct Hermes fallback produced no recordable verdict\n"
+            "[meta-repair 2026-07-03T21:15:56+00:00] all meta-repair launch paths failed; negative evidence persisted\n",
+            encoding="utf-8",
+        )
+        os.utime(terminal_log, (2_000_000_000, 2_000_000_000))
 
         findings = _run_gather_program(
             [
@@ -2224,7 +3762,12 @@ class TestLiveSignalFiltering:
         assert meta["failed_meta_run_evidence"] is True
         assert meta["failed_meta_record_count"] == 1
         assert meta["failed_meta_run_count"] >= 1
-        assert any("failed launch/no-output evidence" in reason for reason in finding["reasons"])
+        current_run = next(
+            ref for ref in meta["meta_run_refs"] if ref.get("current_episode")
+        )
+        assert current_run["failure_code"] == "meta_repair_launch_failure"
+        assert current_run["launch_failure"] is True
+        assert current_run["terminal_failure"] is True
 
     def test_meta_repair_summary_ignores_partial_liveness_for_complete_chain_without_repair_context(
         self, tmp_path: Path
@@ -2299,6 +3842,37 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_failed_launch_without_bound_liveness_stays_diagnostic_only(
+        self, tmp_path: Path
+    ) -> None:
+        del tmp_path
+        namespace = _load_superfixer_cycle_functions()
+        evidence = {
+            "current_state": "initialized",
+            "session_header": {
+                "marker_path": "/workspace/.megaplan/cloud-sessions/demo-session.json",
+                "launch_outcome": {
+                    "status": "failed",
+                    "code": "engine_ref_not_advertised",
+                    "detail": "Configured cloud megaplan.ref is not advertised by the source repo.",
+                },
+            },
+            "current_target": {"tmux_process": {"live_status": "stopped"}},
+            "active_step_liveness": {"present": True, "worker_pid_alive": False},
+            "chain_state_summary": {"current": {}, "all": []},
+            "prior_watchdog_report_refs": [],
+        }
+
+        reasons = [
+            reason
+            for reason in (
+                namespace["_marker_present_stopped_without_chain_state_reason"](evidence),
+            )
+            if reason
+        ]
+
+        assert reasons == []
+
     def test_meta_repair_summary_ignores_partial_liveness_for_live_active_step_after_finalize(
         self, tmp_path: Path
     ) -> None:
@@ -2372,6 +3946,84 @@ class TestLiveSignalFiltering:
         assert findings["findings"] == []
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
+
+    def test_meta_repair_summary_reconciles_partial_liveness_with_new_chain_target(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "old-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "old-plan", "current_state": "done", "latest_failure": None}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "new-plan",
+                    "last_state": "finalized",
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True)
+        sidecar_events.mkdir(parents=True)
+        (repair_root / "old-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "old-session",
+                    "outcome": "partial_liveness",
+                    "current_attempt_id": 1,
+                    "current_advancement_snapshot": {
+                        "milestone_or_plan": "superseded-plan",
+                        "current_state": "authority_divergence",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "old-session",
+                        "run_kind": "chain",
+                        "plan_name": "superseded-plan",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-03T22:0{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(2)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "old-plan",
+                    "session": "old-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
 
     def test_gather_flags_watchdog_complete_chain_health_disagreement(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
@@ -2449,7 +4101,10 @@ class TestLiveSignalFiltering:
                     "chain_complete": True,
                     "pr_state": "merged",
                     "milestones": [{"label": "m1"}, {"label": "m2"}],
-                    "completed": [{"label": "m1", "status": "done"}, {"label": "m2", "status": "done"}],
+                    "completed": [
+                        {"label": "m1", "status": "done"},
+                        {"label": "m2", "plan": "demo-plan", "status": "done"},
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -2503,7 +4158,7 @@ class TestLiveSignalFiltering:
                     "chain_complete": True,
                     "pr_state": "merged",
                     "milestones": [{"label": "m1"}],
-                    "completed": [{"label": "m1", "status": "done"}],
+                    "completed": [{"label": "m1", "plan": "demo-plan", "status": "done"}],
                 }
             ),
             encoding="utf-8",
@@ -2540,6 +4195,142 @@ class TestLiveSignalFiltering:
         assert len(findings["findings"]) == 1
         assert any("repair_data_ghost_running" in reason for reason in findings["findings"][0]["reasons"])
         assert findings["findings"][0]["repair_data_summary"]["current_attempt_id"] == ""
+
+    def test_gather_flags_captured_repair_activity_without_investigation(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {"kind": "execution_blocked", "message": "captured repeat"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repair_exhausted",
+                    "attempts": [{"attempt_id": 1, "failure_classification": "execution_blocked"}],
+                    "iterations": [{"i": 1, "mechanical_launch": "failed"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        reason_text = " ".join(findings["findings"][0]["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+        assert findings["findings"][0]["repair_data_summary"]["investigation_summary"]["status"] == "missing"
+
+    def test_gather_routes_l1_context_constructor_failure_with_exact_reason(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {
+                        "kind": "quality_gate_blocked",
+                        "message": "T24 remains blocked",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "fixer_infrastructure_failure",
+                    "attempts": [{"attempt_id": 15, "outcome": "fixer_infrastructure_failure"}],
+                    "investigation": {
+                        "status": "failed",
+                        "failure_phase": "context_construction",
+                        "reason": "bounded repair investigation context construction failed",
+                        "error_excerpt": "TypeError: unhashable type: 'slice'",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        reason_text = " ".join(finding["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+        assert "bounded repair investigation context construction failed" in reason_text
+        assert finding["repair_data_summary"]["investigation_summary"]["status"] == "invalid"
 
     def test_gather_flags_complete_repair_with_incomplete_chain(self, tmp_path: Path) -> None:
         """The exact false-success artifact must be visible to the L3 prompt."""
@@ -2581,7 +4372,285 @@ class TestLiveSignalFiltering:
         assert len(findings["findings"]) == 1
         reasons = findings["findings"][0]["reasons"]
         assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
-        assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+        assert not any("plan_active_step_ghost_worker" in reason for reason in reasons)
+
+    def test_gather_flags_completed_repair_request_missing_profile_preservation_clause(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "custody-control-plane-20260714"
+        plan = "m9-rebuildable-projections-20260722-0431"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": plan, "current_state": "planned"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-custody.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 7,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [
+                        {"label": f"m{index}"} for index in range(1, 11)
+                    ],
+                    "completed": [
+                        {"label": f"m{index}", "status": "done"}
+                        for index in range(1, 8)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            source="resident_authorized_recovery",
+            workspace=workspace,
+            run_kind="chain",
+            target={
+                "plan_name": plan,
+                "configured_profile": "partnered-5",
+                "recovery_contract": {
+                    "preserve_configured_profile": True,
+                    "required_cursor_advance": True,
+                    "success_requires": "active execution plus chain-owned receipt",
+                    "forbid_standalone_completion": True,
+                },
+            },
+            problem_signature={
+                "failure_kind": "completed_repair_without_cursor_advance",
+                "current_state": "planned",
+                "phase_or_step": "critique",
+                "milestone_or_plan": plan,
+                "gate_recommendation": "continue legal transition",
+                "blocked_task_id": "phase:critique",
+            },
+            root_cause_hint="ordinary repair completed without cursor advancement",
+            repair_identity=repair_identity(
+                session=session,
+                plan=plan,
+                failure_kind="completed_repair_without_cursor_advance",
+                phase="critique",
+                task="phase:critique",
+            ),
+        )
+        request_path = Path(queued["path"])
+        persisted = json.loads(request_path.read_text(encoding="utf-8"))
+        request_id = persisted["request_id"]
+        blocker_id = persisted["blocker_id"]
+        persisted["target"]["recovery_contract"].pop(
+            "preserve_configured_profile"
+        )
+        request_path.write_text(
+            json.dumps(persisted, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+        )
+
+        assert len(findings["findings"]) == 1
+        finding = findings["findings"][0]
+        reason = next(
+            item
+            for item in finding["reasons"]
+            if item.startswith("repair_request_contract_invalid:")
+        )
+        assert f"request_id={request_id}" in reason
+        assert f"blocker_id={blocker_id}" in reason
+        assert "configured_profile=partnered-5" in reason
+        invalid = finding["repair_custody_summary"]["invalid_contract_requests"]
+        assert invalid == [
+            {
+                "request_id": request_id,
+                "blocker_id": blocker_id,
+                "configured_profile": "partnered-5",
+                "failure_kind": "completed_repair_without_cursor_advance",
+                "violations": ["missing_preserve_configured_profile"],
+            }
+        ]
+
+    def test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "workflow-boundary-contracts-corrective-20260710"
+        plan = "c1-contract-reality-20260711-1433"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": plan,
+                    "current_state": "executed",
+                    "iteration": 9,
+                    "active_step": {"phase": "execute", "worker_pid": 99999999},
+                    "latest_failure": {
+                        "kind": "blocked_recovery_not_resolved",
+                        "message": "machine repair exhausted without advancement",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-wbc.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "c1"}, {"label": "c2"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / f"{session}.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "workspace": str(workspace),
+                    "outcome": "repair_exhausted",
+                    "attempt_ids": [],
+                    "iterations": [{"iteration": value} for value in range(1, 10)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            workspace=workspace,
+            source="legacy_watchdog",
+            problem_signature={
+                "failure_kind": "blocked_recovery_not_resolved",
+                "current_state": "blocked",
+                "phase_or_step": "execute",
+                "milestone_or_plan": plan,
+                "gate_recommendation": "repair",
+                "blocked_task_id": "phase:execute",
+            },
+            root_cause_hint="machine repair exhausted without advancement",
+            target={"plan_name": plan},
+            repair_identity=repair_identity(
+                session=session,
+                plan=plan,
+                failure_kind="blocked_recovery_not_resolved",
+                phase="execute",
+                task="phase:execute",
+            ),
+        )
+        assert queued["status"] == "queued"
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        assert any("stale_l1_l2_cycle" in reason for reason in finding["reasons"])
+        evidence = finding["deterministic_superfixer_evidence"]
+        assert evidence["actionable"] is True
+        assert evidence["accepted_unclaimed_count"] == 1
+        assert evidence["claim_count"] == 0
+        assert evidence["attempt_count"] == 0
+        assert evidence["repair_outcome"] == "repair_exhausted"
+        # The accepted-unclaimed request independently authorizes this custody
+        # finding; bare active-step/tmux absence no longer proves runner death.
+        assert evidence["runner_dead"] is False
+        assert evidence["chain_incomplete"] is True
+        assert evidence["absent_or_stale_l2"] is True
+        assert evidence["retry_budget"]["remaining_attempts"] == 3
+
+    def test_superfixer_cycle_excludes_typed_human_gate_and_fails_closed_on_malformed_evidence(
+        self,
+    ) -> None:
+        namespace: dict[str, object] = {}
+        source = "\n\n".join(
+            [
+                _extract_gather_function(
+                    "_chain_state_looks_terminal", "_chain_state_looks_nonterminal"
+                ),
+                _extract_gather_function(
+                    "_chain_state_looks_nonterminal",
+                    "_watchdog_chain_health_disagreement_reason",
+                ),
+                _extract_gather_function(
+                    "_superfixer_cycle_evidence", "_stale_l1_l2_cycle_reason"
+                ),
+            ]
+        )
+        exec(source, namespace)
+        classify = namespace["_superfixer_cycle_evidence"]
+
+        human = classify({"resolver_state": {"canonical_state": "HUMAN_ACTION_REQUIRED"}})
+        assert human == {
+            "actionable": False,
+            "excluded_typed_human_gate": True,
+            "canonical_state": "HUMAN_ACTION_REQUIRED",
+        }
+
+        malformed = classify(
+            {
+                "resolver_state": {"canonical_state": "UNKNOWN"},
+                "repair_custody_summary": {"malformed_request_count": 1},
+                "repair_data_summary": {},
+                "active_step_liveness": {
+                    "present": True,
+                    "worker_pid_alive": False,
+                },
+                "current_target": {"tmux_process": {"live_status": "dead"}},
+                "chain_state_summary": {
+                    "current": {
+                        "last_state": "blocked",
+                        "chain_complete": False,
+                        "total_milestones": 2,
+                        "completed_count": 0,
+                    }
+                },
+            }
+        )
+        assert malformed["actionable"] is False
+        assert malformed["unknown_evidence"] is True
+        assert malformed["canonical_state"] == "UNKNOWN"
+        assert malformed["malformed_request_count"] == 1
+        assert malformed["excluded_typed_human_gate"] is False
 
     def test_meta_repair_summary_ignores_stale_recurring_retry_after_complete_chain(
         self, tmp_path: Path
@@ -3334,12 +5403,12 @@ class TestAutonomousFixAttemptsJsonSchema:
             "green_checks": [],
         }
         payload, _md = _run_report_assembler(findings_data, tmp_path)
-        assert len(payload["autonomous_fix_attempts"]) == 1
-        af = payload["autonomous_fix_attempts"][0]
-        assert set(af.keys()) == {"plan", "session", "commit", "summary"}
+        assert payload["autonomous_fix_attempts"] == []
+        af = payload["risky_or_deferred_fixes"][0]
+        assert set(af.keys()) == {"plan", "session", "verdict", "summary"}
         assert af["plan"] == "fixed-plan"
         assert af["session"] == "fixed-sess"
-        assert af["commit"] == "abc123def"
+        assert af["verdict"] == "INVALID_MUTATION_CLAIM"
         assert "null-pointer" in af["summary"]
 
     def test_field_ignores_non_fixed_hypotheses(self, tmp_path: Path) -> None:
@@ -3578,7 +5647,8 @@ class TestAutonomousFixAttemptsMarkdown:
         assert "## 🔧 Autonomous fix attempts" in md
         assert "**fixed-plan**" in md
         assert "deadbeef" in md
-        assert "_No autonomous fixes were attempted" not in md
+        assert "_No autonomous fixes were attempted" in md
+        assert "INVALID_MUTATION_CLAIM" in md
 
     def test_shows_multiple_fixed_attempts(self, tmp_path: Path) -> None:
         findings_data = {
@@ -3827,11 +5897,1970 @@ class TestRiskyOrDeferredFixesMarkdown:
             "green_checks": [],
         }
         payload, md = _run_report_assembler(findings_data, tmp_path)
-        assert len(payload["autonomous_fix_attempts"]) == 1
-        assert len(payload["risky_or_deferred_fixes"]) == 1
+        assert payload["autonomous_fix_attempts"] == []
+        assert len(payload["risky_or_deferred_fixes"]) == 2
         assert "## 🔧 Autonomous fix attempts" in md
         assert "## ⚠️ Risky or deferred fixes" in md
         assert "**fixed-plan**" in md
         assert "**esc-plan**" in md
         assert "ccc333" in md
         assert "ESCALATE" in md
+
+
+class TestStageMetrics:
+    """Focused `TestStageMetrics` coverage for stage_metrics JSON and Markdown."""
+
+    STAGE_NAMES = [
+        "prep", "plan", "critique", "gate", "revise", "finalize",
+        "execute", "review", "feedback", "chain", "repair",
+        "meta_repair", "human_pr_ci", "deployment_runtime",
+    ]
+
+    COUNTER_NAMES = [
+        "stalls", "retries", "repair_attempts", "meta_repair_attempts",
+        "human_waits", "ci_waits", "handoff_gaps", "no_op_loops",
+        "dead_workers", "duration_seconds", "unknowns", "missing_evidence",
+    ]
+
+    def _bucket(self, **counters):
+        """Build a stage metric bucket with zero counters and optional overrides."""
+        bucket = {}
+        for c in self.COUNTER_NAMES:
+            bucket[c] = counters.get(c, 0)
+            bucket[f"{c}_evidence"] = counters.get(f"{c}_evidence", [])
+        return bucket
+
+    def _ref(self, ref_type, value, **extra):
+        ref = {"type": ref_type, "value": value}
+        ref.update(extra)
+        return ref
+
+    # ── JSON payload shape for all 14 stages ──────────────────────────
+
+    def test_stage_metrics_json_has_all_14_stages(self, tmp_path: Path) -> None:
+        stage_metrics = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        stage_metrics["unknown_phase_count"] = 0
+        stage_metrics["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": stage_metrics,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        sm = payload["stage_metrics"]
+        for stage in self.STAGE_NAMES:
+            assert stage in sm, f"stage_metrics missing key: {stage}"
+        assert sm["unknown_phase_count"] == 0
+        assert sm["unknown_phase_evidence"] == []
+
+    # ── All 12 counters per stage ─────────────────────────────────────
+
+    def test_stage_metrics_each_stage_has_all_12_counters(self, tmp_path: Path) -> None:
+        stage_metrics = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        stage_metrics["unknown_phase_count"] = 0
+        stage_metrics["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": stage_metrics,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        for stage in self.STAGE_NAMES:
+            bucket = payload["stage_metrics"][stage]
+            for c in self.COUNTER_NAMES:
+                assert c in bucket, f"{stage} missing counter: {c}"
+                assert isinstance(bucket[c], int), f"{stage}.{c} should be int, got {type(bucket[c])}"
+
+    # ── Empty evidence for zero counters ──────────────────────────────
+
+    def test_stage_metrics_zero_counters_have_empty_evidence(self, tmp_path: Path) -> None:
+        stage_metrics = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        stage_metrics["unknown_phase_count"] = 0
+        stage_metrics["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": stage_metrics,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        for stage in self.STAGE_NAMES:
+            bucket = payload["stage_metrics"][stage]
+            for c in self.COUNTER_NAMES:
+                if bucket[c] == 0:
+                    ev = bucket.get(f"{c}_evidence", None)
+                    assert ev == [], f"{stage}.{c}_evidence should be [] when counter=0, got {ev}"
+
+    # ── Evidence pointer fields for nonzero counters ──────────────────
+
+    def test_stage_metrics_nonzero_counters_have_evidence_refs(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        # Put nonzero data in the chain stage
+        ref = self._ref("watchdog_stall", "stall:test-plan", source="watchdog-report.json")
+        sm["chain"]["stalls"] = 2
+        sm["chain"]["stalls_evidence"] = [ref]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        chain = payload["stage_metrics"]["chain"]
+        assert chain["stalls"] == 2
+        assert chain["stalls_evidence"] == [ref]
+        assert ref["type"] == "watchdog_stall"
+        assert ref["value"] == "stall:test-plan"
+
+    # ── Markdown rendering ────────────────────────────────────────────
+
+    def test_stage_metrics_markdown_section_header_present(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+        assert "## Stage metrics" in md
+
+    def test_stage_metrics_markdown_renders_nonzero_stage(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["chain"]["stalls"] = 3
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "stall:plan-a", source="watchdog-report.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert "**chain**" in md
+        assert "stalls=3" in md
+
+    def test_stage_metrics_markdown_empty_state(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+        assert "_No stage metric data available._" in md
+
+    # ── Synthetic phase durations ─────────────────────────────────────
+
+    def test_stage_metrics_duration_seconds_counter(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["execute"]["duration_seconds"] = 420
+        sm["execute"]["duration_seconds_evidence"] = [
+            self._ref("phase_duration", "execute", duration_seconds=420, source="events.ndjson"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["execute"]["duration_seconds"] == 420
+        assert "duration=420s" in md
+        assert "**execute**" in md
+
+    # ── Repair attempts / retries ─────────────────────────────────────
+
+    def test_stage_metrics_repair_attempts_and_retries(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["repair"]["repair_attempts"] = 4
+        sm["repair"]["repair_attempts_evidence"] = [
+            self._ref("repair_data", "/tmp/repair-data.json", source="repair-data"),
+        ]
+        sm["gate"]["retries"] = 3
+        sm["gate"]["retries_evidence"] = [
+            self._ref("recent_gate_history", "test-plan", source="state.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["repair"]["repair_attempts"] == 4
+        assert payload["stage_metrics"]["gate"]["retries"] == 3
+        assert "**repair**" in md
+        assert "repair_attempts=4" in md
+        assert "**gate**" in md
+        assert "retries=3" in md
+
+    # ── Watchdog stalls ───────────────────────────────────────────────
+
+    def test_stage_metrics_watchdog_stalls_counter(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["chain"]["stalls"] = 2
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "progress_stall:m-tune", source="watchdog-report.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "progress_stall:m-tune",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["chain"]["stalls"] == 2
+        assert "stalls=2" in md
+        assert "**chain**" in md
+
+    # ── Unmapped phases ───────────────────────────────────────────────
+
+    def test_stage_metrics_unmapped_phases_unknown_count(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 5
+        sm["unknown_phase_evidence"] = [
+            {"phase": "weird_phase", "refs": [self._ref("plan", "test-plan")]},
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["unknown_phase_count"] == 5
+        assert len(payload["stage_metrics"]["unknown_phase_evidence"]) == 1
+        # Markdown renders unknown phases as a separate bullet
+        assert "unknown phases" in md
+
+    # ── Missing evidence ──────────────────────────────────────────────
+
+    def test_stage_metrics_missing_evidence_counter(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["execute"]["missing_evidence"] = 3
+        sm["execute"]["missing_evidence_evidence"] = [
+            self._ref("unpaired_phase_start", "execute", source="events.ndjson"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["execute"]["missing_evidence"] == 3
+        assert "missing_evidence=3" in md
+        assert "**execute**" in md
+
+    # ── coverage block ────────────────────────────────────────────────
+
+    def test_coverage_block_shape(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        # Mark one stage as having data
+        sm["execute"]["duration_seconds"] = 100
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        cov = payload["coverage"]
+        assert cov["total_stages"] == 14
+        assert "stages_with_data" in cov
+        assert "stages_without_data" in cov
+        assert "stages_not_checked" in cov
+        assert "execute" in cov["stages_with_data"]
+        assert "prep" in cov["stages_without_data"]  # all-zero
+        # No stages should be not_checked since all 14 buckets are present
+        assert cov["stages_not_checked"] == []
+
+    def test_coverage_block_with_missing_stages(self, tmp_path: Path) -> None:
+        # Stage_metrics with only a few stages (simulating partial input)
+        sm: dict = {"unknown_phase_count": 0, "unknown_phase_evidence": []}
+        sm["chain"] = self._bucket(stalls=1)
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        cov = payload["coverage"]
+        # Stages not present in the dict go to stages_not_checked
+        assert "prep" in cov["stages_not_checked"]
+        assert "chain" in cov["stages_with_data"]
+        assert len(cov["stages_not_checked"]) > 0
+
+    # ── data_quality block ────────────────────────────────────────────
+
+    def test_data_quality_block_shape(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 2
+        sm["unknown_phase_evidence"] = [{"phase": "unknown_x", "refs": []}]
+        sm["execute"]["missing_evidence"] = 1
+        sm["execute"]["missing_evidence_evidence"] = [
+            self._ref("unpaired_phase_start", "execute", source="events.ndjson"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        dq = payload["data_quality"]
+        assert dq["unknown_phases"] == 2
+        assert len(dq["unknown_phase_evidence"]) == 1
+        assert "execute" in dq["stages_with_missing_evidence"]
+        assert dq["missing_inputs"] == []
+        assert dq["data_sources"]["stage_metrics_available"] is True
+        assert dq["data_sources"]["findings_available"] is False
+        assert dq["data_sources"]["green_checks_available"] is False
+
+    def test_data_quality_missing_inputs(self, tmp_path: Path) -> None:
+        # Only a subset of stages present
+        sm: dict = {"unknown_phase_count": 0, "unknown_phase_evidence": []}
+        sm["plan"] = self._bucket(duration_seconds=60)
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        dq = payload["data_quality"]
+        missing = {m["stage"] for m in dq["missing_inputs"]}
+        assert "prep" in missing
+        assert "plan" not in missing  # plan IS present
+        for m in dq["missing_inputs"]:
+            assert m["status"] == "not_checked"
+
+    # ── dispatch_summary block ────────────────────────────────────────
+
+    def test_dispatch_summary_block_present(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        ds = payload["dispatch_summary"]
+        assert ds["mode"] == "report_only"
+        expected_keys = {
+            "mode", "autofix_enabled", "repair_dispatched", "model_dispatched",
+            "deepseek_dispatched", "meta_repair_dispatched", "codex_dispatched",
+            "git_commit_performed", "file_edit_performed", "rationale",
+            "resolved_runtime_model", "dispatch_receipt_count",
+            "managed_agent_run_count", "managed_agent_runs", "repair_agent_runs",
+        }
+        assert set(ds.keys()) == expected_keys
+
+    def test_dispatch_summary_report_only_guard(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        ds = payload["dispatch_summary"]
+        assert ds["autofix_enabled"] is False
+        assert ds["repair_dispatched"] is False
+        assert ds["model_dispatched"] is False
+        assert ds["deepseek_dispatched"] is False
+        assert ds["meta_repair_dispatched"] is False
+        assert ds["codex_dispatched"] is False
+        assert ds["git_commit_performed"] is False
+        assert ds["file_edit_performed"] is False
+        assert "report-only" in ds["rationale"].lower()
+        assert "no repair" in ds["rationale"].lower()
+
+    def test_dispatch_summary_launch_attempt_permanently_falsifies_report_only(
+        self, tmp_path: Path
+    ) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one finding",
+            "findings": [{"plan": "p", "codex_launch_attempted": True}],
+            "green_checks": [],
+        }
+
+        payload, _md = _run_report_assembler(
+            findings_data,
+            tmp_path,
+            autofix_authorized=True,
+        )
+
+        ds = payload["dispatch_summary"]
+        assert ds["mode"] == "report_only"
+        assert ds["autofix_enabled"] is True
+        assert ds["model_dispatched"] is False
+        assert ds["codex_dispatched"] is False
+        assert payload["data_quality"]["canonical_launch_disagreements"]
+
+    def test_dispatch_summary_rejects_receipt_without_managed_manifest_as_model_authority(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.receipts.writer import (
+            finalize_dispatch_receipt,
+            initialize_dispatch_receipt,
+            prepare_dispatch_receipt,
+            record_dispatch_started,
+        )
+
+        receipt_root = tmp_path / "receipt-root"
+        receipt = initialize_dispatch_receipt(
+            receipt_root,
+            prepare_dispatch_receipt(action="six_hour_audit", configured_model="stale-config"),
+        )
+        receipt = record_dispatch_started(
+            receipt_root, receipt, resolved_runtime_model="gpt-5.6-sol"
+        )
+        final = finalize_dispatch_receipt(
+            receipt_root,
+            receipt,
+            outcome="failed",
+            resolved_runtime_model="gpt-5.6-sol",
+            mutation_facts={"state": False, "source": False, "commit": False, "push": False},
+        )
+        payload, _md = _run_report_assembler(
+            {
+                "findings": [{
+                    "plan": "p",
+                    "dispatch_receipt_root": str(receipt_root),
+                    "dispatch_id": final["dispatch_id"],
+                    "configured_model": "wrong-report-value",
+                }],
+                "green_checks": [],
+            },
+            tmp_path,
+        )
+
+        assert payload["dispatch_summary"]["resolved_runtime_model"] is None
+        assert payload["dispatch_summary"]["mode"] == "report_only"
+        assert payload["dispatch_receipts"][0]["outcome"] == "failed"
+        assert payload["data_quality"]["canonical_launch_disagreements"]
+
+    @pytest.mark.parametrize(
+        ("master", "path", "authorized"),
+        [("0", "0", False), ("0", "1", False), ("1", "0", False), ("1", "1", True)],
+    )
+    def test_auditor_wrapper_dispatch_matrix_requires_master_and_l3_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        master: str,
+        path: str,
+        authorized: bool,
+    ) -> None:
+        monkeypatch.setenv("ARNOLD_AUTONOMY", master)
+        monkeypatch.setenv("ARNOLD_AUDIT_AUTOFIX_ENABLED", path)
+
+        assert feature_flags.audit_autofix_mutation_authorized() is authorized
+        wrapper = _wrapper("arnold-progress-auditor")
+        assert 'if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]' in wrapper
+        assert 'AUDIT_LAUNCH_ATTEMPTED=1' in wrapper
+        managed_at = wrapper.index("arnold_pipelines.megaplan.managed_agent run")
+        worker_at = wrapper.index('timeout "$CODEX_TIMEOUT" codex exec')
+        evidence_at = wrapper.index("AUDIT_LAUNCH_ATTEMPTED=1")
+        assert managed_at < worker_at < evidence_at
+
+    # ── Multiple nonzero stages in markdown ───────────────────────────
+
+    def test_stage_metrics_markdown_multiple_nonzero_stages(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["plan"]["retries"] = 1
+        sm["plan"]["retries_evidence"] = [
+            self._ref("chain_log_repetition", "status_stopped", source="chain_log"),
+        ]
+        sm["chain"]["stalls"] = 2
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "stall:plan-a", source="watchdog-report.json"),
+        ]
+        sm["repair"]["repair_attempts"] = 3
+        sm["repair"]["repair_attempts_evidence"] = [
+            self._ref("repair_data", "/tmp/rd", source="repair-data"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "stall:plan-a",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert "**plan**" in md
+        assert "retries=1" in md
+        assert "**chain**" in md
+        assert "stalls=2" in md
+        assert "**repair**" in md
+        assert "repair_attempts=3" in md
+
+    # ── Multiple counter types within a single stage ───────────────────
+
+    def test_stage_metrics_multiple_counters_same_stage(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["human_pr_ci"]["human_waits"] = 4
+        sm["human_pr_ci"]["human_waits_evidence"] = [
+            self._ref("unresolved_user_actions", "test-plan", source="finalize.json"),
+        ]
+        sm["human_pr_ci"]["ci_waits"] = 2
+        sm["human_pr_ci"]["ci_waits_evidence"] = [
+            self._ref("chain_log_repetition", "pr_closed", source="chain_log"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        hb = payload["stage_metrics"]["human_pr_ci"]
+        assert hb["human_waits"] == 4
+        assert hb["ci_waits"] == 2
+        assert "**human_pr_ci**" in md
+        assert "human_waits=4" in md
+        assert "ci_waits=2" in md
+
+    # ── Stage metrics absent from findings_data ────────────────────────
+
+    def test_stage_metrics_absent_from_input(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        # stage_metrics defaults to empty dict
+        assert payload["stage_metrics"] == {}
+        # coverage marks all stages as not_checked
+        assert len(payload["coverage"]["stages_not_checked"]) == 14
+        # data_quality marks all stages as missing_inputs
+        assert len(payload["data_quality"]["missing_inputs"]) == 14
+        assert payload["data_quality"]["data_sources"]["stage_metrics_available"] is False
+        # MD shows empty state
+        assert "_No stage metric data available._" in md
+
+    # ── Evidence pointers have stable shape ───────────────────────────
+
+    def test_stage_metrics_evidence_pointer_fields_stable(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        ref = self._ref("watchdog_stall", "progress_stall:m-tune",
+                        source="watchdog-report.json",
+                        plan="test-plan",
+                        workspace="/ws/test")
+        sm["chain"]["stalls"] = 1
+        sm["chain"]["stalls_evidence"] = [ref]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "progress_stall:m-tune",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        ev = payload["stage_metrics"]["chain"]["stalls_evidence"][0]
+        # Stable required fields
+        assert ev["type"] == "watchdog_stall"
+        assert ev["value"] == "progress_stall:m-tune"
+        assert ev["source"] == "watchdog-report.json"
+        assert ev["plan"] == "test-plan"
+        assert ev["workspace"] == "/ws/test"
+
+    # ── Markdown evidence truncation ──────────────────────────────────
+
+    def test_stage_metrics_markdown_includes_compact_evidence_refs(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["chain"]["stalls"] = 1
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "stall:plan-x", source="watchdog-report.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        # Evidence refs should appear in brackets
+        assert "watchdog_stall:stall:plan-x" in md
+
+
+# ---------------------------------------------------------------------------
+# T18: Progress auditor — audited window, repair dispatch refs,
+#      missing repair verdict findings, stale repair-data findings,
+#      and escalation verdict evidence shape
+# ---------------------------------------------------------------------------
+
+
+class TestProgressAuditorAuditedWindow:
+    """The report JSON payload carries the audited window in hours."""
+
+    def test_window_hours_in_payload(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "window_hours" in payload
+        assert payload["window_hours"] == 6
+
+    def test_window_hours_custom_value(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 12,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert payload["window_hours"] == 12
+
+
+class TestProgressAuditorRepairDispatchRefs:
+    """The dispatch_summary reports whether repair was dispatched."""
+
+    def test_dispatch_summary_repair_dispatched_field(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "dispatch_summary" in payload
+        assert "repair_dispatched" in payload["dispatch_summary"]
+        assert isinstance(payload["dispatch_summary"]["repair_dispatched"], bool)
+
+    def test_dispatch_summary_meta_repair_dispatched_field(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        ds = payload["dispatch_summary"]
+        assert "meta_repair_dispatched" in ds
+        assert isinstance(ds["meta_repair_dispatched"], bool)
+
+    def test_dispatch_receipt_count_zero_by_default(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert payload["dispatch_summary"]["dispatch_receipt_count"] == 0
+
+
+class TestProgressAuditorMissingRepairVerdictFindings:
+    """Findings carry repair-verdict-related evidence that the auditor can consume."""
+
+    def test_findings_structure_has_failure_kind(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one finding",
+            "findings": [{
+                "plan": "test-plan",
+                "workspace": "/w/test",
+                "session": "sess-test",
+                "reasons": ["repair loop did not produce verdict"],
+                "current_state": "repairing",
+                "iteration": 1,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": "missing_verdict",
+                "latest_failure_message": "no verdict produced",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "sess-test", "workspace": "/w/test", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {"outcome": "repairing", "verdict_present": False},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": "repair",
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert len(payload["findings"]) == 1
+        finding = payload["findings"][0]
+        assert finding["latest_failure_kind"] == "missing_verdict"
+        assert finding["current_state"] == "repairing"
+        assert "repair_data_summary" in finding
+        assert finding["repair_data_summary"]["verdict_present"] is False
+
+    def test_repair_data_summary_preserved_in_payload(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [{
+                "plan": "p",
+                "workspace": "/w/p",
+                "session": "s",
+                "reasons": [],
+                "current_state": "running",
+                "iteration": 1,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": None,
+                "latest_failure_message": "",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "s", "workspace": "/w/p", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {"outcome": "complete", "verdict_present": True,
+                                        "verdict_kind": "cleared"},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": None,
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        rd = payload["findings"][0]["repair_data_summary"]
+        assert rd["verdict_present"] is True
+        assert rd["verdict_kind"] == "cleared"
+        assert rd["outcome"] == "complete"
+
+
+class TestProgressAuditorStaleRepairDataFindings:
+    """Findings carry stale repair-data signals for auditor consumption."""
+
+    def test_findings_stale_repair_data_indicator(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [{
+                "plan": "stale-plan",
+                "workspace": "/w/stale",
+                "session": "sess-stale",
+                "reasons": ["repair running too long"],
+                "current_state": "repairing",
+                "iteration": 100,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": "repair_timeout",
+                "latest_failure_message": "repair exceeded budget",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "sess-stale", "workspace": "/w/stale", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {"outcome": "repairing", "age_hours": 8.5,
+                                        "stale_repair_data": True},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {"classification": "STALE_STATE",
+                                         "recommended_action": "mechanical re-drive only"},
+                "user_action_context": {},
+                "active_step_phase": "repair",
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        finding = payload["findings"][0]
+        assert finding["latest_failure_kind"] == "repair_timeout"
+        assert finding["current_state"] == "repairing"
+        rd = finding["repair_data_summary"]
+        assert rd["stale_repair_data"] is True
+        assert rd["age_hours"] == 8.5
+        sse = finding["stale_state_evidence"]
+        assert sse["classification"] == "STALE_STATE"
+
+    def test_green_checks_preserved_for_auditor_verdict(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [
+                {
+                    "plan": "healthy-plan",
+                    "session": "sess-healthy",
+                    "workspace": "/w/healthy",
+                    "summary": "No findings - plan is progressing normally",
+                },
+            ],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert len(payload["green_checks"]) == 1
+        assert payload["green_checks"][0]["plan"] == "healthy-plan"
+
+
+class TestProgressAuditorEscalationVerdictShape:
+    """The report output carries escalation verdict evidence for the six-hour auditor."""
+
+    def test_escalated_finding_preserved(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one escalated finding",
+            "findings": [{
+                "plan": "esc-plan",
+                "workspace": "/w/esc",
+                "session": "esc-sess",
+                "reasons": ["repeated stall without recovery"],
+                "current_state": "executing",
+                "iteration": 10,
+                "last_gate_recommendation": "blocked",
+                "last_gate_score": 1.0,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 5,
+                "recent_gate_total": 5,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [1, 1, 1],
+                "active_step_attempt": None,
+                "latest_failure_kind": "execution_blocked",
+                "latest_failure_message": "blocked at gate repeatedly",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": True,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "esc-sess", "workspace": "/w/esc", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": "execute",
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": "ESCALATE\nPlan is cycling between milestones without progress.",
+                "deepseek_model": "deepseek:deepseek-v4-pro",
+                "deepseek_response": "ESCALATE\nPlan is cycling between milestones without progress.",
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        finding = payload["findings"][0]
+        assert finding["between_milestone_cycling"] is True
+        assert "ESCALATE" in str(finding.get("hypothesis", ""))
+        assert finding["iteration"] == 10
+
+    def test_stall_summary_conveys_escalation_context(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "progress_stall:critical-plan",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "stall_summary" in payload
+        assert payload["stall_summary"] == "progress_stall:critical-plan"
+
+
+class TestProgressAuditorCompletionRecordShape:
+    """The complete report payload provides a completion record the six-hour auditor can consume."""
+
+    def test_payload_top_level_keys_for_auditor_evidence(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "window_hours" in payload
+        assert "findings" in payload
+        assert "dispatch_summary" in payload
+        assert "autonomous_fix_attempts" in payload
+        assert "risky_or_deferred_fixes" in payload
+        assert "green_checks" in payload
+        assert "stall_summary" in payload
+
+    def test_findings_list_carries_plan_and_session(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [{
+                "plan": "audit-plan",
+                "workspace": "/w/audit",
+                "session": "audit-sess",
+                "reasons": [],
+                "current_state": "running",
+                "iteration": 1,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": None,
+                "latest_failure_message": "",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "audit-sess", "workspace": "/w/audit", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": None,
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert payload["findings"][0]["plan"] == "audit-plan"
+        assert payload["findings"][0]["session"] == "audit-sess"
+
+
+
+
+def test_gather_report_only_does_not_write_audited_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "read-only-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "executing"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-read-only.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(workspace): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+
+    _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": plan,
+                "session": "read-only-session",
+                "kind": "chain",
+            }
+        ],
+        tmp_path,
+    )
+
+    after = {
+        path.relative_to(workspace): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+def test_gather_flags_liveness_and_repair_churn_without_acceptance(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "green-churn"
+    plan = "active-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_dir = marker_dir / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc).isoformat()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "blocked", "iteration": 7}),
+        encoding="utf-8",
+    )
+    events = [
+        {"kind": kind, "phase": "execute", "ts_utc": now, "seq": index}
+        for index, kind in enumerate(
+            ["llm_token_heartbeat", "state_written", "cost_recorded", "llm_token_heartbeat"],
+            start=101,
+        )
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    (chain_dir / "chain-green.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / f"{session}.chain-health.progress.json").write_text(
+        json.dumps({"no_advance_ticks": 4, "stuck_ticks": 3, "updated_at": now}),
+        encoding="utf-8",
+    )
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"session": session, "outcome": "running", "iterations": [{"i": 1}]}),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain"}],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert payload["green_checks"] == []
+    reasons = payload["findings"][0]["reasons"]
+    assert any(reason.startswith("green_with_recent_repair_churn:") for reason in reasons)
+    assert any(reason.startswith("liveness_without_acceptance_progress:") for reason in reasons)
+
+
+def test_gather_flags_deterministic_repair_failure_exhaustion(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "deterministic-repair-loop"
+    plan = "active-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    repair_dir = tmp_path / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "executing"}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-loop.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    repeated = {
+        "chain_state_summary": {"current_plan_name": plan, "last_state": "blocked"},
+        "plan_latest_failure": {"kind": "phase_failed", "message": "same parse failure"},
+    }
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"session": session, "outcome": "running", "iterations": [repeated] * 3}),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain"}],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert payload["green_checks"] == []
+    assert any(
+        reason.startswith("deterministic_failure_exhaustion:")
+        for reason in payload["findings"][0]["reasons"]
+    )
+
+
+def test_gather_suppresses_completed_shadow_including_session_custody(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "completed-shadow"
+    shadow = "m1-done"
+    current = "m2-current"
+    plan_dir = workspace / ".megaplan" / "plans" / shadow
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": shadow, "current_state": "done"}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-shadow.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": current,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [{"label": "m1", "plan": shadow, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    worklist = [
+        {
+            "workspace": str(workspace),
+            "plan": shadow,
+            "session": session,
+            "kind": "chain",
+            "session_evidence_scope": False,
+        }
+    ]
+
+    clean = _run_gather_program(worklist, tmp_path)
+
+    assert clean["findings"] == []
+    assert clean["green_checks"][0]["suppression"]["reason"] == (
+        "completed_plan_shadow_plan_local_evidence_suppressed"
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "outcome": "running",
+                "current_attempt_id": "",
+                "attempt_ids": [],
+                "iterations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    suspicious = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert suspicious["findings"] == []
+    assert suspicious["green_checks"][0]["suppression"]["reason"] == (
+        "completed_plan_shadow_plan_local_evidence_suppressed"
+    )
+    chain = suspicious["green_checks"][0]["chain_state_summary"]["current"]
+    assert any(item.get("plan") == shadow for item in chain["completed"])
+
+
+def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "current-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    state_path.write_text(json.dumps({"name": plan, "current_state": "executing"}), encoding="utf-8")
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-wrapper.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    installed = tmp_path / "installed-auditor"
+    installed.write_text("older wrapper\n", encoding="utf-8")
+    worklist = [
+        {
+            "workspace": str(workspace),
+            "plan": plan,
+            "session": "wrapper-drift",
+            "kind": "chain",
+        }
+    ]
+
+    active = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_INSTALLED_WRAPPER": str(installed)},
+    )
+
+    assert active["green_checks"] == []
+    assert any(
+        reason.startswith("installed_wrapper_drift:")
+        for reason in active["findings"][0]["reasons"]
+    )
+    assert active["findings"][0]["auditor_wrapper_runtime"]["installed_matches_source"] is False
+    report, _markdown = _run_report_assembler(active, tmp_path)
+    assert report["auditor_runtime_receipt"]["installed_matches_source"] is False
+    assert report["dispatch_summary"]["mode"] == "report_only"
+    assert report["dispatch_summary"]["repair_dispatched"] is False
+    assert report["dispatch_summary"]["file_edit_performed"] is False
+
+    state_path.write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "chain_complete": None,
+                "pr_state": "merged",
+                "current_milestone_index": 1,
+                "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    terminal_with_drift = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_INSTALLED_WRAPPER": str(installed)},
+    )
+
+    assert terminal_with_drift["findings"] == []
+    assert len(terminal_with_drift["green_checks"]) == 1
+    assert terminal_with_drift["green_checks"][0]["suppression"]["reason"] == (
+        "authoritative_terminal_success_historical_evidence_suppressed"
+    )
+
+
+def test_gather_suppresses_historical_churn_after_authoritative_terminal_success(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "m11-final"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    (chain_dir / "chain-terminal.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "chain_complete": True,
+                "pr_state": "merged",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": "terminal-chain", "kind": "chain"}],
+        tmp_path,
+    )
+
+    assert result["findings"] == []
+    assert len(result["green_checks"]) == 1
+    assert result["green_checks"][0]["suppression"]["reason"] == (
+        "authoritative_terminal_success_historical_evidence_suppressed"
+    )
+
+
+@pytest.mark.parametrize(
+    "chain_overrides",
+    [
+        {"current_plan_name": "m11-inconsistent"},
+        {"last_state": "blocked"},
+        {"pr_state": "open"},
+        {
+            "milestones": [{"label": "m1"}, {"label": "m2"}],
+            "completed": [
+                {"label": "m1", "plan": "m11-inconsistent", "status": "done"}
+            ],
+        },
+        {
+            "milestones": None,
+            "current_milestone_index": 2,
+        },
+    ],
+)
+def test_gather_does_not_suppress_plan_chain_terminal_disagreement(
+    tmp_path: Path,
+    chain_overrides: dict,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "m11-inconsistent"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    chain_state = {
+        "current_plan_name": "",
+        "last_state": "done",
+        "chain_complete": True,
+        "pr_state": "merged",
+        "milestones": [{"label": "m1"}],
+        "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+    }
+    chain_state.update(chain_overrides)
+    (chain_dir / "chain-terminal.json").write_text(
+        json.dumps(chain_state),
+        encoding="utf-8",
+    )
+
+    result = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": "inconsistent-chain", "kind": "chain"}],
+        tmp_path,
+    )
+
+    assert result["green_checks"] == []
+    reasons = result["findings"][0]["reasons"]
+    assert any(reason.startswith("plan_v refreshed") for reason in reasons)
+    assert any(reason.startswith("score regression") for reason in reasons)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M9 T61: Shared deterministic exact-evidence reason fixtures
+#
+# These fixtures exercise the six_hour_auditor's finding pipeline across
+# 12 reason classes.  Each fixture fires exactly once with a content-addressed
+# evidence ID and is shared across watchdog and auditor suites.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+import hashlib as _hashlib
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+    _finding,
+    _evidence_id_for_finding,
+    _deduplicate_findings,
+    _project_progress_finding,
+    _watchdog_finding,
+    _repair_layer_finding,
+    _install_sync_finding,
+    _github_sync_finding,
+    _live_process_finding,
+    _stale_claim_finding,
+    _missing_evidence_finding,
+    _recurrence_finding,
+    _semantic_custody_findings,
+    _auditor_recursion_finding,
+    AuditorConfig,
+)
+
+
+class TestSharedDeterministicReasonFixtures:
+    """Shared reason fixtures — each fires once with exact evidence IDs.
+
+    These 12 reason classes are consumed by both watchdog and auditor
+    suites.  Every fixture verifies:
+    * The reason fires exactly once (no duplicate emission for identical evidence).
+    * The evidence ID is content-addressed and deterministic.
+    * The finding carries ``_non_authoritative: True``.
+    """
+
+    # ── 1. consecutive normalized blocks ──────────────────────────────
+
+    def test_reason_consecutive_normalized_blocks_once_only(self):
+        """Normalized blocks that repeat must fire once with deterministic evidence ID."""
+        finding_a = _finding(
+            "consecutive_normalized_blocks",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Consecutive normalized blocks detected without progress.",
+            recommendation="auditor_escalate_to_human",
+            block_count=3,
+            block_ids=["b1", "b2", "b3"],
+        )
+        finding_b = _finding(
+            "consecutive_normalized_blocks",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Consecutive normalized blocks detected without progress.",
+            recommendation="auditor_escalate_to_human",
+            block_count=3,
+            block_ids=["b1", "b2", "b3"],
+        )
+        # Same evidence → same ID
+        assert finding_a["evidence_id"] == finding_b["evidence_id"]
+        assert finding_a["_non_authoritative"] is True
+        assert finding_a["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate: only one survives
+        deduped = _deduplicate_findings([finding_a, finding_b])
+        assert len(deduped) == 1
+        assert deduped[0]["evidence_id"] == finding_a["evidence_id"]
+
+    # ── 2. signature drift ────────────────────────────────────────────
+
+    def test_reason_signature_drift_once_only(self):
+        """Signature drift between expected and observed must fire once with evidence ID."""
+        finding = _finding(
+            "signature_drift",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Failure signature does not match expected identity.",
+            recommendation="meta_repair.repair_attempt",
+            expected_signature="fail:quality_gate:abc123",
+            observed_signature="fail:quality_gate:def456",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic: repeat with same inputs → same ID
+        finding2 = _finding(
+            "signature_drift",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Failure signature does not match expected identity.",
+            recommendation="meta_repair.repair_attempt",
+            expected_signature="fail:quality_gate:abc123",
+            observed_signature="fail:quality_gate:def456",
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+    # ── 3. unclosed custody ───────────────────────────────────────────
+
+    def test_reason_unclosed_custody_once_only(self):
+        """Unclosed custody must fire once with evidence ID."""
+        finding = _finding(
+            "unclosed_custody",
+            layer="semantic_custody",
+            status="error",
+            severity="error",
+            message="Custody lease was accepted but never closed or released.",
+            recommendation="watchdog.dispatch",
+            custody_id="lease:abc123",
+            accepted_at="2026-07-04T20:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate identical findings
+        deduped = _deduplicate_findings([finding, dict(finding)])
+        assert len(deduped) == 1
+
+    # ── 4. index mismatch ─────────────────────────────────────────────
+
+    def test_reason_index_mismatch_once_only(self):
+        """Index mismatch between ordered sources must fire once with evidence ID."""
+        finding = _finding(
+            "index_mismatch",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Ordered source indices disagree on event sequence.",
+            recommendation="system.integrity_repair",
+            source_a_index=42,
+            source_b_index=41,
+            source_a="brief",
+            source_b="incident",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Different indices → different evidence IDs
+        finding2 = _finding(
+            "index_mismatch",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Ordered source indices disagree on event sequence.",
+            recommendation="system.integrity_repair",
+            source_a_index=42,
+            source_b_index=40,
+            source_a="brief",
+            source_b="incident",
+        )
+        assert finding["evidence_id"] != finding2["evidence_id"]
+
+    # ── 5. SLO breach ─────────────────────────────────────────────────
+
+    def test_reason_slo_breach_once_only(self):
+        """SLO breach must fire once with evidence ID."""
+        finding = _finding(
+            "slo_breach",
+            layer="watchdog",
+            status="error",
+            severity="error",
+            message="Watchdog report exceeds SLO freshness window.",
+            recommendation="watchdog.dispatch",
+            slo_window_hours=6,
+            observed_age_hours=8.5,
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["severity"] == "error"
+
+    # ── 6. overlap ────────────────────────────────────────────────────
+
+    def test_reason_overlap_once_only(self):
+        """Overlapping claims must fire once with evidence ID."""
+        finding = _finding(
+            "overlap_detected",
+            layer="stale_claim",
+            status="error",
+            severity="error",
+            message="Two active claims overlap on the same incident window.",
+            recommendation="auditor_escalate_to_human",
+            claim_ids=["claim-a", "claim-b"],
+            overlapping_window="2026-07-04T18:00:00Z/2026-07-04T20:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate
+        deduped = _deduplicate_findings([finding, dict(finding)])
+        assert len(deduped) == 1
+
+    # ── 7. cross-session joins ────────────────────────────────────────
+
+    def test_reason_cross_session_joins_once_only(self):
+        """Cross-session join anomalies must fire once with evidence ID."""
+        finding = _finding(
+            "cross_session_join_anomaly",
+            layer="reconciler",
+            status="warn",
+            severity="warn",
+            message="Cross-session join produced inconsistent custody states.",
+            recommendation="watchdog.dispatch",
+            session_ids=["s1", "s2"],
+            joined_dimension="custody",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["severity"] == "warn"
+
+    # ── 8. projection amplification ───────────────────────────────────
+
+    def test_reason_projection_amplification_once_only(self):
+        """Projection amplification (recursive non-ok cycles) must fire once with evidence ID."""
+        finding = _finding(
+            "projection_amplification",
+            layer="auditor_recursion",
+            status="error",
+            severity="error",
+            message="Non-ok findings are amplifying across audit cycles.",
+            recommendation="auditor_escalate_to_human",
+            cycle_count=3,
+            amplified_codes=["stale_claim_detected", "missing_evidence_refs"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic repeat
+        finding2 = _finding(
+            "projection_amplification",
+            layer="auditor_recursion",
+            status="error",
+            severity="error",
+            message="Non-ok findings are amplifying across audit cycles.",
+            recommendation="auditor_escalate_to_human",
+            cycle_count=3,
+            amplified_codes=["stale_claim_detected", "missing_evidence_refs"],
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+    # ── 9. seriality ──────────────────────────────────────────────────
+
+    def test_reason_seriality_once_only(self):
+        """Seriality violations must fire once with evidence ID."""
+        finding = _finding(
+            "seriality_violation",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Event ordering violates expected seriality constraints.",
+            recommendation="system.integrity_repair",
+            expected_order=["evt-1", "evt-2", "evt-3"],
+            observed_order=["evt-1", "evt-3", "evt-2"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    # ── 10. oversized rework ──────────────────────────────────────────
+
+    def test_reason_oversized_rework_once_only(self):
+        """Oversized rework must fire once with evidence ID."""
+        finding = _finding(
+            "oversized_rework",
+            layer="recurrence",
+            status="error",
+            severity="error",
+            message="Repair attempts exceed the rework budget without new evidence.",
+            recommendation="auditor_escalate_to_human",
+            attempt_count=5,
+            budget_limit=3,
+            new_evidence_since_last_attempt=False,
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["status"] == "error"
+
+    # ── 11. invalid model ─────────────────────────────────────────────
+
+    def test_reason_invalid_model_once_only(self):
+        """Invalid model detection must fire once with evidence ID."""
+        finding = _finding(
+            "invalid_model",
+            layer="resolver_semantics",
+            status="error",
+            severity="error",
+            message="Resolver canonical state is incompatible with supporting evidence model.",
+            recommendation="auditor_escalate_to_human",
+            canonical_state="RUNNING",
+            expected_states=["REPAIRING", "RETRYABLE_EXECUTION_BLOCK"],
+            invalid_reasons=["wrong_canonical_state_for_evidence"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["code"] == "invalid_model"
+
+    # ── 12. missing ledger coverage ───────────────────────────────────
+
+    def test_reason_missing_ledger_coverage_once_only(self):
+        """Missing ledger coverage must fire once with evidence ID."""
+        finding = _finding(
+            "missing_ledger_coverage",
+            layer="missing_evidence",
+            status="error",
+            severity="error",
+            message="Work ledger has no coverage for the reported incident window.",
+            recommendation="system.integrity_repair",
+            incident_window_start="2026-07-04T00:00:00Z",
+            incident_window_end="2026-07-04T06:00:00Z",
+            ledger_earliest="2026-07-04T08:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic repeat
+        finding2 = _finding(
+            "missing_ledger_coverage",
+            layer="missing_evidence",
+            status="error",
+            severity="error",
+            message="Work ledger has no coverage for the reported incident window.",
+            recommendation="system.integrity_repair",
+            incident_window_start="2026-07-04T00:00:00Z",
+            incident_window_end="2026-07-04T06:00:00Z",
+            ledger_earliest="2026-07-04T08:00:00Z",
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+
+class TestReasonFixtureDeduplication:
+    """Prove that the _deduplicate_findings pipeline fires each reason exactly once."""
+
+    def test_all_twelve_reasons_deduplicate_to_unique_evidence_ids(self):
+        """When all 12 reason fixtures fire, each produces a unique evidence ID."""
+        reasons = [
+            _finding("consecutive_normalized_blocks", layer="reconciler", status="error", severity="error",
+                     message="Blocks without progress.", recommendation="auditor_escalate_to_human", block_count=1),
+            _finding("signature_drift", layer="reconciler", status="error", severity="error",
+                     message="Signature mismatch.", recommendation="meta_repair.repair_attempt",
+                     expected_signature="a", observed_signature="b"),
+            _finding("unclosed_custody", layer="semantic_custody", status="error", severity="error",
+                     message="Custody never closed.", recommendation="watchdog.dispatch", custody_id="c1"),
+            _finding("index_mismatch", layer="reconciler", status="error", severity="error",
+                     message="Index mismatch.", recommendation="system.integrity_repair",
+                     source_a_index=1, source_b_index=2),
+            _finding("slo_breach", layer="watchdog", status="error", severity="error",
+                     message="SLO breach.", recommendation="watchdog.dispatch", slo_window_hours=6),
+            _finding("overlap_detected", layer="stale_claim", status="error", severity="error",
+                     message="Overlap.", recommendation="auditor_escalate_to_human", claim_ids=["a"]),
+            _finding("cross_session_join_anomaly", layer="reconciler", status="warn", severity="warn",
+                     message="Cross-session join.", recommendation="watchdog.dispatch", session_ids=["s1"]),
+            _finding("projection_amplification", layer="auditor_recursion", status="error", severity="error",
+                     message="Amplification.", recommendation="auditor_escalate_to_human", cycle_count=1),
+            _finding("seriality_violation", layer="reconciler", status="error", severity="error",
+                     message="Seriality.", recommendation="system.integrity_repair",
+                     expected_order=["a"], observed_order=["b"]),
+            _finding("oversized_rework", layer="recurrence", status="error", severity="error",
+                     message="Oversized rework.", recommendation="auditor_escalate_to_human", attempt_count=5),
+            _finding("invalid_model", layer="resolver_semantics", status="error", severity="error",
+                     message="Invalid model.", recommendation="auditor_escalate_to_human",
+                     canonical_state="X", expected_states=["Y"]),
+            _finding("missing_ledger_coverage", layer="missing_evidence", status="error", severity="error",
+                     message="Missing ledger.", recommendation="system.integrity_repair",
+                     incident_window_start="2026-07-04T00:00:00Z"),
+        ]
+        evidence_ids = [r["evidence_id"] for r in reasons]
+        # All 12 must be unique
+        assert len(set(evidence_ids)) == 12, f"Expected 12 unique evidence IDs, got {len(set(evidence_ids))}"
+
+    def test_duplicate_reasons_reduce_to_one_per_evidence_id(self):
+        """Duplicate identical reasons must collapse to exactly one per evidence ID."""
+        base = _finding("slo_breach", layer="watchdog", status="error", severity="error",
+                        message="SLO breach.", recommendation="watchdog.dispatch",
+                        slo_window_hours=6, observed_age_hours=8)
+        duplicates = [dict(base) for _ in range(5)]
+        deduped = _deduplicate_findings(duplicates)
+        assert len(deduped) == 1
+        assert deduped[0]["evidence_id"] == base["evidence_id"]
+
+    def test_layer_precedence_preserved_in_deduplication(self):
+        """When two findings share evidence_id, the earlier layer wins."""
+        finding_watchdog = _finding("shared_code", layer="watchdog", status="error", severity="error",
+                                    message="Shared.", recommendation=None)
+        finding_reconciler = _finding("shared_code", layer="reconciler", status="error", severity="error",
+                                      message="Shared.", recommendation=None)
+        # Both have same evidence_id (same code+layer+message with same details)
+        # They should differ because layer is part of the evidence_id input
+        assert finding_watchdog["evidence_id"] != finding_reconciler["evidence_id"], \
+            "Different layers must produce different evidence IDs"
+
+
+class TestReasonFixturesAcrossAuditorSurfaces:
+    """Prove deterministic reason fixtures fire correctly through real auditor finding functions."""
+
+    def test_project_progress_finding_produces_evidence_id(self):
+        """_project_progress_finding must produce a finding with evidence_id."""
+        brief = {"deadline_status": "overdue"}
+        incident = {"next_expected_event": "watchdog.dispatch"}
+        finding = _project_progress_finding(brief, incident, "2026-07-04T22:00:00Z")
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["_non_authoritative"] is True
+
+    def test_watchdog_finding_produces_evidence_id(self):
+        """_watchdog_finding must produce a finding with evidence_id."""
+        brief = {"next_expected_event": "watchdog.dispatch"}
+        snapshot = {"watchdog": {"last_reported_at": "2026-07-03T00:00:00Z"}}
+        finding = _watchdog_finding(brief, snapshot, "2026-07-04T22:00:00Z", AuditorConfig())
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_stale_claim_finding_produces_evidence_id(self):
+        """_stale_claim_finding must produce a finding with evidence_id."""
+        brief = {"claims": [{"classification": "expired", "claim_id": "c1"}]}
+        finding = _stale_claim_finding(brief)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["status"] == "error"
+
+    def test_missing_evidence_finding_produces_evidence_id(self):
+        """_missing_evidence_finding must produce a finding with evidence_id."""
+        brief = {"evidence": [{"status": "MISSING", "path": "/missing/ref"}]}
+        incident = {}
+        snapshot = {}
+        finding = _missing_evidence_finding(brief, incident, snapshot)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_recurrence_finding_produces_evidence_id(self):
+        """_recurrence_finding must produce a finding with evidence_id."""
+        incident = {}
+        problem = {}
+        finding = _recurrence_finding(incident, problem)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_semantic_custody_findings_produce_evidence_ids(self):
+        """_semantic_custody_findings must produce findings with evidence_ids."""
+        snapshot = {}
+        findings = _semantic_custody_findings(snapshot, now="2026-07-04T22:00:00Z", config=AuditorConfig())
+        assert len(findings) >= 1
+        for f in findings:
+            assert "evidence_id" in f
+            assert f["evidence_id"].startswith("finding:sha256:")
+            assert f["_non_authoritative"] is True

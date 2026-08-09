@@ -33,10 +33,42 @@ ACTIVE_MEGAPLAN_PACKAGE_NAMES = (
     "arnold_pipelines.megaplan",
 )
 _MEGAPLAN_INITIATIVE_SUBDIRS = frozenset(
-    {"briefs", "research", "decisions", "notes", "assets", "handoff"}
+    {
+        "briefs",
+        "research",
+        "decisions",
+        "notes",
+        "assets",
+        # Historical initiative plans remain durable context but are not active
+        # chain inputs.  Keep them under an explicit archive boundary instead
+        # of forcing preservation material back into executable root slots.
+        "archive",
+        # Supporting prose and milestone verification are initiative-owned
+        # artifacts with narrower semantics than general notes/evidence.
+        "annexes",
+        "validation",
+        "handoff",
+        # Chain completion and custody tooling writes plural handoffs and
+        # machine-verifiable evidence under the initiative that owns them.
+        "handoffs",
+        "evidence",
+    }
 )
 _MEGAPLAN_INITIATIVE_ROOT_FILES = frozenset(
-    {"README.md", "NORTHSTAR.md", "chain.yaml", "proof-map.json", "completion-manifest.json"}
+    {
+        "README.md",
+        "NORTHSTAR.md",
+        "STRATEGY.md",
+        "chain.yaml",
+        # ``brief epic --cloud-ready`` scaffolds this beside chain.yaml.
+        "cloud.yaml",
+        "proof-map.json",
+        "completion-manifest.json",
+        # Dependency repair deliberately emits this beside the proof map.
+        "dependency-completion-proof.json",
+        # Retirement is initiative-wide state, not a prose handoff.
+        ".retired",
+    }
 )
 LEGACY_REFERENCE_PATTERNS = (
     "arnold.pipelines.megaplan",
@@ -719,6 +751,42 @@ def check_megaplan_artifact_layout(
     allowed = set(allowlist or set())
     unexpected: dict[str, tuple[str, ...]] = {}
 
+    # Proof maps are the authority for initiative-local evidence receipts.
+    # Permit only exact, repo-relative root artifacts that a proof map names;
+    # this preserves the loose-file ratchet while allowing generated receipts
+    # to remain beside the manifest that hashes them.
+    declared_proof_paths: set[str] = set()
+
+    def _walk_strings(value: object) -> tuple[str, ...]:
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, Mapping):
+            return tuple(
+                item
+                for nested in value.values()
+                for item in _walk_strings(nested)
+            )
+        if isinstance(value, (list, tuple)):
+            return tuple(item for nested in value for item in _walk_strings(nested))
+        return ()
+
+    initiatives_root = root / ".megaplan" / "initiatives"
+    for proof_map in sorted(initiatives_root.glob("*/proof-map.json")):
+        try:
+            payload = json.loads(proof_map.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        initiative_prefix = proof_map.parent.relative_to(root).as_posix() + "/"
+        for candidate in _walk_strings(payload):
+            candidate_path = Path(candidate)
+            if candidate_path.is_absolute() or ".." in candidate_path.parts:
+                continue
+            normalized = candidate_path.as_posix()
+            if not normalized.startswith(initiative_prefix):
+                continue
+            if len(candidate_path.parts) == 4:
+                declared_proof_paths.add(normalized)
+
     def _is_allowed(rel: str) -> bool:
         for pattern in allowed:
             if pattern == rel:
@@ -734,6 +802,8 @@ def check_megaplan_artifact_layout(
             continue
         rel = path.relative_to(root).as_posix()
         if _is_allowed(rel):
+            continue
+        if rel in declared_proof_paths:
             continue
         reason: str | None = None
         if rel == "chain.yaml":

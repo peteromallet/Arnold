@@ -2,7 +2,7 @@
 id: 01KTPVSH8X04XE0D122M0V0712
 title: Neutral pipeline executor fails SILENTLY on an unresolvable next-label (routing
   typo halts mid-run)
-status: open
+status: addressed
 source: human
 tags:
 - arnold
@@ -12,10 +12,18 @@ tags:
 - high-severity
 codebase_id: null
 created_at: '2026-06-09T18:54:50.141269+00:00'
-last_edited_at: '2026-06-09T18:56:37.998306+00:00'
+last_edited_at: '2026-07-31T02:31:00+00:00'
+resolution_note: >-
+  Both the neutral whole-pipeline executor and stepwise driver now propagate an
+  unresolved-label RoutingError on any stage with outgoing edges. Explicit
+  halt and structurally terminal leaf stages remain valid, and suspension
+  remains prior to routing.
+addressed_at: '2026-07-31T02:31:00+00:00'
 epics:
 - epic_id: aggressive-generalized-pipeline-migration
   resolves_on_complete: false
+  kind: associated
+  provenance: legacy-ticket-metadata-normalization-20260731
   linked_at: '2026-06-09T18:56:37.998300+00:00'
 ---
 

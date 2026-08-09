@@ -1,14 +1,86 @@
-"""Pure incident-ledger auditor rules for the six-hour progress audit."""
+"""Pure incident-ledger auditor rules for the six-hour progress audit.
+
+Steps 15B-15C: Six-hour reconciliation backstop.
+
+Step 15C: Runs every six hours, queries the recovery event store and
+repair request ledger, and runs watchdog-wrapped checks against durable
+state.  Converts malformed output, absent child, fallback mismatch,
+missed events, and malformed L1/L2 evidence into durable failures or
+typed escalation — never treating process presence as success.
+
+The auditor is the reconciliation backstop for recovery — it does not
+perform primary mutations (repair/retry).  It only detects anomalies
+and escalates them.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from enum import Enum
+from hashlib import sha256
 import json
+import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping, Optional
 
+from arnold_pipelines.megaplan.cloud.repair_contract import append_incident_record
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    enqueue_occurrence_bound_repair_request,
+    normalize_repair_identity,
+    repair_identity_key,
+)
+from arnold_pipelines.megaplan.cloud.engine_runtime_repair import (
+    materialize_engine_runtime_repair_admission,
+)
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorDimension,
+    SourceCursorState,
+    SourceCursorVector,
+    build_all_fresh_vector,
+)
+from arnold_pipelines.megaplan.run_state.quality_family import (
+    QualityFamily,
+    normalize_quality_family,
+)
+
+from arnold_pipelines.megaplan.cloud.recovery_events import (
+    RecoveryEventKind,
+    RecoveryEvent,
+    RecoveryEventStore,
+    RecoveryEventBuilder,
+)
+
+# ── Step 15C: six-hour reconciliation backstop constants ───────────────
+
+SIX_HOURS_SECONDS = 6 * 3600
+
+# ── Step 47 (T33): next-three-hour reconciliation is the positive-proof ─
+# contract for auditor evidence.  The ``six_hour`` module / filename / field
+# names are retained ONLY as legacy compatibility aliases; they must never
+# mint repair authority on their own.  Positive proof now flows through the
+# next-three-hour reconciliation cadence, which is the schedule contract the
+# timer (``OnUnitActiveSec=3h``) and the terminal-receipt expectations
+# (``_AUDITOR_TERMINAL_RECEIPT_EXPECTATIONS`` -> ``next_three_hour``) encode.
+THREE_HOURS_SECONDS = 3 * 3600
+AUDITOR_RECONCILIATION_INTERVAL = "next_three_hour"
+LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY = True
+
+# ── auditor completion evidence constants ─────────────────────────────
+
+_AUDITOR_6H_COMPLETION_ROW_ID = "auditor.6h_complete.1"
+_AUDITOR_6H_COMPLETION_BOUNDARY_ID = "auditor_6h_completion"
+
+AUDIT_CODEX_MODEL = "gpt-5.6-sol"
+AUDIT_MODEL_INPUTS = (
+    "CODEX_MODEL",
+    "MEGAPLAN_AUDIT_CODEX_MODEL",
+    "CLOUD_WATCHDOG_CODEX_MODEL",
+)
 
 _LAYER_ORDER = (
     "project_progress",
@@ -24,6 +96,7 @@ _LAYER_ORDER = (
     "reconciler",
     "resolver_confidence",
     "resolver_semantics",
+    "semantic_custody",
     "auditor_recursion",
     "ci_health",
     "engine_tree",
@@ -56,6 +129,9 @@ _AUDITOR_RECURSION_VOLATILE_KEYS = frozenset(
         "observed_at",
         "recorded_at",
         "summary",
+        # M9: projection metadata fields that vary across runs
+        "_non_authoritative",
+        "evidence_id",
     }
 )
 _AUDITOR_RECURSION_STALE_CODES = frozenset(
@@ -76,16 +152,309 @@ class AuditorConfig:
     max_running_repair_age: timedelta = timedelta(hours=2)
 
 
+def validate_audit_model_inputs(environ: dict[str, str]) -> str:
+    """Reject any explicit Codex pin that disagrees with the audit boundary."""
+    conflicts = {
+        name: value
+        for name in AUDIT_MODEL_INPUTS
+        if (value := str(environ.get(name) or "").strip())
+        and value != AUDIT_CODEX_MODEL
+    }
+    if conflicts:
+        rendered = ", ".join(f"{name}={value}" for name, value in sorted(conflicts.items()))
+        raise ValueError(
+            f"six-hour auditor model pin conflict: {rendered}; required={AUDIT_CODEX_MODEL}"
+        )
+    return AUDIT_CODEX_MODEL
+
+
+# ── Step 46 (T32): canonical occurrence identity helpers ───────────────
+
+_AUDITOR_TERMINAL_RECEIPT_EXPECTATIONS: list[str] = [
+    "five_minute",
+    "one_hour",
+    "next_three_hour",
+]
+
+
+def _auditor_text(value: Any) -> str:
+    """Strip and stringify a possibly-absent value for the F01 tuple."""
+    return str(value or "").strip()
+
+
+def _auditor_mapping(value: Any) -> Mapping[str, Any]:
+    """Return *value* when it is a mapping, else an empty mapping."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _auditor_f01_fields(audit_item: Mapping[str, Any]) -> dict[str, str]:
+    """Extract the F01 repair-occurrence tuple from an audit finding.
+
+    Mirrors :func:`progress_auditor_escalation._finding_f01_fields` so the
+    auditor derives authority from the exact same occurrence contract that
+    the escalation and ownership policies use.
+    """
+
+    target = _auditor_mapping(audit_item.get("current_target"))
+    custody = _auditor_mapping(audit_item.get("repair_custody_summary"))
+    escalation = _auditor_mapping(audit_item.get("l3_escalation_gate"))
+    session_header = _auditor_mapping(audit_item.get("session_header"))
+    return {
+        "environment": _auditor_text(
+            target.get("environment") or audit_item.get("environment")
+        ),
+        "session": _auditor_text(audit_item.get("session")),
+        "chain": _auditor_text(
+            session_header.get("chain")
+            or target.get("chain")
+            or audit_item.get("chain")
+        ),
+        "plan_revision": _auditor_text(
+            target.get("plan_revision") or audit_item.get("plan_revision")
+        ),
+        "phase": _auditor_text(target.get("phase") or audit_item.get("phase")),
+        "task": _auditor_text(target.get("task") or audit_item.get("task")),
+        "attempt": _auditor_text(
+            target.get("attempt") or audit_item.get("iteration")
+        ),
+        "normalized_failure_kind": _auditor_text(
+            custody.get("normalized_failure_kind")
+            or audit_item.get("normalized_failure_kind")
+        ),
+        "blocker_or_phase_result_hash": _auditor_text(
+            custody.get("blocker_id")
+            or custody.get("blocker_or_phase_result_hash")
+        ),
+        "fence": _auditor_text(
+            escalation.get("fence")
+            or custody.get("fence")
+            or audit_item.get("fence")
+        ),
+    }
+
+
+def _auditor_forbidden_source(f01: Mapping[str, str]) -> str:
+    """Return the forbidden authority source implied by a partial F01 tuple.
+
+    Mirrors :func:`progress_auditor_escalation._forbidden_source_for_partial`.
+    When the exact F01 tuple cannot be satisfied, the residual identity must
+    derive from one of the four forbidden authority surfaces.  The mapping is
+    deterministic so callers record *why* authority was refused rather than
+    silently falling back to a non-occurrence identity.
+    """
+
+    fence = bool(_auditor_text(f01.get("fence")))
+    blocker = bool(_auditor_text(f01.get("blocker_or_phase_result_hash")))
+    kind = bool(_auditor_text(f01.get("normalized_failure_kind")))
+    if not fence and blocker:
+        return "wbc_receipt"
+    if not fence and kind:
+        return "liveness"
+    if not fence:
+        return "label"
+    return "rebuildable_projection"
+
+
+def enqueue_audit_repair_request(
+    audit_item: dict[str, Any],
+    *,
+    queue_root: Path | str,
+) -> dict[str, Any] | None:
+    """Route an unhealthy audit finding through the central repair authority.
+
+    This is deliberately the auditor's only operational handoff.  It creates
+    no claims, edits no source or run state, and performs no commit or push.
+    """
+    incident_audit = (
+        audit_item.get("incident_audit")
+        if isinstance(audit_item.get("incident_audit"), dict)
+        else {}
+    )
+    deterministic = (
+        audit_item.get("deterministic_superfixer_evidence")
+        if isinstance(audit_item.get("deterministic_superfixer_evidence"), dict)
+        else {}
+    )
+    escalation_gate = (
+        audit_item.get("l3_escalation_gate")
+        if isinstance(audit_item.get("l3_escalation_gate"), dict)
+        else {}
+    )
+    deterministic_actionable = (
+        deterministic.get("actionable") is True
+        and escalation_gate.get("eligible") is True
+        and escalation_gate.get("decision") == "true_stall"
+    )
+    # Ordinary reconciler/report findings are not repair authority.  The
+    # separately authorized controller is the only caller that supplies this
+    # coherent true-stall receipt.
+    if not deterministic_actionable:
+        return None
+    primary = {
+        "code": "stale_l1_l2_cycle",
+        "layer": "superfixer_custody",
+        "recommendation": "deep_superfixer_repair",
+        "message": (
+            "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
+            "chain, and absent or stale L2 evidence require control-plane repair."
+        ),
+    }
+    session = str(audit_item.get("session") or "").strip()
+    if not session:
+        raise ValueError("six-hour audit repair request requires a session")
+    workspace = str(audit_item.get("workspace") or "").strip()
+    plan = str(audit_item.get("plan") or "").strip()
+    code = str(primary.get("code") or "six_hour_audit_finding").strip()
+    layer = str(primary.get("layer") or "six_hour_auditor").strip()
+    recommendation = str(primary.get("recommendation") or "").strip()
+    incident_id = str(incident_audit.get("incident_id") or "").strip()
+    problem_id = str(incident_audit.get("problem_id") or "").strip()
+    accepted_request_ids = sorted(
+        {
+            str(value).strip()
+            for value in deterministic.get("accepted_unclaimed_request_ids") or []
+            if str(value).strip()
+        }
+    )
+    escalation_id = str(escalation_gate.get("escalation_id") or "").strip()
+    if not escalation_id:
+        raise ValueError("six-hour audit repair request requires an escalation identity")
+    root_cause_identity = escalation_id
+    retry_ordinal = max(1, int(audit_item.get("l3_retry_ordinal") or 1))
+    retry_identity = f"{root_cause_identity}:attempt:{retry_ordinal}"
+    legacy_root_cause_identity = "audit:" + sha256(
+        json.dumps(
+            {
+                "session": session,
+                "plan": plan,
+                "incident_id": incident_id,
+                "problem_id": problem_id,
+                "layer": layer,
+                "code": code,
+                "accepted_request_ids": accepted_request_ids,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    evidence_cursor = {
+        "incident_id": incident_id,
+        "problem_id": problem_id,
+        "accepted_request_ids": accepted_request_ids,
+        "layer": layer,
+        "code": code,
+        "audit_escalation_id": escalation_id,
+        "finding_evidence_digest": escalation_gate.get("evidence_digest"),
+        "legacy_root_cause_identity": legacy_root_cause_identity,
+    }
+    retry_budget = (
+        dict(deterministic.get("retry_budget") or {})
+        if isinstance(deterministic.get("retry_budget"), dict)
+        else {}
+    )
+    signature = {
+        "failure_kind": code,
+        "current_state": str(
+            audit_item.get("current_state")
+            or (audit_item.get("incident_projection") or {}).get("state")
+            or deterministic.get("canonical_state")
+            or "machine_action_required"
+        ).strip(),
+        "phase_or_step": layer,
+        "milestone_or_plan": plan,
+        "gate_recommendation": "",
+        "blocked_task_id": retry_identity,
+        "event_signature": f"six_hour_auditor:{layer}:{code}:attempt:{retry_ordinal}",
+    }
+    diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
+    # The auditor is a reconciliation backstop, not an authority producer.
+    # Reuse only the complete identity previously persisted by the lifecycle
+    # owner; report labels and F01 projections remain diagnostic/read-only.
+    custody_summary = _auditor_mapping(audit_item.get("repair_custody_summary"))
+    occurrence_identity = normalize_repair_identity(
+        _auditor_mapping(audit_item.get("repair_identity"))
+        or _auditor_mapping(escalation_gate.get("repair_identity"))
+        or _auditor_mapping(custody_summary.get("repair_identity"))
+    )
+    # The auditor remains read-only: it may carry forward an explicit
+    # operator/Sol Horizon-A charge, but it cannot mint one from a label,
+    # liveness signal, WBC projection, or deterministic finding.  The typed
+    # bridge binds that charge to this exact occurrence before queueing.
+    operator_charge = (
+        _auditor_mapping(audit_item.get("operator_charge"))
+        or _auditor_mapping(audit_item.get("engine_runtime_repair_admission"))
+        or _auditor_mapping(escalation_gate.get("operator_charge"))
+        or _auditor_mapping(escalation_gate.get("engine_runtime_repair_admission"))
+    )
+    engine_runtime_admission = (
+        materialize_engine_runtime_repair_admission(
+            occurrence_fingerprint=repair_identity_key(occurrence_identity),
+            operator_charge=operator_charge,
+        )
+        if occurrence_identity is not None and operator_charge
+        else None
+    )
+    evidence_cursor_digest = "sha256:" + sha256(
+        json.dumps(
+            evidence_cursor,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return enqueue_occurrence_bound_repair_request(
+        queue_root=queue_root,
+        session=session,
+        problem_signature=signature,
+        root_cause_hint={
+            "summary": diagnosis.get("summary") or primary.get("message") or code,
+            "recommendation": recommendation,
+            "incident_id": incident_audit.get("incident_id"),
+        },
+        source="six_hour_auditor",
+        target={
+            "plan": plan,
+            "plan_name": plan,
+            "incident_id": incident_id,
+            "problem_id": problem_id,
+            "workspace": workspace,
+            "root_cause_identity": root_cause_identity,
+            "retry_ordinal": retry_ordinal,
+            "retry_of_run_id": str(audit_item.get("l3_retry_of_run_id") or ""),
+            "evidence_cursor": evidence_cursor,
+            "retry_budget": retry_budget,
+            "retry_strategy": "deep_superfixer_repair",
+            "dispatch_intent": "deep_superfixer_repair",
+            "deterministic_superfixer_evidence": deterministic,
+            "l3_escalation_gate": escalation_gate,
+            "repair_context_path": str(audit_item.get("l3_repair_context_path") or ""),
+            "repair_context_digest": str(audit_item.get("l3_repair_context_digest") or ""),
+            "route": escalation_gate.get("route") or {},
+            "occurrence_identity": occurrence_identity,
+            "engine_runtime_repair_admission": engine_runtime_admission or {},
+        },
+        workspace=workspace,
+        run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
+        occurrence_identity=occurrence_identity,
+    )
+
+
 def build_audit_input(
     id_or_session: str,
     *,
     root: Path | str | None = None,
     now: str | None = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Resolve the same bounded brief used by the CLI plus backing projections."""
     workspace_root = Path.cwd() if root is None else Path(root)
-    projections = rebuild_projections(workspace_root)
-    brief = build_brief(id_or_session, root=workspace_root, now=now)
+    projections = rebuild_projections(workspace_root, persist=persist)
+    brief = build_brief(
+        id_or_session,
+        root=workspace_root,
+        now=now,
+        persist=persist,
+    )
     incident = _resolve_incident(
         projections["incidents"].get("incidents", []),
         brief.get("incident_id"),
@@ -133,11 +502,16 @@ def audit_projection_input(
         _repair_layer_finding("immediate_repair", brief, incident, snapshot, effective_now, cfg),
         _repair_layer_finding("meta_repair", brief, incident, snapshot, effective_now, cfg),
         _install_sync_finding(brief, incident),
-        _github_sync_finding(problem, snapshot, effective_now),
+        _github_sync_finding(problem, incident, snapshot, effective_now),
         _live_process_finding(brief, incident, snapshot, effective_now),
         _stale_claim_finding(brief),
         _missing_evidence_finding(brief, incident, snapshot),
         _recurrence_finding(incident, problem),
+        *_semantic_custody_findings(
+            snapshot,
+            now=effective_now,
+            config=cfg,
+        ),
     ]
     recursion_finding = _auditor_recursion_finding(
         brief=brief,
@@ -148,6 +522,9 @@ def audit_projection_input(
     )
     if recursion_finding is not None:
         findings.append(recursion_finding)
+
+    # ── M9: deduplicate findings by evidence ID for once-only reason emission ──
+    findings = _deduplicate_findings(findings)
 
     unhealthy = [finding for finding in findings if finding["status"] != "ok"]
     primary = _primary_finding(unhealthy)
@@ -160,6 +537,14 @@ def audit_projection_input(
         outcome = "escalated" if unhealthy else "audit_cycle_complete"
         if not unhealthy and str(brief.get("outcome") or "") == "recovered":
             outcome = "audit_cycle_complete"
+
+    # ── M9: build source-cursor vector from normalized auditor inputs ──
+    source_cursor = _build_auditor_source_cursor(
+        brief=brief,
+        incident=incident,
+        problem=problem,
+        resolver_state=normalized_input["resolver_state"],
+    )
 
     return {
         "incident_id": brief.get("incident_id") or incident.get("incident_id"),
@@ -176,6 +561,20 @@ def audit_projection_input(
             "next_expected_event": next_expected_event,
         },
         "next_expected_event": next_expected_event,
+        # ── M9: source-cursor projection metadata (non-authoritative) ──
+        "_non_authoritative": True,
+        "source_cursor": {
+            "vector_id": source_cursor.vector_id,
+            "_non_authoritative": True,
+            "cursors": [
+                {
+                    "dimension": c.dimension,
+                    "state": c.state,
+                    "evidence_id": c.evidence_id,
+                }
+                for c in source_cursor.cursors
+            ],
+        },
     }
 
 
@@ -524,6 +923,140 @@ def _normalize_projection_input(projection_input: Any) -> dict[str, Any]:
     }
 
 
+def _build_auditor_source_cursor(
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    problem: dict[str, Any],
+    resolver_state: dict[str, Any],
+    *,
+    observed_at_epoch_ms: int | None = None,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from the auditor's normalized inputs.
+
+    The auditor is a reconciliation backstop (L3), not a primary scheduler.
+    It normalizes inputs through the shared projection/reason contract and
+    surfaces typed indeterminate states without claiming authority.
+    """
+    import time as _time
+
+    now_ms = observed_at_epoch_ms or int(_time.time() * 1000)
+    observed_at = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat()
+
+    def _dim(dim: SourceCursorDimension, state: SourceCursorState) -> DimensionCursor:
+        version = sha256(
+            json.dumps(
+                {
+                    "brief_id": brief.get("incident_id") or "",
+                    "incident_state": incident.get("state") or "",
+                    "problem_id": problem.get("problem_id") or "",
+                    "resolver_state": resolver_state.get("canonical_state") or "",
+                    "dimension": dim,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        evidence_id = f"audit:sha256:{sha256(json.dumps({'dim': dim, 'state': state, 'version': version, 'observed_at': observed_at}, sort_keys=True).encode()).hexdigest()[:16]}"
+        return DimensionCursor(
+            dimension=dim,
+            state=state,
+            version=version,
+            evidence_id=evidence_id,
+            observed_at=observed_at,
+        )
+
+    # Lifecycle: derived from brief/incident state coherence
+    lifecycle_state: SourceCursorState = "fresh"
+    if brief.get("outcome") in ("recovered", "completed", "audit_cycle_complete"):
+        lifecycle_state = "stale"  # terminal incidents are stale for auditor purposes
+    if not brief.get("incident_id"):
+        lifecycle_state = "unknown"
+
+    # WBC: unknown — auditor does not have direct WBC access
+    wbc_state: SourceCursorState = "unknown"
+
+    # Custody: derived from resolver state
+    custody_state: SourceCursorState = "unknown"
+    if resolver_state.get("canonical_state"):
+        custody_state = "fresh"
+
+    # Run authority: unknown — auditor is observer only
+    run_authority_state: SourceCursorState = "unknown"
+
+    # Work ledger: derived from brief outcome history
+    work_ledger_state: SourceCursorState = "unknown"
+    if brief.get("outcome"):
+        work_ledger_state = "fresh"
+
+    # Process correlation: derived from incident state
+    process_correlation_state: SourceCursorState = "unknown"
+    if incident.get("state") in ("running", "repairing", "blocked"):
+        process_correlation_state = "fresh"
+
+    return SourceCursorVector(
+        cursors=(
+            _dim("lifecycle", lifecycle_state),
+            _dim("wbc", wbc_state),
+            _dim("custody", custody_state),
+            _dim("run_authority", run_authority_state),
+            _dim("work_ledger", work_ledger_state),
+            _dim("process_correlation", process_correlation_state),
+        ),
+    )
+
+
+def _evidence_id_for_finding(
+    code: str,
+    layer: str,
+    message: str,
+    **details: Any,
+) -> str:
+    """Generate a content-addressed evidence ID for an auditor finding.
+
+    Evidence IDs are deterministic and deduplicate exact-reason emissions,
+    ensuring that the same finding class with the same evidence produces
+    the same ID — once-only emission per exact evidence.
+    """
+    payload = json.dumps(
+        {"code": code, "layer": layer, "message": message, **details},
+        sort_keys=True,
+        default=str,
+    )
+    return f"finding:sha256:{sha256(payload.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _deduplicate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate findings by evidence_id, preserving layer-order precedence.
+
+    When two findings share the same evidence_id, the one with the earlier
+    layer (per ``_LAYER_ORDER``) is kept.  This ensures once-only emission
+    of exact-evidence reasons while respecting auditor layer semantics.
+    """
+    seen: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        eid = finding.get("evidence_id", "")
+        if not eid:
+            seen.setdefault("__no_id__", finding)
+            continue
+        if eid in seen:
+            existing_layer = seen[eid].get("layer", "")
+            new_layer = finding.get("layer", "")
+            if _LAYER_ORDER.index(new_layer) < _LAYER_ORDER.index(existing_layer) if new_layer in _LAYER_ORDER and existing_layer in _LAYER_ORDER else False:
+                seen[eid] = finding
+        else:
+            seen[eid] = finding
+    # Preserve original order
+    result = []
+    for finding in findings:
+        eid = finding.get("evidence_id", "")
+        if eid and eid in seen and seen[eid] is finding:
+            result.append(finding)
+            del seen[eid]
+        elif not eid and "__no_id__" in seen:
+            result.append(finding)
+            seen.pop("__no_id__", None)
+    return result
+
+
 def _coerce_resolver_state(value: Any) -> dict[str, Any]:
     return _coerce_mapping(value)
 
@@ -754,6 +1287,7 @@ def _expected_root_cause_kinds_for_canonical_state(canonical_state: str) -> set[
             "verification",
         },
         "UNKNOWN": set(),
+        "PAUSED": {"operator_pause"},
         "COMPLETED": set(),
         "STALE_DERIVED_STATE": set(),
     }.get(canonical_state, set())
@@ -776,6 +1310,7 @@ def _next_action_matches_canonical_state(canonical_state: str, next_action: str)
     valid_actions = {
         "BROKEN_STATE_MACHINE": {"escalate_broken_state_machine"},
         "COMPLETED": {"audit_cycle_complete", "no_action_run_complete"},
+        "PAUSED": {"explicit_operator_resume"},
         "HUMAN_ACTION_REQUIRED": {"await_human_action", "manual_review"},
         "REAL_IMPLEMENTATION_BLOCK": {"machine_repair_or_replan"},
         "RETRYABLE_EXECUTION_BLOCK": {"requeue_or_retry"},
@@ -894,6 +1429,7 @@ def _install_sync_finding(
 
 def _github_sync_finding(
     problem: dict[str, Any],
+    incident: dict[str, Any],
     snapshot: dict[str, Any],
     now: str | None,
 ) -> dict[str, Any]:
@@ -911,7 +1447,7 @@ def _github_sync_finding(
         and int(problem.get("occurrence_count") or 0) >= 2
     ) or bool(problem.get("recurred_after_fix"))
     github_sync = snapshot.get("github_sync") if isinstance(snapshot.get("github_sync"), dict) else {}
-    last_attempt = github_sync.get("last_attempt_at")
+    last_attempt = _github_sync_last_attempt(incident, github_sync)
     if publish_due and not last_attempt:
         return _finding(
             "github_sync_publish_due",
@@ -929,6 +1465,33 @@ def _github_sync_finding(
         message="GitHub sync is not currently the blocking layer.",
         recommendation="github_sync.publish" if publish_due else None,
     )
+
+
+def _github_sync_last_attempt(incident: dict[str, Any], github_sync: dict[str, Any]) -> str | None:
+    last_attempt = _normalized_text(github_sync.get("last_attempt_at"))
+    if last_attempt:
+        return last_attempt
+
+    if _normalized_text(incident.get("latest_actor")) == "github_sync":
+        incident_last_timestamp = _normalized_text(incident.get("last_timestamp"))
+        if incident_last_timestamp:
+            return incident_last_timestamp
+
+    events = incident.get("events")
+    if not isinstance(events, list):
+        return None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        actor = _normalized_text(event.get("actor"))
+        kind = _normalized_text(event.get("kind"))
+        if actor != "github_sync" and not kind.startswith("incident.github_sync."):
+            continue
+        for key in ("timestamp", "recorded_at", "created_at", "timestamp_utc"):
+            value = _normalized_text(event.get(key))
+            if value:
+                return value
+    return None
 
 
 def _live_process_finding(
@@ -1054,6 +1617,212 @@ def _recurrence_finding(
     )
 
 
+
+# ── S4 semantic/custody auditor reason codes ───────────────────────────
+# These consume pre-computed semantic-health and custody facts from the
+# status snapshot; they never recompute findings or custody independently.
+
+_SEMANTIC_CUSTODY_LAYER = "semantic_custody"
+_AUDITOR_CUSTODY_DISAGREEMENT_CODE = "custody_disagreement"
+_AUDITOR_UNRESOLVED_SEMANTIC_CODE = "unresolved_semantic_findings"
+_AUDITOR_STALE_ACTIVE_STEP_CODE = "stale_active_step_worker"
+_AUDITOR_UNMANAGED_PROCESS_CODE = "unmanaged_live_process"
+_AUDITOR_REPAIR_SUCCESS_NO_CUSTODY_CODE = "repair_success_without_custody"
+
+_CUSTODY_MANAGED_STATES: frozenset[str] = frozenset({"managed-running", "complete"})
+_CUSTODY_UNMANAGED_STATES: frozenset[str] = frozenset(
+    {"unmanaged-running-with-warning", "blocked-relaunch-failure"}
+)
+_REPAIR_SUCCESS_STATES: frozenset[str] = frozenset({"recovered", "completed", "fixed", "verified_recovered"})
+
+
+def _semantic_custody_findings(
+    snapshot: dict[str, Any],
+    *,
+    now: str | None,
+    config: AuditorConfig,
+) -> list[dict[str, Any]]:
+    """Gather all semantic/custody findings, consuming snapshot facts only."""
+    findings: list[dict[str, Any]] = []
+
+    unresolved = _unresolved_semantic_finding(snapshot)
+    if unresolved is not None:
+        findings.append(unresolved)
+
+    stale_worker = _stale_active_step_worker_finding(snapshot, now=now, config=config)
+    if stale_worker is not None:
+        findings.append(stale_worker)
+
+    unmanaged = _unmanaged_live_process_finding(snapshot)
+    if unmanaged is not None:
+        findings.append(unmanaged)
+
+    repair_no_custody = _repair_success_without_custody_finding(snapshot)
+    if repair_no_custody is not None:
+        findings.append(repair_no_custody)
+
+    disagreement = _custody_disagreement_finding(snapshot)
+    if disagreement is not None:
+        findings.append(disagreement)
+
+    # Emit a healthy ok when all sub-checks pass.
+    if not findings:
+        findings.append(
+            _finding(
+                "semantic_custody_clear",
+                layer=_SEMANTIC_CUSTODY_LAYER,
+                status="ok",
+                severity="ok",
+                message="Semantic-health and custody facts are consistent and clear.",
+                recommendation=None,
+            )
+        )
+
+    return findings
+
+
+def _unresolved_semantic_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect unresolved semantic findings from the status snapshot.
+
+    Consumes the pre-computed ``semantic_health`` summary (produced by
+    :func:`cloud_counts_summary`) -- never recomputes findings independently.
+    """
+    semantic_health = snapshot.get("semantic_health")
+    if not isinstance(semantic_health, dict):
+        return None
+    total_count = semantic_health.get("total_count", 0)
+    if not isinstance(total_count, int) or total_count <= 0:
+        return None
+    return _finding(
+        _AUDITOR_UNRESOLVED_SEMANTIC_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="error",
+        severity="error",
+        message=f"Status snapshot reports {total_count} unresolved semantic finding(s).",
+        recommendation="immediate_repair.repair_attempt",
+        total_count=total_count,
+        fingerprint=semantic_health.get("fingerprint"),
+        counts_by_kind=semantic_health.get("counts_by_kind"),
+        counts_by_boundary=semantic_health.get("counts_by_boundary"),
+    )
+
+
+def _stale_active_step_worker_finding(
+    snapshot: dict[str, Any],
+    *,
+    now: str | None,
+    config: AuditorConfig,
+) -> dict[str, Any] | None:
+    """Detect a stale active-step worker from the status snapshot.
+
+    Uses the same staleness threshold as the watchdog
+    (:attr:`AuditorConfig.watchdog_stale_after`).
+    """
+    activity_phase = snapshot.get("activity_phase")
+    if not isinstance(activity_phase, str) or not activity_phase:
+        return None
+    last_activity = snapshot.get("last_activity")
+    if not _is_stale(last_activity, now, config.watchdog_stale_after):
+        return None
+    return _finding(
+        _AUDITOR_STALE_ACTIVE_STEP_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=(
+            f"Active-step worker is in phase '{activity_phase}' but its last "
+            "activity is older than the audit cadence."
+        ),
+        recommendation="watchdog.dispatch",
+        activity_phase=activity_phase,
+        last_activity=last_activity,
+    )
+
+
+def _unmanaged_live_process_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect an unmanaged live process from custody state in the snapshot."""
+    custody_state = snapshot.get("custody_state")
+    if not isinstance(custody_state, str) or not custody_state:
+        return None
+    if custody_state not in _CUSTODY_UNMANAGED_STATES:
+        return None
+    return _finding(
+        _AUDITOR_UNMANAGED_PROCESS_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=f"Session custody is '{custody_state}' -- the process is live but not under managed supervision.",
+        recommendation="watchdog.dispatch",
+        custody_state=custody_state,
+    )
+
+
+def _repair_success_without_custody_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect repair-success claims without corroborating managed custody."""
+    repair_state = snapshot.get("repair_state")
+    custody_state = snapshot.get("custody_state")
+    if not isinstance(repair_state, str) or not repair_state:
+        return None
+    if repair_state not in _REPAIR_SUCCESS_STATES:
+        return None
+    if isinstance(custody_state, str) and custody_state in _CUSTODY_MANAGED_STATES:
+        return None
+    return _finding(
+        _AUDITOR_REPAIR_SUCCESS_NO_CUSTODY_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=(
+            f"Repair state '{repair_state}' indicates success but custody "
+            f"is '{custody_state or 'unknown'}' -- not under managed supervision."
+        ),
+        recommendation="watchdog.dispatch",
+        repair_state=repair_state,
+        custody_state=custody_state or "",
+    )
+
+
+def _custody_disagreement_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect watchdog/status custody disagreement from snapshot facts.
+
+    Compares the watchdog's recorded custody kind against the status
+    snapshot's custody_state.  Both must be present and disagree for
+    a finding to be emitted.
+    """
+    status_custody = snapshot.get("custody_state")
+    watchdog = snapshot.get("watchdog")
+    if not isinstance(watchdog, dict):
+        return None
+    watchdog_custody = watchdog.get("custody_state")
+    if not isinstance(status_custody, str) or not status_custody:
+        return None
+    if not isinstance(watchdog_custody, str) or not watchdog_custody:
+        return None
+    if status_custody == watchdog_custody:
+        return None
+    return _finding(
+        _AUDITOR_CUSTODY_DISAGREEMENT_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="error",
+        severity="error",
+        message=(
+            f"Watchdog custody '{watchdog_custody}' disagrees with "
+            f"status snapshot custody '{status_custody}'."
+        ),
+        recommendation="auditor_escalate_to_human",
+        watchdog_custody=watchdog_custody,
+        status_custody=status_custody,
+    )
+
+
 def _auditor_recursion_finding(
     *,
     brief: dict[str, Any],
@@ -1152,6 +1921,28 @@ def _next_expected_event(
     return candidate if isinstance(candidate, str) and candidate else None
 
 
+def github_sync_publication_due(incident_audit: dict[str, Any]) -> bool:
+    """Return whether an audit requires GitHub publication as an independent action."""
+    audit_complete = (
+        incident_audit.get("audit_complete")
+        if isinstance(incident_audit.get("audit_complete"), dict)
+        else {}
+    )
+    raw_handoff = audit_complete.get("next_expected_event") or incident_audit.get(
+        "next_expected_event"
+    )
+    if raw_handoff == "github_sync.publish":
+        return True
+    findings = incident_audit.get("findings")
+    if not isinstance(findings, list):
+        return False
+    return any(
+        isinstance(finding, dict)
+        and finding.get("recommendation") == "github_sync.publish"
+        for finding in findings
+    )
+
+
 def _requires_human_escalation(findings: list[dict[str, Any]]) -> bool:
     return any(finding.get("recommendation") == "auditor_escalate_to_human" for finding in findings)
 
@@ -1165,16 +1956,17 @@ def _primary_finding(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
         "reconciler": 1,
         "resolver_confidence": 2,
         "resolver_semantics": 3,
-        "watchdog": 4,
-        "stale_claim": 5,
-        "missing_evidence": 6,
-        "meta_repair": 7,
-        "immediate_repair": 8,
-        "install_sync": 9,
-        "github_sync": 10,
-        "recurrence": 11,
-        "project_progress": 12,
-        "live_process": 13,
+        "semantic_custody": 4,
+        "watchdog": 5,
+        "stale_claim": 6,
+        "missing_evidence": 7,
+        "meta_repair": 8,
+        "immediate_repair": 9,
+        "install_sync": 10,
+        "github_sync": 11,
+        "recurrence": 12,
+        "project_progress": 13,
+        "live_process": 14,
     }
     return sorted(
         findings,
@@ -1342,21 +2134,832 @@ def _finding(
     recommendation: str | None,
     **details: Any,
 ) -> dict[str, Any]:
-    finding = {
+    # ── M9: content-addressed evidence ID for once-only reason emission ──
+    evidence_id = _evidence_id_for_finding(
+        code=code, layer=layer, message=message, **details
+    )
+    finding: dict[str, Any] = {
         "code": code,
         "layer": layer,
         "status": status,
         "severity": severity,
         "message": message,
         "recommendation": recommendation,
+        "_non_authoritative": True,
+        "evidence_id": evidence_id,
     }
     finding.update(details)
     return finding
 
 
+# ── Auditor completion evidence ───────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SixHourAuditorCompletionEvidence:
+    """Structured 6h auditor completion evidence.
+
+    Captures the audited window, findings, next expected event,
+    repair dispatch refs, escalation verdicts, and structured
+    findings for missing repair verdicts or stale repair-data
+    in auditor inputs.
+
+    Downstream custody/status consumers use this evidence to decide
+    whether the 6h audit cycle produced a trustworthy completion.
+    """
+
+    contract_id: str = _AUDITOR_6H_COMPLETION_ROW_ID
+    boundary_id: str = _AUDITOR_6H_COMPLETION_BOUNDARY_ID
+    audited_window_hours: float = 6.0
+    audit_timestamp: str = ""
+    finding_count: int = 0
+    highest_severity: str = "ok"
+    next_expected_event: str = ""
+    outcome: str = ""
+    repair_dispatch_count: int = 0
+    repair_dispatch_refs: tuple[str, ...] = ()
+    escalation_verdict_count: int = 0
+    escalation_verdict_refs: tuple[str, ...] = ()
+    drift_findings: tuple[dict[str, Any], ...] = ()
+    missing_repair_verdict_findings: tuple[dict[str, Any], ...] = ()
+    stale_repair_data_findings: tuple[dict[str, Any], ...] = ()
+    evidence_timestamp: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_id": self.contract_id,
+            "boundary_id": self.boundary_id,
+            "audited_window_hours": self.audited_window_hours,
+            "audit_timestamp": self.audit_timestamp,
+            "finding_count": self.finding_count,
+            "highest_severity": self.highest_severity,
+            "next_expected_event": self.next_expected_event,
+            "outcome": self.outcome,
+            "repair_dispatch_count": self.repair_dispatch_count,
+            "repair_dispatch_refs": list(self.repair_dispatch_refs),
+            "escalation_verdict_count": self.escalation_verdict_count,
+            "escalation_verdict_refs": list(self.escalation_verdict_refs),
+            "drift_findings": [dict(finding) for finding in self.drift_findings],
+            "missing_repair_verdict_findings": [
+                dict(finding) for finding in self.missing_repair_verdict_findings
+            ],
+            "stale_repair_data_findings": [
+                dict(finding) for finding in self.stale_repair_data_findings
+            ],
+            "evidence_timestamp": self.evidence_timestamp,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> "SixHourAuditorCompletionEvidence":
+        return cls(
+            contract_id=_auditor_evidence_text(
+                payload.get("contract_id")
+            )
+            or _AUDITOR_6H_COMPLETION_ROW_ID,
+            boundary_id=_auditor_evidence_text(
+                payload.get("boundary_id")
+            )
+            or _AUDITOR_6H_COMPLETION_BOUNDARY_ID,
+            audited_window_hours=float(payload.get("audited_window_hours", 6.0)),
+            audit_timestamp=_auditor_evidence_text(payload.get("audit_timestamp")),
+            finding_count=int(payload.get("finding_count", 0)),
+            highest_severity=_auditor_evidence_text(payload.get("highest_severity"))
+            or "ok",
+            next_expected_event=_auditor_evidence_text(
+                payload.get("next_expected_event")
+            ),
+            outcome=_auditor_evidence_text(payload.get("outcome")),
+            repair_dispatch_count=int(payload.get("repair_dispatch_count", 0)),
+            repair_dispatch_refs=tuple(
+                _auditor_evidence_text(item)
+                for item in _auditor_evidence_list(payload.get("repair_dispatch_refs"))
+                if _auditor_evidence_text(item)
+            ),
+            escalation_verdict_count=int(
+                payload.get("escalation_verdict_count", 0)
+            ),
+            escalation_verdict_refs=tuple(
+                _auditor_evidence_text(item)
+                for item in _auditor_evidence_list(
+                    payload.get("escalation_verdict_refs")
+                )
+                if _auditor_evidence_text(item)
+            ),
+            drift_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(payload.get("drift_findings"))
+                if isinstance(item, dict)
+            ),
+            missing_repair_verdict_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(
+                    payload.get("missing_repair_verdict_findings")
+                )
+                if isinstance(item, dict)
+            ),
+            stale_repair_data_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(
+                    payload.get("stale_repair_data_findings")
+                )
+                if isinstance(item, dict)
+            ),
+            evidence_timestamp=_auditor_evidence_text(
+                payload.get("evidence_timestamp")
+            ),
+        )
+
+
+def _auditor_evidence_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _auditor_evidence_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _auditor_evidence_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _auditor_utc_now_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _primary_severity(findings: list[dict[str, Any]]) -> str:
+    rank = {"error": 0, "warn": 1, "ok": 2}
+    best = "ok"
+    best_rank = 99
+    for finding in findings:
+        severity = _auditor_evidence_text(finding.get("severity")) or "ok"
+        r = rank.get(severity, 99)
+        if r < best_rank:
+            best_rank = r
+            best = severity
+    return best
+
+
+def _extract_missing_repair_verdict_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract structured findings for missing repair verdicts in auditor inputs.
+
+    A missing repair verdict means the auditor's input layer (immediate_repair
+    or meta_repair) produced a non-ok finding whose code indicates missing
+    evidence — the repair system did not produce a verdict the auditor can trust.
+    """
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        layer = _auditor_evidence_text(finding.get("layer"))
+        status = _auditor_evidence_text(finding.get("status"))
+        code = _auditor_evidence_text(finding.get("code"))
+        if status == "ok":
+            continue
+        if layer not in ("immediate_repair", "meta_repair"):
+            continue
+        if "missing" not in code and layer not in (
+            "immediate_repair",
+            "meta_repair",
+        ):
+            continue
+        # Only treat as missing-verdict when the finding explicitly
+        # indicates missing evidence or missing activity.
+        if "missing" in code or "absent" in code:
+            extracted.append(
+                {
+                    "layer": layer,
+                    "code": code,
+                    "status": status,
+                    "severity": _auditor_evidence_text(finding.get("severity")),
+                    "message": _auditor_evidence_text(finding.get("message")),
+                    "recommendation": _auditor_evidence_text(
+                        finding.get("recommendation")
+                    ),
+                    "finding_kind": "missing_repair_verdict",
+                }
+            )
+    return extracted
+
+
+def _extract_drift_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        if _auditor_evidence_text(finding.get("code")) != "DRIFT_DETECTED":
+            continue
+        extracted.append(
+            {
+                "layer": _auditor_evidence_text(finding.get("layer")),
+                "code": "DRIFT_DETECTED",
+                "source_pair": _auditor_evidence_text(finding.get("source_pair")),
+                "contradiction": _auditor_evidence_text(finding.get("contradiction")),
+                "recommendation": _auditor_evidence_text(finding.get("recommendation")),
+                "observed": _auditor_evidence_mapping(finding.get("observed")),
+                "expected": _auditor_evidence_mapping(finding.get("expected")),
+            }
+        )
+    return extracted
+
+
+def _extract_stale_repair_data_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract structured findings for stale repair-data in auditor inputs.
+
+    Stale repair-data means the repair layer produced a finding indicating
+    the repair process itself has been running too long or its data is
+    older than the configured threshold.
+    """
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        layer = _auditor_evidence_text(finding.get("layer"))
+        status = _auditor_evidence_text(finding.get("status"))
+        code = _auditor_evidence_text(finding.get("code"))
+        if status == "ok":
+            continue
+        if layer not in ("immediate_repair", "meta_repair"):
+            continue
+        if "stale" in code or "running_stale" in code:
+            extracted.append(
+                {
+                    "layer": layer,
+                    "code": code,
+                    "status": status,
+                    "severity": _auditor_evidence_text(finding.get("severity")),
+                    "message": _auditor_evidence_text(finding.get("message")),
+                    "recommendation": _auditor_evidence_text(
+                        finding.get("recommendation")
+                    ),
+                    "finding_kind": "stale_repair_data",
+                    "observed_at": _auditor_evidence_text(finding.get("observed_at")),
+                }
+            )
+    return extracted
+
+
+def build_auditor_completion_evidence(
+    *,
+    audit_findings: list[dict[str, Any]] | None = None,
+    audit_outcome: str = "",
+    next_expected_event: str = "",
+    audited_window_hours: float = 6.0,
+    repair_dispatch_refs: tuple[str, ...] = (),
+    timestamp: str | None = None,
+) -> SixHourAuditorCompletionEvidence:
+    """Build structured 6h auditor completion evidence from audit output.
+
+    Parameters
+    ----------
+    audit_findings:
+        The per-incident/per-plan audit findings produced by
+        :func:`audit_projection_input` or equivalent.
+    audit_outcome:
+        The canonical audit outcome (``audit_cycle_complete``,
+        ``escalated``, ``auditor_human_escalation``).
+    next_expected_event:
+        The next expected event after audit completion.
+    audited_window_hours:
+        Size of the audit window in hours.
+    repair_dispatch_refs:
+        Paths/refs to repair requests dispatched by the auditor.
+    timestamp:
+        ISO-8601 evidence timestamp (defaults to now).
+    """
+    findings = list(audit_findings) if audit_findings is not None else []
+    evidence_ts = timestamp or _auditor_utc_now_iso()
+
+    # Repair dispatch consumes a historical evidence window.  A zero,
+    # negative, NaN, or infinite window is only a probe; it cannot establish
+    # health and must not produce a successful empty audit.
+    valid_window = math.isfinite(audited_window_hours) and audited_window_hours > 0
+    if not valid_window:
+        return SixHourAuditorCompletionEvidence(
+            audited_window_hours=audited_window_hours,
+            audit_timestamp=evidence_ts,
+            finding_count=len(findings),
+            highest_severity="error",
+            next_expected_event="auditor.retry_with_valid_evidence_window",
+            outcome="invalid_evidence_window",
+            repair_dispatch_count=0,
+            repair_dispatch_refs=(),
+            evidence_timestamp=evidence_ts,
+        )
+
+    missing_repair_verdict = _extract_missing_repair_verdict_findings(findings)
+    drift_findings = _extract_drift_findings(findings)
+    stale_repair_data = _extract_stale_repair_data_findings(findings)
+
+    return SixHourAuditorCompletionEvidence(
+        audited_window_hours=audited_window_hours,
+        audit_timestamp=evidence_ts,
+        finding_count=len(findings),
+        highest_severity=_primary_severity(findings),
+        next_expected_event=next_expected_event or "",
+        outcome=audit_outcome or "",
+        repair_dispatch_count=len(repair_dispatch_refs),
+        repair_dispatch_refs=repair_dispatch_refs,
+        escalation_verdict_count=sum(
+            1
+            for finding in findings
+            if _auditor_evidence_text(finding.get("recommendation"))
+            == "auditor_escalate_to_human"
+        ),
+        escalation_verdict_refs=tuple(
+            f"{_auditor_evidence_text(finding.get('layer',''))}:"
+            f"{_auditor_evidence_text(finding.get('code',''))}"
+            for finding in findings
+            if _auditor_evidence_text(finding.get("recommendation"))
+            == "auditor_escalate_to_human"
+        ),
+        drift_findings=tuple(drift_findings),
+        missing_repair_verdict_findings=tuple(missing_repair_verdict),
+        stale_repair_data_findings=tuple(stale_repair_data),
+        evidence_timestamp=evidence_ts,
+    )
+
+
+def save_auditor_completion_evidence(
+    path: str | Path,
+    evidence: SixHourAuditorCompletionEvidence,
+    *,
+    redactor: Callable[[str], str] | None = None,
+    sidecar_dir: str | Path | None = None,
+    session: str = "",
+    plan: str = "",
+) -> dict[str, Any]:
+    """Validate, redact, and persist auditor completion evidence to *path*.
+
+    The evidence is written as a JSON artifact so downstream custody/status
+    consumers can read it without recomputing the audit mapping.
+    """
+    prepared = evidence.to_dict()
+    if redactor is not None:
+        prepared = _redact_auditor_evidence_payload(prepared, redactor)
+    _auditor_atomic_write_json(path, prepared)
+    if sidecar_dir is not None:
+        append_incident_record(
+            sidecar_dir,
+            {
+                "session": session,
+                "kind": "auditor_6h_completion",
+                "summary": evidence.outcome or "audit_cycle_complete",
+                "plan": plan,
+                "record_path": str(path),
+                "next_expected_event": evidence.next_expected_event,
+                "repair_dispatch_count": evidence.repair_dispatch_count,
+                "escalation_verdict_refs": list(evidence.escalation_verdict_refs),
+                "drift_findings": [dict(finding) for finding in evidence.drift_findings],
+                "recorded_at": evidence.evidence_timestamp,
+            },
+        )
+    return prepared
+
+
+def _redact_auditor_evidence_payload(
+    payload: dict[str, Any],
+    redactor: Callable[[str], str],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            result[key] = redactor(value)
+        elif isinstance(value, list):
+            result[key] = [
+                redactor(item) if isinstance(item, str) else item for item in value
+            ]
+        elif isinstance(value, dict):
+            result[key] = _redact_auditor_evidence_payload(value, redactor)
+        else:
+            result[key] = value
+    return result
+
+
+def _auditor_atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
+    """Write *payload* to *path* atomically (write-then-rename)."""
+    import tempfile
+
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        suffix=".json", prefix="auditor-evidence-", dir=str(dest.parent)
+    )
+    try:
+        with open(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        Path(tmp).rename(dest)
+    except Exception:
+        try:
+            Path(tmp).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 __all__ = [
     "AuditorConfig",
+    "SixHourAuditorCompletionEvidence",
     "audit_incident",
     "audit_projection_input",
     "build_audit_input",
+    "build_auditor_completion_evidence",
+    "save_auditor_completion_evidence",
+    # Step 15C additions
+    "AuditSeverity",
+    "AuditFinding",
+    "SixHourAuditReport",
+    "SixHourAuditor",
+    "SIX_HOURS_SECONDS",
+    # Step 47 (T33): next-three-hour reconciliation is the positive-proof
+    # cadence; ``six_hour`` names remain only as legacy compatibility aliases.
+    "THREE_HOURS_SECONDS",
+    "AUDITOR_RECONCILIATION_INTERVAL",
+    "LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY",
+    "LOGGER",
 ]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Step 15C: Six-hour reconciliation backstop (SixHourAuditor)
+# ──────────────────────────────────────────────────────────────────────────────
+
+LOGGER = logging.getLogger(__name__)
+
+
+class AuditSeverity(str, Enum):
+    """Severity of an audit finding."""
+
+    OK = "ok"
+    ANOMALY = "anomaly"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class AuditFinding:
+    """A single finding from the six-hour reconciliation backstop."""
+
+    finding_id: str
+    severity: AuditSeverity
+    category: str
+    detail: str
+    occurred_at: str
+    evidence: dict[str, Any] = field(default_factory=dict)
+    escalated: bool = False
+
+
+@dataclass(frozen=True)
+class SixHourAuditReport:
+    """Complete report from a six-hour reconciliation audit cycle."""
+
+    audit_id: str
+    started_at: str
+    completed_at: str
+    duration_seconds: float
+    findings: tuple[AuditFinding, ...]
+    events_checked: int
+    requests_checked: int
+    slo_violations: int
+    escalated_count: int
+
+    @property
+    def ok(self) -> bool:
+        return all(f.severity == AuditSeverity.OK for f in self.findings)
+
+    @property
+    def requires_attention(self) -> bool:
+        return any(
+            f.severity in (AuditSeverity.DEGRADED, AuditSeverity.FAILED)
+            for f in self.findings
+        )
+
+
+class SixHourAuditor:
+    """Step 15C: Six-hour reconciliation backstop for recovery.
+
+    Runs on a six-hour cadence.  Queries the recovery event store and
+    repair request ledger, then runs watchdog-wrapped checks against
+    durable state.  Does NOT perform primary mutations — it is a
+    detection-and-escalation backstop only.
+    """
+
+    def __init__(
+        self,
+        *,
+        event_store: RecoveryEventStore | None = None,
+        repair_request_provider: Callable[[], list[dict[str, Any]]] | None = None,
+        child_presence_check: Callable[[str], bool] | None = None,
+        evidence_validator: Callable[[dict[str, Any]], bool] | None = None,
+        escalation_sink: Callable[[AuditFinding], None] | None = None,
+        now_fn: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._event_store = event_store or RecoveryEventStore()
+        self._repair_request_provider = repair_request_provider or (lambda: [])
+        self._child_presence_check = child_presence_check or (lambda _: True)
+        self._evidence_validator = evidence_validator or (lambda _: True)
+        self._escalation_sink = escalation_sink
+        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+
+    def run_audit(self) -> SixHourAuditReport:
+        """Run a complete six-hour reconciliation audit cycle."""
+        audit_id = f"six-hour-{int(time.time() * 1_000_000)}"
+        started_at = self._now_fn().isoformat()
+        start_wall = time.monotonic()
+
+        findings: list[AuditFinding] = []
+        findings.extend(self._check_missed_events())
+        findings.extend(self._check_parser_loss_events())
+        findings.extend(self._check_classification_incompatibilities())
+        findings.extend(self._check_launcher_failures())
+        findings.extend(self._check_missing_children())
+        findings.extend(self._check_malformed_evidence())
+        findings.extend(self._check_fallback_mismatches())
+        findings.extend(self._check_slo_violations())
+        findings.extend(self._check_stale_repair_requests())
+
+        completed_at = self._now_fn().isoformat()
+        duration = time.monotonic() - start_wall
+
+        escalated = 0
+        for finding in findings:
+            if finding.severity in (AuditSeverity.DEGRADED, AuditSeverity.FAILED):
+                escalated_finding = AuditFinding(
+                    finding_id=finding.finding_id,
+                    severity=finding.severity,
+                    category=finding.category,
+                    detail=finding.detail,
+                    occurred_at=finding.occurred_at,
+                    evidence=finding.evidence,
+                    escalated=True,
+                )
+                if self._escalation_sink is not None:
+                    try:
+                        self._escalation_sink(escalated_finding)
+                    except Exception as exc:
+                        LOGGER.exception(
+                            "Escalation sink failed for finding %s: %s",
+                            finding.finding_id, exc,
+                        )
+                escalated += 1
+
+        events_checked = self._event_store.slo_denominator()
+        requests_checked = len(self._repair_request_provider())
+        slo_violations = len(self._event_store.slo_violations())
+
+        return SixHourAuditReport(
+            audit_id=audit_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_seconds=duration,
+            findings=tuple(findings),
+            events_checked=events_checked,
+            requests_checked=requests_checked,
+            slo_violations=slo_violations,
+            escalated_count=escalated,
+        )
+
+    def _check_missed_events(self) -> list[AuditFinding]:
+        """Detect missed events — blocker/process-exit events without requests."""
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        blocker_events = self._event_store.events_by_kind(
+            RecoveryEventKind.BLOCKER_DETECTED
+        )
+        process_exits = self._event_store.events_by_kind(
+            RecoveryEventKind.PROCESS_EXIT
+        )
+        for event in blocker_events:
+            if not event.request_id:
+                findings.append(AuditFinding(
+                    finding_id=f"missed-blocker-{event.event_id}",
+                    severity=AuditSeverity.DEGRADED,
+                    category="missed_event",
+                    detail=f"Blocker detected but no repair request enqueued: {event.event_id}",
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "kind": event.kind.value,
+                              "occurred_at": event.occurred_at, "metadata": event.metadata},
+                ))
+        for event in process_exits:
+            if not event.request_id:
+                findings.append(AuditFinding(
+                    finding_id=f"missed-exit-{event.event_id}",
+                    severity=AuditSeverity.DEGRADED,
+                    category="missed_event",
+                    detail=f"Process exit detected but no repair request enqueued: {event.event_id}",
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "kind": event.kind.value,
+                              "occurred_at": event.occurred_at, "metadata": event.metadata},
+                ))
+        return findings
+
+    def _check_parser_loss_events(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.events_by_kind(RecoveryEventKind.PARSER_LOSS):
+            findings.append(AuditFinding(
+                finding_id=f"parser-loss-{event.event_id}",
+                severity=AuditSeverity.FAILED,
+                category="parser_loss",
+                detail=f"Parser loss detected: {event.metadata.get('detail', 'no detail')}",
+                occurred_at=now,
+                evidence={"event_id": event.event_id, "occurred_at": event.occurred_at,
+                          "session": event.metadata.get("session", ""),
+                          "phase": event.metadata.get("phase_or_step", ""),
+                          "detail": event.metadata.get("detail", "")},
+            ))
+        return findings
+
+    def _check_classification_incompatibilities(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.events_by_kind(RecoveryEventKind.CLASSIFICATION_INCOMPATIBLE):
+            findings.append(AuditFinding(
+                finding_id=f"class-incompat-{event.event_id}",
+                severity=AuditSeverity.FAILED,
+                category="classification_incompatible",
+                detail=(f"Classification incompatible: expected "
+                        f"{event.metadata.get('expected_schema', '?')}, "
+                        f"observed {event.metadata.get('observed', '?')}"),
+                occurred_at=now,
+                evidence={"event_id": event.event_id, "occurred_at": event.occurred_at,
+                          "session": event.metadata.get("session", ""),
+                          "expected_schema": event.metadata.get("expected_schema", ""),
+                          "observed": event.metadata.get("observed", "")},
+            ))
+        return findings
+
+    def _check_launcher_failures(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.events_by_kind(RecoveryEventKind.LAUNCHER_FAILURE):
+            findings.append(AuditFinding(
+                finding_id=f"launcher-fail-{event.event_id}",
+                severity=AuditSeverity.FAILED,
+                category="launcher_failure",
+                detail=(f"Launcher failure: {event.metadata.get('launcher_name', 'unknown')} "
+                        f"exit_code={event.metadata.get('exit_code', '?')}"),
+                occurred_at=now,
+                evidence={"event_id": event.event_id, "occurred_at": event.occurred_at,
+                          "launcher_name": event.metadata.get("launcher_name", ""),
+                          "exit_code": event.metadata.get("exit_code"),
+                          "detail": event.metadata.get("detail", "")},
+            ))
+        return findings
+
+    def _check_missing_children(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.events_by_kind(RecoveryEventKind.MISSING_CHILD):
+            child_id = str(event.metadata.get("child_id", ""))
+            expected_path = str(event.metadata.get("expected_path", ""))
+            child_still_missing = True
+            if expected_path:
+                try:
+                    child_still_missing = not self._child_presence_check(expected_path)
+                except Exception:
+                    child_still_missing = True
+            if child_still_missing:
+                findings.append(AuditFinding(
+                    finding_id=f"missing-child-{event.event_id}",
+                    severity=AuditSeverity.FAILED,
+                    category="missing_child",
+                    detail=(f"Missing child: {child_id} at {expected_path} "
+                            f"— still absent at audit time"),
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "occurred_at": event.occurred_at,
+                              "child_id": child_id, "expected_path": expected_path,
+                              "session": event.metadata.get("session", "")},
+                ))
+            else:
+                findings.append(AuditFinding(
+                    finding_id=f"child-recovered-{event.event_id}",
+                    severity=AuditSeverity.ANOMALY,
+                    category="missing_child",
+                    detail=(f"Previously missing child {child_id} at {expected_path} "
+                            f"has reappeared"),
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "occurred_at": event.occurred_at,
+                              "child_id": child_id, "expected_path": expected_path,
+                              "recovered": True},
+                ))
+        return findings
+
+    def _check_malformed_evidence(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.all_events():
+            evidence = event.metadata
+            if not isinstance(evidence, dict):
+                findings.append(AuditFinding(
+                    finding_id=f"bad-evidence-{event.event_id}",
+                    severity=AuditSeverity.FAILED,
+                    category="malformed_evidence",
+                    detail=f"Event {event.event_id} has non-dict evidence: {type(evidence).__name__}",
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "kind": event.kind.value,
+                              "evidence_type": type(evidence).__name__},
+                ))
+            elif not evidence:
+                findings.append(AuditFinding(
+                    finding_id=f"empty-evidence-{event.event_id}",
+                    severity=AuditSeverity.DEGRADED,
+                    category="malformed_evidence",
+                    detail=f"Event {event.event_id} has empty evidence dict",
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "kind": event.kind.value},
+                ))
+            elif not self._evidence_validator(evidence):
+                findings.append(AuditFinding(
+                    finding_id=f"invalid-evidence-{event.event_id}",
+                    severity=AuditSeverity.FAILED,
+                    category="malformed_evidence",
+                    detail=f"Event {event.event_id} has evidence that failed validation",
+                    occurred_at=now,
+                    evidence={"event_id": event.event_id, "kind": event.kind.value,
+                              "evidence_keys": list(evidence.keys())},
+                ))
+        return findings
+
+    def _check_fallback_mismatches(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.events_by_kind(RecoveryEventKind.REPAIR_TERMINAL):
+            if event.claim_time and event.terminal_time:
+                if event.claim_time > event.terminal_time:
+                    findings.append(AuditFinding(
+                        finding_id=f"time-mismatch-{event.event_id}",
+                        severity=AuditSeverity.FAILED,
+                        category="fallback_mismatch",
+                        detail=(f"Claim time ({event.claim_time}) is after "
+                                f"terminal time ({event.terminal_time})"),
+                        occurred_at=now,
+                        evidence={"event_id": event.event_id,
+                                  "claim_time": event.claim_time,
+                                  "terminal_time": event.terminal_time,
+                                  "request_id": event.request_id},
+                    ))
+        return findings
+
+    def _check_slo_violations(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn().isoformat()
+        for event in self._event_store.slo_violations():
+            lat = event.total_latency_seconds
+            if lat is None:
+                continue
+            findings.append(AuditFinding(
+                finding_id=f"slo-violation-{event.event_id}",
+                severity=AuditSeverity.DEGRADED,
+                category="slo_violation",
+                detail=(f"SLO violation: {lat:.1f}s "
+                        f"> {event.slo_target_seconds}s target"),
+                occurred_at=now,
+                evidence={"event_id": event.event_id, "kind": event.kind.value,
+                          "total_latency_seconds": lat,
+                          "slo_target_seconds": event.slo_target_seconds,
+                          "denominator_group": event.denominator_group},
+            ))
+        return findings
+
+    def _check_stale_repair_requests(self) -> list[AuditFinding]:
+        findings: list[AuditFinding] = []
+        now = self._now_fn()
+        now_iso = now.isoformat()
+        for request in self._repair_request_provider():
+            if not isinstance(request, dict):
+                continue
+            status = str(request.get("status", ""))
+            created_at = str(request.get("created_at", ""))
+            if status in ("pending", "claimed") and created_at:
+                try:
+                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    age_seconds = (now - created).total_seconds()
+                    if age_seconds > SIX_HOURS_SECONDS:
+                        findings.append(AuditFinding(
+                            finding_id=f"stale-request-{request.get('request_id', 'unknown')}",
+                            severity=AuditSeverity.DEGRADED,
+                            category="stale_repair_request",
+                            detail=(f"Repair request {request.get('request_id', '?')} "
+                                    f"is stale ({age_seconds/3600:.1f}h old, status={status})"),
+                            occurred_at=now_iso,
+                            evidence={"request_id": request.get("request_id", ""),
+                                      "status": status, "created_at": created_at,
+                                      "age_seconds": age_seconds},
+                        ))
+                except (ValueError, TypeError):
+                    pass
+        return findings

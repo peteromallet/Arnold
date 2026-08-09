@@ -1,34 +1,36 @@
-"""Auto-driver that advances a plan through its phases without human intervention.
+"""Auto-driver that advances a plan through its workflow-backed phases.
 
-This is the mechanical loop that most orchestrators end up writing by hand:
-read `status`, run `next_step`, repeat until terminal. All real judgment is
-delegated to megaplan's existing phase logic — the driver only applies two
-documented defaults:
+This loop is intentionally operational, not semantic: it reads status,
+projects the next actionable target from the planning control surface, validates
+that target against the canonical lowered workflow cursor when one is observed,
+dispatches it, and repeats until terminal. If a run needs human judgment, the
+driver records the lifecycle failure and stops instead of inventing a route.
 
-1. Gate ESCALATE → force-proceed (caller opts out with ``--on-escalate abort``
-   or ``--on-escalate fail``).
-2. Same state for N consecutive iterations → bail (stall detection).
-
-The driver is intentionally dumb. If a run needs judgment the driver can't
-provide, it exits with a non-zero status and prints the state snapshot so the
-caller can intervene.
+M9 status: This module's chain-advancement path integrates through
+``chain_runner.py`` (T42) which carries full WBC adapter evidence
+with ``positive_dispatch_requires_reread: True`` and ``_non_authoritative``
+markers.  In M9 shadow/view-only mode, positive control actions remain
+disabled.  Full control-path cutover to the shared SourceCursorVector
+contract is deferred to M10.
 """
+
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import logging
 import os
 import re
 import shlex
-import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,19 +43,34 @@ from arnold_pipelines.megaplan._core import (
     active_phase_name,
     find_plan_dir,
     list_batch_artifacts,
+    plan_lock,
+    sha256_file,
 )
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
 )
+from arnold_pipelines.megaplan._core.phase_runtime import (
+    WORKER_DEAD,
+    WORKER_LIVE,
+    WORKER_UNKNOWN,
+    active_step_cas_token,
+    observe_active_step_worker,
+)
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
-from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
+from arnold_pipelines.megaplan.runtime.process import kill_group
 from arnold_pipelines.megaplan.observability.events import (
     EventKind,
     emit as emit_event,
     read_events,
+)
+from arnold_pipelines.megaplan.observability.work_ledger import (
+    emit_queue,
+    emit_retry_wait,
+    emit_transition,
+    build_work_class_summary,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
@@ -64,16 +81,37 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
     effective_execute_completed_task_ids,
 )
-from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
+from arnold_pipelines.megaplan.orchestration.recovery_policy import (
+    CircuitState,
+    RecoveryPolicy,
+    circuit_transition,
+    classify_failure_class,
+    normalize_failure_signature,
+)
 from arnold_pipelines.megaplan.store import PlanRepository
 from arnold_pipelines.megaplan.types import (
     CliError,
 )
+from arnold_pipelines.megaplan.control_interface import read_valid_targets
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AUTO_ADMISSION_SURFACE,
+    AUTO_ADMISSION_WRITER_ID,
+    AdmissionFence,
+    register_admission_writers,
+    synthetic_text_source_record,
+    validate_admission_mutation,
+)
+from arnold_pipelines.megaplan.workflows.events import (
+    resolve_workflow_phase,
+    workflow_cursor,
+    workflow_dispatch_phase_names,
+    workflow_phase_aliases,
+)
+from arnold.security.redaction import redact_text as redact_security_text
 from arnold_pipelines.megaplan.planning.state import (
     AUTOMATION_TERMINAL_STATES,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
-    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_CANCELLED,
     STATE_CRITIQUED,
@@ -87,6 +125,11 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
+
+# M9: _non_authoritative marker — control-path decisions in this module
+# are projection-backed (non-authoritative) until M10 integrates live
+# reread of Run Authority grant/fence + Custody lease/epoch + WBC evidence.
+_m9_non_authoritative = True
 
 
 DEFAULT_STALL_THRESHOLD = 5
@@ -121,6 +164,7 @@ EXTERNAL_PERMANENT_ERROR_KINDS = frozenset(
         "context_exhausted",
         "context_length",
         "rate_limit",
+        "provider_contract",
     }
 )
 EXTERNAL_RETRYABLE_LAYERS = frozenset(
@@ -137,7 +181,6 @@ STALL_PROGRESS_EVENT_KINDS = frozenset(
         EventKind.LLM_CALL_START,
         EventKind.LLM_TOKEN_HEARTBEAT,
         EventKind.LLM_CALL_END,
-        EventKind.LLM_CALL_ERROR,
         EventKind.ARTIFACT_WRITTEN,
         EventKind.COST_RECORDED,
         EventKind.TIER_ESCALATED,
@@ -153,6 +196,11 @@ DEFAULT_MAX_BLOCKED_RETRIES = 1
 # internally (default 3); the auto-driver applies its own cap so that an
 # unexpected-config or mis-routed rework loop cannot spin indefinitely.
 DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
+# M8A T14 — rework-wave ceiling: if review requests rework on more than
+# MAX_SERIAL_REWORK tasks, the executor refuses to dispatch and emits a typed
+# blocker/escalation instead. This prevents unbounded rework waves from
+# starving the plan's budget and preserves quality-block evidence.
+MAX_SERIAL_REWORK = 5
 # How many consecutive `override add-note` failures the auto-driver will
 # tolerate at a given critique fork before escalating to `override
 # force-proceed`. The gate emits `override add-note` first in `valid_next`
@@ -171,6 +219,18 @@ DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES = 3
 # retrying the same binding cannot make progress and should not spend the
 # global max_iterations budget.
 DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS = 2
+DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS = 3
+# Harness-owned validation runs before execute worker dispatch.  A transient
+# runner failure gets one bounded retry; assertion/contract failures get none.
+# In either case a stronger execute model cannot help because no model worker
+# has been launched yet.
+DEFAULT_MAX_PREDISPATCH_VALIDATION_INFRA_RETRIES = 1
+PREDISPATCH_VALIDATION_ERROR_CODES = frozenset(
+    {"invalid_validation_job", "validation_job_failed"}
+)
+PREDISPATCH_VALIDATION_INFRA_EXIT_CODES = frozenset(
+    {-15, -9, 124, 137, 143}
+)
 # Auto-ESCALATE-up: after this many consecutive execute failures with no
 # forward progress, the driver pins execute to the next *more capable* tier
 # model and retries with a fresh session. It keeps climbing on further
@@ -188,34 +248,48 @@ DEFAULT_ESCALATE_AFTER_FAILS = 2
 DEFAULT_PHASE_HEARTBEAT_SECONDS = 60.0
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
-PHASE_NAMES = frozenset(
-    {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
-)
+PHASE_NAMES = workflow_dispatch_phase_names()
 REQUIRES_STATE_RE = re.compile(
     r"requires state ['\"](?P<required>[^'\"]+)['\"], got ['\"](?P<got>[^'\"]+)['\"]"
 )
 
-# Stable-ID → flat-name resolution for canonical dispatch surfaces.
-# When the auto-driver receives a stable component ID (e.g. "megaplan:prep"),
-# it resolves to the flat phase name the native program expects.  Flat names
-# pass through unchanged so existing callers are not broken.
 _STABLE_ID_TO_PHASE: dict[str, str] = {
-    "megaplan:prep": "prep",
-    "megaplan:plan": "plan",
-    "megaplan:critique": "critique",
-    "megaplan:gate": "gate",
-    "megaplan:revise": "revise",
-    "megaplan:tiebreaker_run": "tiebreaker_run",
-    "megaplan:tiebreaker_decide": "tiebreaker_decide",
-    "megaplan:finalize": "finalize",
-    "megaplan:execute": "execute",
-    "megaplan:review": "review",
+    alias: phase
+    for alias, phase in workflow_phase_aliases().items()
+    if alias.startswith("megaplan:")
 }
+
+_AUTO_CONTROL_TARGETS = frozenset(
+    {
+        "abort",
+        "adopt-execution",
+        "feedback",
+        "force-proceed",
+        "recover-blocked",
+        "resume-clarify",
+    }
+)
 
 
 def _resolve_phase_name(raw: str) -> str:
-    """Return the flat phase name for *raw*, resolving any stable-ID prefix."""
-    return _STABLE_ID_TO_PHASE.get(raw, raw)
+    """Return the dispatch phase for *raw* when workflow source defines one."""
+
+    return resolve_workflow_phase(raw) or raw
+
+
+def _normalize_auto_target_id(raw: str | None) -> str | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    parts = shlex.split(raw)
+    if len(parts) >= 2 and parts[0] == "override":
+        return parts[1]
+    return _resolve_phase_name(raw.strip())
+
+
+def _is_auto_supported_target(target_id: str | None) -> bool:
+    if not isinstance(target_id, str) or not target_id:
+        return False
+    return target_id in PHASE_NAMES or target_id in _AUTO_CONTROL_TARGETS
 
 
 @dataclass
@@ -348,6 +422,75 @@ def _is_cli_error_payload(payload: Any) -> bool:
     )
 
 
+def _predispatch_validation_failure(
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any] | None:
+    """Classify a harness validation failure without volatile evidence fields.
+
+    Validation evidence contains per-run paths, durations, and hashes.  Those
+    values prove that another validation command ran, but they do not make an
+    identical failing admission gate a new semantic failure.  The returned
+    signature/occurrence id therefore uses only the stable validation
+    contract and outcome fields.  Callers may use the occurrence id for
+    retry accounting and notification deduplication.
+    """
+
+    payload = _extract_cli_error_payload(stdout, stderr)
+    if payload is None:
+        return None
+    error_code = str(payload.get("error") or "").strip()
+    if error_code not in PREDISPATCH_VALIDATION_ERROR_CODES:
+        return None
+    raw_details = payload.get("details")
+    details = dict(raw_details) if isinstance(raw_details, Mapping) else {}
+    expected_exit_codes = details.get("expected_exit_codes")
+    if not isinstance(expected_exit_codes, list):
+        expected_exit_codes = []
+    invalid_fields = details.get("invalid_fields")
+    if not isinstance(invalid_fields, list):
+        invalid_fields = []
+    exit_code = details.get("exit_code")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        exit_code = None
+    stable = {
+        "error_code": error_code,
+        "job_id": str(details.get("job_id") or ""),
+        "validation_job_kind": str(details.get("validation_job_kind") or ""),
+        "exit_code": exit_code,
+        "expected_exit_codes": expected_exit_codes,
+        "invalid_fields": sorted(str(item) for item in invalid_fields),
+    }
+    stable_raw = json.dumps(
+        stable,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    signature = "sha256:" + hashlib.sha256(stable_raw.encode("utf-8")).hexdigest()
+    failure_class = str(details.get("failure_class") or "").strip().lower()
+    retryable_infrastructure = (
+        details.get("retryable_infrastructure") is True
+        or failure_class
+        in {
+            "infrastructure",
+            "runner_error",
+            "runner_timeout",
+            "timeout",
+            "validation_infrastructure",
+        }
+        or exit_code in PREDISPATCH_VALIDATION_INFRA_EXIT_CODES
+    )
+    return {
+        **stable,
+        "message": _normalize_failure_message(payload.get("message")),
+        "signature": signature,
+        "occurrence_id": f"validation-{signature.removeprefix('sha256:')[:20]}",
+        "retryable_infrastructure": retryable_infrastructure,
+        "worker_dispatched": False,
+    }
+
+
 def _extract_last_json_object(text: str) -> dict[str, Any] | None:
     """Find the last balanced JSON object (``{…}``) in *text*.
 
@@ -467,6 +610,8 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
     message = str(getattr(external_error, "message", "") or "").lower()
 
+    if getattr(external_error, "nonretryable", None) is True:
+        return False
     if error_kind in EXTERNAL_PERMANENT_ERROR_KINDS:
         return False
     if retry_after_s is not None:
@@ -485,6 +630,50 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     ):
         return True
     return False
+
+
+def _is_deterministic_provider_contract_error(
+    external_error: object | None,
+) -> bool:
+    """Recognize the exact typed response-contract failure shape.
+
+    Message matching is deliberately forbidden here.  A provider-contract
+    repair gate is authority-bearing, so all four producer attestations must
+    survive the phase boundary before auto may select it.
+    """
+
+    if external_error is None:
+        return False
+    return (
+        str(getattr(external_error, "error_kind", "") or "").lower()
+        == "provider_contract"
+        and str(getattr(external_error, "error_layer", "") or "").lower()
+        == "schema_error"
+        and getattr(external_error, "deterministic", None) is True
+        and getattr(external_error, "nonretryable", None) is True
+        and bool(str(getattr(external_error, "failure_fingerprint", "") or "").strip())
+    )
+
+
+def _provider_contract_repair_already_used(
+    plan_dir: Path | None,
+    phase: str,
+) -> bool:
+    """Return whether this phase has consumed its one validated repair retry."""
+
+    state = _read_state_data(plan_dir)
+    meta = state.get("meta") if isinstance(state, Mapping) else None
+    allowance = (
+        meta.get("provider_contract_repair_retry")
+        if isinstance(meta, Mapping)
+        else None
+    )
+    return bool(
+        isinstance(allowance, Mapping)
+        and allowance.get("status") == "available"
+        and allowance.get("failure_kind") == "provider_contract_failure"
+        and allowance.get("phase") == phase
+    )
 
 
 def _apply_envelope_handshake(
@@ -667,6 +856,54 @@ def _run_planning_phase(
     )
 
 
+class _PhaseDiagnosticText(str):
+    """A phase stderr string carrying redacted in-process exception evidence."""
+
+    diagnostic: dict[str, Any] | None
+
+    def __new__(cls, value: str, diagnostic: dict[str, Any] | None = None) -> "_PhaseDiagnosticText":
+        instance = super().__new__(cls, value)
+        instance.diagnostic = diagnostic
+        return instance
+
+
+def _native_exception_diagnostic(error: Exception) -> dict[str, Any]:
+    """Capture bounded, redacted exception evidence at the native phase boundary.
+
+    This deliberately records a UTF-8 representation of the diagnostic, not
+    purported provider bytes.  Native in-process exceptions do not expose the
+    original stream bytes, and authoritative artifacts remain strictly decoded.
+    """
+    frames = traceback.extract_tb(error.__traceback__)
+    callsite: dict[str, Any] | None = None
+    if frames:
+        frame = frames[-1]
+        callsite = {
+            "file": frame.filename,
+            "line": frame.lineno,
+            "function": frame.name,
+        }
+    rendered = redact_security_text("".join(traceback.format_exception(error)))
+    # The bounded, redacted text is the only material encoded below; never
+    # persist raw provider/request bytes from an exception object here.
+    rendered = rendered[-16_384:]
+    encoded = base64.b64encode(rendered.encode("utf-8", errors="backslashreplace")).decode("ascii")
+    return {
+        "source": "native_phase_exception",
+        "exception_type": type(error).__name__,
+        "exception_message": redact_security_text(str(error)),
+        "exception_traceback": rendered,
+        "exception_callsite": callsite,
+        "diagnostic_bytes_b64": encoded,
+        "diagnostic_bytes_encoding": "utf-8+base64",
+    }
+
+
+def _phase_diagnostic_metadata(stderr: str) -> dict[str, Any]:
+    diagnostic = getattr(stderr, "diagnostic", None)
+    return dict(diagnostic) if isinstance(diagnostic, dict) else {}
+
+
 def _run_native_planning_phase(
     args: list[str],
     *,
@@ -711,7 +948,11 @@ def _run_native_planning_phase(
             }
         )
     except Exception as error:  # noqa: BLE001 - convert to tuple-shaped phase failure.
-        return 1, "", f"{type(error).__name__}: {error}"
+        diagnostic = _native_exception_diagnostic(error)
+        return 1, "", _PhaseDiagnosticText(
+            f"{diagnostic['exception_type']}: {diagnostic['exception_message']}",
+            diagnostic,
+        )
 
     if not isinstance(payload, dict):
         return 1, "", f"native phase {phase!r} returned {type(payload).__name__}"
@@ -942,30 +1183,17 @@ def _override_adopt_execution_in_process(
     plan: str,
     reason: str,
 ) -> tuple[int, str, str]:
-    try:
-        from arnold_pipelines.megaplan._core.io import json_dump
-        from arnold_pipelines.megaplan.handlers.override import handle_override
-
-        response = handle_override(
-            root,
-            argparse.Namespace(
-                override_action="adopt-execution",
-                plan=plan,
-                reason=reason,
-            ),
-        )
-        return 0, json_dump(response), ""
-    except CliError as error:
-        payload: dict[str, Any] = {
-            "success": False,
-            "error": error.code,
-            "message": error.message,
-        }
-        if error.extra:
-            payload["details"] = dict(error.extra)
-        return error.exit_code, "", json.dumps(payload)
-    except Exception as error:  # noqa: BLE001 - match CLI failure surface.
-        return 1, "", f"{type(error).__name__}: {error}"
+    return _run_override_command(
+        [
+            "override",
+            "adopt-execution",
+            "--plan",
+            plan,
+            "--reason",
+            reason,
+        ],
+        cwd=root,
+    )
 
 
 def _with_project_dir_arg(args: list[str], project_dir: Path) -> list[str]:
@@ -1082,21 +1310,14 @@ def _status(
     return dict(response)
 
 
-def _has_valid_next(status: dict[str, Any], action: str) -> bool:
-    return action in (status.get("valid_next") or [])
-
-
 def _control_action_label(next_step: str) -> str:
-    parts = shlex.split(next_step)
-    if len(parts) >= 2 and parts[0] == "override":
-        return parts[1]
-    return next_step
+    return _normalize_auto_target_id(next_step) or next_step
 
 
 def _required_state_for_control_action(next_step: str) -> str | None:
     action = _control_action_label(next_step)
     if action == "resume-clarify":
-        return STATE_AWAITING_HUMAN_VERIFY
+        return STATE_AWAITING_HUMAN
     if action == "recover-blocked":
         return STATE_BLOCKED
     return None
@@ -1194,28 +1415,9 @@ def _control_invalid_transition_failure(
     }
 
 
-def _phase_command(
-    next_step: str,
-    substrate: "Substrate" = "subprocess_isolated",
-) -> list[str]:
-    """Translate a `next_step` from status into the CLI args that run it.
-
-    Most phases are one-to-one: next_step == command. Execute adds the
-    destructive + user-approved flags because auto-mode implies both.
-
-    Multi-token values like ``"override add-note"`` must be split into
-    ``["override", "add-note"]`` so argparse sees the sub-subcommand —
-    otherwise the whole string is passed as a single positional and
-    argparse rejects it with `invalid choice`.
-
-    The *substrate* parameter is a forward-looking shim (M3 Step 12):
-    ``"subprocess_isolated"`` (default) preserves the legacy CLI-args
-    contract; ``"in_process"`` is accepted but currently returns the
-    same args.  Callers in the unified-dispatch path should pass the
-    active substrate explicitly so the contract is unambiguous when the
-    in-process path gains its own translation.
-    """
-    if next_step == "execute":
+def _command_for_auto_target(next_step: str) -> list[str]:
+    target = _control_action_label(next_step)
+    if target == "execute":
         # --retry-blocked-tasks is safe to pass on every iteration. Within a
         # single auto session, tasks that report status=blocked terminate the
         # auto loop via STATE_AWAITING_HUMAN_VERIFY (see eb4ac447), so re-dispatch
@@ -1229,20 +1431,63 @@ def _phase_command(
             "--user-approved",
             "--retry-blocked-tasks",
         ]
-    if next_step == "feedback":
+    if target == "feedback":
         # The auto driver must dispatch the *workflow* operation, not the
         # default "edit" operation — otherwise the handler would open $EDITOR
         # and block on human input.  "feedback workflow" scaffolds the file
         # non-interactively and transitions reviewed → done.
         return ["feedback", "workflow"]
-    if next_step == "recover-blocked":
+    if target == "recover-blocked":
         return [
             "override",
             "recover-blocked",
             "--reason",
             "megaplan auto: recover blocked plan after blocker resolution",
         ]
-    return shlex.split(next_step)
+    if target == "resume-clarify":
+        return ["override", "resume-clarify"]
+    if target == "force-proceed":
+        return [
+            "override",
+            "force-proceed",
+            "--reason",
+            "megaplan auto: dispatch declared override target",
+        ]
+    if target == "abort":
+        return [
+            "override",
+            "abort",
+            "--reason",
+            "megaplan auto: dispatch declared override target",
+        ]
+    if target == "adopt-execution":
+        return [
+            "override",
+            "adopt-execution",
+            "--reason",
+            "megaplan auto: adopt complete execution artifact after worker failure",
+        ]
+    return [target]
+
+
+def _phase_command(
+    next_step: str,
+    substrate: "Substrate" = "subprocess_isolated",
+) -> list[str]:
+    """Preserve the legacy phase-command contract for external callers.
+
+    Command selection is owned by :func:`_command_for_auto_target`. Explicit
+    multi-token override commands retain their historical argv shape so
+    compatibility callers can continue to pass them through unchanged.
+    ``substrate`` is accepted for forward compatibility; both supported
+    substrates currently use the same command translation.
+    """
+
+    del substrate
+    parts = shlex.split(next_step)
+    if len(parts) >= 2 and parts[0] == "override":
+        return parts
+    return _command_for_auto_target(next_step)
 
 
 def _failure_resume_cursor_for_step(
@@ -1260,6 +1505,7 @@ def _failure_resume_cursor_for_step(
 
     if next_step == "recover-blocked" and plan_dir is not None:
         try:
+            # dormant-path: subprocess seam, retired at M6
             state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
             state_payload = {}
@@ -1462,6 +1708,60 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _admit_auto_driver(plan_dir: Path | None, plan: str) -> dict[str, Any] | None:
+    """Fail closed before auto mutates a stale or mismatched plan."""
+
+    state_data = _read_state_data(plan_dir)
+    if plan_dir is None or state_data is None:
+        return None
+
+    register_admission_writers()
+    source_record = synthetic_text_source_record(
+        selector=plan,
+        label="auto-state",
+        text=json.dumps(state_data, sort_keys=True, separators=(",", ":")),
+    )
+    fences = [
+        AdmissionFence(
+            identity="plan_name",
+            expected=plan,
+            observed=state_data.get("name"),
+            satisfied=str(state_data.get("name") or "") == plan,
+            detail="auto must mutate the exact requested plan",
+        )
+    ]
+
+    binding = (state_data.get("meta") or {}).get("canonical_source_binding")
+    if isinstance(binding, Mapping):
+        from arnold_pipelines.megaplan.planning.source_binding import assert_canonical_source_current
+
+        report = assert_canonical_source_current(plan_dir, state_data, operation="auto")
+        current = report.get("current")
+        bound = report.get("bound")
+        if isinstance(current, Mapping):
+            source_record = dict(current)
+        elif isinstance(bound, Mapping):
+            source_record = dict(bound)
+        fences.append(
+            AdmissionFence(
+                identity="canonical_source_status",
+                expected="match",
+                observed=report.get("status"),
+                satisfied=report.get("status") == "match",
+                detail="auto requires the bound canonical source to remain current",
+            )
+        )
+
+    return validate_admission_mutation(
+        writer_id=AUTO_ADMISSION_WRITER_ID,
+        surface_name=AUTO_ADMISSION_SURFACE,
+        selector=plan,
+        source_record=source_record,
+        fences=tuple(fences),
+        extra={"plan_dir": str(plan_dir)},
+    )
+
+
 def _normalize_failure_message(value: object) -> str:
     text = str(value or "").strip()
     text = re.sub(r"\s+", " ", text)
@@ -1476,13 +1776,24 @@ def _latest_meaningful_history_failure(
     history = state_data.get("history")
     if not isinstance(history, list):
         return None
-    for entry in reversed(history):
+    succeeded_steps: set[str] = set()
+    for history_index in range(len(history) - 1, -1, -1):
+        entry = history[history_index]
         if not isinstance(entry, dict):
             continue
+        step = str(entry.get("step") or entry.get("phase") or "").strip().lower()
         result = str(entry.get("result") or "").strip().lower()
         message = _normalize_failure_message(entry.get("message"))
+        if result in {"success", "succeeded", "done", "pass", "passed", "ok"}:
+            if step:
+                succeeded_steps.add(step)
+            continue
+        if step and step in succeeded_steps:
+            continue
         if result in {"error", "failed", "failure", "blocked"} or message:
-            return entry
+            failure = dict(entry)
+            failure["_history_index"] = history_index
+            return failure
     return None
 
 
@@ -1509,6 +1820,21 @@ def _repeated_failure_signature(
     message = _normalize_failure_message(failure.get("message"))
     if not message:
         return None
+    history_index = int(failure.get("_history_index", -1))
+    occurrence_raw = json.dumps(
+        {
+            "history_index": history_index,
+            "timestamp": failure.get("timestamp") or failure.get("completed_at"),
+            "artifact_hash": failure.get("artifact_hash"),
+            "raw_output_file": failure.get("raw_output_file"),
+            "invocation_id": failure.get("invocation_id"),
+            "session_id": failure.get("session_id"),
+            "step": step,
+            "result": result,
+            "message": message,
+        },
+        sort_keys=True,
+    )
     raw = json.dumps(
         {
             "state": status.get("state"),
@@ -1524,7 +1850,30 @@ def _repeated_failure_signature(
         "step": step,
         "result": result,
         "message": message,
+        "history_index": history_index,
+        "timestamp": failure.get("timestamp") or failure.get("completed_at") or "",
+        "occurrence_id": hashlib.sha256(occurrence_raw.encode("utf-8")).hexdigest(),
     }
+
+
+def _update_repeated_failure_counter(
+    repeat: dict[str, Any] | None,
+    *,
+    tracked_signature: str | None,
+    tracked_occurrence: str | None,
+    count: int,
+) -> tuple[str | None, str | None, int]:
+    """Count distinct failure occurrences, never polls of one history entry."""
+
+    if repeat is None:
+        return None, None, 0
+    signature = str(repeat["hash"])
+    occurrence = str(repeat["occurrence_id"])
+    if signature != tracked_signature:
+        return signature, occurrence, 1
+    if occurrence == tracked_occurrence:
+        return signature, occurrence, count
+    return signature, occurrence, count + 1
 
 
 def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
@@ -1727,8 +2076,11 @@ def _read_finalize_data(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
-        with (plan_dir / "finalize.json").open(encoding="utf-8") as handle:
-            data = json.load(handle)
+        from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+            load_finalize_for_update,
+        )
+
+        data = load_finalize_for_update(plan_dir)
     except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
@@ -1765,8 +2117,21 @@ def _pin_tasks_to_tier(
         mutated.append(task_id)
     if mutated and plan_dir is not None:
         try:
-            _write_json_atomic(plan_dir / "finalize.json", data)
-        except OSError:
+            from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+                FinalizeMutationContext,
+                publish_finalize_update,
+            )
+
+            publish_finalize_update(
+                plan_dir,
+                data,
+                context=FinalizeMutationContext(
+                    owner="auto",
+                    operation="pin-task-tier",
+                    attempt_id=f"auto-tier:{new_tier}:{','.join(sorted(mutated))}",
+                ),
+            )
+        except (OSError, RuntimeError):
             logging.getLogger("megaplan").warning(
                 "_pin_tasks_to_tier: failed writing finalize.json", exc_info=True
             )
@@ -1825,14 +2190,18 @@ def _issue_signature(item: dict[str, Any]) -> str:
 def _review_rework_signatures_by_task(review_data: dict[str, Any]) -> dict[str, set[str]]:
     if review_data.get("review_verdict") != "needs_rework":
         return {}
+    # Keep convergence tracking aligned with execute routing. Bulk and
+    # manifest findings can legitimately target several concrete tasks.
+    from arnold_pipelines.megaplan.execute.batch import _rework_item_target_task_ids
+
     result: dict[str, set[str]] = {}
     for item in review_data.get("rework_items", []) or []:
         if not isinstance(item, dict):
             continue
-        task_id = item.get("task_id")
-        if not isinstance(task_id, str) or not task_id or task_id.startswith("REVIEW"):
-            continue
-        result.setdefault(task_id, set()).add(_issue_signature(item))
+        task_ids, _ = _rework_item_target_task_ids(item)
+        signature = _issue_signature(item)
+        for task_id in task_ids:
+            result.setdefault(task_id, set()).add(signature)
     return result
 
 
@@ -1929,6 +2298,158 @@ def _phase_result_signature(plan_dir: Path | None) -> tuple[int, int] | None:
     return (stat.st_mtime_ns, stat.st_size)
 
 
+_REPAIR_IDENTITY_SEED_SCHEMA = "megaplan.repair_identity_seed.v1"
+_REPAIR_IDENTITY_SEED_META_KEY = "repair_identity_seed"
+
+
+def _active_step_invocation_id(active_step: Mapping[str, Any]) -> str:
+    """Return one fail-closed invocation binding for an active occurrence.
+
+    New state stores the field at the active-step root while older state only
+    has it in ``orphan_fence``.  If both are present but disagree, neither is
+    safe to use as a repair source.
+    """
+
+    root_id = str(active_step.get("invocation_id") or "").strip()
+    orphan_fence = active_step.get("orphan_fence")
+    fence_id = ""
+    if isinstance(orphan_fence, Mapping):
+        fence_id = str(orphan_fence.get("invocation_id") or "").strip()
+    if root_id and fence_id and root_id != fence_id:
+        return ""
+    return root_id or fence_id
+
+
+def _build_repair_identity_seed(
+    *,
+    plan_dir: Path,
+    state: Mapping[str, Any],
+    phase: str,
+    active_step: Mapping[str, Any],
+    result: object,
+) -> dict[str, Any] | None:
+    """Capture non-authoritative source evidence before active-step cleanup.
+
+    A phase result is the boundary between the worker occurrence and the
+    lifecycle failure recorder. The recorder may run after the worker
+    occurrence has been removed from state.json; retain only the exact
+    active-step snapshot needed by the existing lifecycle identity producer.
+    This seed is evidence, never a repair grant or queue authority.
+    """
+
+    result_phase = str(getattr(result, "phase", "") or "").strip()
+    invocation_id = str(getattr(result, "invocation_id", "") or "").strip()
+    exit_kind = getattr(result, "exit_kind", "")
+    if isinstance(exit_kind, ExitKind):
+        exit_kind = exit_kind.value
+    exit_kind = str(exit_kind or "").strip()
+    if (
+        not phase
+        or result_phase != phase
+        or not invocation_id
+        or not exit_kind
+    ):
+        return None
+
+    phase_result_sha256 = ""
+    try:
+        phase_result_sha256 = sha256_file(plan_dir / "phase_result.json")
+    except (OSError, TypeError, ValueError):
+        # The invocation and exact active-step CAS still provide a bounded
+        # source binding when the result file disappears during cleanup.
+        pass
+
+    meta = state.get("meta")
+    meta = meta if isinstance(meta, Mapping) else {}
+    plan_revision = str(state.get("plan_revision") or "").strip()
+    coordinator_attempt_id = str(
+        meta.get("current_invocation_id") or ""
+    ).strip()
+    return {
+        "schema": _REPAIR_IDENTITY_SEED_SCHEMA,
+        "_non_authoritative": True,
+        "phase": phase,
+        "invocation_id": invocation_id,
+        "exit_kind": exit_kind,
+        "active_step_cas": active_step_cas_token(active_step),
+        "active_step": dict(active_step),
+        "phase_result_sha256": phase_result_sha256,
+        "plan_revision": plan_revision,
+        "coordinator_attempt_id": coordinator_attempt_id,
+        "seeded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _active_step_from_repair_identity_seed(
+    plan_dir: Path,
+    state: Mapping[str, Any],
+    *,
+    phase: str | None,
+) -> tuple[dict[str, Any], Mapping[str, Any]] | None:
+    """Recover one exact active-step snapshot for the lifecycle owner.
+
+    Seeds are accepted only when they still bind to the current phase result,
+    invocation, active-step CAS, and plan/coordinator revision. The caller
+    must pass the resulting snapshot through the canonical lifecycle identity
+    producer with a fresh runner-lease reread; the seed itself cannot confer
+    authority.
+    """
+
+    if not phase:
+        return None
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    raw_seed = meta.get(_REPAIR_IDENTITY_SEED_META_KEY)
+    if not isinstance(raw_seed, Mapping):
+        return None
+    if raw_seed.get("schema") != _REPAIR_IDENTITY_SEED_SCHEMA:
+        return None
+    if raw_seed.get("_non_authoritative") is not True:
+        return None
+    if str(raw_seed.get("phase") or "").strip() != phase:
+        return None
+    active = raw_seed.get("active_step")
+    if not isinstance(active, Mapping):
+        return None
+    active = dict(active)
+    if active_phase_name(active) != phase:
+        return None
+    invocation_id = str(raw_seed.get("invocation_id") or "").strip()
+    if (
+        not invocation_id
+        or _active_step_invocation_id(active) != invocation_id
+    ):
+        return None
+    if (
+        str(raw_seed.get("active_step_cas") or "")
+        != active_step_cas_token(active)
+    ):
+        return None
+
+    seed_revision = str(raw_seed.get("plan_revision") or "").strip()
+    current_revision = str(state.get("plan_revision") or "").strip()
+    if seed_revision and current_revision and seed_revision != current_revision:
+        return None
+    seed_coordinator = str(raw_seed.get("coordinator_attempt_id") or "").strip()
+    current_meta_attempt = str(meta.get("current_invocation_id") or "").strip()
+    if (
+        seed_coordinator
+        and current_meta_attempt
+        and seed_coordinator != current_meta_attempt
+    ):
+        return None
+
+    expected_result_digest = str(raw_seed.get("phase_result_sha256") or "").strip()
+    if expected_result_digest:
+        try:
+            if sha256_file(plan_dir / "phase_result.json") != expected_result_digest:
+                return None
+        except (OSError, TypeError, ValueError):
+            return None
+    return active, raw_seed
+
+
 def _record_lifecycle_failure(
     *,
     plan_dir: Path | None,
@@ -1971,6 +2492,105 @@ def _record_lifecycle_failure(
                 reason="unreadable",
             )
             current_state = STATE_BLOCKED
+    queue_root, marker_dir, repair_session, repair_run_kind = (
+        _lifecycle_repair_request_route(plan_dir)
+    )
+    metadata_payload = dict(metadata or {})
+    try:
+        from arnold_pipelines.megaplan._core.phase_runtime import (
+            current_runner_lease_binding,
+        )
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            build_owned_lifecycle_repair_identity,
+            normalize_repair_identity,
+        )
+
+        persisted_identity = normalize_repair_identity(
+            metadata_payload.get("repair_identity")
+        )
+        if persisted_identity is None:
+            state_before = _read_state_data(plan_dir) or {}
+            active_step = state_before.get("active_step")
+            active = active_step if isinstance(active_step, Mapping) else {}
+            seeded_active = _active_step_from_repair_identity_seed(
+                plan_dir,
+                state_before,
+                phase=phase,
+            )
+            seed_payload: Mapping[str, Any] | None = None
+            if (
+                (not active or (phase and active_phase_name(active) != phase))
+                and seeded_active is not None
+            ):
+                active, seed_payload = seeded_active
+            state_meta = state_before.get("meta")
+            state_meta = state_meta if isinstance(state_meta, Mapping) else {}
+            coordinator_attempt_id = str(
+                state_meta.get("current_invocation_id") or ""
+            ).strip()
+            revision = str(state_before.get("plan_revision") or "").strip()
+            if not revision:
+                revision = "sha256:" + hashlib.sha256(
+                    json.dumps(
+                        state_before,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8")
+                ).hexdigest()
+            blocked_task = _lifecycle_blocked_task_id(metadata_payload)
+            if not blocked_task:
+                blocked_task = f"phase:{phase}" if phase else "phase:driver"
+            blocker_payload = {
+                "kind": kind,
+                "message": message,
+                "current_state": current_state,
+                "phase": phase,
+                "suggested_action": suggested_action,
+                "metadata": metadata_payload,
+            }
+            blocker_digest = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    blocker_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            persisted_identity = build_owned_lifecycle_repair_identity(
+                environment=str(_workspace_path_for_plan_dir(plan_dir)),
+                session=repair_session,
+                chain=_derive_chain_path(plan_dir, metadata_payload),
+                plan_revision=revision,
+                phase=str(phase or "driver"),
+                task=blocked_task,
+                attempt=str(active.get("attempt") or ""),
+                normalized_failure_kind=kind,
+                blocker_or_phase_result_hash=blocker_digest,
+                active_step=active,
+                live_runner_lease=current_runner_lease_binding(),
+                coordinator_attempt_id=coordinator_attempt_id,
+            )
+            if persisted_identity is not None and seed_payload is not None:
+                metadata_payload["repair_identity_seed_provenance"] = {
+                    "schema": _REPAIR_IDENTITY_SEED_SCHEMA,
+                    "source": "active_step_cleanup",
+                    "phase": seed_payload.get("phase"),
+                    "invocation_id": seed_payload.get("invocation_id"),
+                    "active_step_cas": seed_payload.get("active_step_cas"),
+                    "positive_source_reread": True,
+                }
+        if persisted_identity is not None:
+            metadata_payload["repair_identity"] = persisted_identity
+            metadata_payload["repair_identity_provenance"] = {
+                "authority_source": "plan_state_lifecycle_failure_owner",
+                "positive_source_reread": True,
+            }
+    except (OSError, TypeError, ValueError):
+        # The queue boundary remains fail-closed below.  Failure recording must
+        # not be lost merely because exact repair authority is unavailable.
+        pass
+
     failure_details: dict[str, Any] | None = None
     try:
         failure_details = PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
@@ -1981,18 +2601,23 @@ def _record_lifecycle_failure(
             resume_cursor=resume_cursor,
             last_artifact=last_artifact,
             suggested_action=suggested_action,
-            metadata=metadata,
+            metadata=metadata_payload,
         )
     except (OSError, RuntimeError, ValueError):
         return
     _enqueue_lifecycle_failure_request(
         plan_dir=plan_dir,
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session=repair_session,
+        run_kind=repair_run_kind,
         kind=kind,
         message=message,
         current_state=current_state,
         phase=phase,
         suggested_action=suggested_action,
-        metadata=metadata,
+        metadata=metadata_payload,
+        retry_strategy=str((resume_cursor or {}).get("retry_strategy") or ""),
     )
     if progress_emitter is not None and failure_details is not None:
         if current_state == STATE_BLOCKED:
@@ -2004,30 +2629,61 @@ def _record_lifecycle_failure(
 def _enqueue_lifecycle_failure_request(
     *,
     plan_dir: Path,
+    queue_root: Path,
+    marker_dir: Path | None = None,
+    session: str | None = None,
+    run_kind: str = "plan",
     kind: str,
     message: str,
     current_state: str | None,
     phase: str | None,
     suggested_action: str | None,
     metadata: dict[str, Any] | None,
+    retry_strategy: str = "",
 ) -> None:
     try:
         from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
-        from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            enqueue_occurrence_bound_repair_request,
+            normalize_repair_identity,
+        )
 
         if not repair_request_queue_enabled():
             return
         workspace_path = _workspace_path_for_plan_dir(plan_dir)
-        enqueue_repair_request(
-            marker_dir=plan_dir,
-            session=plan_dir.name,
+
+        session_id = session or plan_dir.name
+        # Phase-contract failures are durable repair subjects even when the
+        # phase does not own a task-shaped executor record.  Allocate that
+        # identity before constructing or admitting the request; otherwise
+        # the occurrence-bound queue correctly rejects the incomplete F01
+        # tuple and the watchdog can only see an unclaimable failure.
+        blocked_task = _lifecycle_blocked_task_id(metadata)
+        if not blocked_task and phase:
+            blocked_task = f"phase:{phase}"
+
+        # Failure labels and file mtimes cannot mint repair authority.  The
+        # coordinator must persist the complete run/custody identity in the
+        # lifecycle metadata; otherwise enqueue fails closed and reacquisition
+        # is explicit.
+        occurrence_identity = normalize_repair_identity(
+            (metadata or {}).get("repair_identity")
+            if isinstance(metadata, dict)
+            else None
+        )
+
+        enqueue_occurrence_bound_repair_request(
+            queue_root=queue_root,
+            marker_dir=marker_dir or plan_dir,
+            session=session_id,
             source="lifecycle_failure",
             workspace=workspace_path,
-            run_kind="plan",
+            run_kind=run_kind,
             target={
                 "plan_dir": str(plan_dir),
                 "plan_name": plan_dir.name,
                 "workspace_path": str(workspace_path),
+                "retry_strategy": retry_strategy,
             },
             problem_signature={
                 "failure_kind": kind,
@@ -2035,9 +2691,16 @@ def _enqueue_lifecycle_failure_request(
                 "phase_or_step": phase or "",
                 "milestone_or_plan": plan_dir.name,
                 "gate_recommendation": suggested_action or "",
-                "blocked_task_id": _lifecycle_blocked_task_id(metadata),
+                "blocked_task_id": blocked_task,
             },
             root_cause_hint=message,
+            occurrence_identity=occurrence_identity,
+            evidence_cursor_digest=_derive_evidence_cursor_digest(plan_dir),
+            terminal_receipt_expectations=[
+                "five_minute",
+                "one_hour",
+                "next_three_hour",
+            ],
         )
     except Exception:
         _warn_best_effort_emit_failure(
@@ -2047,6 +2710,85 @@ def _enqueue_lifecycle_failure_request(
             phase=phase,
             context={"failure_kind": kind},
         )
+
+
+def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
+    """Route a handler-recorded terminal failure to the managed repair queue.
+
+    Some handlers, notably review, record ``latest_failure`` while transitioning
+    the plan directly to ``blocked``.  The auto driver observes that terminal
+    state without calling :func:`_record_lifecycle_failure`, so mirror the
+    existing failure into repair custody without rewriting plan state.
+    """
+
+    try:
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        failure = state.get("latest_failure") if isinstance(state, dict) else None
+        if not isinstance(failure, dict):
+            return
+        queue_root, marker_dir, repair_session, repair_run_kind = (
+            _lifecycle_repair_request_route(plan_dir)
+        )
+        metadata = (
+            dict(failure.get("metadata"))
+            if isinstance(failure.get("metadata"), dict)
+            else {}
+        )
+        # The terminal mirror runs after the handler has relinquished its
+        # active step.  Reuse only the exact identity already persisted by the
+        # lifecycle owner; never reconstruct authority from the terminal
+        # failure labels.
+        if "repair_identity" not in metadata and isinstance(
+            state.get("repair_identity"), dict
+        ):
+            metadata["repair_identity"] = dict(state["repair_identity"])
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=queue_root,
+            marker_dir=marker_dir,
+            session=repair_session,
+            run_kind=repair_run_kind,
+            kind=str(failure.get("kind") or "terminal_blocked"),
+            message=str(failure.get("message") or "plan entered a blocked terminal state"),
+            current_state=str(state.get("current_state") or STATE_BLOCKED),
+            phase=str(failure.get("phase") or "") or None,
+            suggested_action=str(failure.get("suggested_action") or "") or None,
+            metadata=metadata,
+            retry_strategy=str(
+                (state.get("resume_cursor") or {}).get("retry_strategy")
+                if isinstance(state.get("resume_cursor"), dict)
+                else ""
+            ),
+        )
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
+            action="enqueue_terminal_failure_request",
+            plan_dir=plan_dir,
+            phase="terminal_block",
+        )
+
+
+def _lifecycle_repair_request_route(
+    plan_dir: Path,
+) -> tuple[Path, Path, str, str]:
+    """Resolve lifecycle failures onto the dispatcher-owned queue when set.
+
+    Local runs retain their workspace queue. Managed cloud launchers inject the
+    canonical queue, session, marker, and run-kind identity so plan-level
+    failures cannot become accepted-but-unclaimed sidecars in a nested
+    workspace queue.
+    """
+
+    workspace_path = _workspace_path_for_plan_dir(plan_dir)
+    queue_root = Path(
+        os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+        or workspace_path / ".megaplan" / "repair-queue"
+    )
+    marker_dir = Path(os.environ.get("ARNOLD_REPAIR_MARKER_DIR") or plan_dir)
+    session = os.environ.get("ARNOLD_REPAIR_SESSION") or plan_dir.name
+    run_kind = os.environ.get("ARNOLD_REPAIR_RUN_KIND") or "plan"
+    return queue_root, marker_dir, session, run_kind
 
 
 def _workspace_path_for_plan_dir(plan_dir: Path) -> Path:
@@ -2070,6 +2812,42 @@ def _lifecycle_blocked_task_id(metadata: dict[str, Any] | None) -> str:
     return ""
 
 
+def _derive_chain_path(plan_dir: Path, metadata: dict[str, Any] | None) -> str:
+    """Derive the chain spec path from metadata or environment."""
+    if isinstance(metadata, dict):
+        for key in ("chain_path", "chain", "chain_spec"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    chain_env = os.environ.get("ARNOLD_CHAIN_SPEC") or ""
+    if chain_env.strip():
+        return chain_env.strip()
+    # Plan-scoped runs have no chain spec, but the concrete plan directory is
+    # still the stable execution identity.  Preserve that identity instead of
+    # emitting a partial F01 tuple that the custody boundary must reject.
+    return str(plan_dir)
+
+
+def _derive_evidence_cursor_digest(plan_dir: Path) -> str:
+    """Derive an evidence cursor digest from plan state files.
+
+    Reads plan state, phase result, and finalize timestamps/sizes to
+    produce a content-addressed digest that captures the point-in-time
+    evidence cursor for this enqueue event.
+    """
+    parts: list[str] = []
+    for filename in ("state.json", "phase_result.json", "finalize.json"):
+        try:
+            stat = (plan_dir / filename).stat()
+            parts.append(f"{filename}:{stat.st_mtime_ns}:{stat.st_size}")
+        except OSError:
+            parts.append(f"{filename}:absent")
+    if not parts:
+        return ""
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
 def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:
     if plan_dir is None:
         return
@@ -2079,6 +2857,10 @@ def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:
         current["latest_failure"] = None
         if "resume_cursor" in current:
             current.pop("resume_cursor", None)
+            changed = True
+        meta = current.get("meta")
+        if isinstance(meta, dict) and "provider_contract_repair_retry" in meta:
+            meta.pop("provider_contract_repair_retry", None)
             changed = True
         return changed
 
@@ -2354,8 +3136,75 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
     # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json"
     try:
-        with state_path.open(encoding="utf-8") as handle:
-            state_data = json.load(handle)
+        with plan_lock(plan_dir, step="auto-recover-execute-callback"):
+            with state_path.open(encoding="utf-8") as handle:
+                state_data = json.load(handle)
+            return _recover_execute_callback_failure_state_locked(plan_dir, state_data)
+    except FileNotFoundError:
+        return False
+    except json.JSONDecodeError:
+        _warn_read_fallback(
+            "M3A_WARN_CALLBACK_RECOVERY_READ",
+            path=state_path,
+            reason="corrupt_json",
+        )
+        return False
+    except (CliError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        _warn_read_fallback(
+            "M3A_WARN_CALLBACK_RECOVERY_READ",
+            path=state_path,
+            reason="unreadable_or_locked",
+        )
+        return False
+
+
+def _active_step_recovery_snapshot(
+    state_data: Mapping[str, Any],
+    *,
+    expected_phase: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return a mutation fence only when persisted custody is absent or dead.
+
+    Artifact authority can prove that work completed, but it cannot prove that
+    a persisted worker occurrence is no longer running.  A LIVE or UNKNOWN
+    occurrence therefore retains custody; only an exact DEAD observation may
+    be recovered.  Callers must hold ``plan_lock`` while using the returned
+    snapshot and compare it again in their state mutation.
+    """
+
+    active_step = state_data.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return True, None
+    snapshot = dict(active_step)
+    if active_phase_name(snapshot) != expected_phase:
+        return False, snapshot
+    observation = observe_active_step_worker(snapshot)
+    if observation.state != WORKER_DEAD:
+        return False, snapshot
+    return True, snapshot
+
+
+def _active_step_snapshot_matches(
+    current: Mapping[str, Any],
+    expected: Mapping[str, Any] | None,
+) -> bool:
+    live = current.get("active_step")
+    if expected is None:
+        return not isinstance(live, Mapping)
+    return (
+        isinstance(live, Mapping)
+        and dict(live) == dict(expected)
+        and active_step_cas_token(live) == active_step_cas_token(expected)
+    )
+
+
+def _recover_execute_callback_failure_state_locked(
+    plan_dir: Path,
+    state_data: object,
+) -> bool:
+    """Locked implementation for callback recovery."""
+
+    try:
         if not isinstance(state_data, dict):
             return False
         if state_data.get("current_state") != STATE_FAILED:
@@ -2402,31 +3251,34 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
                 return False
         if not (plan_dir / "execution.json").exists():
             return False
+        recovery_allowed, expected_active = _active_step_recovery_snapshot(
+            state_data,
+            expected_phase="execute",
+        )
+        if not recovery_allowed:
+            return False
         next_state = (
             STATE_EXECUTED if execute_result == "success" else STATE_FINALIZED
         )
+        changed = False
+
+        def _patch(current: dict[str, Any]) -> bool:
+            nonlocal changed
+            if not _active_step_snapshot_matches(current, expected_active):
+                return False
+            current["current_state"] = next_state
+            current.pop("active_step", None)
+            changed = True
+            return True
+
         write_plan_state(
             plan_dir,
             mode="patch-many",
-            patch={"current_state": next_state, "active_step": None},
-            mutation=lambda current: (current.pop("active_step", None), True)[1],
+            patch={},
+            mutation=_patch,
         )
-        return True
-    except FileNotFoundError:
-        return False
-    except json.JSONDecodeError:
-        _warn_read_fallback(
-            "M3A_WARN_CALLBACK_RECOVERY_READ",
-            path=state_path,
-            reason="corrupt_json",
-        )
-        return False
-    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
-        _warn_read_fallback(
-            "M3A_WARN_CALLBACK_RECOVERY_READ",
-            path=state_path,
-            reason="unreadable",
-        )
+        return changed
+    except (CliError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
         return False
 
 
@@ -2443,6 +3295,16 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
 
     if plan_dir is None:
         return False
+    try:
+        with plan_lock(plan_dir, step="auto-recover-execute-artifacts"):
+            return _recover_completed_execute_artifacts_after_failure_locked(plan_dir)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return False
+
+
+def _recover_completed_execute_artifacts_after_failure_locked(plan_dir: Path) -> bool:
+    """Locked implementation for completed-execute adoption."""
+
     state_path = plan_dir / "state.json"
     try:
         state_data = json.loads(state_path.read_text(encoding="utf-8"))
@@ -2452,11 +3314,12 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
         return False
     if state_data.get("current_state") != STATE_FINALIZED:
         return False
-    active_step = state_data.get("active_step")
-    if isinstance(active_step, dict):
-        active_phase = active_phase_name(active_step)
-        if active_phase and active_phase != "execute":
-            return False
+    recovery_allowed, _expected_active = _active_step_recovery_snapshot(
+        state_data,
+        expected_phase="execute",
+    )
+    if not recovery_allowed:
+        return False
     if not (plan_dir / "execution.json").exists():
         return False
     if _latest_review_requires_rework_after_execution(plan_dir):
@@ -2487,40 +3350,119 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
     if plan_dir is None:
         return False
     try:
+        with plan_lock(plan_dir, step="auto-recover-gate-artifact"):
+            return _recover_completed_gate_artifact_after_failure_locked(plan_dir)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return False
+
+
+def _recover_completed_gate_artifact_after_failure_locked(plan_dir: Path) -> bool:
+    """Locked implementation for completed-gate adoption."""
+
+    try:
         state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         gate_data = json.loads((plan_dir / "gate.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return False
     if not isinstance(state_data, dict) or state_data.get("current_state") != STATE_CRITIQUED:
         return False
-    active_step = state_data.get("active_step")
-    if isinstance(active_step, dict):
-        active_phase = active_phase_name(active_step)
-        if active_phase and active_phase != "gate":
-            return False
+    recovery_allowed, expected_active = _active_step_recovery_snapshot(
+        state_data,
+        expected_phase="gate",
+    )
+    if not recovery_allowed:
+        return False
     if not isinstance(gate_data, dict):
         return False
     if gate_data.get("recommendation") != "PROCEED" or gate_data.get("passed") is not True:
         return False
     if gate_data.get("unresolved_flags"):
         return False
+    iteration = state_data.get("iteration")
+    if not isinstance(iteration, int) or iteration < 1:
+        return False
+    custody_path = plan_dir / f"critique_custody_v{iteration}.json"
+    signals_path = plan_dir / f"gate_signals_v{iteration}.json"
+    try:
+        gate_signals = json.loads(signals_path.read_text(encoding="utf-8"))
+        custody_digest = sha256_file(custody_path)
+        custody_mtime = custody_path.stat().st_mtime_ns
+        signals_mtime = signals_path.stat().st_mtime_ns
+        gate_mtime = (plan_dir / "gate.json").stat().st_mtime_ns
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(gate_signals, dict):
+        return False
+    custody_binding = gate_signals.get("critique_custody")
+    if not isinstance(custody_binding, dict):
+        return False
+    if (
+        custody_binding.get("receipt") != custody_path.name
+        or custody_binding.get("receipt_sha256") != custody_digest
+        or custody_binding.get("admitted") is not True
+        or custody_binding.get("loss_count") != 0
+    ):
+        return False
+    if not (custody_mtime <= signals_mtime <= gate_mtime):
+        return False
+
+    # Replan intentionally reuses the plan directory, so a passing gate.json
+    # can belong to an older planning epoch.  Adopting that stale artifact
+    # skips the gate that must evaluate the newly written critique and leaves
+    # the workflow cursor at critique -> gate while state has advanced to
+    # gated.  Fail closed unless the candidate gate artifact is at least as
+    # fresh as the latest successful critique artifact.  If a gate worker
+    # crashed before writing a new artifact, rerunning gate is safer than
+    # manufacturing a transition from an older epoch.
+    history = state_data.get("history")
+    if isinstance(history, list):
+        latest_critique = next(
+            (
+                entry
+                for entry in reversed(history)
+                if isinstance(entry, dict)
+                and entry.get("step") == "critique"
+                and entry.get("result") == "success"
+            ),
+            None,
+        )
+        if isinstance(latest_critique, dict):
+            critique_output = latest_critique.get("output_file")
+            if isinstance(critique_output, str) and critique_output:
+                critique_path = plan_dir / Path(critique_output).name
+                try:
+                    if (
+                        (plan_dir / "gate.json").stat().st_mtime_ns
+                        < critique_path.stat().st_mtime_ns
+                    ):
+                        return False
+                except OSError:
+                    return False
+
+    changed = False
 
     def _patch(current: dict[str, Any]) -> bool:
+        nonlocal changed
+        if not _active_step_snapshot_matches(current, expected_active):
+            return False
         current["current_state"] = STATE_GATED
         current.pop("active_step", None)
         current.setdefault("meta", {})["gate_artifact_recovery"] = {
             "reason": "adopted passing gate.json after worker failure",
             "gate_recommendation": gate_data.get("recommendation"),
+            "critique_custody_receipt": custody_path.name,
+            "critique_custody_sha256": custody_digest,
         }
+        changed = True
         return True
 
     write_plan_state(
         plan_dir,
         mode="patch-many",
-        patch={"current_state": STATE_GATED, "active_step": None},
+        patch={},
         mutation=_patch,
     )
-    return True
+    return changed
 
 
 def _latest_review_requires_rework_after_execution(plan_dir: Path) -> bool:
@@ -2596,24 +3538,46 @@ def _execution_batch_completed_task_ids(
 def _latest_recorded_execute_head(plan_dir: Path | None) -> str | None:
     if plan_dir is None:
         return None
-    for batch_path in reversed(list_batch_artifacts(plan_dir)):
+    candidates: list[tuple[int, int, str, str]] = []
+    for batch_path in list_batch_artifacts(plan_dir):
         try:
             payload = json.loads(batch_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
             continue
         if not isinstance(payload, dict):
             continue
+        fence_token = -1
+        dispatch_identity = payload.get("dispatch_identity")
+        if isinstance(dispatch_identity, dict):
+            fence = dispatch_identity.get("fence")
+            raw_token = fence.get("token") if isinstance(fence, dict) else None
+            if isinstance(raw_token, int) and not isinstance(raw_token, bool):
+                fence_token = raw_token
+        try:
+            mtime_ns = batch_path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = -1
         task_updates = payload.get("task_updates")
         if not isinstance(task_updates, list):
             continue
+        latest_head: str | None = None
         for record in reversed(task_updates):
             if not isinstance(record, dict):
                 continue
             for key in ("head_sha", "head"):
                 value = record.get(key)
                 if isinstance(value, str) and value.strip():
-                    return value.strip()
-    return None
+                    latest_head = value.strip()
+                    break
+            if latest_head is not None:
+                break
+        if latest_head is not None:
+            candidates.append(
+                (fence_token, mtime_ns, batch_path.as_posix(), latest_head)
+            )
+    if not candidates:
+        return None
+    return max(candidates)[3]
 
 
 def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
@@ -2650,16 +3614,14 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
         if raw_status in {None, "", "pending", "todo", "in_progress"}:
-            if task_id in completed or task_id in batch_completed:
+            if task_id in batch_completed:
                 continue
             missing.append(
                 f"{task_id or '<missing-task-id>'}:"
                 f"not_executed:{raw_status or 'missing_status'}"
             )
             continue
-        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"}:
-            if task_id in completed or task_id in batch_completed:
-                continue
+        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
             if (
                 raw_status == "skipped"
                 and task.get("reviewer_verdict") == "deferred_baseline_unavailable"
@@ -2731,8 +3693,9 @@ def _block_for_execute_authority_divergence(
 # Output artifacts written incrementally by long-running phase workers. When
 # the worker dies mid-write these files survive on disk but lack the terminal
 # fields the recovery paths look for. The next dispatch must start clean —
-# otherwise critique's `_recover_valid_critique_output` (and friends) can
-# treat the half-written file as authoritative and short-circuit the rerun.
+# otherwise a registered file-fill provider can mistake output from the dead
+# occurrence for its own current attempt. Critique scratch is always
+# quarantined because no legacy scratch file carries invocation/attempt proof.
 _PHASE_OUTPUT_QUARANTINE: dict[str, tuple[str, ...]] = {
     "critique": ("critique_output.json",),
     "plan": ("plan_output.json",),
@@ -2764,10 +3727,20 @@ def _quarantine_phase_outputs(plan_dir: Path, step: str) -> list[str]:
             if not source.exists():
                 continue
             artifact_name = source.name
-            # Treat zero-byte AND structurally-empty payloads as corpses worth
-            # quarantining. An output file that holds a complete payload is
-            # rare in this orphan path, but we leave it alone — the handler's
-            # own recover logic will accept or reject it normally.
+            if step == "critique":
+                target = plan_dir / f"{artifact_name}.orphaned"
+                suffix = 1
+                while target.exists():
+                    target = plan_dir / f"{artifact_name}.orphaned.{suffix}"
+                    suffix += 1
+                try:
+                    source.replace(target)
+                except OSError:
+                    continue
+                quarantined.append(artifact_name)
+                continue
+            # Other legacy phase paths retain their established empty/corrupt
+            # quarantine behavior until their transports gain attempt binding.
             try:
                 text = source.read_text(encoding="utf-8")
             except OSError:
@@ -2821,14 +3794,14 @@ def _clear_orphaned_active_step(
     plan_dir: Path | None,
     expected_step: str,
     *,
+    expected_active_step: Mapping[str, Any] | None = None,
     quarantine: bool = True,
 ) -> bool:
     """Strip an orphaned ``active_step`` from ``state.json`` in place.
 
-    Returns True iff the cleanup actually wrote a change. The expected step
-    name is used purely as a safety check — if state.json's ``active_step``
-    no longer matches (because some other actor cleared it), we leave it
-    alone rather than racing with a healthy phase.
+    Returns True iff the cleanup won an exact compare-and-swap. The expected
+    step plus full active-occurrence snapshot (run, invocation, incarnation,
+    lease/fence, heartbeat) prevent racing a concurrent resume or replacement.
 
     ``quarantine`` controls whether ``<step>_output.json`` is renamed aside.
     Dead-worker orphans still quarantine half-written outputs; completed
@@ -2872,11 +3845,25 @@ def _clear_orphaned_active_step(
     recorded_step = active_phase_name(current_active)
     if recorded_step != expected_step:
         return False
-    quarantined = (
-        _quarantine_phase_outputs(plan_dir, expected_step) if quarantine else []
-    )
+    expected_snapshot = dict(expected_active_step or current_active)
+    expected_token = active_step_cas_token(expected_snapshot)
+    quarantined: list[str] = []
+    cleared = False
+
     def _patch_orphan_recovery(current: dict[str, Any]) -> bool:
+        nonlocal cleared
+        live_active = current.get("active_step")
+        if not isinstance(live_active, dict):
+            return False
+        if (
+            live_active != expected_snapshot
+            or active_step_cas_token(live_active) != expected_token
+        ):
+            return False
+        if quarantine:
+            quarantined.extend(_quarantine_phase_outputs(plan_dir, expected_step))
         changed = current.pop("active_step", None) is not None
+        cleared = changed
         if quarantined:
             meta = current.setdefault("meta", {})
             if isinstance(meta, dict):
@@ -2884,6 +3871,7 @@ def _clear_orphaned_active_step(
                 if isinstance(history, list):
                     history.append({
                         "step": expected_step,
+                        "active_step_cas": expected_token,
                         "quarantined": list(quarantined),
                     })
                     changed = True
@@ -2903,7 +3891,359 @@ def _clear_orphaned_active_step(
             f"M3B_HALT_ORPHAN_CLEAR_WRITE: failed to clear orphaned active_step in {state_path}: {exc}",
             extra={"path": str(state_path), "expected_step": expected_step},
         ) from exc
-    return True
+    return cleared
+
+
+def _clear_completed_active_step(
+    plan_dir: Path | None,
+    expected_step: str,
+    result: object | None,
+) -> bool:
+    """Clear only the exact occurrence acknowledged by ``PhaseResult``.
+
+    The phase subprocess normally clears its own occurrence.  This fallback
+    covers the narrow crash-after-result seam, but must never erase a newer
+    resume/replacement that claimed the same phase name.  The invocation id is
+    the result-to-occurrence binding; the full snapshot token is the CAS fence.
+    For every valid result, persist a non-authoritative repair-identity seed in
+    the same CAS mutation before removing the occurrence. This preserves the
+    source needed by lifecycle repair, including callback failures after a
+    successful worker result, without granting queue authority.
+    """
+
+    if (
+        plan_dir is None
+        or result is None
+        or getattr(result, "phase", None) != expected_step
+    ):
+        return False
+    result_invocation = getattr(result, "invocation_id", None)
+    if not isinstance(result_invocation, str) or not result_invocation:
+        return False
+    try:
+        with plan_lock(plan_dir, step=f"auto-clear-completed-{expected_step}"):
+            state_data = _read_state_data(plan_dir)
+            if not isinstance(state_data, dict):
+                return False
+            active_step = state_data.get("active_step")
+            if not isinstance(active_step, Mapping):
+                return False
+            expected_active = dict(active_step)
+            if (
+                active_phase_name(expected_active) != expected_step
+                or _active_step_invocation_id(expected_active) != result_invocation
+            ):
+                return False
+            expected_token = active_step_cas_token(expected_active)
+            changed = False
+
+            def _patch(current: dict[str, Any]) -> bool:
+                nonlocal changed
+                live_active = current.get("active_step")
+                if (
+                    not isinstance(live_active, Mapping)
+                    or dict(live_active) != expected_active
+                    or active_step_cas_token(live_active) != expected_token
+                ):
+                    return False
+                seed = _build_repair_identity_seed(
+                    plan_dir=plan_dir,
+                    state=current,
+                    phase=expected_step,
+                    active_step=expected_active,
+                    result=result,
+                )
+                meta = current.get("meta")
+                if not isinstance(meta, dict):
+                    meta = {}
+                    current["meta"] = meta
+                if seed is not None:
+                    # Keep the exact result-bound source through the callback
+                    # boundary too: a successful worker can still fail while
+                    # publishing its state transition.
+                    meta[_REPAIR_IDENTITY_SEED_META_KEY] = seed
+                current.pop("active_step", None)
+                changed = True
+                return True
+
+            write_plan_state(
+                plan_dir,
+                mode="patch-many",
+                patch={},
+                mutation=_patch,
+                validate_current_state=False,
+            )
+            return changed
+    except (CliError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return False
+
+
+@dataclass(frozen=True)
+class _AutoDispatchProjection:
+    next_step: str | None
+    valid_next: tuple[str, ...]
+    issue: str | None = None
+    message: str = ""
+    observed_phase: str | None = None
+    observed_phase_source: str | None = None
+
+
+def _projection_state_snapshot(
+    plan: str,
+    plan_dir: Path | None,
+    status: Mapping[str, Any],
+) -> dict[str, Any]:
+    state = _read_state_data(plan_dir) or {}
+    if not isinstance(state.get("name"), str) or not state.get("name"):
+        state["name"] = plan
+    current_state = status.get("state")
+    if not isinstance(state.get("current_state"), str) and isinstance(current_state, str):
+        state["current_state"] = current_state
+    config = state.get("config")
+    if not isinstance(config, dict):
+        state["config"] = {}
+    return state
+
+
+def _projection_uses_recovery(state: Mapping[str, Any]) -> bool:
+    current_state = state.get("current_state")
+    return current_state in {
+        STATE_AWAITING_HUMAN,
+        STATE_BLOCKED,
+        STATE_FAILED,
+    }
+
+
+def _projection_cursor_payload(
+    status: Mapping[str, Any],
+    observed_phase: str | None,
+) -> dict[str, Any] | None:
+    payload = status.get("workflow_cursor")
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    if observed_phase is None:
+        return None
+    cursor = workflow_cursor(observed_phase)
+    if cursor is None:
+        return None
+    return cursor.to_dict()
+
+
+def _observed_phase_context(
+    state: Mapping[str, Any],
+    status: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    active_step = status.get("active_step")
+    if isinstance(active_step, Mapping):
+        active_phase = active_phase_name(active_step)
+        if isinstance(active_phase, str) and active_phase:
+            return active_phase, "active_step"
+    state_active_step = state.get("active_step")
+    if isinstance(state_active_step, Mapping):
+        active_phase = active_phase_name(state_active_step)
+        if isinstance(active_phase, str) and active_phase:
+            return active_phase, "active_step"
+    resume_cursor = state.get("resume_cursor")
+    if isinstance(resume_cursor, Mapping):
+        phase = resume_cursor.get("phase")
+        if isinstance(phase, str) and phase:
+            return phase, "resume_cursor"
+    latest_failure = state.get("latest_failure")
+    if isinstance(latest_failure, Mapping):
+        phase = latest_failure.get("phase")
+        if isinstance(phase, str) and phase:
+            return phase, "latest_failure"
+    # A history record is not automatically a completed transition.  In
+    # particular execute emits ``partial``/``blocked`` while finalized keeps
+    # projecting execute for the remaining work.  Letting those records
+    # manufacture a review cursor turns a valid rework continuation into a
+    # workflow_cursor_mismatch.
+    last_step = status.get("last_step")
+    if (
+        isinstance(last_step, Mapping)
+        and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+    ):
+        phase = last_step.get("step")
+        if isinstance(phase, str) and phase:
+            return phase, "last_step"
+    return None, None
+
+
+def _gate_operator_issue(state: Mapping[str, Any]) -> tuple[str, str] | None:
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, Mapping):
+        return None
+    recommendation = last_gate.get("recommendation")
+    if recommendation == "ESCALATE":
+        return (
+            "gate_escalated",
+            "gate escalated and requires an operator decision",
+        )
+    preflight = last_gate.get("preflight_results")
+    failed = (
+        {name for name, passed in preflight.items() if not passed}
+        if isinstance(preflight, Mapping)
+        else set()
+    )
+    if (
+        state.get("current_state") == STATE_BLOCKED
+        and recommendation == "PROCEED"
+        and not last_gate.get("passed", False)
+        and failed
+        and failed <= {"claude_available", "codex_available"}
+    ):
+        return (
+            "gate_force_proceed_required",
+            "gate proceed is blocked by agent-availability preflight and requires an operator override",
+        )
+    return None
+
+
+def _project_auto_dispatch(
+    plan: str,
+    *,
+    plan_dir: Path | None,
+    status: Mapping[str, Any],
+) -> _AutoDispatchProjection:
+    state = _projection_state_snapshot(plan, plan_dir, status)
+    observed_phase, observed_phase_source = _observed_phase_context(state, status)
+    cursor_payload = _projection_cursor_payload(status, observed_phase)
+    cursor_dispatch_phase = (
+        str(cursor_payload.get("dispatch_phase"))
+        if isinstance(cursor_payload, Mapping) and isinstance(cursor_payload.get("dispatch_phase"), str)
+        else _normalize_auto_target_id(observed_phase)
+    )
+    cursor_next_dispatches = tuple(
+        str(item)
+        for item in (cursor_payload.get("next_dispatch_phases") if isinstance(cursor_payload, Mapping) else ())
+        if isinstance(item, str) and item
+    )
+    # The static pypeline cursor is plan-agnostic: it describes the canonical
+    # full workflow, not the plan's actual robustness-pruned topology (for
+    # example at light robustness there is no gate step: critiqued -> revise).
+    # Reconcile the control projection against the plan's own topology so
+    # legitimate robustness-pruned transitions are not flagged as drift.
+    if state.get("current_state"):
+        try:
+            from arnold_pipelines.megaplan._core.workflow import workflow_next
+
+            plan_next = tuple(
+                str(item) for item in workflow_next(state) if isinstance(item, str) and item
+            )
+        except Exception:
+            plan_next = ()
+        if plan_next:
+            cursor_next_dispatches = tuple(
+                dict.fromkeys((*cursor_next_dispatches, *plan_next))
+            )
+    blocker_recovery = status.get("blocker_recovery")
+    if (
+        state.get("current_state") == STATE_BLOCKED
+        and isinstance(blocker_recovery, Mapping)
+        and blocker_recovery.get("has_terminal_blockers") is True
+    ):
+        return _AutoDispatchProjection(
+            next_step=None,
+            valid_next=(),
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    try:
+        projection = read_valid_targets(
+            state,
+            plugin_id="megaplan",
+            recovery=_projection_uses_recovery(state),
+        )
+    except Exception:
+        projection = ()
+
+    valid_targets: list[str] = []
+    mismatches: list[str] = []
+    for target in projection:
+        target_id = _normalize_auto_target_id(getattr(target, "id", None))
+        if not _is_auto_supported_target(target_id):
+            continue
+        metadata = getattr(target, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        if metadata.get("actionable", True) is False:
+            continue
+        if _projection_uses_recovery(state):
+            valid_targets.append(target_id)
+            continue
+        if metadata.get("dispatch_surface") == "workflow.native_policy":
+            valid_targets.append(target_id)
+            continue
+        if not cursor_next_dispatches:
+            valid_targets.append(target_id)
+            continue
+        if target_id in cursor_next_dispatches:
+            valid_targets.append(target_id)
+            continue
+        if (
+            observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+            and cursor_dispatch_phase is not None
+            and target_id == cursor_dispatch_phase
+        ):
+            valid_targets.append(target_id)
+            continue
+        mismatches.append(target_id)
+
+    unique_valid_targets = tuple(dict.fromkeys(valid_targets))
+    if unique_valid_targets:
+        return _AutoDispatchProjection(
+            next_step=unique_valid_targets[0],
+            valid_next=unique_valid_targets,
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    if (
+        cursor_dispatch_phase is not None
+        and _is_auto_supported_target(cursor_dispatch_phase)
+        and observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+    ):
+        return _AutoDispatchProjection(
+            next_step=cursor_dispatch_phase,
+            valid_next=(cursor_dispatch_phase,),
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    gate_issue = _gate_operator_issue(state)
+    if gate_issue is not None:
+        return _AutoDispatchProjection(
+            next_step=None,
+            valid_next=(),
+            issue=gate_issue[0],
+            message=gate_issue[1],
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    if mismatches and cursor_next_dispatches:
+        expected = ", ".join(cursor_next_dispatches)
+        actual = ", ".join(mismatches)
+        source = observed_phase_source or "observed_phase"
+        return _AutoDispatchProjection(
+            next_step=None,
+            valid_next=(),
+            issue="workflow_cursor_mismatch",
+            message=(
+                f"workflow cursor from {source} expects one of [{expected}] "
+                f"but control projection offered [{actual}]"
+            ),
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    return _AutoDispatchProjection(
+        next_step=None,
+        valid_next=(),
+        observed_phase=cursor_dispatch_phase,
+        observed_phase_source=observed_phase_source,
+    )
 
 
 def _plan_clarification(plan_dir: Path | None) -> dict[str, Any] | None:
@@ -3388,15 +4728,43 @@ def drive(
     external_retry_count = 0
     external_retry_counts_by_phase: dict[str, int] = {}
     blocked_retry_count = 0
-    # Consecutive `override add-note` dispatches on the same critique fork.
-    # Reset when the next_step changes. A repeated successful add-note that
-    # leaves the plan on the same override path is still a no-progress loop
-    # and should eventually escalate to `override force-proceed`.
-    add_note_attempts = 0
     repeated_failure_signature: str | None = None
+    repeated_failure_occurrence: str | None = None
     repeated_failure_signature_count = 0
     invalid_transition_signature: str | None = None
     invalid_transition_signature_count = 0
+    deterministic_phase_failure_signature: str | None = None
+    deterministic_phase_failure_count = 0
+    predispatch_validation_signature: str | None = None
+    predispatch_validation_count = 0
+
+    # ── M8A T14 — per-task circuit-breaker states ──────────────────────
+    # Each task/attempt gets a CircuitState keyed by failure_class.
+    # When two equivalent failures occur for the same class, the circuit
+    # opens and the driver emits a typed blocker/escalation instead of
+    # retrying indefinitely.
+    _task_circuit_states: dict[str, CircuitState] = {}
+
+    def _advance_circuit(
+        error: Any,
+        *,
+        task_id: str = "",
+        attempt_id: str = "",
+    ) -> tuple[CircuitState, Any | None]:
+        """Classify ``error``, normalize its signature, and advance the circuit.
+
+        Returns ``(next_state, halt_decision_or_None)``.  The caller owns
+        the state update; this helper is pure.
+        """
+        fc = classify_failure_class(error)
+        sig = normalize_failure_signature(fc, error, task_id=task_id, attempt_id=attempt_id)
+        state_key = f"{fc}:{task_id}" if task_id else fc
+        current = _task_circuit_states.get(state_key)
+        if current is None:
+            current = CircuitState(failure_class=fc)
+        next_state, decision = circuit_transition(current, sig)
+        _task_circuit_states[state_key] = next_state
+        return next_state, decision
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -3424,6 +4792,7 @@ def drive(
     # review cycle finished since we last observed the state.
     plan_dir = _resolve_plan_dir(plan, cwd)
     if plan_dir is not None:
+        _admit_auto_driver(plan_dir, plan)
         emit_event(EventKind.INIT, plan_dir=plan_dir, payload={"plan_name": plan})
     from arnold_pipelines.megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)
@@ -3439,6 +4808,80 @@ def drive(
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
+
+    iteration = 0
+
+    def _emit_work_boundary(
+        kind: str,
+        *,
+        phase: str | None = None,
+        elapsed_ms: int | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if plan_dir is None:
+            return
+        payload = {"boundary": kind, "iteration": iteration, **dict(metadata or {})}
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_compaction,
+                emit_queue_idle,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "auto_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase or "auto",
+                    session_id=f"auto:{os.getpid()}:{plan}",
+                    agent="auto",
+                    metadata=payload,
+                )
+            elif kind == "queue_idle":
+                emit_queue_idle(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_driver_wait_no_model",
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_driver_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "compaction":
+                emit_compaction(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_context_retry_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase or "auto",
+                    transition=str(payload.get("transition") or "auto_state_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            _warn_best_effort_emit_failure(
+                "M9_WARN_EMIT_AUTO_WORK_LEDGER",
+                action="auto-work-ledger",
+                plan_dir=plan_dir,
+                phase=phase,
+                event_kind=kind,
+                context=payload,
+            )
+
+    _emit_work_boundary("auto_session_start", phase="auto")
 
     live_phase_models = [
         item for item in (phase_model or []) if isinstance(item, str) and "=" in item
@@ -3467,11 +4910,38 @@ def drive(
             message = latest_failure.get("message")
             if isinstance(message, str) and message.strip():
                 return message.strip()
+        # The phase subprocess is the authority for the failure that just
+        # happened.  ``prior_failure`` is captured only so we can retain useful
+        # context when a crashing subprocess emits no diagnostics at all.  If
+        # it outranks current stderr/stdout, distinct failures are assigned the
+        # first failure's signature and can be falsely latched as deterministic.
+        current_stderr = _filtered_failure_stderr(stderr)
+        if current_stderr:
+            try:
+                current_payload = json.loads(current_stderr)
+            except (TypeError, ValueError):
+                current_payload = None
+            if isinstance(current_payload, dict):
+                details = current_payload.get("details")
+                message = current_payload.get("message")
+                if (
+                    isinstance(details, dict)
+                    and details.get("raw_output") == "parallel"
+                    and isinstance(message, str)
+                    and message.strip()
+                ):
+                    return (
+                        f"{message.strip()} [parallel critique aggregate; "
+                        "inspect critique_check_* artifacts]"
+                    )
+        current_detail = (current_stderr or stdout.strip()[-400:]).strip()
+        if current_detail:
+            return current_detail
         if isinstance(prior_failure, Mapping) and prior_failure.get("phase") == next_step:
             message = prior_failure.get("message")
             if isinstance(message, str) and message.strip():
                 return message.strip()
-        return (_filtered_failure_stderr(stderr) or stdout.strip()[-400:]).strip()
+        return ""
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         before_phase_result = _phase_result_signature(plan_dir)
@@ -3554,17 +5024,7 @@ def drive(
         return code, out, err, result
 
     def _clear_completed_phase_active_step(next_step: str, result: object | None) -> None:
-        if plan_dir is None or result is None or getattr(result, "phase", None) != next_step:
-            return
-        try:
-            write_plan_state(
-                plan_dir,
-                mode="patch-many",
-                patch={"active_step": None},
-                mutation=lambda current: (current.pop("active_step", None), True)[1],
-            )
-        except Exception:
-            return
+        _clear_completed_active_step(plan_dir, next_step, result)
 
     def _outcome(
         status: str,
@@ -3598,7 +5058,6 @@ def drive(
             publish=publish,
         )
 
-    iteration = 0
     while iteration < max_iterations:
         iteration += 1
         try:
@@ -3658,25 +5117,62 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        next_step = status.get("next_step")
-        valid_next = status.get("valid_next") or []
+        legacy_next_step = status.get("next_step")
+        legacy_valid_next = status.get("valid_next") or []
+        # A worker can finish every execute artifact but die before its
+        # finalized -> executed transition is persisted.  In that shape the
+        # state control projection still offers ``execute`` while the last
+        # completed workflow event correctly points at ``review``.  Reconcile
+        # the artifact *before* comparing those two projections: otherwise
+        # the comparison turns a recoverable state-write gap into a permanent
+        # workflow_cursor_mismatch and the evidence-gated adoption path below
+        # is never reached.
+        status_active_step = status.get("active_step")
+        status_active_phase = (
+            active_phase_name(status_active_step)
+            if isinstance(status_active_step, dict)
+            else None
+        )
+        if (
+            state == STATE_FINALIZED
+            and (legacy_next_step == "execute" or status_active_phase == "execute")
+            and _recover_completed_execute_artifacts_after_failure(plan_dir)
+        ):
+            message = "reconciled complete execution.json before workflow projection"
+            log("recovered completed execute artifacts before workflow projection; resuming from executed")
+            events.append({"msg": message, "phase": "execute", "plan": plan})
+            continue
+        projection = _project_auto_dispatch(plan, plan_dir=plan_dir, status=status)
+        next_step = projection.next_step
+        valid_next = list(projection.valid_next)
+        status = dict(status)
+        status["legacy_next_step"] = legacy_next_step
+        status["legacy_valid_next"] = list(legacy_valid_next)
+        status["next_step"] = next_step
+        status["valid_next"] = valid_next
 
         log(
-            f"iter {iteration} state={state} next={next_step} valid_next={valid_next}",
+            f"iter {iteration} state={state} next={next_step} valid_next={valid_next} "
+            f"legacy_next={legacy_next_step}",
             iteration=iteration,
             state=state,
             next_step=next_step,
             valid_next=valid_next,
+            legacy_next_step=legacy_next_step,
+            legacy_valid_next=legacy_valid_next,
         )
 
         repeat = _repeated_failure_signature(plan_dir, status)
-        if repeat is None:
-            pass
-        elif repeat["hash"] == repeated_failure_signature:
-            repeated_failure_signature_count += 1
-        else:
-            repeated_failure_signature = str(repeat["hash"])
-            repeated_failure_signature_count = 1
+        (
+            repeated_failure_signature,
+            repeated_failure_occurrence,
+            repeated_failure_signature_count,
+        ) = _update_repeated_failure_counter(
+            repeat,
+            tracked_signature=repeated_failure_signature,
+            tracked_occurrence=repeated_failure_occurrence,
+            count=repeated_failure_signature_count,
+        )
         if (
             repeat is not None
             and max_repeated_failure_signatures > 0
@@ -3715,6 +5211,9 @@ def drive(
                     "failure_step": repeat.get("step"),
                     "failure_result": repeat.get("result"),
                     "failure_message": repeat.get("message"),
+                    "failure_occurrence_id": repeat.get("occurrence_id"),
+                    "failure_history_index": repeat.get("history_index"),
+                    "failure_timestamp": repeat.get("timestamp"),
                     "iteration": iteration,
                 },
             )
@@ -3733,12 +5232,6 @@ def drive(
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
             log("recovered execute state after phase-complete callback failure; resuming")
             continue
-        status_active_step = status.get("active_step")
-        status_active_phase = (
-            active_phase_name(status_active_step)
-            if isinstance(status_active_step, dict)
-            else None
-        )
         if (
             state == STATE_FINALIZED
             and (next_step == "execute" or status_active_phase == "execute")
@@ -3765,8 +5258,53 @@ def drive(
             events.append({"msg": message, "phase": "gate", "plan": plan})
             continue
 
+        # Rerun-cursor re-open: a plan that reached done under a shadow
+        # completion contract with genuinely-blocked tasks carries a chain-
+        # recorded rerun cursor ({phase: execute, retry_strategy: rerun_phase}).
+        # Re-enter execute so the blocked tasks get re-dispatched instead of
+        # terminal-exiting with uncorroborated completion.  The chain's
+        # fail-closed authority gate still refuses advancement until task
+        # completion is corroborated; this only re-opens the recovery loop.
+        if state == STATE_DONE:
+            _rerun_cursor = None
+            try:
+                _rerun_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+                if isinstance(_rerun_payload, dict):
+                    _rerun_cursor = _rerun_payload.get("resume_cursor")
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                _rerun_cursor = None
+            if (
+                isinstance(_rerun_cursor, dict)
+                and _rerun_cursor.get("phase") == "execute"
+                and _rerun_cursor.get("retry_strategy") == "rerun_phase"
+            ):
+                log(
+                    "done plan carries execute rerun cursor — re-opening execute for "
+                    "blocked-task re-dispatch"
+                )
+                try:
+                    write_plan_state(
+                        plan_dir,
+                        mode="patch-many",
+                        patch={
+                            "current_state": STATE_FINALIZED,
+                            "resume_cursor": _rerun_cursor,
+                        },
+                        validate_current_state=False,
+                    )
+                    log("re-opened done plan to finalized for execute re-dispatch")
+                    continue
+                except Exception as _reopen_err:
+                    log(f"failed to re-open done plan for execute: {_reopen_err}")
+
         # Terminal: plan reached a final state (or automation-terminal).
-        if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
+        if state in AUTOMATION_TERMINAL_STATES and not (
+            state == STATE_BLOCKED
+            and (
+                valid_next
+                or projection.issue in {"gate_escalated", "gate_force_proceed_required"}
+            )
+        ):
             if state == STATE_AWAITING_HUMAN:
                 # Distinguish prep-sourced halts (blocking ambiguities) from
                 # criteria-verification halts. Prep halts include the blocking
@@ -3909,6 +5447,7 @@ def drive(
                     _clear_latest_failure_for_success(plan_dir)
                 elif terminal_status == "blocked":
                     _clear_obsolete_failure_for_terminal_block(plan_dir, status)
+                    _enqueue_terminal_failure_request(plan_dir)
                 try:
                     if terminal_status == "aborted":
                         emit_event(EventKind.PLAN_ABORTED, plan_dir=plan_dir, payload={"state": state})
@@ -3924,6 +5463,18 @@ def drive(
                         ),
                         context={"state": state},
                     )
+            # M8A T18 — write aggregate work-class summary on terminal exit
+            if plan_dir is not None:
+                try:
+                    import json as _json
+                    summary = build_work_class_summary(plan_dir)
+                    summary_path = Path(plan_dir) / "evidence" / "work_class_summary.json"
+                    summary_path.parent.mkdir(parents=True, exist_ok=True)
+                    summary_path.write_text(
+                        _json.dumps(summary, indent=2, sort_keys=True, default=str)
+                    )
+                except Exception:
+                    pass
             return _outcome(
                 terminal_status,
                 final_state=state,
@@ -3934,15 +5485,53 @@ def drive(
             )
 
         active_step = status.get("active_step")
+        persisted_state_for_active = _read_state_data(plan_dir) or {}
+        persisted_active_step = persisted_state_for_active.get("active_step")
+        if isinstance(persisted_active_step, Mapping):
+            # state.json is custody authority.  A stale or degraded status
+            # projection must not hide a persisted occurrence and thereby
+            # bypass the LIVE/UNKNOWN redispatch prohibition.
+            active_step = dict(persisted_active_step)
+        else:
+            persisted_active_step = active_step if isinstance(active_step, Mapping) else None
         orphan_actions = {
             "resume_or_recover",
             "rerun_same_step",
             "rerun_execute",
             "terminate_idle_step",
         }
+        worker_observation_state: str | None = None
+        # A PID is meaningful only inside the runner incarnation that recorded
+        # it.  Same-namespace processes are bound by PID + process start
+        # identity; foreign namespaces require the exact shared runner lease.
+        # UNKNOWN is deliberately non-actionable and therefore cannot cause a
+        # duplicate dispatch.
+        if isinstance(active_step, dict):
+            worker_observation = observe_active_step_worker(
+                persisted_active_step or active_step
+            )
+            worker_observation_state = worker_observation.state
+            active_step["worker_liveness"] = worker_observation.state
+            active_step["worker_liveness_reason"] = worker_observation.reason
+            if worker_observation.state == WORKER_DEAD:
+                active_step["recommended_action"] = "resume_or_recover"
+                active_step["health"] = "dead"
+                active_step["recommended_action_reason"] = worker_observation.reason
+            elif worker_observation.state == WORKER_LIVE:
+                active_step["recommended_action"] = "wait"
+                active_step["health"] = "healthy"
+                active_step["recommended_action_reason"] = worker_observation.reason
+            elif worker_observation.state == WORKER_UNKNOWN:
+                active_step["recommended_action"] = "wait"
+                active_step["health"] = "unknown"
+                active_step["recommended_action_reason"] = (
+                    f"worker liveness is UNKNOWN: {worker_observation.reason}; "
+                    "redispatch is forbidden until exact death or replacement is proven"
+                )
         if (
             isinstance(active_step, dict)
             and active_step.get("recommended_action") not in orphan_actions
+            and worker_observation_state not in {WORKER_LIVE, WORKER_UNKNOWN}
         ):
             is_stale, idle_seconds = _active_step_last_activity_stale(
                 active_step,
@@ -3989,10 +5578,21 @@ def drive(
                             log=log,
                             outcome=_outcome,
                         )
-                _clear_orphaned_active_step(
-                    plan_dir, active_name, quarantine=False
+                cleared = _clear_orphaned_active_step(
+                    plan_dir,
+                    active_name,
+                    expected_active_step=persisted_active_step,
+                    quarantine=False,
                 )
-                active_step = None
+                if cleared:
+                    active_step = None
+                else:
+                    log(
+                        f"active step '{active_name}' changed during completed-phase recovery; "
+                        "refusing redispatch until the new occurrence is observed"
+                    )
+                    iteration -= 1
+                    continue
 
         if (
             isinstance(active_step, dict)
@@ -4002,6 +5602,28 @@ def drive(
             reason = active_step.get("recommended_action_reason") or "active step is still healthy"
             log(f"active step '{active_name}' still running — waiting: {reason}")
             if poll_sleep > 0:
+                # M8A T18 — emit queue event for the wait
+                try:
+                    if plan_dir is not None:
+                        emit_queue(
+                            plan_dir,
+                            task_id="auto_loop",
+                            duration_ms=int(poll_sleep * 1000),
+                            queue_reason="active_step_wait",
+                            active_phase=active_name,
+                        )
+                except Exception:
+                    pass
+                _emit_work_boundary(
+                    "queue_idle",
+                    phase=active_name,
+                    elapsed_ms=max(0, int(poll_sleep * 1000)),
+                    metadata={
+                        "active_step": active_name,
+                        "reason": reason,
+                        "recommended_action": active_step.get("recommended_action"),
+                    },
+                )
                 time.sleep(poll_sleep)
             iteration -= 1  # healthy wait — don't consume iteration budget
             continue
@@ -4028,7 +5650,18 @@ def drive(
                 recommended_action=active_step.get("recommended_action"),
                 health=active_step.get("health"),
             )
-            _clear_orphaned_active_step(plan_dir, orphan_step)
+            cleared = _clear_orphaned_active_step(
+                plan_dir,
+                orphan_step,
+                expected_active_step=persisted_active_step,
+            )
+            if not cleared:
+                log(
+                    f"active step '{orphan_step}' changed during orphan recovery; "
+                    "exact CAS refused the clear and redispatch"
+                )
+                iteration -= 1
+                continue
 
         # Review-cycle progress: a fresh review.json means a real review
         # pass completed since the last iteration. This counts as forward
@@ -4176,6 +5809,19 @@ def drive(
                     ),
                     last_phase=last_phase,
                 )
+            # The review-wave ceiling is a per-worker dispatch bound. Execute
+            # deterministically partitions larger legitimate review frontiers;
+            # the cycle and non-convergence guards above bound total rework.
+            if (
+                rework_cycles_observed == 1
+                and review_rework_streaks
+                and len(review_rework_streaks) > MAX_SERIAL_REWORK
+            ):
+                log(
+                    f"review rework wave has {len(review_rework_streaks)} tasks; "
+                    f"execute will partition it into <= {MAX_SERIAL_REWORK}-task "
+                    "dispatches"
+                )
 
         # Stall detection: same state for stall_threshold+ iterations with no
         # measurable progress. "Stalled" means "no progress", not merely
@@ -4277,13 +5923,25 @@ def drive(
                         last_phase=last_phase,
                     )
                 log(f"stalled at state={state} for {stall_count} iterations")
+                # Preserve the original blocked-phase cursor instead of wedging
+                # on a recovery-helper phase.  `_failure_resume_cursor_for_step`
+                # keeps the cursor of the phase that actually blocked when a
+                # recovery command (e.g. recover-blocked) is the projected next
+                # step; the iteration-cap path uses the same helper.  Without
+                # this, a stall after repeated recover-blocked attempts persists
+                # `phase='recover-blocked'`, which has no topology predecessor
+                # and permanently blocks recover-blocked/resume.
+                stall_cursor = _failure_resume_cursor_for_step(
+                    last_phase or str(next_step or "status"),
+                    plan_dir=plan_dir,
+                )
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="stalled",
                     message=f"stalled at '{state}' for {stall_count} iterations",
                     current_state=None,
                     phase=last_phase,
-                    resume_cursor={"phase": last_phase or str(next_step or "status"), "retry_strategy": "manual_review"},
+                    resume_cursor={**stall_cursor, "retry_strategy": "manual_review"},
                     suggested_action="Review the plan state before resuming automation.",
                     metadata={
                         "stall_count": stall_count,
@@ -4311,6 +5969,13 @@ def drive(
                         plan_dir=plan_dir,
                         payload={"from": last_state, "to": state},
                     )
+                    _emit_work_boundary(
+                        "transition",
+                        phase="auto",
+                        from_state=last_state,
+                        to_state=state,
+                        metadata={"transition": "auto_state_transition"},
+                    )
                 except Exception:
                     _warn_best_effort_emit_failure(
                         "M3A_WARN_EMIT_AUTO_STATE_TRANSITION",
@@ -4319,129 +5984,106 @@ def drive(
                         event_kind="state_transition",
                         context={"from_state": last_state, "to_state": state},
                     )
+                # M8A T18 — emit transition work-ledger event
+                try:
+                    emit_transition(
+                        plan_dir,
+                        task_id="auto_loop",
+                        from_state=last_state,
+                        to_state=state,
+                        duration_ms=0,
+                    )
+                except Exception:
+                    pass
             last_state = state
         if progress_sig_now is not None:
             last_progress_sig = progress_sig_now
         last_stall_progress_event_seq = stall_progress_event_seq_now
         last_active_step_progress_sig = active_step_progress_sig_now
 
-        # Escalation: no phase to run but overrides are available.
         if not next_step:
-            if _has_valid_next(status, "override force-proceed"):
-                if on_escalate == "force-proceed":
-                    log("gate escalated — force-proceeding (per on_escalate=force-proceed)")
-                    run_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
-                    if progress_env:
-                        run_kwargs["progress_env"] = progress_env
-                    _apply_envelope_handshake(run_kwargs, plan_dir)
-                    code, out, err = _override_force_proceed_in_process(
-                        root=Path(cwd or Path.cwd()),
-                        plan=plan,
-                        reason="megaplan auto: escalate → force-proceed",
-                    )
-                    if code != 0:
-                        log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
-                        # Strict-notes invariants surface as specific error
-                        # codes — when we see them the right move is to
-                        # surrender to the human rather than treat the
-                        # subprocess failure as a generic auto-driver fault.
-                        combined_text = f"{out}\n{err}"
-                        strict_signals = (
-                            "unabsorbed_notes_exist",
-                            "escalate_requires_user_approval",
-                        )
-                        if any(signal in combined_text for signal in strict_signals):
-                            _record_failure(
-                                plan_dir=plan_dir,
-                                kind="human_required",
-                                message="force-proceed blocked by strict-notes",
-                                current_state=STATE_BLOCKED,
-                                phase="override",
-                                resume_cursor={"phase": "override", "retry_strategy": "human_approval"},
-                                suggested_action="Address strict notes or approve escalate before resuming.",
-                                metadata={"signals": [signal for signal in strict_signals if signal in combined_text]},
-                            )
-                            return _outcome(
-                                "human_required",
-                                final_state=state,
-                                iterations=iteration,
-                                reason=(
-                                    "force-proceed blocked by strict-notes — human "
-                                    "required to address notes or approve escalate"
-                                ),
-                                last_phase=last_phase,
-                            )
-                        _record_failure(
-                            plan_dir=plan_dir,
-                            kind="override_failed",
-                            message=f"override force-proceed exited {code}",
-                            current_state=STATE_FAILED,
-                            phase="override",
-                            resume_cursor={"phase": "override", "retry_strategy": "rerun_override"},
-                            suggested_action="Inspect override output before resuming.",
-                            metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:]},
-                        )
-                        return _outcome(
-                            "failed",
-                            final_state=state,
-                            iterations=iteration,
-                            reason=f"override force-proceed exited {code}",
-                            last_phase=last_phase,
-                        )
-                    continue
-                if on_escalate == "abort":
-                    log("gate escalated — aborting (per on_escalate=abort)")
-                    run_kwargs = {"cwd": cwd, "timeout": status_timeout}
-                    if progress_env:
-                        run_kwargs["progress_env"] = progress_env
-                    _apply_envelope_handshake(run_kwargs, plan_dir)
-                    _override_abort_in_process(
-                        root=Path(cwd or Path.cwd()),
-                        plan=plan,
-                        reason="megaplan auto: escalate → abort",
-                    )
-                    return _outcome(
-                        "aborted",
-                        final_state=state,
-                        iterations=iteration,
-                        reason="gate escalated and on_escalate=abort",
-                        last_phase=last_phase,
-                    )
-                # on_escalate == "fail"
-                log("gate escalated — failing (per on_escalate=fail)")
+            if projection.issue in {"gate_escalated", "gate_force_proceed_required"}:
+                log(projection.message)
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="gate_escalated",
-                    message="gate escalated and on_escalate=fail",
+                    message=projection.message,
                     current_state=STATE_BLOCKED,
                     phase="gate",
-                    resume_cursor={"phase": "gate", "retry_strategy": "human_decision"},
-                    suggested_action="Resolve the gate escalation before resuming.",
-                    metadata={"iteration": iteration},
+                    resume_cursor={
+                        "phase": projection.observed_phase or "gate",
+                        "retry_strategy": "human_decision",
+                    },
+                    suggested_action=(
+                        "Resolve the gate decision explicitly; auto-drive no longer "
+                        "chooses override routes on your behalf."
+                    ),
+                    metadata={
+                        "iteration": iteration,
+                        "issue": projection.issue,
+                        "legacy_next_step": legacy_next_step,
+                        "legacy_valid_next": legacy_valid_next,
+                    },
                 )
                 return _outcome(
-                    "escalated",
+                    "human_required",
                     final_state=state,
                     iterations=iteration,
-                    reason="gate escalated and on_escalate=fail — human required",
+                    reason=projection.message,
                     last_phase=last_phase,
                 )
-            log(f"no next_step and no override available (valid_next={valid_next})")
+            if projection.issue == "workflow_cursor_mismatch":
+                log(projection.message)
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind="workflow_cursor_mismatch",
+                    message=projection.message,
+                    current_state=STATE_BLOCKED,
+                    phase=projection.observed_phase,
+                    resume_cursor={
+                        "phase": projection.observed_phase or "status",
+                        "retry_strategy": "repair_workflow_projection",
+                    },
+                    suggested_action=(
+                        "Repair the plan or workflow projection so the observed "
+                        "workflow cursor and control targets agree."
+                    ),
+                    metadata={
+                        "iteration": iteration,
+                        "legacy_next_step": legacy_next_step,
+                        "legacy_valid_next": legacy_valid_next,
+                        "observed_phase_source": projection.observed_phase_source,
+                    },
+                )
+                return _outcome(
+                    "blocked",
+                    final_state=STATE_BLOCKED,
+                    iterations=iteration,
+                    reason=projection.message,
+                    last_phase=projection.observed_phase,
+                    blocking_reasons=["workflow_cursor_mismatch"],
+                )
+            log(f"no actionable workflow target available (valid_next={valid_next})")
             _record_failure(
                 plan_dir=plan_dir,
                 kind="no_next_step",
-                message="no next_step and no override available",
+                message="no actionable workflow target available",
                 current_state=STATE_FAILED,
                 phase=None,
                 resume_cursor={"phase": "status", "retry_strategy": "repair_state"},
-                suggested_action="Repair state.json or workflow mapping before resuming.",
-                metadata={"valid_next": valid_next, "iteration": iteration},
+                suggested_action="Repair state.json or workflow/control mapping before resuming.",
+                metadata={
+                    "valid_next": valid_next,
+                    "iteration": iteration,
+                    "legacy_next_step": legacy_next_step,
+                    "legacy_valid_next": legacy_valid_next,
+                },
             )
             return _outcome(
                 "failed",
                 final_state=state,
                 iterations=iteration,
-                reason="no next_step and no override available",
+                reason="no actionable workflow target available",
                 last_phase=last_phase,
             )
 
@@ -4489,63 +6131,21 @@ def drive(
                 blocking_reasons=["control_binding_mismatch"],
             )
 
-        # Special-case `override add-note`: the CLI requires a non-empty
-        # ``--note`` argument, so we synthesize one from the latest gate
-        # signals / critique flags. After ``max_add_note_attempts``
-        # consecutive dispatches on the same override path, fall through to
-        # ``override force-proceed`` — that's the safety-net escape valve
-        # when human intervention isn't available (Track B fallback).
-        if next_step == "override add-note":
-            if (
-                max_add_note_attempts >= 0
-                and add_note_attempts >= max_add_note_attempts
-                and _has_valid_next(status, "override force-proceed")
-            ):
-                log(
-                    f"override add-note repeated {add_note_attempts} times — "
-                    "escalating to override force-proceed",
-                    add_note_attempts=add_note_attempts,
-                    max_add_note_attempts=max_add_note_attempts,
-                )
-                cmd = [
-                    "override",
-                    "force-proceed",
-                    "--plan",
-                    plan,
-                    "--reason",
-                    (
-                        f"megaplan auto: {add_note_attempts} add-note retries "
-                        "exhausted, forcing proceed"
-                    ),
-                ]
-                last_phase = "override force-proceed"
-                add_note_attempts = 0
-            else:
-                cmd = _build_override_add_note_command(
-                    plan,
-                    plan_dir,
-                    iteration=iteration,
-                    attempt=add_note_attempts + 1,
-                )
-                last_phase = next_step
-        else:
-            # Any non-add-note dispatch resets the add-note attempt counter.
-            add_note_attempts = 0
-            cmd = _phase_command(next_step) + ["--plan", plan]
-            cmd = _append_live_phase_models(cmd, str(next_step))
-            last_phase = next_step
-            # Apply an active execute-tier escalation pin. The pin overrides
-            # tier_models.execute via --phase-model and forces a *fresh*
-            # session: the failed worker's session must not be resumed, or the
-            # stronger model would never actually run (a tier change is a no-op
-            # if the batch --resume's the old session on the old model).
-            if next_step == "execute" and escalation_pin_spec is not None:
-                cmd = [
-                    *cmd,
-                    "--phase-model",
-                    f"execute={escalation_pin_spec}",
-                    "--fresh",
-                ]
+        cmd = _command_for_auto_target(next_step) + ["--plan", plan]
+        cmd = _append_live_phase_models(cmd, str(next_step))
+        last_phase = next_step
+        # Apply an active execute-tier escalation pin. The pin overrides
+        # tier_models.execute via --phase-model and forces a *fresh*
+        # session: the failed worker's session must not be resumed, or the
+        # stronger model would never actually run (a tier change is a no-op
+        # if the batch --resume's the old session on the old model).
+        if next_step == "execute" and escalation_pin_spec is not None:
+            cmd = [
+                *cmd,
+                "--phase-model",
+                f"execute={escalation_pin_spec}",
+                "--fresh",
+            ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         prior_phase_failure: dict[str, Any] | None = None
         if plan_dir is not None:
@@ -4562,8 +6162,115 @@ def drive(
                 )
         code, out, err, result = _run_phase(cmd, next_step)
         _clear_completed_phase_active_step(next_step, result)
-        if next_step == "override add-note" and last_phase == "override add-note":
-            add_note_attempts += 1
+        # Execute validation jobs are harness-owned admission work and run
+        # before worker dispatch.  Do not let fresh evidence paths/hashes make
+        # the same failure look like productive progress, and never escalate
+        # the execute model for a failure no model observed.  A typed transient
+        # runner/timeout outcome gets one bounded retry; deterministic suite or
+        # contract failures halt once and enqueue/notify once.
+        validation_failure = (
+            _predispatch_validation_failure(out, err)
+            if next_step == "execute"
+            else None
+        )
+        if validation_failure is not None:
+            signature = str(validation_failure["signature"])
+            if signature == predispatch_validation_signature:
+                predispatch_validation_count += 1
+            else:
+                predispatch_validation_signature = signature
+                predispatch_validation_count = 1
+            retryable_infrastructure = bool(
+                validation_failure["retryable_infrastructure"]
+            )
+            max_attempts = (
+                DEFAULT_MAX_PREDISPATCH_VALIDATION_INFRA_RETRIES + 1
+                if retryable_infrastructure
+                else 1
+            )
+            if predispatch_validation_count < max_attempts:
+                log(
+                    "execute pre-dispatch validation infrastructure failed — "
+                    f"retrying without model escalation "
+                    f"({predispatch_validation_count}/{max_attempts})",
+                    validation_occurrence_id=validation_failure["occurrence_id"],
+                    validation_signature=signature,
+                    worker_dispatched=False,
+                )
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase="execute_validation",
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": predispatch_validation_count,
+                        "max_attempts": max_attempts,
+                        "retry_strategy": "retry_validation_infrastructure",
+                        "validation_occurrence_id": validation_failure[
+                            "occurrence_id"
+                        ],
+                        "worker_dispatched": False,
+                    },
+                )
+                continue
+
+            failure_label = (
+                "validation infrastructure"
+                if retryable_infrastructure
+                else "validation gate"
+            )
+            message = str(validation_failure.get("message") or "").strip()
+            reason = (
+                f"execute pre-dispatch {failure_label} failed "
+                f"{predispatch_validation_count} time(s) without launching a worker"
+                + (f": {message}" if message else "")
+            )
+            log(
+                f"{reason} — halting without model escalation",
+                validation_occurrence_id=validation_failure["occurrence_id"],
+                validation_signature=signature,
+                worker_dispatched=False,
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="pre_dispatch_validation_failed",
+                message=reason,
+                current_state=STATE_BLOCKED,
+                phase="execute",
+                resume_cursor={
+                    "phase": "execute",
+                    "retry_strategy": (
+                        "repair_validation_infrastructure"
+                        if retryable_infrastructure
+                        else "repair_validation_failure"
+                    ),
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Repair the harness validation runner/timeout and resume execute."
+                    if retryable_infrastructure
+                    else "Repair the failing validation gate before resuming execute."
+                ),
+                metadata={
+                    **validation_failure,
+                    "count": predispatch_validation_count,
+                    "max_attempts": max_attempts,
+                    "exit_code": code,
+                    "iteration": iteration,
+                    # The stable occurrence key lets downstream notification
+                    # admission collapse repeated attempts of this incident.
+                    "notification_occurrence_id": validation_failure[
+                        "occurrence_id"
+                    ],
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase="execute",
+                blocking_reasons=["pre_dispatch_validation_failed"],
+            )
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.
         #
@@ -4585,29 +6292,61 @@ def drive(
                     context_retries_used=context_retry_count,
                     phase=next_step,
                 )
-                if _ctx_decision.action == "halt":
+                # M8A T14 — advance per-task circuit on context exhaustion.
+                # When the circuit opens (2 equivalent failures), emit a
+                # typed blocker with `failed: <detail>` evidence instead of
+                # a bare retry-exhausted halt.
+                _ctx_circuit_state, _ctx_circuit_decision = _advance_circuit(result)
+                _ctx_circuit_open = (
+                    _ctx_circuit_decision is not None
+                    and getattr(_ctx_circuit_decision, "action", None) == "halt"
+                )
+                if _ctx_decision.action == "halt" or _ctx_circuit_open:
+                    halt_reason = (
+                        f"context exhaustion circuit open "
+                        f"({_ctx_circuit_state.failure_class})"
+                        if _ctx_circuit_open
+                        else f"context exhaustion retry cap reached ({max_context_retries})"
+                    )
                     log(
-                        f"context exhaustion retry cap reached ({max_context_retries}) — bailing",
+                        f"{halt_reason} — bailing",
                         context_retries_used=context_retry_count,
                         max_context_retries=max_context_retries,
+                        circuit_open=_ctx_circuit_open,
+                        failure_class=_ctx_circuit_state.failure_class if _ctx_circuit_open else None,
+                        circuit_count=_ctx_circuit_state.count,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
-                        kind="context_retry_exhausted",
-                        message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
+                        kind=(
+                            "context_circuit_open"
+                            if _ctx_circuit_open
+                            else "context_retry_exhausted"
+                        ),
+                        message=f"{halt_reason} ({context_retry_count}/{max_context_retries})",
                         current_state=None,
                         phase=next_step,
                         resume_cursor={"phase": next_step, "retry_strategy": "fresh_session"},
                         last_artifact=_latest_artifact_name(plan_dir),
                         suggested_action="Resume execute with a fresh worker context.",
-                        metadata={"context_retries_used": context_retry_count, "max_context_retries": max_context_retries},
+                        metadata={
+                            "context_retries_used": context_retry_count,
+                            "max_context_retries": max_context_retries,
+                            "circuit_open": _ctx_circuit_open,
+                            "failure_class": (
+                                _ctx_circuit_state.failure_class
+                                if _ctx_circuit_open
+                                else None
+                            ),
+                            "circuit_count": _ctx_circuit_state.count,
+                        },
                     )
                     return _outcome(
                         "context_retry_exhausted",
                         final_state=state,
                         iterations=iteration,
                         reason=(
-                            f"context exhaustion retry cap reached "
+                            f"{halt_reason} "
                             f"({context_retry_count}/{max_context_retries})"
                         ),
                         last_phase=last_phase,
@@ -4618,6 +6357,29 @@ def drive(
                     context_retries_used=context_retry_count,
                     max_context_retries=max_context_retries,
                     next_context_retry=context_retry_count + 1,
+                )
+                # M8A T18 — emit retry_wait before context exhaustion retry
+                try:
+                    if plan_dir is not None:
+                        emit_retry_wait(
+                            plan_dir,
+                            task_id="auto_loop",
+                            duration_ms=0,
+                            attempt_number=context_retry_count + 1,
+                            wait_reason="context_exhaustion_retry",
+                        )
+                except Exception:
+                    pass
+                _emit_work_boundary(
+                    "compaction",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": context_retry_count + 1,
+                        "max_retries": max_context_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ExitKind.context_exhausted.value,
+                    },
                 )
                 context_retry_count += _ctx_decision.budget_delta
                 if "--fresh" not in cmd:
@@ -4648,6 +6410,25 @@ def drive(
             # Retain the legacy retryability gate verbatim (identity guard).
             if not _is_retryable_external_error(next_step, external_error):
                 break
+            # M8A T14 — advance per-phase circuit on external errors.
+            # When the circuit opens (2 equivalent transient failures for
+            # the same failure class), emit a typed escalation instead of
+            # retrying. This prevents provider-failover exhaustion loops
+            # from burning retry budget indefinitely.
+            _ext_circuit_state, _ext_circuit_decision = _advance_circuit(external_error or result)
+            if (
+                _ext_circuit_decision is not None
+                and getattr(_ext_circuit_decision, "action", None) == "halt"
+            ):
+                log(
+                    f"phase '{next_step}' external error circuit open "
+                    f"({_ext_circuit_state.failure_class}) — bailing "
+                    f"after {_ext_circuit_state.count} equivalent failures",
+                    phase=next_step,
+                    failure_class=_ext_circuit_state.failure_class,
+                    circuit_count=_ext_circuit_state.count,
+                )
+                break
             provider = getattr(external_error, "provider", "unknown")
             error_kind = getattr(external_error, "error_kind", "unknown")
             error_layer = getattr(external_error, "error_layer", None)
@@ -4668,6 +6449,20 @@ def drive(
                 provider_error_code=provider_error_code,
                 external_retries_used=external_retry_count,
                 max_external_retries=max_external_retries,
+            )
+            _emit_work_boundary(
+                "retry_wait",
+                phase=next_step,
+                elapsed_ms=0,
+                metadata={
+                    "retry": phase_retry_count,
+                    "max_retries": max_external_retries,
+                    "provider": provider,
+                    "error_kind": error_kind,
+                    "error_layer": error_layer,
+                    "provider_error_code": provider_error_code,
+                    "retry_strategy": "fresh_session",
+                },
             )
             if plan_dir is not None:
                 try:
@@ -4704,6 +6499,13 @@ def drive(
             code, out, err, result = _run_phase(cmd, next_step)
             _clear_completed_phase_active_step(next_step, result)
 
+        if result is None or getattr(result, "exit_kind", None) not in {
+            ExitKind.internal_error.value,
+            ExitKind.malformed_model_output.value,
+        }:
+            deterministic_phase_failure_signature = None
+            deterministic_phase_failure_count = 0
+
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
             log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
@@ -4727,6 +6529,88 @@ def drive(
                 last_artifact=_latest_artifact_name(plan_dir),
                 suggested_action="Investigate the timed-out phase and resume from the phase cursor.",
                 metadata={"timeout_seconds": phase_timeout, "idle_timeout_seconds": phase_idle_timeout, "iteration": iteration},
+            )
+        elif (
+            result is not None
+            and getattr(result, "exit_kind", None) == ExitKind.external_error.value
+            and _is_deterministic_provider_contract_error(
+                getattr(result, "external_error", None)
+            )
+        ):
+            external_error = getattr(result, "external_error", None)
+            provider = str(getattr(external_error, "provider", "unknown") or "unknown")
+            message = str(getattr(external_error, "message", "") or "")
+            provider_fingerprint = str(
+                getattr(external_error, "failure_fingerprint", "") or ""
+            )
+            repair_retry_used = _provider_contract_repair_already_used(
+                plan_dir,
+                next_step,
+            )
+            failure_kind = (
+                "provider_contract_repair_failed"
+                if repair_retry_used
+                else "provider_contract_failure"
+            )
+            retry_strategy = (
+                "manual_review" if repair_retry_used else "repair_provider_contract"
+            )
+            reason = (
+                f"phase '{next_step}' provider response contract is invalid "
+                f"for [{provider}]: {message[:500]}"
+            )
+            if repair_retry_used:
+                reason += " (the single validated post-repair retry also failed)"
+            log(
+                reason,
+                phase=next_step,
+                provider=provider,
+                error_kind="provider_contract",
+                error_layer="schema_error",
+                failure_fingerprint=provider_fingerprint,
+                repair_retry_used=repair_retry_used,
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind=failure_kind,
+                message=reason,
+                current_state=STATE_BLOCKED,
+                phase=next_step,
+                resume_cursor={
+                    "phase": next_step,
+                    "retry_strategy": retry_strategy,
+                    "provider_failure_fingerprint": provider_fingerprint,
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Validate and commit the provider response-contract repair, then "
+                    "use recover-blocked with the exact failure fingerprint and target HEAD."
+                    if not repair_retry_used
+                    else (
+                        "The bounded provider-contract repair retry was consumed. "
+                        "Inspect the compiler attestation and perform manual review; "
+                        "do not retry or switch models automatically."
+                    )
+                ),
+                metadata={
+                    "provider": provider,
+                    "error_kind": "provider_contract",
+                    "error_layer": "schema_error",
+                    "deterministic": True,
+                    "nonretryable": True,
+                    "failure_fingerprint": provider_fingerprint,
+                    "repair_retry_used": repair_retry_used,
+                    "exit_code": code,
+                    "iteration": iteration,
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase=next_step,
+                blocking_reasons=[failure_kind],
             )
         elif result is not None and getattr(result, "exit_kind", None) == ExitKind.external_error.value:
             external_error = getattr(result, "external_error", None)
@@ -4864,6 +6748,8 @@ def drive(
                 prior_failure=prior_phase_failure,
             )
             filtered_stderr = _filtered_failure_stderr(err)
+            diagnostic_metadata = _phase_diagnostic_metadata(err)
+            redacted_stderr = redact_security_text(err.strip())[-16_384:]
             log(f"phase '{next_step}' exited with {exit_kind}: {failure_detail}")
             # plan_locked is transient contention from a concurrent auto/phase,
             # not a phase failure. Writing STATE_FAILED here turns a recoverable
@@ -4871,11 +6757,15 @@ def drive(
             # auto drivers raced into the same phase. Treat as a no-op; the next
             # iteration's status() will see the lock released.
             if "plan_locked" in ((err or "") + (out or "")):
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
                 log(f"phase '{next_step}' hit plan_locked — transient contention, retrying next iteration")
             elif (
                 next_step == "execute"
                 and _recover_completed_execute_artifacts_after_failure(plan_dir)
             ):
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
                 log("phase 'execute' failed after writing complete artifacts — recovered to executed")
                 events.append(
                     {
@@ -4885,6 +6775,59 @@ def drive(
                     }
                 )
             else:
+                signature = json.dumps(
+                    [next_step, exit_kind, failure_detail],
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+                if signature == deterministic_phase_failure_signature:
+                    deterministic_phase_failure_count += 1
+                else:
+                    deterministic_phase_failure_signature = signature
+                    deterministic_phase_failure_count = 1
+                if (
+                    deterministic_phase_failure_count
+                    >= DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS
+                ):
+                    reason = (
+                        f"phase '{next_step}' repeated the same {exit_kind} "
+                        f"{deterministic_phase_failure_count} times: {failure_detail}"
+                    )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="deterministic_phase_failure",
+                        message=reason,
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "retry_strategy": "repair_phase_contract",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action=(
+                            "Repair or change the deterministic phase contract before resuming; "
+                            "re-running the same phase output cannot make progress."
+                        ),
+                        metadata={
+                            "signature": signature,
+                            "count": deterministic_phase_failure_count,
+                            "max_attempts": DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS,
+                            "exit_code": code,
+                            "stderr": filtered_stderr,
+                            "stderr_raw": redacted_stderr,
+                            "stdout": out.strip()[-400:],
+                            "iteration": iteration,
+                            **diagnostic_metadata,
+                        },
+                    )
+                    return _outcome(
+                        "blocked",
+                        final_state=STATE_BLOCKED,
+                        iterations=iteration,
+                        reason=reason,
+                        last_phase=next_step,
+                        blocking_reasons=["deterministic_phase_failure"],
+                    )
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_failed",
@@ -4897,9 +6840,14 @@ def drive(
                     metadata={
                         "exit_code": code,
                         "stderr": filtered_stderr,
-                        "stderr_raw": err.strip() if filtered_stderr != err.strip() else "",
+                        # Preserve redacted diagnostic stderr even when there
+                        # were no warning lines to filter.  The old conditional
+                        # erased the only evidence for in-process decoder
+                        # failures such as UnicodeDecodeError.
+                        "stderr_raw": redacted_stderr,
                         "stdout": out.strip()[-400:],
                         "iteration": iteration,
+                        **diagnostic_metadata,
                     },
                 )
         elif result is None and code != 0:
@@ -5175,24 +7123,94 @@ def drive(
                         last_phase=last_phase,
                         blocking_reasons=blocking_reasons,
                     )
-                # No blocked tasks but still blocked_by_prereq — treat as
-                # quality blocking via deviations.
-                deviations_list: list[str] = [
+                # M11 Step 13: empty blocked_by_prereq (no typed blocked tasks after
+                # stale-completed filtering) is a classification contradiction.
+                # Do NOT auto-reinterpret as quality — surface as invalid_phase_result
+                # so the operator can inspect the executor output.
+                reason = (
+                    "execute reported blocked_by_prereq with empty blocked_tasks — "
+                    "classification_incompatible: the executor must supply typed "
+                    "blocked tasks or use a different exit_kind"
+                )
+                log(
+                    "execute reported blocked_by_prereq with empty blocked_tasks — "
+                    "rejecting as invalid_phase_result (not reinterpreting as quality)",
+                    blocked_retries_used=blocked_retry_count,
+                    max_blocked_retries=max_blocked_retries,
+                )
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind="invalid_phase_result",
+                    message=reason,
+                    current_state=STATE_BLOCKED,
+                    phase=next_step,
+                    resume_cursor={
+                        "phase": next_step,
+                        "batch_index": None,
+                        "retry_strategy": "manual_review",
+                    },
+                    last_artifact=_latest_artifact_name(plan_dir),
+                    suggested_action=(
+                        "Inspect the executor output to determine why blocked_by_prereq "
+                        "was emitted without typed blocked_tasks. The executor must "
+                        "either supply blocked task records or use blocked_by_quality."
+                    ),
+                    metadata={
+                        "blocked_retries_used": blocked_retry_count,
+                        "max_blocked_retries": max_blocked_retries,
+                        "classification_incompatible": True,
+                    },
+                )
+                return _outcome(
+                    "blocked",
+                    final_state=STATE_FINALIZED,
+                    iterations=iteration,
+                    reason=reason,
+                    last_phase=last_phase,
+                    blocking_reasons=[reason],
+                )
+            elif ek == ExitKind.blocked_by_quality.value:
+                # Quality-gate block — retry with cap, using result.deviations
+                # directly (no string prefix matching).
+                deviations_list = [
                     getattr(dv, "message", str(dv))
                     for dv in getattr(result, "deviations", ())
                 ]
-                if blocked_retry_count >= max_blocked_retries:
+                # M8A T14 — advance circuit on quality-gate blocks.
+                # When the circuit opens (2 equivalent quality blocks),
+                # emit a typed escalation with `failed: <detail>` evidence
+                # instead of consuming the ambient retry cap.
+                _blkq_circuit_state, _blkq_circuit_decision = _advance_circuit(result)
+                _blkq_circuit_open = (
+                    _blkq_circuit_decision is not None
+                    and getattr(_blkq_circuit_decision, "action", None) == "halt"
+                )
+                if blocked_retry_count >= max_blocked_retries or _blkq_circuit_open:
+                    halt_reason = (
+                        f"quality-gate circuit open "
+                        f"({_blkq_circuit_state.failure_class}) "
+                        f"after {_blkq_circuit_state.count} equivalent failures"
+                        if _blkq_circuit_open
+                        else f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries})"
+                    )
                     log(
-                        f"execute blocked by quality gates and retry cap reached "
-                        f"({max_blocked_retries}) — bailing",
+                        f"{halt_reason} — bailing",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations_list,
+                        circuit_open=_blkq_circuit_open,
+                        failure_class=_blkq_circuit_state.failure_class if _blkq_circuit_open else None,
+                        circuit_count=_blkq_circuit_state.count,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
-                        kind="execution_blocked",
-                        message="execute blocked_by_prereq with no blocked tasks — treating as quality block",
+                        kind=(
+                            "quality_gate_circuit_open"
+                            if _blkq_circuit_open
+                            else "execution_blocked"
+                        ),
+                        message=f"{halt_reason}",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
                         resume_cursor={
@@ -5206,6 +7224,13 @@ def drive(
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
                             "blocking_reasons": deviations_list,
+                            "circuit_open": _blkq_circuit_open,
+                            "failure_class": (
+                                _blkq_circuit_state.failure_class
+                                if _blkq_circuit_open
+                                else None
+                            ),
+                            "circuit_count": _blkq_circuit_state.count,
                         },
                     )
                     return _outcome(
@@ -5213,7 +7238,7 @@ def drive(
                         final_state=state,
                         iterations=iteration,
                         reason=(
-                            "execute blocked by quality gates "
+                            f"{halt_reason} "
                             f"after {blocked_retry_count + 1} attempt(s); "
                             f"retry cap {max_blocked_retries} reached"
                         ),
@@ -5228,59 +7253,17 @@ def drive(
                     max_blocked_retries=max_blocked_retries,
                     blocking_reasons=deviations_list,
                 )
-            elif ek == ExitKind.blocked_by_quality.value:
-                # Quality-gate block — retry with cap, using result.deviations
-                # directly (no string prefix matching).
-                deviations_list = [
-                    getattr(dv, "message", str(dv))
-                    for dv in getattr(result, "deviations", ())
-                ]
-                if blocked_retry_count >= max_blocked_retries:
-                    log(
-                        f"execute blocked by quality gates and retry cap reached "
-                        f"({max_blocked_retries}) — bailing",
-                        blocked_retries_used=blocked_retry_count,
-                        max_blocked_retries=max_blocked_retries,
-                        blocking_reasons=deviations_list,
-                    )
-                    _record_failure(
-                        plan_dir=plan_dir,
-                        kind="execution_blocked",
-                        message="execute blocked by quality gates",
-                        current_state=STATE_BLOCKED,
-                        phase=next_step,
-                        resume_cursor={
-                            "phase": next_step,
-                            "batch_index": None,
-                            "retry_strategy": "fresh_session",
-                        },
-                        last_artifact=_latest_artifact_name(plan_dir),
-                        suggested_action="Review blocking deviations and resume execute with a fresh session.",
-                        metadata={
-                            "blocked_retries_used": blocked_retry_count,
-                            "max_blocked_retries": max_blocked_retries,
-                            "blocking_reasons": deviations_list,
-                        },
-                    )
-                    return _outcome(
-                        "worker_blocked",
-                        final_state=state,
-                        iterations=iteration,
-                        reason=(
-                            "execute blocked by quality gates "
-                            f"after {blocked_retry_count + 1} attempt(s); "
-                            f"retry cap {max_blocked_retries} reached"
-                        ),
-                        last_phase=last_phase,
-                        blocking_reasons=deviations_list,
-                    )
-                blocked_retry_count += 1
-                log(
-                    f"execute blocked by quality gates — retrying "
-                    f"({blocked_retry_count}/{max_blocked_retries})",
-                    blocked_retries_used=blocked_retry_count,
-                    max_blocked_retries=max_blocked_retries,
-                    blocking_reasons=deviations_list,
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": blocked_retry_count,
+                        "max_retries": max_blocked_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ek,
+                        "blocking_reasons": deviations_list,
+                    },
                 )
             # timeout, context_exhausted, internal_error already handled above.
 
@@ -5423,6 +7406,18 @@ def drive(
             execute_fail_streak = 0
 
         if poll_sleep > 0:
+            # M8A T18 — emit retry_wait for the loop poll interval
+            try:
+                if plan_dir is not None and iteration > 1:
+                    emit_retry_wait(
+                        plan_dir,
+                        task_id="auto_loop",
+                        duration_ms=int(poll_sleep * 1000),
+                        attempt_number=iteration,
+                        wait_reason="loop_poll_interval",
+                    )
+            except Exception:
+                pass
             time.sleep(poll_sleep)
 
         # Emit phase_end after phase completes
@@ -5454,6 +7449,18 @@ def drive(
         suggested_action="Review automation progress before resuming.",
         metadata={"max_iterations": max_iterations},
     )
+    # M8A T18 — write aggregate work-class summary on iteration cap exit
+    if plan_dir is not None:
+        try:
+            import json as _json
+            summary = build_work_class_summary(plan_dir)
+            summary_path = Path(plan_dir) / "evidence" / "work_class_summary.json"
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
+                _json.dumps(summary, indent=2, sort_keys=True, default=str)
+            )
+        except Exception:
+            pass
     return _outcome(
         "cap",
         final_state=last_state or "unknown",

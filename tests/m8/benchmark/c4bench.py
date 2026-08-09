@@ -131,14 +131,31 @@ def _time_cell(tmp_path: Path, cell: C4BenchCell) -> tuple[list[float], list[flo
             seed=f"c4:{cell.scenario}:w{cell.width}:{cell.artifact_tier.label}:r{rep}",
             size_bytes=cell.bytes,
         )
+        manifest_path = artifact.with_suffix(artifact.suffix + ".manifest.json")
+        try:
+            start = time.monotonic()
+            _exercise_hot_paths(
+                artifact,
+                manifest=manifest,
+                width=cell.width,
+                include_validation=False,
+            )
+            baseline_samples.append(time.monotonic() - start)
 
-        start = time.monotonic()
-        _exercise_hot_paths(artifact, manifest=manifest, width=cell.width, include_validation=False)
-        baseline_samples.append(time.monotonic() - start)
-
-        start = time.monotonic()
-        _exercise_hot_paths(artifact, manifest=manifest, width=cell.width, include_validation=True)
-        validation_samples.append(time.monotonic() - start)
+            start = time.monotonic()
+            _exercise_hot_paths(
+                artifact,
+                manifest=manifest,
+                width=cell.width,
+                include_validation=True,
+            )
+            validation_samples.append(time.monotonic() - start)
+        finally:
+            # The profile measures one artifact at a time. Retaining all 320
+            # repetitions would require more than 8 GiB and makes the gate
+            # depend on incidental free disk rather than hot-path behavior.
+            artifact.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
     return baseline_samples, validation_samples
 
 

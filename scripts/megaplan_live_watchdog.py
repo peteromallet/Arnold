@@ -4,6 +4,11 @@
 Scans the machine for likely-live Megaplan/Arnold runs, classifies their
 health via the ``live-supervisor`` Arnold pipeline, and orchestrates a bounded
 repair/relaunch/recheck loop for problem incidents.
+
+Step 76-80: Repair execution is gated through typed delegation.  The
+RepairRunner no longer directly executes megaplan subcommands — every repair
+attempt is routed through the delegation shim and return-code success is
+never treated as accepted repair without canonical delegation.
 """
 
 from __future__ import annotations
@@ -17,9 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from arnold.execution import run
-from arnold.execution.backend import SkeletalBackend
-from arnold.workflow import compile_pipeline
+from arnold.pipeline.native import run_native_pipeline
 from arnold_pipelines.megaplan.pipelines.live_supervisor import build_pipeline
 from arnold_pipelines.megaplan.pipelines.live_supervisor.model import HealthCategory, Triage
 from arnold_pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS
@@ -107,24 +110,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _run_pipeline_once(snapshot_dict: dict[str, Any]) -> dict[str, Any]:
-    """Run the live-supervisor workflow manifest and return artifact contents.
+    """Run the live-supervisor native program and return artifact contents.
 
-    M5 Phase 3: the pipeline is now an explicit-node ``arnold.workflow.Pipeline``
-    executed through the neutral manifest runtime. The skeletal backend proves
-    compile/run compatibility; a product-specific backend adapter is required to
-    re-hydrate the legacy step artifacts (classifications.json, diagnoses.json,
-    repair_decisions.json, recheck_emit.json) in a later phase.
+    The compatibility pipeline shell carries the authoritative native program.
+    Running that program executes the four supervisor stages and writes their
+    artifacts; feeding the shell to the retired manifest compiler does not.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        manifest = compile_pipeline(build_pipeline())
-        run(
-            manifest,
+        pipeline = build_pipeline()
+        run_native_pipeline(
+            pipeline.native_program,
             artifact_root=tmpdir,
-            backend=SkeletalBackend(),
+            initial_state={"snapshot": snapshot_dict},
         )
-        # The legacy step shells are preserved for reference but are not
-        # executed by the neutral runtime. Return an empty artifact mapping
-        # until a Megaplan backend adapter is wired.
         artifacts: dict[str, Any] = {}
         artifact_names = {
             "classify": "classifications.json",

@@ -11,12 +11,22 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from ulid import ULID
 
 from arnold_pipelines.megaplan.schemas import Ticket, TicketEpicLink
 from arnold_pipelines.megaplan.store import Store
+from arnold_pipelines.megaplan.strategy.contract import RoadmapHorizon
+from arnold_pipelines.megaplan.strategy.io import (
+    StrategyConflictError,
+    load_strategy_for_write,
+    write_strategy,
+)
+from arnold_pipelines.megaplan.strategy.mutations import (
+    add_roadmap_entry,
+    make_roadmap_entry,
+)
 
 from .files import (
     _FRONTMATTER_FIELDS,
@@ -149,6 +159,8 @@ def new(
     tags: Sequence[str] | None = None,
     store: Store | None = None,
     cwd: Path | None = None,
+    roadmap_horizon: RoadmapHorizon | None = None,
+    roadmap_title: str | None = None,
 ) -> str:
     """Create a new ticket and return its ULID.
 
@@ -164,6 +176,16 @@ def new(
         Explicit store.  If *None*, resolved from environment.
     cwd:
         Working directory for git operations.
+    roadmap_horizon:
+        When provided (``Now``, ``Next``, or ``Later``), the new ticket is
+        added to the strategy roadmap in the specified horizon.  The strategy
+        file (``.megaplan/STRATEGY.md``) must exist before the ticket is
+        created — preflight failure prevents ticket creation.
+        When *None* (the default), the ticket is non-strategic.
+    roadmap_title:
+        Optional display title for the roadmap entry.  When *None* (the
+        default), the ticket *title* is used.  Only meaningful when
+        *roadmap_horizon* is set.
 
     Returns
     -------
@@ -178,6 +200,41 @@ def new(
 
     if store is None:
         store = _resolve_store()
+
+    # ---- Resolve repo root --------------------------------------------------
+    if cwd:
+        repo_root = str(cwd)
+    else:
+        repo_root = os.getcwd()
+
+    # ---- Roadmap opt-in preflight: strategy must exist and be valid BEFORE
+    #      ticket creation.
+    strategy_doc = None
+    strategy_state = None
+    if roadmap_horizon is not None:
+        try:
+            strategy_doc, strategy_state = load_strategy_for_write(repo_root)
+        except FileNotFoundError:
+            raise ValueError(
+                f"Cannot create roadmap-linked ticket: strategy file not found.\n"
+                f"Run 'python -P -m arnold_pipelines.megaplan strategy init' "
+                f"to create one, then retry."
+            )
+
+        # Reject if the loaded document has hard errors (invalid scaffold, etc.)
+        hard_errors = [
+            d for d in strategy_doc.diagnostics if d.level == "error"
+        ]
+        if hard_errors:
+            error_msgs = "\n".join(
+                f"  - {d.message}" for d in hard_errors[:5]
+            )
+            raise ValueError(
+                f"Cannot create roadmap-linked ticket: strategy document has "
+                f"{len(hard_errors)} validation error(s):\n{error_msgs}\n"
+                f"Run 'python -P -m arnold_pipelines.megaplan strategy validate' "
+                f"to see full details, then fix the strategy file before retrying."
+            )
 
     source, turn_id, actor_id = _derive_source()
     ticket_id = str(ULID())
@@ -210,10 +267,6 @@ def new(
     }
 
     # Write file (both modes)
-    if cwd:
-        repo_root = str(cwd)
-    else:
-        repo_root = os.getcwd()
     fpath = ticket_file_path(repo_root, ticket_id, slug)
     write_ticket_file(fpath, record)
 
@@ -230,6 +283,25 @@ def new(
             slug=slug,
             ticket_id=ticket_id,
         )
+
+    # ---- Roadmap opt-in: add [ticket:<ULID>] to strategy --------------------
+    if roadmap_horizon is not None and strategy_doc is not None and strategy_state is not None:
+        display_title = roadmap_title if roadmap_title else title
+        entry = make_roadmap_entry("ticket", ticket_id, display_title)
+        mutated = add_roadmap_entry(strategy_doc, entry, roadmap_horizon)
+        try:
+            write_strategy(mutated, strategy_state, repo_root)
+        except StrategyConflictError:
+            # Ticket was created successfully; roadmap write failed due to
+            # concurrent modification — report but do not lose the ticket.
+            print(
+                f"Warning: ticket {ticket_id} created but strategy roadmap "
+                f"could not be updated (concurrent modification detected). "
+                f"Re-load and retry: 'strategy add --type ticket --ref "
+                f"{ticket_id} --title \"{display_title}\" --horizon "
+                f"{roadmap_horizon}'.",
+                file=sys.stderr,
+            )
 
     # Print only the ULID to stdout (per spec)
     print(ticket_id, flush=True)
@@ -294,8 +366,15 @@ def list_tickets(
                 file_tags = set(fm.get("tags") or [])
                 if not file_tags.intersection(tags):
                     continue
+            from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+            ticket_id = fm.get("id")
+            epics_normalized: list[dict[str, Any]] = []
+            if isinstance(ticket_id, str) and ticket_id:
+                links = parse_frontmatter_links(fm, ticket_id)
+                epics_normalized = serialize_links_to_frontmatter(links)
             d: dict[str, Any] = {
-                "id": fm.get("id"),
+                "id": ticket_id,
                 "title": fm.get("title"),
                 "status": fm.get("status"),
                 "source": fm.get("source"),
@@ -305,7 +384,7 @@ def list_tickets(
                 "last_edited_at": _iso(fm.get("last_edited_at")),
                 "resolution_note": fm.get("resolution_note"),
                 "body": fm.get("__body__", ""),
-                "epics": fm.get("epics", []),
+                "epics": epics_normalized,
             }
             results.append(d)
 
@@ -606,13 +685,13 @@ def show(
             "resolution_note": t.resolution_note,
             "addressed_at": t.addressed_at.isoformat() if t.addressed_at else None,
         }
-        # Enrich body from file
+        # Enrich body from file and normalise epics
         if cwd:
             fpath = ticket_file_path(cwd, t.id, t.slug)
             fm = read_ticket_file(fpath)
             if fm:
                 result["body"] = fm.get("__body__", "")
-                result["epics"] = fm.get("epics", [])
+                result["epics"] = _normalize_epics_output(fm, t.id)
         if json_output:
             import json
 
@@ -637,7 +716,7 @@ def show(
                     "resolution_note": fm.get("resolution_note"),
                     "addressed_at": _iso(fm.get("addressed_at")),
                     "body": fm.get("__body__", ""),
-                    "epics": fm.get("epics", []),
+                    "epics": _normalize_epics_output(fm, ticket_id),
                 }
                 if json_output:
                     import json
@@ -747,6 +826,8 @@ def link(
     epic_id: str,
     *,
     resolves: bool = False,
+    kind: str = "associated",
+    provenance: str | None = None,
     store: Store | None = None,
     cwd: Path | None = None,
 ) -> dict[str, Any] | None:
@@ -768,11 +849,23 @@ def link(
     if found_fm is None:
         return None
 
-    epics: list[dict[str, Any]] = list(found_fm.get("epics") or [])
+    from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+    # Parse existing links (normalises legacy entries)
+    links = parse_frontmatter_links(found_fm, ticket_id)
     # Remove existing entry for this epic if present (idempotent re-link)
-    epics = [e for e in epics if e.get("epic_id") != epic_id]
-    epics.append({"epic_id": epic_id, "resolves_on_complete": resolves, "linked_at": datetime.now(timezone.utc).isoformat()})
-    found_fm["epics"] = epics
+    links = [link for link in links if link.epic_id != epic_id]
+    # Build new link
+    new_link = TicketEpicLink(
+        ticket_id=ticket_id,
+        epic_id=epic_id,
+        resolves_on_complete=resolves,
+        kind=kind,
+        provenance=provenance,
+        linked_at=datetime.now(timezone.utc),
+    )
+    links.append(new_link)
+    found_fm["epics"] = serialize_links_to_frontmatter(links)
     found_fm["last_edited_at"] = datetime.now(timezone.utc)
 
     if found_path:
@@ -784,6 +877,8 @@ def link(
             ticket_id=ticket_id,
             epic_id=epic_id,
             resolves_on_complete=resolves,
+            kind=kind,
+            provenance=provenance,
         )
 
     return found_fm
@@ -813,9 +908,12 @@ def unlink(
     if found_fm is None:
         return None
 
-    epics: list[dict[str, Any]] = list(found_fm.get("epics") or [])
-    epics = [e for e in epics if e.get("epic_id") != epic_id]
-    found_fm["epics"] = epics
+    from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+    # Parse existing links (normalises legacy entries), filter out target epic
+    links = parse_frontmatter_links(found_fm, ticket_id)
+    links = [link for link in links if link.epic_id != epic_id]
+    found_fm["epics"] = serialize_links_to_frontmatter(links)
     found_fm["last_edited_at"] = datetime.now(timezone.utc)
 
     if found_path:
@@ -971,13 +1069,18 @@ def address_resolved_by_epic(
         if not tickets_dir(repo_root).is_dir():
             return updated
 
+        from .relationships import auto_address_predicate, parse_frontmatter_links
+
         for fpath, fm in iterate_ticket_files(repo_root):
             if fm.get("status") != "open":
                 continue
-            epics: list[dict[str, Any]] = fm.get("epics") or []
+            ticket_id = fm.get("id")
+            if not isinstance(ticket_id, str) or not ticket_id:
+                continue
+            links = parse_frontmatter_links(fm, ticket_id)
             matched = any(
-                e.get("epic_id") == epic_id and e.get("resolves_on_complete") is True
-                for e in epics
+                link.epic_id == epic_id and auto_address_predicate(link)
+                for link in links
             )
             if not matched:
                 continue
@@ -996,6 +1099,21 @@ def address_resolved_by_epic(
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+
+def _normalize_epics_output(
+    fm: dict[str, Any],
+    ticket_id: str,
+) -> list[dict[str, Any]]:
+    """Normalize epics frontmatter through relationship adapter for output.
+
+    Ensures ``kind`` and ``provenance`` are always present in JSON output,
+    without copying artifact status into strategy.
+    """
+    from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+    links = parse_frontmatter_links(fm, ticket_id)
+    return serialize_links_to_frontmatter(links)
 
 
 def _iso(val: object) -> str | None:

@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-import arnold_pipelines.megaplan as megaplan
+from arnold_pipelines.megaplan import handlers as megaplan_handlers
+import arnold_pipelines.megaplan.workers as worker_module
 from arnold_pipelines.megaplan._core import atomic_write_json, sha256_file
 from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED
 from arnold_pipelines.megaplan.workers import WorkerResult, _build_mock_payload, run_step_with_worker
@@ -52,9 +53,9 @@ def test_revise_iterations_write_distinct_hashes_and_sessions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     make_args = plan_fixture.make_args
-    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan_handlers.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan_handlers.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan_handlers.handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
     calls = {"count": 0}
 
@@ -75,11 +76,14 @@ def test_revise_iterations_write_distinct_hashes_and_sessions(
         )
         return worker, "codex", "persistent", True
 
-    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr(worker_module, "run_step_with_worker", fake_run_step_with_worker)
 
     for _ in range(3):
         _mark_for_revise(plan_fixture)
-        megaplan.handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+        megaplan_handlers.handle_revise(
+            plan_fixture.root,
+            make_args(plan=plan_fixture.plan_name),
+        )
 
     plan_hashes = [
         sha256_file(path)
@@ -247,7 +251,16 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
         duration_ms=12,
     )
 
-    with patch("arnold_pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with (
+        patch(
+            "arnold_pipelines.megaplan.workers.shannon._assert_vendored_shannon_sentinel",
+            return_value=None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ) as run_command,
+    ):
         result = run_shannon_step(
             "revise",
             state,
@@ -257,13 +270,12 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
             prompt_override="revise prompt",
         )
 
-    clear_command = run_command.call_args_list[0].args[0]
-    command = run_command.call_args_list[-1].args[0]
-    assert clear_command[clear_command.index("-p") + 1] == "/clear"
-    assert clear_command[clear_command.index("--resume") + 1] == "old-shannon-session"
-    assert "--resume" in command
-    assert command[command.index("--resume") + 1] == "fresh-shannon-session"
-    assert "old-shannon-session" not in command
+    command_texts = [" ".join(call.args[0]) for call in run_command.call_args_list]
+    clear_command_text = next(text for text in command_texts if " -p /clear " in f" {text} ")
+    command_text = command_texts[-1]
+    assert "--resume old-shannon-session" in clear_command_text
+    assert "--resume fresh-shannon-session" in command_text
+    assert "old-shannon-session" not in command_text
     # Prompt file is now written to the per-run artifact dir (T9 Step 7).
     assert (plan_dir / ".megaplan" / "runs" / "test-plan" / "revise" / "shannon" / "revise_v2_shannon_prompt.txt").exists()
     assert result.session_id == "fresh-shannon-session"

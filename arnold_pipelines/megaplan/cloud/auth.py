@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Any
 
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec
+from arnold_pipelines.megaplan.types import CliError
 
 
 _CODEX_SOURCE = Path(".codex/auth.json")
@@ -116,3 +117,63 @@ def seed_codex_oauth(
         write(f"cloud codex OAuth seed: {seed.label} seed failed: {reason}\n")
         events.append({"label": seed.label, "status": "failed", "reason": reason})
     return {"events": events}
+
+
+def seed_isolated_git_credentials(
+    spec: CloudSpec,
+    provider: Any,
+    *,
+    required: bool,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    writer: Callable[[str], object] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    """Seed local ``gh`` auth without putting its token in argv or output.
+
+    The local token is captured in memory, then handed to the isolated SSH
+    provider which transports it through stdin only.  Returned events are
+    deliberately non-secret and suitable for deploy reports.
+    """
+    if not spec.isolated_chain_runner:
+        return {
+            "events": [
+                {"label": "git", "status": "skipped", "reason": "not_isolated"}
+            ]
+        }
+    write = writer or sys.stderr.write
+    try:
+        result = runner(
+            ["gh", "auth", "token"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        result = None
+    token = (result.stdout if result is not None and result.returncode == 0 else "").strip()
+    if not token:
+        if required:
+            raise CliError(
+                "isolated_chain_runner_git_auth_unavailable",
+                "isolated cloud chain requires local `gh auth token` for durable Git pushes",
+            )
+        write("cloud isolated Git auth seed: local gh auth unavailable; skipping\n")
+        return {
+            "events": [
+                {"label": "git", "status": "skipped", "reason": "local_gh_auth_unavailable"}
+            ]
+        }
+    installer = getattr(provider, "seed_isolated_chain_runner_git_credentials", None)
+    if installer is None:
+        raise CliError(
+            "isolated_chain_runner_git_auth_unavailable",
+            "SSH provider lacks isolated Git credential seeding",
+        )
+    receipt = installer(token)
+    if not isinstance(receipt, dict) or receipt.get("status") != "seeded":
+        raise CliError(
+            "isolated_chain_runner_git_auth_failed",
+            "isolated Git credential seeding did not return a valid receipt",
+        )
+    write("cloud isolated Git auth seed: seeded github.com credential helper\n")
+    return {"events": [{"label": "git", "status": "seeded"}]}

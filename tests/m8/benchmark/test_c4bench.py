@@ -1,16 +1,13 @@
 """C4 benchmark gate — width × size matrix with median + p95 per cell.
 
-Skipped by default; opt in with ``-m m8_benchmark`` to actually run.
-The shape tests (profile constants, report writer correctness) run
-unconditionally so the structure of C4BENCH_PROFILE / the report
-format are pinned even in non-benchmark CI.
+Runs by default as acceptance evidence. The ``m8_benchmark`` marker supports
+targeted execution, while the shape tests pin C4BENCH_PROFILE and the report
+format independently.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -120,7 +117,7 @@ class TestC4BenchProfileShape:
 
 @pytest.mark.m8_benchmark
 class TestC4BenchRun:
-    """Runs the full matrix; opt-in via ``-m m8_benchmark``."""
+    """Runs the full benchmark matrix."""
 
     def test_run_produces_rows_and_writes_report(self, tmp_path: Path) -> None:
         rows = run_c4bench(tmp_path)
