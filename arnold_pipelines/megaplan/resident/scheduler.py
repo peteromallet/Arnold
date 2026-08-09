@@ -48,6 +48,17 @@ from .reply_chain import reply_chain_projection
 from . import vp_todo
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
+
+class PlannedOutcome(Exception):
+    """Non-terminal handler outcome: the occurrence was planned, not fired.
+
+    A handler that only plans a dispatch (e.g. the proactive superfixer seam
+    building a ``seam_dispatch_plan`` for later launch) raises this instead of
+    returning normally.  The worker treats it as neither success nor failure:
+    the job is NOT marked ``fired`` (no terminal success without an actual
+    launch) and NOT marked failed -- the handler already persisted the
+    ``planned`` state and re-armed the follow-up occurrence.
+    """
 TERMINAL_OR_INPUT_NEEDED: frozenset[CloudClassification] = frozenset(
     {"blocked", "failed", "gate-needed", "completed"}
 )
@@ -348,6 +359,11 @@ class ScheduledJobWorker:
                 continue
             try:
                 await handler(job)
+            except PlannedOutcome:
+                # Non-terminal: occurrence was planned (handler persisted
+                # planned state + re-armed follow-up).  NOT fired -- a plan is
+                # never a terminal success -- and NOT failed.
+                pass
             except Exception as exc:
                 retrying = await self.backend.mark_failed(str(job["id"]), str(exc), now=now)
                 retried += int(retrying)
@@ -518,6 +534,14 @@ class ResidentJobHandlers:
             idempotency_key=deterministic_idempotency_key(
                 "resident-superfixer-proactive-fire", job.id, job.attempt_count
             ),
+        )
+        # Planning alone is NEVER a terminal success: the occurrence stays
+        # pending (planned) until the launch machinery records the actual
+        # dispatch.  Raising PlannedOutcome keeps the worker from marking the
+        # job fired.
+        raise PlannedOutcome(
+            "superfixer_proactive: seam dispatch planned; occurrence pending "
+            "until the managed launch performs and records the dispatch"
         )
 
     def _reschedule_superfixer_proactive(
