@@ -10,7 +10,7 @@
       "schema_version": "cl.schema.v1",
       "class_name": "CritiqueOccurrenceEnvelope",
       "source_file": "arnold/critique_ledger/schemas.py",
-      "sha256": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+      "sha256": "fc8936d6c7f59f95625d1b060b3fea0673c254903aacc47fe10837379b2a1638"
     },
     "reconciliation_event_schema": {
       "schema_version": "cl.schema.v1",
@@ -38,21 +38,21 @@
     },
     "semantic_loop": {
       "source_file": "arnold/critique_ledger/semantic_loop.py",
-      "sha256": "4b3bd7337fccbe6501add9b7eebced2c11d8d4367f762b224647952342abd3fd"
+      "sha256": "a32e89a4efa96c6ee47afbef665e123b45ddb94c3f89362901367b13caf263b3"
     },
     "module_init": {
       "source_file": "arnold/critique_ledger/__init__.py",
-      "sha256": "99f40335e32b9ed106760c6da0daf8ece362f196d235199b8a72aca3cc7b4877"
+      "sha256": "b1aadfa2719cf2550c1d4f6239bcec752d5f35222b7d9bbb8b1d1beabe074ce1"
     },
     "owner_matrix_schema": {
       "schema_version": "wbc.matrix.v2",
       "source_file": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
-      "sha256": "76669b2ee62d785993828e6f297aa6a21f58d820446cfd88d6c90289a30d1a9a"
+      "sha256": "b94d611c52640ddd1c0285c678103506e5b76d16f2ad9326da15a2a435c90171"
     },
     "producer_matrix_schema": {
       "schema_version": "wbc.contract_to_producer.v2",
       "source_file": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
-      "sha256": "699d710fb279f00a5dd557811f9ac1fc729a6d6bd5227f3a8801361bba2c94ab"
+      "sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386"
     }
   },
   "owner_and_cutover_mappings": {
@@ -214,7 +214,7 @@
     },
     "retention_class_mapping": {
       "path": "docs/critique-ledger/evidence/retention-class-mapping.json",
-      "sha256": "98e17d0ea3a805e66e0e984f382eef3c3e95bbfe19d8423a342b18c3f7eb8494"
+      "sha256": "3023d2b778738fe4e53262dd9e75cc58e5bc2f21ee5fe165a63524646c5ded5d"
     },
     "failure_atomicity_table": {
       "path": "docs/critique-ledger/evidence/failure-atomicity-table.json",

@@ -259,12 +259,19 @@ class TestHandoffDomainBudgets:
 class TestHandoffOpenGates:
     """Tests that open gates are documented."""
 
-    def test_reviewer_sign_off_pending(self):
-        """Reviewer sign-off must be recorded as pending."""
+    def test_reviewer_sign_off_recorded(self):
+        """Reviewer sign-off must be recorded with the completed verdict.
+
+        The r7 chain reached ``done`` (review approved by cl5-gate-reviewer),
+        so the handoff records a signed-off gate rather than a pending one.
+        """
         doc = _load_handoff()
         gates = doc["open_gates"]
         assert "reviewer_sign_off" in gates
-        assert gates["reviewer_sign_off"]["reviewed"] is False
+        sign_off = gates["reviewer_sign_off"]
+        assert sign_off["reviewed"] is True
+        assert sign_off["status"] == "signed_off"
+        assert sign_off["reviewed_result"] == "accepted"
 
     def test_m6_prerequisite_incoherent(self):
         """M6 prerequisite verification INCOHERENT status recorded."""
