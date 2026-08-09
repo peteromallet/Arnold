@@ -2257,3 +2257,4 @@ ssh root@159.69.51.216 'set -euo pipefail; HROOT=/var/lib/arnold/megaplan-reside
 **DONE-CHECK** — Codex result ends `CHECKPOINT-SENSECHECK-10: PASS`; all Phase-C exit criteria pass.
 
 **PRECONDITION** — TASK-31. On FAIL, halt and use recorded recovery artifacts; do not run GC.
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

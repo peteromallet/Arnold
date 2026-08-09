@@ -64,3 +64,4 @@ Five properties hold simultaneously:
 | `branch-cleanup-judgment-20260807.md` | gpt-5.6-sol's merge/delete verdict on the current mess |
 | `branch-cleanup-action-plan-20260807.md` | the mechanical cleanup Flash executes with Codex sense-checks |
 | `branch-cleanup-agent-brief-20260807.md` | the operating brief given to the Flash agent before it starts the cleanup |
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

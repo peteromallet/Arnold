@@ -69,3 +69,4 @@ Documented as pre-existing lineage debt (byte-identical on RT1):
   finalize_task_feasibility (1), bypass_gating (1), codex_cli_runner (1),
   supervisor_runtime_isolation (2), repair_loop_mode_seam (2),
   watchdog_pr_reconciliation (3)
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

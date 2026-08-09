@@ -48,3 +48,4 @@ Independent validation by Codex (gpt-5.6-luna, read-only) of branch `fixer/fixer
 - runtime_manifest.advance_generation changes heads in memory only; no canary verify; no atomic active-pointer switch (runtime_manifest.py:396-426).
 - fixer_prompt_policy.policy_sha not consumed/verified at dispatch; runtime-create writes empty policy SHAs (arnold-runtime-create:139).
 - Tests: no concurrent-acquire race test; launcher tests assert legacy fallback preserved (test_launcher_manifest_conformance.py:53-60) contrary to "kill with_name"; mode tests are string/dry-run asserts; no manifest-failure refusal test, pointer-switch test, schedule-reference GC test, model-policy enforcement test.
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

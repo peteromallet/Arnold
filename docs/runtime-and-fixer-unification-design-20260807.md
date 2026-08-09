@@ -307,3 +307,4 @@ Full per-epic editable-install runtimes ONLY on evidence of need (dep-fork or en
 ## 8. One-line policy statement
 
 > **Map and restore before you change anything; the origin branch is source, never the live deployment; a deployed runtime is an immutable release generation with a retained rollback; Flash earns the default on a replay benchmark, not by assumption; a bounded investigator→executor fixes by default and a swarm escalates the hard cases; durable fixes promote through canary generation and CAS, never beneath a running process; per-epic runtimes are cheap worktrees with their own venv; nothing authoritative runs un-resolvable; nothing is deleted until its restore is proven.**
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

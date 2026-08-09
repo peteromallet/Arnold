@@ -71,3 +71,4 @@ Every task in the plan has a **DONE-CHECK** — a specific, checkable condition 
 - Delete, force-push, reset, or GC anything the plan or its gate forbids.
 - Touch the five human-gated lineages, the active epic, or any live tree.
 - Treat your own observation as proof — only the plan's DONE-CHECKs and Codex's PASS gates count.
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).
