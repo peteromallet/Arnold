@@ -107,10 +107,13 @@
 import-coupling arnold.agent.adapters._oneshot
 import-coupling arnold.agent.adapters.codex
 import-coupling arnold.agent.adapters.shannon
+import-coupling arnold.critique_ledger.cutover.retire
+import-coupling arnold.critique_ledger.legacy_import
 import-coupling arnold.supervisor.model
 import-coupling arnold.supervisor.outcomes
 
 package-name-staleness arnold.agent.adapters._oneshot
+package-name-staleness arnold.critique_ledger.cutover.retire
 package-name-staleness arnold.agent.agent.anthropic_adapter
 package-name-staleness arnold.agent.agent.auxiliary_client
 package-name-staleness arnold.agent.agent.context_compressor
@@ -140,6 +143,7 @@ package-name-staleness arnold.workflow.source_compiler
 package-name-staleness arnold.workflow.validation
 
 semantic-coupling arnold.agent.adapters._oneshot
+semantic-coupling arnold.critique_ledger.cutover.retire
 semantic-coupling arnold.agent.tools.terminal_tool
 semantic-coupling arnold.agent.agent.anthropic_adapter
 semantic-coupling arnold.agent.agent.auxiliary_client
@@ -172,3 +176,12 @@ megaplan-artifact-layout .megaplan/initiatives/superfixer-repair-custody/megapla
 megaplan-artifact-layout .megaplan/initiatives/superfixer-repair-custody/repair-custody-sprint-plan.md
 
 never-port-artifacts .megaplan/plans/**
+# Historical chain/canary initiatives carry validated fixtures outside the
+# canonical subdirs (test data, structural smoke, dispositions). Ratchet:
+# move into archive/ as each fixture is retired. Owner: Platform  Expiry: 2026-12-31
+megaplan-artifact-layout .megaplan/initiatives/critique-ledger-safe-v3-canary/**
+megaplan-artifact-layout .megaplan/initiatives/critique-ledger-post-relaunch-completion/**
+megaplan-artifact-layout .megaplan/initiatives/superfixer-repair-custody/**
+megaplan-artifact-layout .megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/**
+megaplan-artifact-layout .megaplan/initiatives/critique-ledger-accountability-v3-r6-20260805/**
+megaplan-artifact-layout .megaplan/initiatives/CLOUD.md
