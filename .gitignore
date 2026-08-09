@@ -102,3 +102,16 @@ supabase/.temp/
 # additionally as a `git notes` entry on the delivery commit. A commit/tree cannot
 # contain its own hash, so both post-commit values live only here + the git note.
 docs/critique-ledger/handoffs/.cl2_delivery_commit.txt
+
+# Runtime state that must never be committed to main (initialized at runtime).
+.megaplan/authority/
+.megaplan/repair-queue/
+.megaplan/cloud-logs/
+.megaplan/system_logs/
+.megaplan/runs/
+.megaplan/incident-evidence/
+.megaplan/watchdog-run-logs/
+.megaplan/test_store/
+.megaplan/*.log
+.megaplan/manual-occurrence-*.log
+.megaplan/strategy.projection.json
