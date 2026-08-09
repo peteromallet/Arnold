@@ -1,10 +1,18 @@
 # Arnold Complete Cleanup / Megaplan Single-Root Prep
 
-Date: 2026-06-25
+Date: 2026-08-09
+
+## Current State
+
+The single-root migration is complete on `main` in commit `1052ef091a`, which
+deleted `arnold/pipelines/megaplan/`. This prep record now frames the epic as
+post-hoc verification and closeout of the remaining gates; it is not a plan to
+re-run the migration. The original sizing, profile, complexity, and depth
+decisions below remain the planning rationale for that verification work.
 
 ## Prep Decision
 
-This should run as a short epic, not a single megaplan. The current cleanup is probably too risky for one plan because it combines:
+This should run as a short epic, not a single megaplan. The original cleanup was probably too risky for one plan because it combined:
 
 - final loose-work disposition after the native Python completion merge;
 - a public/import contract migration;
@@ -41,19 +49,21 @@ The raw outputs lived at `/tmp/arnold_single_root_swarm/outputs` during prep. Th
 
 ## Key Judgment Calls
 
-1. `arnold_pipelines.megaplan` is the final implementation authority.
-2. `arnold.pipelines.megaplan` is not a final public compatibility surface.
-3. No permanent shims. Temporary shims are only permitted inside the migration, must forward to existing canonical targets, and must be tracked by a shrink-only registry with removal phases.
-4. Do not create `arnold_pipelines.megaplan._pipeline` as the final replacement. `_pipeline` is a legacy implementation namespace. Extract its responsibilities into named canonical modules such as runtime, registry, CLI, chain, dispatch, and patterns.
-5. The migration must first invert authority for real. Current repo state still has canonical surfaces delegating to legacy behavior in important places.
-6. Deletion is last. The final state must prove no business logic remains under `arnold/pipelines/megaplan`; ideally the package is absent.
-7. The old TypeScript snapshot is valuable but separate: archive it to an explicit remote branch, verify, then delete the local snapshot. Do not fold its code into Python Arnold.
+1. `[SATISFIED on main]` `arnold_pipelines.megaplan` is the final implementation authority.
+2. `[SATISFIED on main]` `arnold.pipelines.megaplan` is not a final public compatibility surface.
+3. `[SATISFIED for the landed migration; verify in closeout]` No permanent shims. Temporary shims are only permitted inside the migration, must forward to existing canonical targets, and must be tracked by a shrink-only registry with removal phases.
+4. `[DONE on main]` Do not create `arnold_pipelines.megaplan._pipeline` as the final replacement. `_pipeline` is a legacy implementation namespace. Its responsibilities are now in named canonical modules such as runtime, registry, CLI, chain, dispatch, and patterns.
+5. `[DONE at 1052ef091a]` The migration must first invert authority for real. The canonical surfaces no longer delegate implementation behavior to the legacy root.
+6. `[DONE at 1052ef091a]` Deletion is last. The final state proves no business logic remains under `arnold/pipelines/megaplan`; the package is absent.
+7. `[OPEN follow-up]` The old TypeScript snapshot is valuable but separate: archive it to an explicit remote branch, verify, then delete the local snapshot. Do not fold its code into Python Arnold. The local snapshot was removed without that archive, so M3 must record archive-or-explicit-abandonment disposition.
 
 ## Invocation
 
 ```bash
 python -m arnold_pipelines.megaplan chain start \
-  --spec .megaplan/initiatives/arnold-complete-cleanup-single-root/briefs/chain.yaml
+  --spec .megaplan/initiatives/arnold-complete-cleanup-single-root/chain.yaml
 ```
 
-Do not start this chain until local `main` has been pushed or a deliberate base branch has been chosen, because local `main` is ahead of `origin/main` after the native completion merge.
+Do not start this chain as a forward migration: the migration is already on
+`main`. Any later authorized start is for verification/closeout and must use
+the re-anchored `main` base.

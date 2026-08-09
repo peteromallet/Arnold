@@ -1,4 +1,6 @@
-base_branch: native-python-working-tree
+# The single-root migration landed on main in 1052ef091a. This chain is now a
+# post-hoc verification/closeout of the remaining gates.
+base_branch: main
 
 anchors:
   north_star: NORTHSTAR.md
@@ -12,8 +14,8 @@ milestones:
     depth: high
     branch: cleanup-single-root-m0-baseline-ratchets
     prep_clarify: false
-    prep_direction: "Start from the post-native-completion native-python-working-tree branch. Verify the cleanup ledger, current git/worktree state, ticket 01KVZZ45DAZW9P5H4JA66JWNY3, and external exceptions. Build the legacy caller/surface inventory and shrink-only ratchets before moving implementation code."
-    notes: "Baseline plus guardrails. Expected to be days, not two weeks, unless inventory reveals a major unknown."
+    prep_direction: "Start from main, where the single-root migration is already landed. Verify the cleanup ledger, current git/worktree state, ticket 01KVZZ45DAZW9P5H4JA66JWNY3, and external exceptions. Confirm the legacy caller/surface inventory and shrink-only ratchets, then record remaining closeout follow-ups rather than moving implementation code."
+    notes: "Baseline plus guardrail verification. Expected to be days, not two weeks, unless a major closeout unknown appears."
 
   - label: m1-authority-and-extraction
     idea: .megaplan/initiatives/arnold-complete-cleanup-single-root/briefs/m1-authority-and-extraction.md
@@ -25,8 +27,8 @@ milestones:
     depends_on:
       - m0-baseline-inventory-ratchets
     prep_clarify: false
-    prep_direction: "Make arnold_pipelines.megaplan authoritative for imports, side effects, public surfaces, and runtime responsibilities. Extract legacy _pipeline/runtime responsibilities into named canonical modules. Do not recreate a final arnold_pipelines.megaplan._pipeline namespace and do not shim to missing targets."
-    notes: "The load-bearing migration. This is the only milestone likely to approach a full two-week sprint."
+    prep_direction: "Verify on main that arnold_pipelines.megaplan is authoritative for imports, side effects, public surfaces, and runtime responsibilities, and reconcile the landed responsibilities with their actual canonical module homes. Do not recreate a final arnold_pipelines.megaplan._pipeline namespace and do not shim to missing targets."
+    notes: "Post-hoc authority and extraction verification. The load-bearing migration is already landed; remaining work is proof and closeout."
 
   - label: m2-parity-and-delete
     idea: .megaplan/initiatives/arnold-complete-cleanup-single-root/briefs/m2-parity-and-delete.md
@@ -38,8 +40,8 @@ milestones:
     depends_on:
       - m1-authority-and-extraction
     prep_clarify: false
-    prep_direction: "Prove canonical behavior through CLI, chain, resume/status, PR helpers, workers, engine isolation, discovery, docs, skills, generated assets, editable install, and wheel install. Then delete or intentionally fail the legacy arnold.pipelines.megaplan import path. Preserve no permanent shims."
-    notes: "Behavior proof plus clean-break deletion. Do not delete before parity gates are green."
+    prep_direction: "Verify the landed canonical behavior through CLI, chain, resume/status, PR helpers, workers, engine isolation, discovery, docs, skills, generated assets, editable install, and wheel install. Confirm the legacy arnold.pipelines.megaplan import path is already absent and preserve no permanent shims. Record any remaining documentation or symlink gates."
+    notes: "Post-hoc behavior proof and clean-break deletion verification. Do not repeat the landed deletion."
 
   - label: m3-merge-result-closeout
     idea: .megaplan/initiatives/arnold-complete-cleanup-single-root/briefs/m3-merge-result-closeout.md
@@ -51,7 +53,7 @@ milestones:
     depends_on:
       - m2-parity-and-delete
     prep_clarify: false
-    prep_direction: "Run only post-merge conformance on the integrated result and close remaining external cleanup exceptions. Verify old TypeScript Arnold snapshot archival/deletion and active operational worktree cleanup triggers."
+    prep_direction: "Run only post-merge conformance on the integrated result and close remaining external cleanup exceptions. Verify the old TypeScript Arnold snapshot disposition, including the required archive-or-abandonment follow-up, and confirm active operational worktree cleanup triggers."
     notes: "Short closeout gate. This should be measured in hours to days, not a full sprint."
 
 on_failure:
