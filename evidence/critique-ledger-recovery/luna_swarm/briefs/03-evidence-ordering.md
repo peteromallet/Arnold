@@ -1,0 +1,3 @@
+# Luna audit 03 — authoritative state and evidence ordering
+
+Context: Read `evidence/critique-ledger-recovery/sol-broader-review-compact-brief-20260804.md` and Sol's verdict. Audit ordering and freshness across state.json, latest_failure, phase_result.json, validation receipts, watchdog snapshots, status/introspect projections, and recovery. Inspect named modules plus focused tests. Do not edit. Identify any precedence, timestamp, occurrence, atomicity, or corruption gap that can resurrect stale evidence. Return observed evidence, one coherent ordering contract, and 3–6 acceptance tests. Under 900 words.

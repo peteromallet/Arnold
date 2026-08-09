@@ -1,0 +1,1748 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.6
+--------
+workdir: /Users/peteromalley/Documents/Arnold
+model: gpt-5.6-luna
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 019fcd9f-66eb-72c3-9062-6fd0a1bb4c8b
+--------
+user
+You are a bounded Luna code auditor. Read the compact evidence brief and Sol verdict in `evidence/critique-ledger-recovery/`. Do NOT use rg, find, git, recursive listing, or any subagent. Use at most five `sed`/`nl` reads, only these paths: `arnold_pipelines/megaplan/cloud/preflight.py`, `arnold/agent/providers/pool.py`, `arnold/agent/adapters/deepseek.py`, `arnold_pipelines/megaplan/workers/hermes.py` (auth/credential sections only), and `tests/arnold/agent/test_pool.py` if present. Return under 700 words: provider preflight gap, single-source-of-truth design, and four acceptance tests. Do not expose secrets or edit.
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+I’ll inspect only the requested evidence and narrowly scoped source sections, staying within five reads and making no changes.
+exec
+/bin/zsh -lc 'ls -1 evidence/critique-ledger-recovery' in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+T0.0
+T0.2
+T0.4
+luna_swarm
+sol-broader-review-20260804.md
+sol-broader-review-brief-20260804.md
+sol-broader-review-compact-brief-20260804.md
+sol-review-r5-20260804.md
+
+exec
+/bin/zsh -lc "sed -n '1,240p' evidence/critique-ledger-recovery/sol-broader-review-compact-brief-20260804.md; sed -n '1,240p' evidence/critique-ledger-recovery/sol-review-r5-20260804.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+# Sol judgement request (compact evidence-only brief)
+
+Take a firm architectural position from the evidence below. Do not inspect the repository or delegate. Return under 1200 words with: (a) root-cause tree, (b) whether the current fixes are root-level or local mitigation, (c) ranked independent Luna audit directions, (d) shortest safe immediate recovery, and (e) shared-system hardening plus acceptance tests.
+
+## Observed facts
+
+1. The cloud session `critique-ledger-accountability-v3-r5-20260803`, plan `cl2-wbc-backed-ledger-20260803-1357`, failed at VJ8 before worker dispatch. State recorded `pre_dispatch_validation_failed`, `phase=execute`, `worker_dispatched=false`, `exit_code=1`, occurrence `validation-8a0d0d672f63643cc82e`, fingerprint `8a0d0d672f63643cc82ef81841ab9493b87bfe69671c5da9d961dc60c878c4d3`.
+2. The VJ8 suite initially had 126 tests, 122 pass and 4 failures. All four were stale expectations around divergent same-idempotency-key ledger events and exact retry canonicalization. After repairing the implementation/tests, the exact suite is 130 passed.
+3. Recovery was made occurrence-bound: a receipt binds the failure fingerprint, occurrence, job, source revision, passing test result, and runtime code hash. Recovery now rejects stale/mismatched evidence and does not clear real U1/quality blockers. Status now exposes latest_failure and projects `finalized` to execute because finalized is an execute-entry state.
+4. The same plan is now `state=finalized`, `execution_state=ready`, `next_step=execute`, with U1/quality blockers still unresolved and authoritative.
+5. The canonical local `cloud resume` wrapper failed before dispatch. Its SSH provider runs `cd <workspace> && arnold status --plan <plan>`. On the container, `arnold` resolves to `/root/.pyenv/shims/arnold`, whose installed `arnold.cli` exposes a different legacy interface and requires `--artifact-root`. The intended megaplan CLI works only when invoked through `/workspace/runtime-venvs/arnold-wbc-full-20260804/bin/python -m arnold_pipelines.megaplan ...`.
+6. Earlier evidence showed: managed runner lease startup errors were swallowed; marker “launch success” could mean only tmux/state was observed; stale phase_result.json could outrank newer state.latest_failure; resident and chain code used different dirty/pinned runtime lineages; watchdog snapshots could be stale or unreadable; `/whats-cooking` could time out while collecting a snapshot.
+7. Luna audits already found: no remote provider-key preflight; alias/auth allowlists are not one source of truth; resident may import dirty `/workspace/arnold` while the chain uses pinned c116; liveness must be lease/process identity, not tmux; observer responses need bounded work and stale-data labeling.
+
+## Constraints
+
+Do not fabricate CL1/U1 handoffs, resolve quality blockers to force progress, create a new chain, or claim liveness without a fresh lease-bound process identity. The fix must generalize to every cloud megaplan pipeline.
+# Sol review brief: r5 execution block and lease gap
+
+Date: 2026-08-04 UTC
+Scope: `critique-ledger-accountability-v3-r5-20260803`, plan
+`cl2-wbc-backed-ledger-20260803-1357` on the cloud agentbox.
+
+## Decision requested
+
+Give a firm judgement on (a) why this run stopped, (b) whether the intended
+source fix is to update stale tests or to undo the new idempotency behavior,
+(c) the safest resume point, and (d) the durable lease/observer fix so a
+managed run cannot execute without authoritative custody. Distinguish facts
+from inference and do not recommend a blind relaunch.
+
+## Durable evidence
+
+- Cloud process at the time of observation: chain wrapper PID 377534 and
+  chain process PID 377538, launched from the pinned runtime
+  `/workspace/runtime-candidates/arnold-wbc-full-20260804` at revision
+  `c116f38cc83de11a1a508eff6153205504d1ba5a`.
+- At 15:18:31Z, `megaplan introspect` showed `display_state=executing`,
+  `execution_state=executing`, `active_phase=execute`, attempt 6,
+  model `zhipu:glm-5.2`, liveness `progressing` (“last event 1s ago”),
+  `latest_failure=null`, an in-flight `llm_call_start`, and event sequence
+  9223 with fresh token-heartbeat events. `doctor` separately reported phase,
+  LLM liveness, cost, and no orphan process as OK.
+- The active step initially had no `runner_lease`. The marker lease file was
+  still bound to a dead earlier PID 373187 and had expired at 14:26:20Z.
+  The launch command exported `ARNOLD_REPAIR_SESSION` but the managed lease
+  startup failure is swallowed, so the chain was allowed to run unbound.
+- As containment only, a liveness lease sidecar was attached to the already
+  live PID 377538 at 15:20:48Z. It created runner fence 8, target PID 377538,
+  and renewed successfully. This did not restart or duplicate the chain.
+- The chain then exited/block-recorded at 15:21:17Z. At 15:24:48Z the chain
+  PID and sidecar were both gone. `state.json` is authoritative:
+  `current_state=blocked`, with `latest_failure.kind=pre_dispatch_validation_failed`,
+  `phase=execute`, `job_id=VJ8`, `exit_code=1`,
+  `retryable_infrastructure=false`, `worker_dispatched=false`,
+  `suggested_action=Repair the failing validation gate before resuming execute.`
+- The exact gate command was:
+
+  ```text
+  timeout 120s pytest tests/arnold/workflow/test_attempt_ledger_store.py \
+    tests/arnold/workflow/test_attempt_ledger_static_negative_checks.py \
+    --tb=short -q --tb=no --no-header -rA
+  ```
+
+  It returned 1. Re-running against the stopped worktree produced 126 tests:
+  122 passed and 4 failed. All four failures are legacy expectations that a
+  divergent event with the same idempotency key silently deduplicates:
+
+  - `test_append_dedups_on_duplicate_idempotency_key`
+  - `test_duplicate_of_pre_terminal_event_returns_existing_after_terminal`
+  - `test_duplicate_of_terminal_event_returns_existing`
+  - `test_dedup_does_not_persist_duplicate_row`
+
+  Each now raises `arnold.workflow.attempt_ledger_store.IdempotencyConflictError`
+  with “already exists with divergent canonical content.”
+- The worker’s durable batch-5 notes say T6 intentionally added
+  `IdempotencyConflictError` and a shared `canonical_event_json` helper, and
+  explicitly says divergent same-key retries must raise; it also says the
+  outbox path was not yet completed and T4 was not started. The plan’s critique
+  flags likewise require content-safe divergence rather than silent dedup.
+- The same worker notes report a stale editable-runtime import problem during
+  foreground verification: `arnold.workflow` resolved to
+  `/workspace/runtime-candidates/arnold-4ed98585fda8c76a8ebfba04b856b6aa9b685a47-live`
+  instead of the session worktree. The exact re-run from the worktree does
+  import the worktree and exposes the four semantic expectation failures above.
+- Current worktree inspection shows `arnold/workflow/attempt_ledger_store.py`,
+  `arnold/workflow/ledger_outbox.py`, and tests are dirty. The helper is
+  imported by the outbox, but `canonical_event_json` is not currently
+  re-exported from `arnold.workflow` despite the worker note claiming it was.
+
+## Constraints
+
+- Do not treat fresh event/token sidecars as custody authority.
+- Do not kill/relaunch a process while an exact live runner is still active.
+- Do not mutate the blocked plan’s state by hand; resume only through its
+  typed recovery path after the gate contract is repaired.
+- Preserve completed batches T1–T3 and the partial T6 evidence; do not silently
+  discard or replay them.
+
+## Questions Sol must answer
+
+1. Is `IdempotencyConflictError` the correct contract and are these four tests
+   stale, or is the implementation wrong? What exact minimal test/code changes
+   should be made before resume?
+2. Does the uncompleted outbox path make T6 unsafe to accept even after the
+   four expectation tests are updated? What is the smallest coherent repair?
+3. Can this plan resume from the typed VJ8 block without restarting T1–T3,
+   and what receipt/evidence checks must be performed first?
+4. What launch invariant prevents a managed chain from running when lease
+   acquisition fails? Recommend the precise fail-closed startup/lease handoff,
+   stale-owner recovery, and observer classification changes.
+5. Give a short ordered recovery plan and identify anything that must remain a
+   follow-up rather than being smuggled into this resume.
+
+## Fresh evidence gathered after cancelling the first Sol review
+
+- The authoritative cloud observation at `2026-08-04T15:37:00Z` is no longer
+  executing: `introspect` reports `plan_state=blocked`,
+  `display_state=blocked`, `execution_state=blocked`, `active_phase=null`,
+  `liveness=stalled`, and `block_details.recoverable_via=["recover-blocked"]`.
+  The event journal's last event is `2026-08-04T15:21:17.996Z`; there is no
+  chain process and no sidecar. This answers the immediate question: it is not
+  cooking now.
+- The current marker is not authoritative for a live run:
+  `runner_pid=null`, `runner_start_identity=null`, `lease=null`, last marker
+  update `2026-08-04T14:21:43Z`. The target container itself is healthy and has
+  325G free on its host-backed `/workspace` volume. A separate, old container
+  named `megaplan-cloud-agent` is exited with a historical Docker-rootfs
+  `no space left on device` error; it is not the r5 target and must not be
+  confused with the active target container.
+- The current introspect payload retains a stale unmatched `llm_call_start`
+  from `2026-08-04T14:23:35Z` (GLM-5.2) even though the phase is null, the
+  process is gone, and the state is blocked. This is telemetry/projection
+  residue, not evidence of a live model call. It is a second control-plane
+  smell: terminal/block transitions must close or quarantine in-flight-call
+  records.
+- The exact VJ8 command was rerun in the cloud worktree with the pinned runtime.
+  It completed in 11.67s with `126` tests total: `122 passed`, `4 failed`.
+  Running only the four failures shows all raise
+  `arnold.workflow.attempt_ledger_store.IdempotencyConflictError` from
+  `_append_tx` because the same key's canonical event content differs. The
+  tests currently assert silent deduplication. This is a deterministic source
+  contract mismatch, not a provider outage, timeout, or worker-dispatch failure.
+- The plan history shows a pattern rather than a single incident: three
+  critique attempts failed structural validation before one succeeded;
+  finalize had six invalid-schema rejections, then a missing-required-field
+  structural audit failure, a usage-limit failure, and later a successful
+  Sol finalize; execute then hit four `VJ2 exited None` validation failures,
+  a blocked state, and finally the current `VJ8 exited 1` block. The system did
+  preserve these typed history entries, but notification/observer surfaces did
+  not collapse them into one incident lineage.
+- The pinned r5 config confirms the intended routing is
+  `profile=partnered-5-glm`, execute via `hermes:zhipu:glm-5.2`, and finalize
+  via `codex:gpt-5.6-sol:high`. The current VJ8 failure happened before any
+  execute worker was dispatched (`worker_dispatched=false`), so changing the
+  execute model cannot fix this gate.
+
+## Additional questions for the consolidated Sol judgement
+
+6. Given the fresh VJ8 reproduction, decide whether the four tests should be
+   rewritten to assert content-safe divergence, or whether the implementation
+   should preserve legacy silent deduplication. Treat the plan brief's
+   “content-safe” and “divergent same-key retry raises” language as binding
+   evidence, not as an assumption.
+7. Decide whether stale in-flight LLM telemetry after a blocked terminal state
+   is merely an observer bug or evidence that recovery could accidentally
+   resurrect an old call. Recommend the smallest fail-closed repair.
+8. Account for the repeated critique/finalize/VJ2 failures as one incident
+   lineage: what should be automatic retry/fixer behavior, what should be a
+   hard block, and how should notifications be deduplicated?
+9. State the shortest safe path from the current typed block to a resumed run,
+   including the exact evidence gates for the test-contract repair, outbox
+   completion, runtime/lease custody, and one clean VJ8 pass.
+
+## Luna cross-checks (fresh, read-only)
+
+- Credential/lifecycle audit: the current r5 launcher has the GLM/Zhipu keys and
+  base URLs in its isolated empty-parent-env probe; the pinned runtime is
+  `/workspace/runtime-candidates/arnold-wbc-full-20260804` at `c116f38`. The
+  routing ledger shows 8/8 post-13:47 calls selecting and actually using
+  `hermes:zhipu:glm-5.2`, with no fallback. The stale “missing
+  OpenAI credentials” message belongs to an earlier 13:47 relaunch artifact,
+  not the VJ8 failure.
+- State-machine audit: `state.json` and the VJ8 artifact independently prove a
+  deterministic pre-dispatch block (`126 passed, 4 failed`,
+  `worker_dispatched=false`, `retryable_infrastructure=false`). The stale
+  chain-health/session projections still say gated/running, while introspect
+  says blocked; status surfaces are therefore reading incompatible projections.
+  The observer/doctor surface also omits the decisive `latest_failure` detail
+  and suggests a generic force-proceed path, which is unsafe for a validation
+  block.
+- The state-machine audit additionally found T6's `ledger_outbox.py` write not
+  represented in its declared write set and outbox tests not yet run. It
+  recommends an occurrence-scoped `recover-blocked` bound to the VJ8 fingerprint
+  and repair commit, never a generic force-proceed, followed by a fresh lease,
+  one clean VJ8/outbox/static-suite pass, and projection/notification refresh.
+- Route/control-plane audit: the lease gap was real at launch (managed lease
+  acquisition failure was swallowed); attaching a sidecar later proved only
+  liveness, not startup custody. The invariant must be fail-closed: no chain
+  process may dispatch or mutate plan state until it holds a marker-bound lease
+  for its exact PID/start identity/container/fence. Stale owners need an
+  explicit fenced handoff, not a marker overwrite.
+- Recovery audit found another concrete state-machine smell: the current
+  `state.json` VJ8 block is newer and has `resume_cursor.retry_strategy=
+  repair_validation_failure`, but the older `phase_result.json` still says
+  `exit_kind=external_error`. The `_external_error_requires_resume` helper
+  consults that stale phase result as well as the latest failure, so
+  `recover-blocked` may misclassify this deterministic validation failure and
+  demand a generic `resume`. Recovery must bind to the newest failure
+  occurrence (or reject stale phase results) before choosing a transition.
+- Route/observer audit adds two status-surface facts: the target container's
+  PID 1 is only an HTTP health server, not the chain runner; and the resident
+  container/watchdog snapshot writer is not a durable chain supervisor. The
+  `/opt/.../.megaplan/status/cloud-status.json` snapshot is stale (generated
+  2026-08-03 18:10Z) and the watchdog sweep stopped around 17:51Z, explaining
+  `/whats-cooking` stale/duplicate “running” reports. A stale `phase_result.json`
+  also carries the old missing-OpenAI-credentials narrative despite successful
+  GLM calls later in the same run. Status must join artifacts by occurrence ID
+  and freshness, never display an old provider error as the current cause.
+- A later blocker-recovery inspection reports `can_continue=false` and
+  `has_terminal_blockers=true`: synthetic U1 prerequisite blockers cover the
+  pending tasks with zero recorded resolutions, and a quality blocker reports
+  that `finalize.json` still has pending tasks without authoritative execution
+  updates. Therefore `recover-blocked` is not a generic resume button even
+  after VJ8 is repaired. The U1/quality evidence must be resolved or explicitly
+  scoped by an approved transition; it must not be marked resolved merely to
+  bypass the gate.
+
+## Sol execution constraint
+
+The evidence above is complete. Make the judgement from this brief only; do
+not inspect the repository or launch tools. Return a firm, concise decision
+(contract choice, safe recovery order, and durable fixes), with no code edits.
+
+## Sol judgement (GPT-5.6 Sol, high reasoning; 2026-08-04)
+
+Sol's firm conclusion: VJ8 is a deterministic pre-dispatch validation failure,
+not a model, credential, container, disk, timeout, or worker failure. The
+`IdempotencyConflictError` behavior is correct and the four legacy tests must
+be updated to distinguish identical-content deduplication from divergent
+same-key rejection. T6 is not yet coherent: finish the outbox integration,
+declare `ledger_outbox.py` in the write set, resolve the public export claim,
+and run ledger + outbox + static-negative suites together.
+
+Sol's safe order is: preserve T1-T3/T6 receipts; make an immutable repair
+identity; prove the pinned runtime import; obtain one clean VJ8 plus outbox and
+static-suite pass; bind recovery to the newest VJ8 occurrence/fingerprint and
+reject the stale external-error phase result; resolve U1/quality blockers
+without fabricating resolutions; acquire a fresh marker-bound fenced lease;
+then invoke occurrence-scoped `recover-blocked` and resume execute. Do not
+force-proceed or relaunch blindly.
+
+Sol's durable invariant is fail-closed startup: no managed chain may read or
+advance execution state, dispatch a worker, or emit `executing` until the exact
+PID/start identity/container/session owns a current marker-bound fenced lease.
+Lease acquisition/renewal errors must stop dispatch, stale-owner takeover must
+be an explicit fenced CAS, and observers must classify fresh events without a
+
+exec
+/bin/zsh -lc "sed -n '240,360p' evidence/critique-ledger-recovery/sol-review-r5-20260804.md; nl -ba arnold_pipelines/megaplan/cloud/preflight.py | sed -n '1,260p'" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+be an explicit fenced CAS, and observers must classify fresh events without a
+matching lease as unowned activity/custody violation. Terminal/block
+transitions must quarantine unmatched LLM telemetry; status and notifications
+must join by occurrence ID and freshness. Automatic repair is appropriate for
+bounded schema/provider failures, but deterministic VJ8 remains a hard source
+block with one deduplicated incident lineage.
+     1	"""Pure cloud-chain preflight helpers.
+     2	
+     3	These helpers do not contact a provider. They resolve chain milestone routing
+     4	with the same profile/phase_model expansion used by runtime workers, then
+     5	translate the resolved agents into runtime commands and environment hints that
+     6	cloud launchers can validate before starting a remote chain.
+     7	"""
+     8	
+     9	from __future__ import annotations
+    10	
+    11	import argparse
+    12	from pathlib import Path
+    13	from typing import Any
+    14	
+    15	from arnold_pipelines.megaplan.chain import ChainSpec
+    16	from arnold_pipelines.megaplan.fallback_chains import FallbackSpecChain, decode_phase_model_value
+    17	from arnold_pipelines.megaplan.profiles import (
+    18	    DEFAULT_AGENT_ROUTING,
+    19	    apply_profile_expansion,
+    20	    effective_premium_vendor,
+    21	)
+    22	from arnold_pipelines.megaplan.types import (
+    23	    format_agent_spec,
+    24	    is_premium_placeholder_spec,
+    25	    parse_agent_spec,
+    26	    resolve_premium_placeholder_spec,
+    27	)
+    28	
+    29	
+    30	AGENTS_DEFAULT_WARNING = (
+    31	    "cloud.yaml agents.default does not override explicit chain profile or "
+    32	    "phase_model routing; resolved chain phase maps are shown below."
+    33	)
+    34	
+    35	
+    36	_COMMANDS_BY_AGENT: dict[str, tuple[str, ...]] = {
+    37	    "claude": ("bun", "claude", "tmux"),
+    38	    "shannon": ("bun", "claude", "tmux"),
+    39	    "codex": ("codex", "tmux"),
+    40	}
+    41	
+    42	_ENV_HINTS_BY_AGENT: dict[str, tuple[str, ...]] = {
+    43	    "claude": ("ANTHROPIC_API_KEY",),
+    44	    "shannon": ("ANTHROPIC_API_KEY",),
+    45	    "codex": ("OPENAI_API_KEY",),
+    46	}
+    47	
+    48	_ENV_HINTS_BY_HERMES_PROVIDER: dict[str, tuple[str, ...]] = {
+    49	    "deepseek": ("DEEPSEEK_API_KEY",),
+    50	    "fireworks": ("FIREWORKS_API_KEY",),
+    51	    "mimo": ("MIMO_API_KEY",),
+    52	    "xai": ("XAI_API_KEY",),
+    53	}
+    54	
+    55	
+    56	def _expanded_phase_models(
+    57	    *,
+    58	    profile: str | None,
+    59	    phase_model: list[str],
+    60	    project_dir: Path | None,
+    61	    vendor: str | None = None,
+    62	    depth: str | None = None,
+    63	    critic: str | None = None,
+    64	    deepseek_provider: str | None = None,
+    65	) -> list[str]:
+    66	    args = argparse.Namespace(
+    67	        profile=profile,
+    68	        phase_model=list(phase_model),
+    69	        vendor=vendor,
+    70	        critic=critic,
+    71	        depth=depth,
+    72	        deepseek_provider=deepseek_provider,
+    73	        agent=None,
+    74	        hermes=None,
+    75	        _profile_applied=False,
+    76	    )
+    77	    apply_profile_expansion(args, project_dir)
+    78	    return list(args.phase_model or [])
+    79	
+    80	
+    81	def _resolved_phase_chains(
+    82	    phase_models: list[str],
+    83	    fallback_routing: dict[str, str],
+    84	) -> tuple[dict[str, FallbackSpecChain], dict[str, str]]:
+    85	    overrides: dict[str, FallbackSpecChain] = {}
+    86	    explicit_entries: dict[str, str] = {}
+    87	    for entry in phase_models:
+    88	        if "=" not in entry:
+    89	            continue
+    90	        phase, chain = decode_phase_model_value(entry)
+    91	        if phase not in overrides:
+    92	            overrides[phase] = chain
+    93	            explicit_entries[phase] = entry
+    94	    return (
+    95	        {
+    96	            phase: overrides.get(phase, FallbackSpecChain.from_value(fallback, path=f"fallback.{phase}"))
+    97	            for phase, fallback in fallback_routing.items()
+    98	        },
+    99	        explicit_entries,
+   100	    )
+   101	
+   102	
+   103	def _resolved_phase_map(
+   104	    resolved_phase_chains: dict[str, FallbackSpecChain],
+   105	) -> dict[str, str]:
+   106	    return {
+   107	        phase: chain.selected()
+   108	        for phase, chain in resolved_phase_chains.items()
+   109	    }
+   110	
+   111	
+   112	def _concrete_fallback_routing(
+   113	    *,
+   114	    vendor: str | None,
+   115	    depth: str | None,
+   116	    critic: str | None,
+   117	    cloud_default_agent: str | None,
+   118	) -> dict[str, str]:
+   119	    del depth, critic
+   120	    if cloud_default_agent:
+   121	        return {phase: cloud_default_agent for phase in DEFAULT_AGENT_ROUTING}
+   122	
+   123	    args = argparse.Namespace(vendor=vendor)
+   124	    effective_vendor = effective_premium_vendor(args, {})
+   125	    return {
+   126	        phase: (
+   127	            format_agent_spec(resolve_premium_placeholder_spec(spec, effective_vendor))
+   128	            if is_premium_placeholder_spec(spec)
+   129	            else spec
+   130	        )
+   131	        for phase, spec in DEFAULT_AGENT_ROUTING.items()
+   132	    }
+   133	
+   134	
+   135	def _provider_requirements(agent: str, model: str | None) -> list[dict[str, Any]]:
+   136	    if agent != "hermes":
+   137	        return []
+   138	    provider: str | None = None
+   139	    model_name = model
+   140	    if model and ":" in model:
+   141	        provider, model_name = model.split(":", 1)
+   142	    return [
+   143	        {
+   144	            "agent": "hermes",
+   145	            "provider": provider,
+   146	            "model": model_name,
+   147	            "env_hints": list(_ENV_HINTS_BY_HERMES_PROVIDER.get(provider or "", ())),
+   148	        }
+   149	    ]
+   150	
+   151	
+   152	def resolve_cloud_chain_runtime_dependencies(
+   153	    chain_spec: ChainSpec,
+   154	    *,
+   155	    project_dir: Path | None = None,
+   156	    cloud_default_agent: str | None = None,
+   157	) -> dict[str, Any]:
+   158	    """Return JSON-serializable runtime dependency details for a chain spec."""
+   159	
+   160	    milestone_summaries: list[dict[str, Any]] = []
+   161	    required_agents: set[str] = set()
+   162	    runtime_commands: set[str] = set()
+   163	    env_hints: set[str] = set()
+   164	    provider_requirements: list[dict[str, Any]] = []
+   165	    for milestone in chain_spec.milestones:
+   166	        fallback_routing = _concrete_fallback_routing(
+   167	            vendor=milestone.vendor,
+   168	            depth=milestone.depth,
+   169	            critic=milestone.critic,
+   170	            cloud_default_agent=cloud_default_agent,
+   171	        )
+   172	        expanded_phase_models = _expanded_phase_models(
+   173	            profile=milestone.profile,
+   174	            phase_model=milestone.phase_model,
+   175	            project_dir=project_dir,
+   176	            vendor=milestone.vendor,
+   177	            depth=milestone.depth,
+   178	            critic=milestone.critic,
+   179	            deepseek_provider=milestone.deepseek_provider,
+   180	        )
+   181	        resolved_phase_chains, explicit_phase_entries = _resolved_phase_chains(
+   182	            expanded_phase_models,
+   183	            fallback_routing,
+   184	        )
+   185	        resolved = _resolved_phase_map(resolved_phase_chains)
+   186	        milestone_agents: set[str] = set()
+   187	        milestone_commands: set[str] = set()
+   188	        milestone_env_hints: set[str] = set()
+   189	        milestone_provider_requirements: list[dict[str, Any]] = []
+   190	
+   191	        for chain in resolved_phase_chains.values():
+   192	            for spec in chain:
+   193	                parsed = parse_agent_spec(spec)
+   194	                milestone_agents.add(parsed.agent)
+   195	                required_agents.add(parsed.agent)
+   196	                for command in _COMMANDS_BY_AGENT.get(parsed.agent, ()):
+   197	                    milestone_commands.add(command)
+   198	                    runtime_commands.add(command)
+   199	                for env_name in _ENV_HINTS_BY_AGENT.get(parsed.agent, ()):
+   200	                    milestone_env_hints.add(env_name)
+   201	                    env_hints.add(env_name)
+   202	                requirements = _provider_requirements(parsed.agent, parsed.model)
+   203	                if requirements:
+   204	                    milestone_provider_requirements.extend(requirements)
+   205	                    provider_requirements.extend(requirements)
+   206	                    for requirement in requirements:
+   207	                        for env_name in requirement.get("env_hints", []):
+   208	                            if isinstance(env_name, str):
+   209	                                milestone_env_hints.add(env_name)
+   210	                                env_hints.add(env_name)
+   211	
+   212	        milestone_summaries.append(
+   213	            {
+   214	                "label": milestone.label,
+   215	                "profile": milestone.profile,
+   216	                "explicit_phase_model": list(milestone.phase_model),
+   217	                "explicit_phase_model_by_phase": explicit_phase_entries,
+   218	                "resolved_phase_map": resolved,
+   219	                "resolved_phase_chains": {
+   220	                    phase: list(chain.specs)
+   221	                    for phase, chain in resolved_phase_chains.items()
+   222	                },
+   223	                "required_agents": sorted(milestone_agents),
+   224	                "runtime_commands": sorted(milestone_commands),
+   225	                "env_hints": sorted(milestone_env_hints),
+   226	                "provider_requirements": milestone_provider_requirements,
+   227	            }
+   228	        )
+   229	
+   230	    # Policy fields from the chain spec
+   231	    policy = {
+   232	        "prerequisite_policy": chain_spec.prerequisite_policy,
+   233	        "validation_policy": chain_spec.validation_policy,
+   234	        "review_policy": dict(chain_spec.review_policy or {}),
+   235	    }
+   236	
+   237	    result: dict[str, Any] = {
+   238	        "base_branch": chain_spec.base_branch,
+   239	        "cloud_default_agent": cloud_default_agent,
+   240	        "warning": AGENTS_DEFAULT_WARNING,
+   241	        "milestones": milestone_summaries,
+   242	        "required_agents": sorted(required_agents),
+   243	        "runtime_commands": sorted(runtime_commands),
+   244	        "env_hints": sorted(env_hints),
+   245	        "provider_requirements": provider_requirements,
+   246	        "policy": policy,
+   247	    }
+   248	
+   249	    # When validation_policy is 'required', report a validation_environment
+   250	    # section with capability requirements so cloud launchers know what
+   251	    # tooling must be present.
+   252	    if chain_spec.validation_policy == "required":
+   253	        validation_commands: set[str] = set()
+   254	        # Collect validation-specific commands (any agent could run validation)
+   255	        for agent in required_agents:
+   256	            for command in _COMMANDS_BY_AGENT.get(agent, ()):
+   257	                validation_commands.add(command)
+   258	        result["validation_environment"] = {
+   259	            "required_commands": sorted(validation_commands),
+   260	            "env_hints": (
+
+codex
+The brief and Sol verdict agree on the core incident: VJ8 is a deterministic pre-dispatch contract failure, while the lease/custody flaw is systemic. I’m checking the implementation surfaces now for whether provider credentials are actually validated and whether routing/auth data has a canonical owner.
+exec
+/bin/zsh -lc "sed -n '1,280p' arnold/agent/providers/pool.py; sed -n '1,260p' arnold/agent/adapters/deepseek.py; sed -n '1,260p' arnold_pipelines/megaplan/workers/hermes.py; sed -n '1,300p' tests/arnold/agent/test_pool.py" in /Users/peteromalley/Documents/Arnold
+ exited 1 in 0ms:
+"""Generic API key pooling for provider-backed agent execution.
+
+Provides:
+* ``KeyPathSource`` — protocol for injecting the API keys file path.
+* ``KeyEntry`` — per-key bookkeeping (last-used, cooldown, failed flag).
+* ``KeyPool`` — thread-safe key pool with LRU acquisition, 429 cooldown,
+  and failure marking.  Reads keys from environment variables and,
+  optionally, from a JSON file supplied via a ``KeyPathSource``.
+
+No imports from arnold.pipelines.megaplan.  Governor integration and
+envelope context wiring belong in the megaplan provider layer.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+from arnold.security.broker_client import BrokerClient
+from arnold.security.llm_proxy import (
+    broker_production_mode_requested,
+    resolve_brokered_llm_proxy,
+)
+
+_RELOAD_TTL_SECONDS = 60.0
+
+_PROVIDER_KEY_VARS = {
+    "zhipu": "ZHIPU_API_KEY",
+    "kimi": "KIMI_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "mimo": "MIMO_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "fireworks": "FIREWORKS_API_KEY",
+    "xai": "XAI_API_KEY",
+}
+_ENV_ALIASES = {
+    "ZHIPU_API_KEY": ("ZHIPU_API_KEY", "GLM_API_KEY"),
+    "ZHIPU_BASE_URL": ("ZHIPU_BASE_URL", "GLM_BASE_URL"),
+    "KIMI_API_KEY": ("KIMI_API_KEY", "MOONSHOT_API_KEY"),
+    "KIMI_BASE_URL": ("KIMI_BASE_URL", "MOONSHOT_BASE_URL"),
+    "GEMINI_API_KEY": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "FIREWORKS_API_KEY": ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+    "FIREWORKS_BASE_URL": ("FIREWORKS_BASE_URL", "FIREWORKS_AI_BASE_URL"),
+}
+_PROVIDER_BASE_URL_VARS = {
+    "zhipu": "ZHIPU_BASE_URL",
+    "kimi": "KIMI_BASE_URL",
+    "minimax": "MINIMAX_BASE_URL",
+    "mimo": "MIMO_BASE_URL",
+    "deepseek": "DEEPSEEK_BASE_URL",
+    "fireworks": "FIREWORKS_BASE_URL",
+    "xai": "XAI_BASE_URL",
+}
+_DEFAULT_BASE_URLS = {
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "kimi": "https://api.moonshot.ai/v1",
+    "minimax": "https://api.minimax.io/v1",
+    "mimo": "https://api.xiaomimimo.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "deepseek": "https://api.deepseek.com",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
+    "xai": "https://api.x.ai/v1",
+}
+KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
+
+
+def resolve_kimi_base_url(api_key: str, default_url: str, env_override: str) -> str:
+    """Return the correct Kimi base URL for legacy Moonshot vs Kimi coding keys.
+
+    Kimi coding keys use the ``sk-kimi-`` prefix and are rejected by the legacy
+    Moonshot endpoint.  An explicit KIMI_BASE_URL/MOONSHOT_BASE_URL override
+    still wins.
+    """
+    if env_override:
+        return env_override
+    if api_key.startswith("sk-kimi-"):
+        return KIMI_CODE_BASE_URL
+    return default_url
+
+# Direct API model name → OpenRouter model ID
+_MINIMAX_OR_MODEL_MAP = {
+    "MiniMax-M2.7-highspeed": "minimax/minimax-m2.7",
+    "MiniMax-M2.7": "minimax/minimax-m2.7",
+    "MiniMax-M2.5-highspeed": "minimax/minimax-m2.5",
+    "MiniMax-M2.5": "minimax/minimax-m2.5",
+    "MiniMax-M2.1-highspeed": "minimax/minimax-m2.1",
+    "MiniMax-M2.1": "minimax/minimax-m2.1",
+    "MiniMax-M2": "minimax/minimax-m2",
+}
+
+
+def minimax_openrouter_model(direct_model: str) -> str:
+    """Map a MiniMax direct API model name to its OpenRouter equivalent."""
+    return _MINIMAX_OR_MODEL_MAP.get(direct_model, "minimax/" + direct_model)
+
+
+# ---------------------------------------------------------------------------
+# Protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class KeyPathSource(Protocol):
+    """Supplies the path to an api_keys.json file for key pool loading."""
+
+    def keys_path(self) -> Path: ...
+
+
+# ---------------------------------------------------------------------------
+# Key entry and pool
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class KeyEntry:
+    key: str
+    last_used: float = 0.0
+    cooldown_until: float = 0.0
+    failed: bool = False
+
+
+@dataclass
+class BrokeredKey:
+    key: str
+    base_url: str
+    expires_at: int | None = None
+
+
+class KeyPool:
+    """Thread-safe API key pool with LRU acquisition and 429 cooldown.
+
+    Keys are sourced from environment variables (and ~/.hermes/.env) and,
+    optionally, from a JSON file at the path returned by ``keys_path_source``.
+
+    Governor integration and envelope context wiring are intentionally absent
+    from this generic pool.  Add them via subclassing or a wrapper in the
+    plugin layer.
+    """
+
+    def __init__(
+        self,
+        ttl_seconds: float = _RELOAD_TTL_SECONDS,
+        keys_path_source: KeyPathSource | None = None,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._keys_path_source = keys_path_source
+        self._lock = threading.Lock()
+        self._next_reload = 0.0
+        self._hermes_env: dict[str, str] = {}
+        self._entries: dict[str, list[KeyEntry]] = {
+            provider: [] for provider in _PROVIDER_KEY_VARS
+        }
+        self._broker_keys: dict[str, BrokeredKey] = {}
+
+    def _api_keys_path(self) -> Path | None:
+        """Return the JSON keys file path via the injected source, or None."""
+        if self._keys_path_source is not None:
+            return self._keys_path_source.keys_path()
+        return None
+
+    def _load_hermes_env_unlocked(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        env_path = Path.home() / ".hermes" / ".env"
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    result[key.strip()] = value.strip().strip("'\"")
+        return result
+
+    def _collect_key_values(self, env_var: str, hermes_env: dict[str, str]) -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        names = _ENV_ALIASES.get(env_var, (env_var,))
+        combined_names = set(hermes_env) | set(os.environ)
+        for name in names:
+            pattern = re.compile(rf"^{re.escape(name)}(?:_(\d+))?$")
+            matches: list[tuple[int, str]] = []
+            for candidate in combined_names:
+                match = pattern.match(candidate)
+                if match:
+                    matches.append((int(match.group(1) or "1"), candidate))
+            for _, candidate in sorted(matches):
+                value = (os.environ.get(candidate) or hermes_env.get(candidate) or "").strip().strip("'\"")
+                if value and value not in seen:
+                    seen.add(value)
+                    values.append(value)
+        return values
+
+    def _load_api_keys_json(self) -> list[str]:
+        path = self._api_keys_path()
+        if path is None or not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        keys: list[str] = []
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    key = str(item.get("key", "")).strip()
+                    if key and key not in keys:
+                        keys.append(key)
+        return keys
+
+    def _load_keys_unlocked(self, now: float) -> None:
+        if now < self._next_reload:
+            return
+        hermes_env = self._load_hermes_env_unlocked()
+        self._hermes_env = hermes_env
+        for provider, env_var in _PROVIDER_KEY_VARS.items():
+            keys = self._collect_key_values(env_var, hermes_env)
+            if provider == "zhipu":
+                for key in self._load_api_keys_json():
+                    if key not in keys:
+                        keys.append(key)
+            existing = {entry.key: entry for entry in self._entries.get(provider, [])}
+            self._entries[provider] = [existing.get(key, KeyEntry(key=key)) for key in keys]
+        self._next_reload = now + self._ttl_seconds
+
+    def _provider_base_url_unlocked(self, provider: str) -> str:
+        env_var = _PROVIDER_BASE_URL_VARS.get(provider, "")
+        env_override = self._get_api_credential_unlocked(env_var) if env_var else ""
+        default_url = _DEFAULT_BASE_URLS.get(provider, "")
+        if provider == "kimi":
+            sample_key = ""
+            for entry in self._entries.get(provider, []):
+                if entry.key:
+                    sample_key = entry.key
+                    break
+            return resolve_kimi_base_url(sample_key, default_url, env_override)
+        return env_override or default_url
+
+    def _acquire_brokered_key_unlocked(self, provider: str) -> str:
+        current = self._broker_keys.get(provider)
+        now = int(time.time())
+        if current is not None and (current.expires_at is None or current.expires_at > now):
+            return current.key
+        upstream_base_url = self._provider_base_url_unlocked(provider)
+        if not upstream_base_url:
+            return ""
+        try:
+            credential = resolve_brokered_llm_proxy(
+                provider,
+                upstream_base_url,
+                broker_client=BrokerClient.from_environment(),
+            )
+        except Exception:
+            return ""
+        if credential is None or not credential.broker_auth:
+            return ""
+        self._broker_keys[provider] = BrokeredKey(
+            key=credential.broker_auth,
+            base_url=credential.base_url,
+            expires_at=credential.expires_at,
+        )
+        return credential.broker_auth
+
+    def _get_api_credential_unlocked(self, env_var: str, hermes_env: dict[str, str] | None = None) -> str:
+        source = hermes_env if hermes_env is not None else self._hermes_env
+        for candidate in _ENV_ALIASES.get(env_var, (env_var,)):
+            value = (os.environ.get(candidate) or source.get(candidate) or "").strip().strip("'\"")
+            if value:
+                return value
+        return ""
+
+    def load_hermes_env(self) -> dict[str, str]:
+        with self._lock:
+"""DeepSeek adapter — wraps ``arnold.agent.run_agent.AIAgent``.
+
+Conforms to :data:`arnold.agent.adapters.BackendAdapter` (``Callable[[AgentRequest], AgentResult]``).
+
+Key behaviours
+--------------
+
+* Creates an ``AIAgent`` via an injectable factory (defaults to the real
+  ``AIAgent`` class so integration tests can swap in a fake).
+* Resolves the API key from a :class:`KeySource` when provided, otherwise
+  falls back to the environment.
+* Reads ``request.timeout_seconds`` as a **top-level** field and passes it
+  as ``HERMES_API_TIMEOUT`` via ``monkeypatch.setenv`` for the duration of
+  the call.
+* Forwards per-request hints from ``request.metadata``:
+  ``toolsets``, ``session_db_path``, ``conversation_history``.
+* Maps ``request.prompt`` → ``user_message`` and
+  ``request.system_prompt`` → ``system_message`` on ``run_conversation``.
+* Projects the ``AIAgent.run_conversation`` result dict into an
+  :class:`~arnold.agent.contracts.AgentResult`.
+* Estimates cost via :mod:`arnold.agent.adapters._pricing` for known
+  models; ``cost_usd`` is ``0.0`` when no pricing data is available
+  (rather than ``None``, because :class:`AgentResult` declares it as
+  ``float``).
+
+No imports from ``arnold.pipelines.megaplan`` (zero-leak gate).
+"""
+
+from __future__ import annotations
+
+import os
+import time
+import urllib.error
+from typing import Any, Callable, Dict, Optional
+from unittest import mock
+
+from arnold.agent.adapters import BackendAdapter, EventEmitter, KeySource, SessionStore
+from arnold.agent.adapters._pricing import estimate_cost_usd
+from arnold.agent.contracts import AgentRequest, AgentResult, ResultProvenance
+from arnold.pipeline.cost_types import CanonicalUsage
+from arnold.agent.costing.token_cost import PricingEntry, estimate_usage_cost
+from arnold.security.llm_proxy import broker_production_mode_requested
+
+
+_PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
+    "deepseek": "https://api.deepseek.com",
+    "mimo": "https://api.xiaomimimo.com/v1",
+    "xai": "https://api.x.ai/v1",
+}
+
+_PROVIDER_KEY_VARS: dict[str, tuple[str, ...]] = {
+    "deepseek": ("DEEPSEEK_API_KEY", "HERMES_API_KEY"),
+    "mimo": ("MIMO_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+}
+
+_PROVIDER_BASE_URL_VARS: dict[str, str] = {
+    "deepseek": "DEEPSEEK_BASE_URL",
+    "mimo": "MIMO_BASE_URL",
+    "xai": "XAI_BASE_URL",
+}
+
+
+def _provider_model(model: str | None) -> tuple[str, str | None]:
+    """Return ``(provider, model_name)`` for Hermes provider-prefixed models."""
+    if not model:
+        return "deepseek", model
+    provider, sep, rest = model.partition(":")
+    if sep and provider in _PROVIDER_DEFAULT_BASE_URLS and rest:
+        return provider, rest
+    return "deepseek", model
+
+
+def _first_env(names: tuple[str, ...]) -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _provider_base_url(provider: str, fallback: str | None = None) -> str:
+    env_name = _PROVIDER_BASE_URL_VARS.get(provider, "")
+    return (
+        (os.getenv(env_name, "").strip() if env_name else "")
+        or fallback
+        or _PROVIDER_DEFAULT_BASE_URLS[provider]
+    )
+
+
+def _provider_headers(provider: str, key: str) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if provider == "mimo":
+        # Xiaomi's curl examples use `api-key`; the OpenAI SDK path uses the
+        # bearer token. Send both for compatibility with either gateway mode.
+        headers["api-key"] = key
+    return headers
+
+
+def _provider_display_name(provider: str) -> str:
+    if provider == "deepseek":
+        return "DeepSeek"
+    if provider == "mimo":
+        return "MiMo"
+    if provider == "xai":
+        return "xAI"
+    return provider
+
+# ---------------------------------------------------------------------------
+# Injectable AIAgent factory
+# ---------------------------------------------------------------------------
+
+_AIAgentFactory = Callable[..., Any]
+"""Signature: ``(**overrides) -> AIAgent``."""
+
+
+def _default_aiaagent_factory(**kwargs: Any) -> Any:
+    """Create a real ``AIAgent`` from ``arnold.agent.run_agent``.
+
+    This is the default factory; callers can inject a fake for testing.
+    """
+    from arnold.agent.run_agent import AIAgent
+
+    return AIAgent(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# DeepSeekAdapter
+# ---------------------------------------------------------------------------
+
+
+class DeepSeekAdapter:
+    """Adapts ``AIAgent`` into the :data:`BackendAdapter` seam.
+
+    Args:
+        session_store: Optional :class:`SessionStore` for session persistence.
+        key_source: Optional :class:`KeySource` for API key resolution.
+        event_emitter: Optional :class:`EventEmitter` for runtime telemetry.
+        agent_factory: Injectable ``AIAgent`` factory (default: real ``AIAgent``).
+    """
+
+    def __init__(
+        self,
+        *,
+        session_store: SessionStore | None = None,
+        key_source: KeySource | None = None,
+        event_emitter: EventEmitter | None = None,
+        agent_factory: _AIAgentFactory | None = None,
+        key_pool: Any | None = None,
+        base_url: str = "https://api.deepseek.com/",
+        transport: Callable[[str, dict[str, Any], dict[str, str], float | None], dict[str, Any]] | None = None,
+        pricing_rows: dict[tuple[str, str], PricingEntry] | None = None,
+    ) -> None:
+        self._session_store = session_store
+        self._key_source = key_source
+        self._event_emitter = event_emitter
+        self._agent_factory = agent_factory or _default_aiaagent_factory
+        self._key_pool = key_pool
+        self._base_url = base_url
+        self._transport = transport
+        self._pricing_rows = pricing_rows
+
+    # ------------------------------------------------------------------
+    # BackendAdapter conformance
+    # ------------------------------------------------------------------
+
+    def __call__(self, request: AgentRequest) -> AgentResult:
+        """Execute *request* through an ``AIAgent`` and return an ``AgentResult``."""
+        if self._transport is not None or self._key_pool is not None:
+            return self._dispatch_openai_compatible(request)
+        return self._dispatch(request)
+
+    def _dispatch_openai_compatible(self, request: AgentRequest) -> AgentResult:
+        started_at = time.monotonic()
+        raw_model = request.resolved_model or request.model or "deepseek-chat"
+        provider, model = _provider_model(raw_model)
+        key = ""
+        if self._key_pool is not None:
+            key = self._key_pool.acquire(provider)
+        if not key and not broker_production_mode_requested():
+            key = _first_env(_PROVIDER_KEY_VARS[provider])
+        if not key:
+            raise LookupError(f"no {_provider_display_name(provider)} API key available")
+
+        model = model or ("mimo-v2.5-pro" if provider == "mimo" else "deepseek-chat")
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt or ""})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+        }
+        if request.effort:
+            payload["reasoning_effort"] = request.effort
+        payload.update(request.metadata or {})
+
+        base_url = _provider_base_url(
+            provider,
+            self._base_url if provider == "deepseek" else None,
+        )
+        if self._key_pool is not None and hasattr(self._key_pool, "resolve_base_url"):
+            resolved = self._key_pool.resolve_base_url(provider)
+            if resolved:
+                base_url = resolved
+        url = base_url.rstrip("/") + "/chat/completions"
+        if not base_url.rstrip("/").endswith("/v1"):
+            url = base_url.rstrip("/") + "/v1/chat/completions"
+        headers = _provider_headers(provider, key)
+        transport = self._transport
+        if transport is None:
+            raise LookupError(f"no {provider} transport configured")
+        try:
+            response = transport(url, payload, headers, request.timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            if self._key_pool is not None and exc.code == 429:
+                self._key_pool.report_429(provider, key)
+            elif self._key_pool is not None and exc.code in {401, 403}:
+                self._key_pool.report_failure(provider, key)
+            raise
+
+        choice = (response.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = message.get("content") or response.get("result") or ""
+        usage = response.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+        cost = estimate_usage_cost(
+            model,
+            CanonicalUsage(
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                request_count=1,
+            ),
+            provider="deepseek",
+            pricing_rows=self._pricing_rows,
+        )
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        return AgentResult(
+            payload={"response": content, "completed": True},
+            raw_output=content,
+            duration_ms=elapsed_ms,
+            cost_usd=float(cost.amount_usd or 0.0),
+            model_actual=response.get("model") or model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            provenance=ResultProvenance(
+                agent=request.agent,
+                mode=request.mode,
+                model=response.get("model") or model,
+                resolved_model=request.resolved_model or request.model,
+                effort=request.effort,
+                metadata={"provider": provider},
+            ),
+            metadata={
+                "cost_status": cost.status,
+                "pricing_version": cost.pricing_version,
+            },
+"""Hermes Agent worker for megaplan — runs phases via AIAgent with OpenRouter."""
+
+from __future__ import annotations
+
+import hashlib
+import html
+import json
+import os
+import sys
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import TextIO
+
+import re
+
+from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
+from arnold_pipelines.megaplan.prompts import create_hermes_prompt
+from arnold_pipelines.megaplan.prompts._projection import check_prompt_size
+from arnold_pipelines.megaplan.workers._impl import (
+    STEP_SCHEMA_FILENAMES,
+    WorkerResult,
+    _check_mock_safe,
+    _contains_mutating_deepseek_tool_markup,
+    _deepseek_tool_markup_names,
+    _json_decode_error_for_raw,
+    _repair_worker_json_once,
+    mock_worker_output,
+    session_key_for,
+)
+from arnold_pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
+from arnold.execution.step_invocation import StepInvocation
+from arnold_pipelines.megaplan.model_seam import (
+    ModelBudgetError,
+    ModelStructuralAuditError,
+    ModelTier,
+    capture_step_output,
+    coerce_plan_markdown_payload,
+    render_prompt_for_dispatch,
+    render_step_message,
+)
+from arnold_pipelines.megaplan.execute.status_constants import TERMINAL_TASK_STATUSES
+
+
+def _pre_dispatch_budget_check(
+    agent,
+    *,
+    conversation_history,
+    user_message,
+    system,
+    tool_manifest,
+    schema,
+    step,
+    model_name,
+    tier,
+    worker,
+):
+    """Pre-dispatch combined-input budget guard.
+
+    Builds a StepInvocation populating the text-budget fields and routes through
+    render_step_message; ModelBudgetError must propagate so an oversized prompt
+    cannot reach the provider.
+    """
+    metadata = {
+        "system": system,
+        "history": conversation_history,
+        "prompt": user_message,
+        "tools": tool_manifest,
+        "schema": schema,
+        "worker": worker,
+        "model": model_name,
+        "normalized_model": model_name,
+        "validation_step": step,
+        "tier": tier.value if isinstance(tier, ModelTier) else tier,
+    }
+    invocation = StepInvocation(kind="model", metadata=metadata)
+    try:
+        return render_step_message(invocation)
+    except ModelBudgetError:
+        raise
+
+
+def _sanitize_db_name(identifier: str) -> str:
+    """Sanitize a task/session identifier for use as a safe filename component."""
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', identifier)
+    sanitized = re.sub(r'_+', '_', sanitized).strip('_')
+    if len(sanitized) > 100:
+        sanitized = sanitized[:100]
+    return sanitized or "default"
+
+
+def _worker_db_path(plan_dir: Path, identifier: str) -> Path:
+    """Derive a per-worker SessionDB path from a plan directory and stable identifier."""
+    sanitized = _sanitize_db_name(identifier)
+    return plan_dir / '.hermes_state' / f'state_{sanitized}.db'
+
+
+def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[str, object]:
+    """Validate the small picklable worker-options surface used by fan-out callers."""
+    if worker_options is None:
+        return {}
+    if not isinstance(worker_options, dict):
+        raise CliError("invalid_args", "Hermes worker options must be a dict")
+
+    normalized: dict[str, object] = {}
+    for key in ("output_path", "template_path", "session_db_path"):
+        value = worker_options.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, (str, Path)):
+            raise CliError("invalid_args", f"Hermes worker option '{key}' must be a string path")
+        normalized[key] = str(value)
+
+    for key in ("check_id", "question"):
+        value = worker_options.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise CliError("invalid_args", f"Hermes worker option '{key}' must be a string")
+        normalized[key] = value
+
+    resolved_model = worker_options.get("resolved_model")
+    if resolved_model is not None:
+        if not isinstance(resolved_model, str) or not resolved_model.strip():
+            raise CliError("invalid_args", "Hermes worker option 'resolved_model' must be a non-empty string")
+        normalized["resolved_model"] = resolved_model
+
+    max_tokens = worker_options.get("max_tokens")
+    if max_tokens is not None:
+        try:
+            normalized["max_tokens"] = int(max_tokens)
+        except (TypeError, ValueError) as exc:
+            raise CliError("invalid_args", "Hermes worker option 'max_tokens' must be an int") from exc
+        if normalized["max_tokens"] <= 0:
+            raise CliError("invalid_args", "Hermes worker option 'max_tokens' must be positive")
+
+    reasoning_config = worker_options.get("reasoning_config")
+    if reasoning_config is not None:
+        if not isinstance(reasoning_config, dict):
+            raise CliError("invalid_args", "Hermes worker option 'reasoning_config' must be a dict")
+        normalized["reasoning_config"] = dict(reasoning_config)
+
+    return normalized
+
+
+def _import_hermes_runtime():
+    """Resolve the vendored hermes runtime packages.
+
+    The agent code now lives under ``arnold.agent``; ensure the agent directory
+    is on ``sys.path`` so the vendored ``run_agent`` / ``hermes_state`` modules
+    are resolvable by their legacy absolute names.
+    """
+    import importlib
+    import sys
+    from pathlib import Path
+
+    import arnold.agent  # noqa: F401
+
+    agent_dir = str(Path(arnold.agent.__file__).resolve().parent)
+    if agent_dir not in sys.path:
+        sys.path.insert(0, agent_dir)
+
+    try:
+        from run_agent import AIAgent
+        from hermes_state import SessionDB
+    except ImportError as exc:
+        from arnold_pipelines.megaplan.types import CliError
+
+        raise CliError(
+            "agent_deps_missing",
+            "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+        ) from exc
+    _install_content_tool_call_normalizer(AIAgent)
+    return AIAgent, SessionDB
+
+
+_CONTENT_TOOL_ALIASES = {
+    "read": "read_file",
+    "read_file": "read_file",
+    "file_read": "read_file",
+    "search": "search_files",
+    "search_files": "search_files",
+    "file_search": "search_files",
+    "web_extract": "web_extract",
+    "fetch_url": "web_extract",
+    "web_search": "web_search",
+}
+_CONTENT_TOOL_NAMES = frozenset(_CONTENT_TOOL_ALIASES)
+_CONTENT_ARG_ALIASES = {
+    "read_file": {"filePath": "path", "filepath": "path"},
+}
+_XML_ATTR_RE = re.compile(
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"
+    r"(?P<quote>[\"'])(?P<value>.*?)(?P=quote)",
+    re.DOTALL,
+)
+
+
+def _coerce_xml_tool_value(raw: str) -> object:
+    text = html.unescape(raw).strip()
+    if re.fullmatch(r"-?\d+", text):
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    if re.fullmatch(r"-?(?:\d+\.\d*|\d*\.\d+)", text):
+        try:
+            return float(text)
+        except ValueError:
+            return text
+    lowered = text.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in {"null", "none"}:
+        return None
+    return text
+
+
+def _make_content_tool_call(name: str, args: dict[str, object], index: int) -> SimpleNamespace:
+    normalized_name = _CONTENT_TOOL_ALIASES.get(name, name)
+    for old_key, new_key in _CONTENT_ARG_ALIASES.get(normalized_name, {}).items():
+        if old_key in args and new_key not in args:
+            args[new_key] = args.pop(old_key)
+    return SimpleNamespace(
+        id=f"call_content_xml_{index}",
+        type="function",
+        function=SimpleNamespace(
+            name=normalized_name,
+            arguments=json.dumps(args, ensure_ascii=False),
+        ),
+    )
+
+
+def _parse_xml_attrs(attrs: str) -> dict[str, object]:
+    return {
+        match.group("key"): _coerce_xml_tool_value(match.group("value"))
+        for match in _XML_ATTR_RE.finditer(attrs or "")
+    }
+
+
+def _has_required_content_tool_args(name: str, args: dict[str, object]) -> bool:
+    normalized_name = _CONTENT_TOOL_ALIASES.get(name, name)
+    for old_key, new_key in _CONTENT_ARG_ALIASES.get(normalized_name, {}).items():
+        if old_key in args and new_key not in args:
+            args[new_key] = args.pop(old_key)
+
+    required_by_tool = {
+        "read_file": "path",
+        "search_files": "pattern",
+        "web_search": "query",
+        "web_extract": "url",
+    }
+    required = required_by_tool.get(normalized_name)
+    if required is None:
+        return True
+    value = args.get(required)
+    return isinstance(value, str) and bool(value.strip())
+sed: tests/arnold/agent/test_pool.py: No such file or directory
+
+exec
+/bin/zsh -lc "nl -ba arnold_pipelines/megaplan/workers/hermes.py | sed -n '260,620p'" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+   260	    return isinstance(value, str) and bool(value.strip())
+   261	
+   262	
+   263	def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
+   264	    calls: list[SimpleNamespace] = []
+   265	    invoke_pattern = re.compile(
+   266	        r"<[^<>\s]*invoke\b(?P<attrs>[^<>]*\bname=[\"'](?P<name>[^\"']+)[\"'][^<>]*)>"
+   267	        r"(?P<body>.*?)"
+   268	        r"</[^<>\s]*invoke>",
+   269	        re.DOTALL,
+   270	    )
+   271	    param_pattern = re.compile(
+   272	        r"<[^<>\s]*parameter\b(?P<attrs>[^<>]*)>"
+   273	        r"(?P<value>.*?)"
+   274	        r"</[^<>\s]*parameter>",
+   275	        re.DOTALL,
+   276	    )
+   277	    name_pattern = re.compile(r"\bname=[\"'](?P<name>[^\"']+)[\"']")
+   278	
+   279	    for match in invoke_pattern.finditer(content):
+   280	        name = match.group("name").strip().lower()
+   281	        if name not in _CONTENT_TOOL_NAMES:
+   282	            continue
+   283	        args: dict[str, object] = _parse_xml_attrs(match.group("attrs"))
+   284	        args.pop("name", None)
+   285	        for param in param_pattern.finditer(match.group("body")):
+   286	            name_match = name_pattern.search(param.group("attrs"))
+   287	            if not name_match:
+   288	                continue
+   289	            args[name_match.group("name")] = _coerce_xml_tool_value(param.group("value"))
+   290	        if not _has_required_content_tool_args(name, args):
+   291	            continue
+   292	        calls.append(_make_content_tool_call(name, args, len(calls)))
+   293	    return calls
+   294	
+   295	
+   296	def _parse_plain_xml_content_tool_calls(content: str) -> list[SimpleNamespace]:
+   297	    calls: list[SimpleNamespace] = []
+   298	    names = "|".join(sorted(re.escape(name) for name in _CONTENT_TOOL_NAMES))
+   299	    self_closing_pattern = re.compile(
+   300	        rf"<(?P<name>{names})\b(?P<attrs>[^<>]*)/>",
+   301	        re.DOTALL | re.IGNORECASE,
+   302	    )
+   303	    tool_pattern = re.compile(
+   304	        rf"<(?P<name>{names})\b(?P<attrs>[^>]*)>"
+   305	        r"(?P<body>.*?)"
+   306	        r"</(?P=name)>",
+   307	        re.DOTALL | re.IGNORECASE,
+   308	    )
+   309	    child_pattern = re.compile(
+   310	        r"<(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\b[^>]*>"
+   311	        r"(?P<value>.*?)"
+   312	        r"</(?P=key)>",
+   313	        re.DOTALL,
+   314	    )
+   315	
+   316	    for match in self_closing_pattern.finditer(content):
+   317	        name = match.group("name").strip().lower()
+   318	        args = _parse_xml_attrs(match.group("attrs"))
+   319	        if not _has_required_content_tool_args(name, args):
+   320	            continue
+   321	        calls.append(_make_content_tool_call(name, args, len(calls)))
+   322	
+   323	    for match in tool_pattern.finditer(content):
+   324	        name = match.group("name").strip().lower()
+   325	        args = _parse_xml_attrs(match.group("attrs"))
+   326	        args.update({
+   327	            child.group("key"): _coerce_xml_tool_value(child.group("value"))
+   328	            for child in child_pattern.finditer(match.group("body"))
+   329	        })
+   330	        if not _has_required_content_tool_args(name, args):
+   331	            continue
+   332	        calls.append(_make_content_tool_call(name, args, len(calls)))
+   333	    return calls
+   334	
+   335	
+   336	def _content_xml_tool_calls(content: object) -> list[SimpleNamespace]:
+   337	    if not isinstance(content, str) or "<" not in content:
+   338	        return []
+   339	    return _parse_dsml_content_tool_calls(content) or _parse_plain_xml_content_tool_calls(content)
+   340	
+   341	
+   342	def _strip_content_xml_tool_calls(content: str) -> str | None:
+   343	    names = "|".join(sorted(re.escape(name) for name in _CONTENT_TOOL_NAMES))
+   344	    stripped = re.sub(
+   345	        r"<[^<>\s]*tool_calls\b[^<>]*>.*?</[^<>\s]*tool_calls>",
+   346	        "",
+   347	        content,
+   348	        flags=re.DOTALL,
+   349	    )
+   350	    stripped = re.sub(
+   351	        rf"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?:{names})[\"'][^<>]*>"
+   352	        r".*?</[^<>\s]*invoke>",
+   353	        "",
+   354	        stripped,
+   355	        flags=re.DOTALL | re.IGNORECASE,
+   356	    )
+   357	    stripped = re.sub(
+   358	        rf"<(?:{names})\b[^>]*/>",
+   359	        "",
+   360	        stripped,
+   361	        flags=re.DOTALL | re.IGNORECASE,
+   362	    )
+   363	    stripped = re.sub(
+   364	        rf"<(?:{names})\b[^>]*>.*?</(?:{names})>",
+   365	        "",
+   366	        stripped,
+   367	        flags=re.DOTALL | re.IGNORECASE,
+   368	    ).strip()
+   369	    return stripped or None
+   370	
+   371	
+   372	def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
+   373	    """Try to recover JSON output from DeepSeek/Kimi write-style tool markup.
+   374	
+   375	    Some models answer "fill in the JSON template" by emitting a
+   376	    ``<write_file path=...>``, ``<invoke name="write_file">`` or
+   377	    ``<bash>...</bash>`` block containing the JSON payload.  When that
+   378	    happens, treat the written content as the worker's actual response
+   379	    instead of rejecting it.
+   380	    """
+   381	    if not content or "<" not in content:
+   382	        return None
+   383	
+   384	    candidates: list[str] = []
+   385	
+   386	    def _balanced_json_blocks(text: str) -> list[str]:
+   387	        """Return top-level brace/bracket-delimited blocks honoring string escapes."""
+   388	        blocks: list[str] = []
+   389	        i = 0
+   390	        n = len(text)
+   391	        while i < n:
+   392	            c = text[i]
+   393	            if c not in ("{", "["):
+   394	                i += 1
+   395	                continue
+   396	            opener, closer = ("{", "}") if c == "{" else ("[", "]")
+   397	            stack = [opener]
+   398	            j = i + 1
+   399	            in_str = False
+   400	            esc = False
+   401	            while j < n and stack:
+   402	                ch = text[j]
+   403	                if in_str:
+   404	                    if esc:
+   405	                        esc = False
+   406	                    elif ch == "\\":
+   407	                        esc = True
+   408	                    elif ch == '"':
+   409	                        in_str = False
+   410	                else:
+   411	                    if ch == '"':
+   412	                        in_str = True
+   413	                    elif ch == opener:
+   414	                        stack.append(opener)
+   415	                    elif ch == closer:
+   416	                        stack.pop()
+   417	                j += 1
+   418	            if not stack:
+   419	                blocks.append(text[i:j])
+   420	            i = j
+   421	        return blocks
+   422	
+   423	    # Helper: add a candidate, optionally stripping markdown fences later.
+   424	    def _add_candidate(text: str) -> None:
+   425	        if text and text.strip():
+   426	            candidates.append(text.strip())
+   427	
+   428	    # Tool names we are willing to treat as JSON-delivery wrappers.  Includes
+   429	    # both mutating tools and read/search/shell tools that models sometimes
+   430	    # emit when asked for structured output.
+   431	    _JSON_TOOL_NAMES = (
+   432	        "write_file|file_write|write|edit_file|patch|apply_patch|delete_file|"
+   433	        "bash|run_command|run_shell|terminal|shell|"
+   434	        "read_file|file_read|read|"
+   435	        "search_files|search|file_search"
+   436	    )
+   437	
+   438	    # 1. Plain XML tags: <write_file ...> ... </write_file>
+   439	    tag_pattern = re.compile(
+   440	        rf"<(?P<tag>{_JSON_TOOL_NAMES})\b[^>]*>"
+   441	        r"(?P<body>.*?)"
+   442	        r"</(?P=tag)>",
+   443	        re.DOTALL | re.IGNORECASE,
+   444	    )
+   445	    heredoc_pattern = re.compile(
+   446	        r"<<\\?['\"]?(\w+)\\?['\"]?[^\n]*\n(.*?)\n\s*\1\s*$",
+   447	        re.DOTALL | re.IGNORECASE,
+   448	    )
+   449	    for match in tag_pattern.finditer(content):
+   450	        body = match.group("body")
+   451	        # Prefer an explicit <content> child if present.
+   452	        content_match = re.search(
+   453	            r"<content\b[^>]*>(.*?)</content>", body, re.DOTALL | re.IGNORECASE
+   454	        )
+   455	        if content_match:
+   456	            _add_candidate(content_match.group(1))
+   457	            _add_candidate(body)
+   458	        else:
+   459	            _add_candidate(body)
+   460	        # For shell tags, a heredoc is a common way the model writes JSON.
+   461	        if match.group("tag").lower() in {"bash", "run_command", "run_shell", "terminal", "shell"}:
+   462	            heredoc_match = heredoc_pattern.search(body)
+   463	            if heredoc_match:
+   464	                _add_candidate(heredoc_match.group(2))
+   465	
+   466	    # 2. <invoke name="write_file"> ... <parameter name="content">...</parameter> ...
+   467	    invoke_pattern = re.compile(
+   468	        rf"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>{_JSON_TOOL_NAMES})[\"'][^<>]*>"
+   469	        r"(?P<body>.*?)"
+   470	        r"</[^<>\s]*invoke>",
+   471	        re.DOTALL | re.IGNORECASE,
+   472	    )
+   473	    param_pattern = re.compile(
+   474	        r"<[^<>\s]*parameter\b[^<>]*\bname=[\"']content[\"'][^<>]*>"
+   475	        r"(?P<value>.*?)"
+   476	        r"</[^<>\s]*parameter>",
+   477	        re.DOTALL | re.IGNORECASE,
+   478	    )
+   479	    for match in invoke_pattern.finditer(content):
+   480	        body = match.group("body")
+   481	        for param in param_pattern.finditer(body):
+   482	            _add_candidate(param.group("value"))
+   483	        # Also look for nested <content> children.
+   484	        content_match = re.search(
+   485	            r"<content\b[^>]*>(.*?)</content>", body, re.DOTALL | re.IGNORECASE
+   486	        )
+   487	        if content_match:
+   488	            _add_candidate(content_match.group(1))
+   489	        _add_candidate(body)
+   490	
+   491	    # 3. DSML-style tags: <｜DSML｜invoke name="write_file"> ...
+   492	    #    <｜DSML｜parameter name="content">...</｜DSML｜parameter> ...
+   493	    dsml_prefix = "\uff5cDSML\uff5c"
+   494	    dsml_invoke_pattern = re.compile(
+   495	        rf"<{re.escape(dsml_prefix)}invoke\b[^<>]*\bname=[\"'](?P<name>{_JSON_TOOL_NAMES})[\"'][^<>]*>"
+   496	        rf"(?P<body>.*?)"
+   497	        rf"</{re.escape(dsml_prefix)}invoke>",
+   498	        re.DOTALL | re.IGNORECASE,
+   499	    )
+   500	    dsml_param_pattern = re.compile(
+   501	        rf"<{re.escape(dsml_prefix)}parameter\b[^<>]*\bname=[\"']content[\"'][^<>]*>"
+   502	        rf"(?P<value>.*?)"
+   503	        rf"</{re.escape(dsml_prefix)}parameter>",
+   504	        re.DOTALL | re.IGNORECASE,
+   505	    )
+   506	    dsml_content_pattern = re.compile(
+   507	        rf"<{re.escape(dsml_prefix)}content\b[^<>]*>(.*?)</{re.escape(dsml_prefix)}content>",
+   508	        re.DOTALL | re.IGNORECASE,
+   509	    )
+   510	    for match in dsml_invoke_pattern.finditer(content):
+   511	        body = match.group("body")
+   512	        for param in dsml_param_pattern.finditer(body):
+   513	            _add_candidate(param.group("value"))
+   514	        for content_match in dsml_content_pattern.finditer(body):
+   515	            _add_candidate(content_match.group(1))
+   516	        _add_candidate(body)
+   517	
+   518	    # 4. Self-closing tags with a content= attribute.
+   519	    self_closing_pattern = re.compile(
+   520	        rf"<({_JSON_TOOL_NAMES})\b[^>]*\bcontent=[\"'](?P<value>[^\"']+)[\"'][^>]*/>",
+   521	        re.DOTALL | re.IGNORECASE,
+   522	    )
+   523	    for match in self_closing_pattern.finditer(content):
+   524	        _add_candidate(match.group("value"))
+   525	
+   526	    # 5. Strip all recognized tool markup and look for any remaining JSON.
+   527	    stripped = content
+   528	    for match in sorted(
+   529	        re.finditer(
+   530	            rf"<({_JSON_TOOL_NAMES})\b[^>]*>.*?</(\1)>",
+   531	            stripped,
+   532	            re.DOTALL | re.IGNORECASE,
+   533	        ),
+   534	        key=lambda m: m.start(),
+   535	        reverse=True,
+   536	    ):
+   537	        stripped = stripped[: match.start()] + stripped[match.end() :]
+   538	    stripped = re.sub(r"<[^<>\s]*invoke\b[^<>]*>.*?</[^<>\s]*invoke>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+   539	    stripped = re.sub(r"<\uff5cDSML\uff5cinvoke\b[^<>]*>.*?</\uff5cDSML\uff5cinvoke>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+   540	    stripped = re.sub(r"<\uff5cDSML\uff5cparameter\b[^<>]*>.*?</\uff5cDSML\uff5cparameter>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+   541	    for block in _balanced_json_blocks(stripped):
+   542	        _add_candidate(block)
+   543	
+   544	    # 6. Fall back to balanced JSON-ish blocks anywhere in the original markup.
+   545	    for block in _balanced_json_blocks(content):
+   546	        _add_candidate(block)
+   547	
+   548	    for candidate in candidates:
+   549	        if not candidate:
+   550	            continue
+   551	        # Strip markdown fences if the model wrapped the JSON.
+   552	        cleaned = candidate
+   553	        if cleaned.startswith("```"):
+   554	            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+   555	            cleaned = re.sub(r"\s*```$", "", cleaned)
+   556	            cleaned = cleaned.strip()
+   557	        try:
+   558	            json.loads(cleaned)
+   559	            return cleaned
+   560	        except json.JSONDecodeError:
+   561	            continue
+   562	    return None
+   563	
+   564	
+   565	def _normalize_response_content_tool_calls(response) -> None:
+   566	    """Promote DeepSeek/Kimi XML content tool calls to OpenAI-style objects."""
+   567	    choices = getattr(response, "choices", None)
+   568	    if not choices:
+   569	        return
+   570	    message = getattr(choices[0], "message", None)
+   571	    if message is None or getattr(message, "tool_calls", None):
+   572	        return
+   573	    content = getattr(message, "content", None)
+   574	    if isinstance(content, str) and _contains_mutating_deepseek_tool_markup(content):
+   575	        recovered = _extract_json_from_mutating_tool_markup(content)
+   576	        if recovered:
+   577	            message.content = recovered
+   578	            return
+   579	        names = ", ".join(sorted(_deepseek_tool_markup_names(content)))
+   580	        raise CliError(
+   581	            "unsupported_tool_call_markup",
+   582	            "model emitted unsupported tool-call markup for a write operation "
+   583	            f"({names}); refusing to treat it as JSON output",
+   584	            extra={
+   585	                "raw_output": content,
+   586	                "unsupported_tool_call_markup": True,
+   587	                "unsupported_write_tool_call": True,
+   588	            },
+   589	        )
+   590	    parsed = _content_xml_tool_calls(content)
+   591	    if not parsed:
+   592	        return
+   593	    message.tool_calls = parsed
+   594	    message.content = _strip_content_xml_tool_calls(message.content or "")
+   595	    try:
+   596	        choices[0].finish_reason = "tool_calls"
+   597	    except Exception:
+   598	        pass
+   599	
+   600	
+   601	def _install_content_tool_call_normalizer(AIAgent) -> None:
+   602	    if getattr(AIAgent, "_megaplan_content_tool_call_normalizer", False):
+   603	        return
+   604	
+   605	    original_api_call = AIAgent._interruptible_api_call
+   606	    original_streaming_api_call = AIAgent._interruptible_streaming_api_call
+   607	
+   608	    def _api_call_with_content_tool_calls(self, api_kwargs: dict):
+   609	        response = original_api_call(self, api_kwargs)
+   610	        _normalize_response_content_tool_calls(response)
+   611	        return response
+   612	
+   613	    def _streaming_api_call_with_content_tool_calls(self, api_kwargs: dict, *, on_first_delta: callable = None):
+   614	        response = original_streaming_api_call(self, api_kwargs, on_first_delta=on_first_delta)
+   615	        _normalize_response_content_tool_calls(response)
+   616	        return response
+   617	
+   618	    AIAgent._interruptible_api_call = _api_call_with_content_tool_calls
+   619	    AIAgent._interruptible_streaming_api_call = _streaming_api_call_with_content_tool_calls
+   620	    AIAgent._megaplan_content_tool_call_normalizer = True
+
+codex
+Provider preflight gap: `preflight.py` reports command and environment-variable hints only. It does not verify that the effective credential exists, aliases resolve consistently, the base URL is usable, or the provider can authenticate. Its provider map is also narrower than `KeyPool` and `DeepSeekAdapter`: routing, aliases, key variables, and defaults are duplicated across modules. `tests/arnold/agent/test_pool.py` is absent.
+
+Single source of truth: create one provider registry containing provider name, model parsing, credential aliases, base URL defaults, supported agents, and a secret-safe authentication probe. Make preflight, `KeyPool`, adapters, and Hermes consume that registry. Preflight should validate the resolved provider/model against the registry, check effective credential presence without printing values, and optionally perform a bounded auth probe. A failed probe must block launch.
+
+Acceptance tests:
+
+1. A chain resolving `hermes:zhipu:<model>` must require the same credential aliases and base URL in preflight, `KeyPool`, and runtime dispatch; missing credentials fail preflight before launch.
+
+2. Every configured alias pair—such as Zhipu/GLM, Kimi/Moonshot, Gemini/Google, and Fireworks variants—must produce identical effective credentials and base URLs across all consumers.
+
+3. For every supported provider-prefixed model, preflight and the adapter must resolve the same provider, model name, endpoint, and authorization mode; no unsupported provider may pass preflight.
+
+4. A managed cloud launch with failed credential preflight or failed lease acquisition must not emit `executing`, mutate execution state, dispatch a worker, or continue without an exact marker-bound PID/start-identity lease.
+tokens used
+34,400

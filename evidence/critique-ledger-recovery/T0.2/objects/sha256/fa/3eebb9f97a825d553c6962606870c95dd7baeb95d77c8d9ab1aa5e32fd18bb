@@ -1,0 +1,45 @@
+{
+  "checks": [
+    {
+      "id": "prerequisite_ordering",
+      "question": "Do tasks that depend on a precondition gracefully handle that precondition only partially holding?",
+      "guidance": "Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.",
+      "findings": [
+        {
+          "detail": "Walked the task graph for the FAILED/DROPPED precondition edge and found an unhandled partial-precondition crash. North Star invariant #1 requires every critic attempt (including failed ones) to be immutable and addressable; the append layer (Step 5, append_occurrence / record_attempt_start) and the importer (Step 10, 'preserves all available legacy evidence') therefore store occurrences with parse_status=FAILED or DROPPED as the normal case. I verified in the paused-epic archive that CL1 semantic_loop.py:1013-1022 RAISES SemanticLoopError (OCCURRENCE_PARSE_FAILED / ATTEMPT_DROPPED) inside replay_full's Phase-0 loop on exactly those statuses. Step 1 ports replay_full verbatim, and Step 3 only (a) relaxes the schema_version!=SCHEMA_VERSION check and (b) adds supersession + a PARTIAL_RECOVERED contract — it does NOT mention relaxing or filtering the FAILED/DROPPED raise. Step 6 'scans all domain event tables ordered by (round_label, sequence)' and calls 'the pure semantic_loop.replay_full-family functions' with no stated filter for failed/dropped occurrences and no stated filter to manifest-accepted event_ids. So any round that contains a stored failed attempt (the expected case, e.g. the M6 five-occurrence family that must 'reconstruct') would make replay_full raise, blocking the cumulative projection AND the downstream active-action (Step 7) and round-accountability (Step 8) projections that consume the replay-sorted stream. This is a producer graceful-preservation (Steps 5/10 store failures) + consumer absolute-completion (Step 6 must replay deterministically, Steps 7-8 must account for every occurrence) pair with no bridging behavior specified. Recommend the plan specify whether Step 6 replays only manifest-accepted/clean events, or routes through the tolerant projection path (project_domain_briefing/project_gate_input at semantic_loop.py:830-855, which COUNT failed/dropped/malformed rather than raising) instead of strict replay_full.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the PARTIAL_RECOVERED graceful-admission edge. Step 10 (importer) admits partially-parseable legacy attempts as ParseStatus.PARTIAL_RECOVERED (graceful fallback — some fields parse, some do not) and writes them to domain tables; Step 3 adds this new status. The downstream consumers demand absolute completion: Step 6 replay feeds all domain events to semantic_loop.replay_full, and Step 8 + its success criterion require round receipts to 'account for every parseable occurrence and active finding'. I verified in the archive that PARTIAL_RECOVERED does not exist in CL1 schemas.py (ParseStatus has only SELECTED/COMPLETED/FAILED/DROPPED/MALFORMED/TOMBSTONED/NO_ADDITIONAL_FINDINGS) and that replay_full's Phase-0 loop (semantic_loop.py:1007-1078) has no PARTIAL_RECOVERED branch, so a partial occurrence currently falls through and is treated as a normal valid occurrence (its missing fields are not mapped to unknown). Step 3 only states the semantics ('evidence-only — cannot carry semantic_finding_id and cannot close a finding; missing fields treated as unknown with unavailable_reason') without specifying the replay_full code change that enforces it. The plan never reconciles (a) whether a PARTIAL_RECOVERED occurrence counts as a 'parseable occurrence' for the round-receipt 'every parseable occurrence' requirement, nor (b) the receipt row shape for an occurrence that has no finding/response/outcome/reopen chain. An executor could drop partials (violating 'every parseable occurrence'), include them with an unspecified shape, or leave replay_full mis-handling them. Recommend the plan conditionalize Step 8 to explicitly include PARTIAL_RECOVERED occurrences as occurrence-rows with unknown downstream, and pin the Step 3 replay_full branch precisely (validation that rejects semantic_finding_id on partials and routes missing fields to unavailable_reason).",
+          "flagged": true
+        },
+        {
+          "detail": "Confirmed the migration-version precondition is sound, not a flag. The plan's Step 4 claims CL2 migrations are versions 5+ appended to the M6A registry via default_combined_migrations(). I verified arnold/workflow/ledger_migrations.py: default_m6a_migrations() (line 468) returns exactly four migrations (versions 1-4 at lines 481/495/511/539); SqliteLedgerMigrator.__init__ (line 758-767) accepts an Optional custom registry and passes it through _validate_registry (line 432) which enforces a strict contiguous version run (MigrationRegistryError at lines 147-156). So default_m6a_migrations()+cl2_domain_migrations() starting at version 5 is contiguous and will validate. This precondition is correctly ordered and the 'do not edit ledger_migrations.py' assumption (6) is consistent with the constructor seam.",
+          "flagged": false
+        },
+        {
+          "detail": "Confirmed the Step 12 (cancelled-archive audit) ordering is not a contradiction. The plan places Step 12 in Phase 5 (last) but states it is 'a prerequisite for referencing any cancelled code'. I checked the prior steps: Steps 1-11 port verbatim from the CL1 paused-epic archive (Step 1) and build fresh domain code; none of them imports or references any of the 5 cancelled CL2 artifacts (cl2_migrations.py, m6_importer.py, ledger_writer.py, wbc_bridge.py, manifest_store.py from the archive). The plan's Question 3 explicitly addresses this (default: no reorder needed because the port is from CL1, not the cancelled CL2). So the audit's late position does not create a broken precondition — no earlier step silently depends on cancelled-code reference. No flag.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-CL2-PREREQ-001",
+      "concern": "replay_full (ported verbatim in Step 1) raises on parse_status=FAILED/DROPPED, but Steps 5/10 store failed attempts as the normal case (North Star invariant #1), and Step 6 replays 'all domain event tables' with no stated filter. Any round containing a stored failed attempt would crash the cumulative projection and cascade-block the active-action (Step 7) and round-accountability (Step 8) projections that depend on the replay-sorted stream. The plan never specifies filtering to manifest-accepted/clean events or routing through the tolerant projection path.",
+      "category": "correctness",
+      "severity_hint": "high",
+      "evidence": "Paused-epic archive semantic_loop.py:1013-1022 (OCCURRENCE_PARSE_FAILED/ATTEMPT_DROPPED raises); plan.md Step 6 ('scans all domain event tables ... calls replay_full-family'); idea_snapshot.md:86 ('Round receipts account for every occurrence'); North Star invariant #1."
+    },
+    {
+      "id": "FLAG-CL2-PREREQ-002",
+      "concern": "PARTIAL_RECOVERED is a brand-new ParseStatus (absent from CL1 schemas.py/replay_full). The importer (Step 10) admits partials as graceful fallback; the round-receipt (Step 8) demands 'every parseable occurrence'. The plan never states whether PARTIAL_RECOVERED counts as 'parseable' for receipt accounting, nor the receipt row shape for an occurrence with no finding/response/outcome chain, and Step 3 only describes partial-occurrence semantics without pinning the replay_full code branch. Executor risk of dropping partials, erroring, or mis-handling them in replay_full's Phase-0 loop.",
+      "category": "completeness",
+      "severity_hint": "medium",
+      "evidence": "Paused-epic archive schemas.py:28-37 (ParseStatus has no PARTIAL_RECOVERED) and semantic_loop.py:1007-1078 (no partial branch); plan.md Step 2.5 (adds PARTIAL_RECOVERED), Step 3.3 (semantics only), Step 10.3 (admits partials); idea_snapshot.md:86 vs plan success criterion ('every occurrence' vs 'every parseable occurrence' wording divergence)."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

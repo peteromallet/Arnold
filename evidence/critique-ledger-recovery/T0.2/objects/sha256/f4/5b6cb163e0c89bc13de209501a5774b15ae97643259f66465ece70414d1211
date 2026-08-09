@@ -1,0 +1,56 @@
+{
+  "selections": [
+    {
+      "check_id": "correctness",
+      "complexity": 7,
+      "complexity_justification": "The hardest realistic check names a test-evading cascade: a superseded reconciliation event leaking into must_act/context_only because the projection resolves latest-by-event-id rather than latest-by-supersession-chain \u2014 a test asserting only 'both original and superseding events are retained' (Step 9) would pass while gate-visible state is wrong. The lens must reason across atomicity, idempotency dedup-with-quarantine ordering, supersession retention, partial-occurrence cannot carry semantic_finding_id, byte-equivalent golden round-trips, and strictly read-only deterministic replay simultaneously. Tier 7 (DEMANDING): both difficulty and consequence (data integrity, North Star custody invariants #1-16) are elevated; not 8 because each invariant maps to a structured test that bounds the validation surface.",
+      "area": ""
+    },
+    {
+      "check_id": "scope",
+      "complexity": 6,
+      "complexity_justification": "Identifying every god-task across 14 steps and proposing correct natural splits is a large check crossing the whole plan with real risk of missing an oversized step \u2014 Step 5's transaction-mirror (_append_domain_tx) plus six typed append methods plus record_attempt_start plus finalize_revision plus a full test_store_append.py is the canonical god-task. Tier 6 (HEAVY): large surface and meaningful execution risk, but the per-step judgment (count substeps, assess single-turn feasibility) is more mechanical than architecturally subtle, so it sits below 7.",
+      "area": ""
+    },
+    {
+      "check_id": "prerequisite_ordering",
+      "complexity": 6,
+      "complexity_justification": "Real partial-precondition cascades across an explicit 14-step dependency graph with a defining tension: the unaccepted-CL1-handoff precondition only partially holds (technical must-gates pass, 5 procedural blockers remain) yet downstream artifacts assume full acceptance-encoding \u2014 the exact 'graceful-fallback-vs-absolute-completion' contradiction the lens targets. Cross-phase assumptions (importer/freshness claimed independent of Phase 3; Step 12 audit is a prerequisite for referencing cancelled code but sequenced in Phase 5) add subtle failure modes. Tier 6 (HEAVY): subtle and boundary-crossing; below 7 because the dependency chain is explicitly published in the plan's Execution Order.",
+      "area": ""
+    },
+    {
+      "check_id": "verification",
+      "complexity": 6,
+      "complexity_justification": "Genuinely hard because the source fixtures themselves are unverified: prep research A1/A2/A3 (CL1 schemas/handoff, cancelled-archive inventory, v1->v2 delta) all ERRORED on a divergent idempotency key, yet the plan asserts specific behavior over them. Tracing a test's execution path through the patch therefore requires reasoning about inputs that do not yet exist \u2014 multiple interacting unknowns. Tier 6 (HEAVY): the uncharacterized-fixture and degraded-selector angles elevate this well above routine test-coverage review.",
+      "area": ""
+    },
+    {
+      "check_id": "all_locations",
+      "complexity": 5,
+      "complexity_justification": "Multiple files/components with non-obvious registration seams: migration registry composition via default_combined_migrations(), the __init__ export surface for all new v2 types, 6 indexes across 4 domain tables, and reuse-not-reimplement boundaries across payload_policy.py/durable_refs.py/ledger_outbox.py/attempt_ledger_store.py. Each is locatable by targeted grep but easy to miss (an unexported type or unregistered migration silently breaks the whole module). Tier 5 (MEANINGFUL): real risk of a missed glue point, but the surface is enumerable rather than architecturally deep.",
+      "area": ""
+    },
+    {
+      "check_id": "issue_hints",
+      "complexity": 5,
+      "complexity_justification": "Cross-referencing 16 North Star invariants, 8 brief locked decisions, and explicit anti-scope against 14 steps for silent contradiction is meaningful but bounded work (read brief + plan, diff). Tier 5 (MEANINGFUL): the difficulty is real because the extensive anti-scope language invites silent widening and the plan already proceeds against a hard brief constraint by assumption, but each check is a focused read rather than deep architectural reasoning, so it sits below 6.",
+      "area": ""
+    }
+  ],
+  "skipped": [
+    {
+      "check_id": "callers",
+      "why": "The changed surfaces are a brand-new module: arnold/critique_ledger/ does not exist in the workspace, import_graph shows 0 dependent_tests and lists every surface as unresolved, and the plan reuses (does not modify) the existing WBC substrate functions (attempt_ledger_store, ledger_outbox, ledger_migrations) by calling them alongside. There are therefore no existing callers to break and no caller-argument edge cases (None/empty/composite) to verify. The only callers are the new module's own tests, and the shared-SQLite-connection interaction is a correctness concern, not a callers concern."
+    },
+    {
+      "check_id": "conventions",
+      "why": "The plan deliberately mirrors the codebase's existing patterns by name: _append_domain_tx mirrors _append_tx, default_combined_migrations() composes default_m6a_migrations() + cl2_domain_migrations(), new dataclasses reuse the existing frozen + strict/preserve from_dict pattern, and migrations reuse the Migration(version, name, statements) dataclass without editing ledger_migrations.py. Conventions adherence is asserted at the spec level, and the load-bearing reuse-not-reimplement invariant is better caught by all_locations (greps for duplicated payload_policy/ledger_outbox logic) and correctness (checks contract fidelity). A standalone conventions check would mostly re-confirm patterns the plan already cites verbatim."
+    },
+    {
+      "check_id": "criteria_quality",
+      "why": "The criteria are well-prioritized: every must criterion maps to run_tests/parse_diff/read_files (objective pass/fail), and the genuinely subjective items ('~500 lines per file,' 'encodes the unaccepted-CL1-handoff assumption explicitly') are correctly downgraded to should. The compound musts (importer = 5 sub-claims; import fixtures = 10 types; active-projection = 4 sub-claims) do not create ambiguous yes/no answers because each is test-backed \u2014 the suite either passes every fixture case or fails. The branch-coverage weakness of those compound criteria is owned by the verification lens."
+    }
+  ],
+  "evaluator_model": "glm-5.2",
+  "flag_verifications": []
+}

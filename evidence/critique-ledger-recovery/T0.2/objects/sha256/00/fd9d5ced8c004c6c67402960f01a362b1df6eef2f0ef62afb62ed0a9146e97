@@ -1,0 +1,63 @@
+{
+  "checks": [
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader \u2014 and is any single step sized to fit one worker turn?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns \u2014 e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' \u2014 is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).",
+      "findings": [
+        {
+          "detail": "CRITICAL: The plan's Overview (plan.md lines 15-18) and Step 1 (line 80-93) state the CL1 module files (`schemas.py` 731 lines, `semantic_loop.py` 1206 lines, `__init__.py`) \"exist only in the paused-epic archive at `/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/`.\" I searched across the entire `/workspace` tree for `paused-epics`, `critique-ledger-m9-glm-20260723`, `semantic_loop.py`, and `**/critique_ledger/schemas.py` — ALL returned zero matches. The archive directory and its source files do not exist in this workspace. Step 1 (\"Port CL1 critique_ledger module verbatim from archive\") cannot execute: there is no source to port. Since Steps 2-14 all transitively depend on the ported schemas and semantic_loop, the entire plan's foundation is unexecutable as written. Step 12 (audit cancelled CL2 archive at the same non-existent archive path, requiring SHA-256 hashes of 5 artifacts: `cl2_migrations.py`, `m6_importer.py`, `ledger_writer.py`, `wbc_bridge.py`, `manifest_store.py`) is likewise blocked. This is the single most material scope issue: it is not a symptom of something broader — the missing archive IS the broader problem. The executor must either locate the archive at a different path, reconstruct the CL1 schemas from the safety amendment spec, or the plan must be re-baselined before Step 1 can run. (Note: if the archive exists outside `/workspace` on the executor's runtime but not in this reviewer workspace, this is unverifiable from here — but the plan pins the path explicitly within `/workspace`.)",
+          "flagged": true
+        },
+        {
+          "detail": "Step 5 (Scope: Large, Complexity: 4, plan.md lines 173-198) is a god-task: it bundles implementing the entire concurrency-sensitive persistence layer AND its full test suite in one ~15-min worker turn. The step requires: (1) `CritiqueLedgerStore` class constructed over a shared `SqliteAttemptLedgerStore` connection, running `default_combined_migrations()` on open; (2) `_append_domain_tx` mirroring `_append_tx`'s contract (BEGIN IMMEDIATE busy-retry → idempotency-key dedup → post-terminal rejection → monotonic sequence → INSERT domain event → UPDATE/INSERT revision manifest → write outbox record → COMMIT, all atomic); (3) SEVEN typed append methods (`append_occurrence`, `append_reconciliation` with supersession, `append_disposition`, `append_response`, `append_outcome_verification`, `append_audit`, `finalize_revision` with partial-publication guard); (4) `record_attempt_start` wiring (start-persistence-before-dispatch); (5) writing `test_store_append.py` with append-atomicity, simulated-crash, idempotency-dedup, partial-publication, supersession, and outbox-recovery test cases. This is easily 400-600 lines of non-trivial transactional code plus a comprehensive test file. Raising complexity to 4 does not buy more time — it only selects a stronger model for the same single turn. Recommend splitting along the natural seam: (a) `CritiqueLedgerStore` + `_append_domain_tx` + `append_occurrence` + core append/atomicity tests; (b) remaining 6 typed append methods + `finalize_revision` partial-publication guard + their tests; (c) `record_attempt_start` outbox integration + crash/dedup recovery tests.",
+          "flagged": true
+        },
+        {
+          "detail": "Step 10 (Scope: Large, Complexity: 4, plan.md lines 265-283) is a god-task: it bundles implementing the full legacy importer AND writing 10 distinct fixture scenarios in one turn. The production code alone is substantial: `LegacyImporter` reading legacy M6 artifacts, mapping to v1 `CritiqueOccurrenceEnvelope` via preserve mode, classifying `semantic_finding_id` as `legacy_semantic_finding_id`, rejecting unsupported target versions without partial publish, admitting partially-parseable attempts with `ParseStatus.PARTIAL_RECOVERED` and `evidence_ref`/`unavailable_reason`. Then `test_importer.py` requires TEN fixture scenarios (current-source, target-only, future-version-rejected, corrupt-partial, redacted-unknown, unavailable-tombstoned, duplicate-idempotent, out-of-order-sequence-corrected, concurrent-WAL-safe, crash-resumable), each needing bespoke setup data and multi-assertion validation. The import map, classification, partial-recovery, and idempotency logic are each independently non-trivial. Recommend splitting: (a) importer core + basic fixtures (current-source, target-only, future-version, duplicate); (b) edge-case admission fixtures (corrupt/partial-recovered, redacted, tombstoned); (c) ordering/concurrency/crash-resumability fixtures.",
+          "flagged": true
+        },
+        {
+          "detail": "Step 13 (Scope: Medium, Complexity: 3, plan.md lines 318-331) bundles THREE distinct test domains into one `test_negative_mutation.py` file/turn: (1) negative-mutation proofs asserting ledger append/replay cannot mutate plan/gate/lifecycle/queue/Git/provider/delivery/external-effect state across ~8 surfaces; (2) concurrency/crash tests (WAL single-writer, crash-mid-append consistency, outbox stale-pending retry, idempotency-dedup crash-restart, duplicate-replay no-op); (3) compatibility/privacy tests (existing suite regression, redacted-evidence-as-unknown, old-reader path compatibility). Each domain is independently substantial. This is borderline — all three are test-writing so a strong model may complete it — but the negative-mutation domain alone requires instrumenting or asserting non-mutation across 8+ external surfaces, which is the heaviest single sub-item. If the executor runs low on time, the compatibility/privacy tests (the regression safety net) are the most likely to be dropped, which is the highest-risk omission. Consider splitting concurrency/crash (which mirrors Step 5's outbox tests) into its own step.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the plan's load-bearing WBC substrate claims against the actual repository — all are accurate. `SqliteAttemptLedgerStore` exists at arnold/workflow/attempt_ledger_store.py:1117. `SqliteLedgerOutbox.append_event_with_outbox` exists at arnold/workflow/ledger_outbox.py:339 (with the BEGIN IMMEDIATE atomicity contract documented at line 309). `SqliteLedgerMigrator` exists at arnold/workflow/ledger_migrations.py:748, and critically, its `__init__` (lines 758-767) accepts `migrations: Optional[Sequence[Migration]] = None` — when provided, it uses the custom registry via `_validate_registry()`, confirming Assumption 6 (CL2 can pass `default_combined_migrations()` without editing ledger_migrations.py). `default_m6a_migrations()` returns exactly 4 migrations at versions 1-4 (lines 482/496/512/540), so the plan's claim that CL2 continues at \"versions 5+\" (Step 4 line 151, Assumption 6 line 430) is correct — no version collision. `payload_policy.py` and `durable_refs.py` both exist at arnold/workflow/ as claimed by the reuse success criterion. The substrate reuse foundation is sound; the sole foundational gap is the missing CL1 archive (Finding 1).",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "CL2-SCOPE-001",
+      "concern": "CL1 source archive `/workspace/.paused-epics/critique-ledger-m9-glm-20260723/` does not exist in this workspace. Step 1 (port verbatim from archive) and Step 12 (audit cancelled CL2 archive with SHA-256 hashes) are both unexecutable. Since every subsequent step depends on the ported schemas/semantic_loop, the entire 14-step plan's foundation is blocked. The executor must locate the archive at a corrected path, reconstruct the CL1 schemas from the safety amendment spec, or the plan must be re-baselined before execution begins.",
+      "category": "completeness",
+      "severity_hint": "blocker",
+      "evidence": "Searched /workspace for `paused-epics` (0 results), `critique-ledger-m9-glm-20260723` (0 results), `semantic_loop.py` (0 results), `**/critique_ledger/schemas.py` (0 results). Plan.md lines 15-18 and 80-93 claim the archive exists and Step 1 ports from it."
+    },
+    {
+      "id": "CL2-SCOPE-002",
+      "concern": "Step 5 (domain append layer) is a god-task: full persistence class + transaction logic + 7 typed append methods + attempt-start wiring + comprehensive test suite in one worker turn (~15 min). Cannot complete in one turn; will be abandoned mid-implementation. Recommend splitting into 3 steps along the append-method/test seam.",
+      "category": "completeness",
+      "severity_hint": "high",
+      "evidence": "Plan.md lines 173-198: Step 5 Scope=Large, Complexity=4, 5 substeps bundling CritiqueLedgerStore + _append_domain_tx + 7 append methods + record_attempt_start + test_store_append.py with 6 test categories."
+    },
+    {
+      "id": "CL2-SCOPE-003",
+      "concern": "Step 10 (legacy importer) is a god-task: full importer implementation + 10 distinct fixture scenarios (each with bespoke setup and multi-assertion validation) in one worker turn. Recommend splitting into 3 steps: core+basic fixtures, edge-case admission fixtures, ordering/concurrency/crash fixtures.",
+      "category": "completeness",
+      "severity_hint": "high",
+      "evidence": "Plan.md lines 265-283: Step 10 Scope=Large, Complexity=4, 4 substeps including LegacyImporter with preserve-mode mapping/classification/version-rejection/partial-recovery + test_importer.py with 10 named fixture scenarios."
+    },
+    {
+      "id": "CL2-SCOPE-004",
+      "concern": "Step 13 bundles three distinct test domains (negative-mutation across 8+ surfaces, concurrency/crash recovery, compatibility/privacy regression) into one test file/turn. The compatibility/privacy regression suite is the highest-risk omission if the executor runs out of time. Consider splitting concurrency/crash tests into a separate step.",
+      "category": "completeness",
+      "severity_hint": "medium",
+      "evidence": "Plan.md lines 318-331: Step 13 Scope=Medium, Complexity=3, 3 substeps covering negative-mutation proofs, concurrency/crash, and compatibility/privacy in test_negative_mutation.py."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

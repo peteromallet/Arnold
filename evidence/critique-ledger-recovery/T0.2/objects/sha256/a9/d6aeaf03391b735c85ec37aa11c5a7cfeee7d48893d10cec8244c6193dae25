@@ -1,0 +1,186 @@
+{
+  "schema": "megaplan.candidate_graph_admission",
+  "schema_version": 1,
+  "candidate_id": "candidate:dbd6aa3ef9440f707f454148525e81e139cea6048ac7f50a4ac588e71f42c39c",
+  "candidate_graph_hash": "dbd6aa3ef9440f707f454148525e81e139cea6048ac7f50a4ac588e71f42c39c",
+  "task_contract_hash": "sha256:8b8b0e4c48cc3f8db578b116ef39fbb560d435e6771092779baec732297f161e",
+  "admitted": false,
+  "failure_fingerprint": "8b362be792508b7ce613b0981863151f613f052312e9468ff19dfe9d726f65ab",
+  "diagnostics": [
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T8_impl",
+      "dependency_id": "T7"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T9",
+      "dependency_id": "T8"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T15_impl",
+      "dependency_id": "T8"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T16",
+      "dependency_id": "T15"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T20",
+      "dependency_id": "T15"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T22",
+      "dependency_id": "T8"
+    },
+    {
+      "code": "dependency_unknown",
+      "message": "Dependency must reference a different finalized task.",
+      "task_id": "T23",
+      "dependency_id": "T8"
+    },
+    {
+      "code": "dependency_graph_invalid",
+      "message": "Unknown dependency ID 'T7' for task 'T8_impl'"
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T7_impl and T8_impl overlap on ['arnold/critique_ledger/store.py', 'tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T7_impl and T23 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T8_impl and T23 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T15_impl and T16 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T15_impl and T17 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T15_impl and T18 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    },
+    {
+      "code": "write_overlap_unordered",
+      "message": "Tasks T15_impl and T24 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+    }
+  ],
+  "observed_at": "2026-07-31T18:42:47Z",
+  "report": {
+    "schema_version": "megaplan-task-feasibility-v2",
+    "task_contract_hash": "sha256:8b8b0e4c48cc3f8db578b116ef39fbb560d435e6771092779baec732297f161e",
+    "plan_hash": "sha256:9cf010374efe50a8270fce034e2e948fb2c8736fd69e9253f957069f1d01456f",
+    "seed_epoch": null,
+    "task_count": 28,
+    "edge_count": 45,
+    "root_count": 0,
+    "max_width": 0,
+    "batches": [],
+    "critical_path_task_ids": [],
+    "critical_path_task_count": 0,
+    "critical_path_minutes": 0.0,
+    "seriality": 0.0,
+    "estimated_dispatch_minutes": 0,
+    "execute_phase_timeout_minutes": 60.0,
+    "warnings": [
+      {
+        "code": "task_count_high",
+        "message": "Task count exceeds 24; inspect scope."
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T8_impl",
+        "dependency_id": "T7"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T9",
+        "dependency_id": "T8"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T15_impl",
+        "dependency_id": "T8"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T16",
+        "dependency_id": "T15"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T20",
+        "dependency_id": "T15"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T22",
+        "dependency_id": "T8"
+      },
+      {
+        "code": "dependency_unknown",
+        "message": "Dependency must reference a different finalized task.",
+        "task_id": "T23",
+        "dependency_id": "T8"
+      },
+      {
+        "code": "dependency_graph_invalid",
+        "message": "Unknown dependency ID 'T7' for task 'T8_impl'"
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T7_impl and T8_impl overlap on ['arnold/critique_ledger/store.py', 'tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T7_impl and T23 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T8_impl and T23 overlap on ['tests/arnold/critique_ledger/test_store_append.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T15_impl and T16 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T15_impl and T17 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T15_impl and T18 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      },
+      {
+        "code": "write_overlap_unordered",
+        "message": "Tasks T15_impl and T24 overlap on ['tests/arnold/critique_ledger/test_importer.py'] without semantic order or a shared routing_group."
+      }
+    ],
+    "admitted": false
+  }
+}

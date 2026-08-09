@@ -1,0 +1,183 @@
+{
+  "area_count": 4,
+  "fanout_count": 4,
+  "forced_count": 0,
+  "completed_count": 1,
+  "partial_count": 0,
+  "timed_out_count": 0,
+  "error_count": 3,
+  "missed_units": [
+    "A1",
+    "A2",
+    "A3"
+  ],
+  "total_cost_usd": 0.104863884,
+  "prompt_tokens": 1424500,
+  "completion_tokens": 29368,
+  "total_tokens": 1453868,
+  "elapsed_time_ms": 595649,
+  "files": [
+    "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/attempt_ledger_store.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/durable_refs.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/execution_attempt_ledger.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_migrations.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_outbox.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_payload_store.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/payload_policy.py",
+    "/workspace/critique-ledger-accountability-v2-20260728/Arnold/tests/arnold/workflow/test_attempt_ledger_store.py"
+  ],
+  "code_refs": [
+    "CritiqueOccurrenceEnvelope (schemas.py:182-312) \u2014 CL1 domain dataclass with semantic_finding_id field that CL2 must restrict for new occurrences",
+    "FindingDispositionEvent (schemas.py:401-488) \u2014 CL1 disposition with eight canonical families",
+    "FindingReconciliationEvent (schemas.py:315-398) \u2014 CL1 reconciliation event with canonical_finding_id, semantic_finding_id, occurrence_ids",
+    "InlinePayloadPolicy / RetentionPayloadPolicy (payload_policy.py:157-340) \u2014 WBC inline/retention schema contracts to be reused",
+    "LedgerEvent / ExecutionAttemptLedger (execution_attempt_ledger.py) \u2014 existing attempt-level event schema that the store is coupled to",
+    "SqliteAttemptLedgerStore.__init__ (attempt_ledger_store.py:1127-1157) \u2014 WAL mode, isolation_level=None, connection management",
+    "SqliteAttemptLedgerStore._append_tx (attempt_ledger_store.py:1905-2094) \u2014 BEGIN IMMEDIATE with idempotency dedup, post-terminal rejection, monotonic sequence, causal predecessor, sequence gap checks",
+    "SqliteAttemptLedgerStore._begin_immediate_retry (attempt_ledger_store.py:1882-1903) \u2014 busy-retry with exponential backoff",
+    "SqliteAttemptLedgerStore.reserve_global_effect (attempt_ledger_store.py:1386-1514) \u2014 multi-table atomicity pattern: attempt_reservations + global_effect_reservations in one BEGIN IMMEDIATE",
+    "SqliteLedgerMigrator (ledger_migrations.py:748-1000) \u2014 versioned, checksum-validated, forward-fix-only migration system",
+    "SqliteLedgerOutbox.append_event_with_outbox (ledger_outbox.py:339-545) \u2014 atomic event + outbox write in one BEGIN IMMEDIATE",
+    "SqliteLedgerOutbox.get_stale_pending (ledger_outbox.py:700-726) \u2014 crash recovery: detect outbox records never delivered",
+    "SqliteLedgerOutbox.retry_failed (ledger_outbox.py:586-662) \u2014 retry with MAX_RETRY_COUNT guard"
+  ],
+  "per_unit": [
+    {
+      "area": "A1",
+      "status": "error",
+      "elapsed_time_ms": 0,
+      "files": [],
+      "code_refs": []
+    },
+    {
+      "area": "A2",
+      "status": "error",
+      "elapsed_time_ms": 0,
+      "files": [],
+      "code_refs": []
+    },
+    {
+      "area": "A3",
+      "status": "error",
+      "elapsed_time_ms": 0,
+      "files": [],
+      "code_refs": []
+    },
+    {
+      "area": "A4",
+      "status": "complete",
+      "elapsed_time_ms": 153414,
+      "files": [
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/attempt_ledger_store.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_outbox.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_migrations.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_payload_store.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/payload_policy.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/durable_refs.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/execution_attempt_ledger.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+        "/workspace/critique-ledger-accountability-v2-20260728/Arnold/tests/arnold/workflow/test_attempt_ledger_store.py"
+      ],
+      "code_refs": [
+        "SqliteAttemptLedgerStore.__init__ (attempt_ledger_store.py:1127-1157) \u2014 WAL mode, isolation_level=None, connection management",
+        "SqliteAttemptLedgerStore._append_tx (attempt_ledger_store.py:1905-2094) \u2014 BEGIN IMMEDIATE with idempotency dedup, post-terminal rejection, monotonic sequence, causal predecessor, sequence gap checks",
+        "SqliteAttemptLedgerStore._begin_immediate_retry (attempt_ledger_store.py:1882-1903) \u2014 busy-retry with exponential backoff",
+        "SqliteAttemptLedgerStore.reserve_global_effect (attempt_ledger_store.py:1386-1514) \u2014 multi-table atomicity pattern: attempt_reservations + global_effect_reservations in one BEGIN IMMEDIATE",
+        "SqliteLedgerOutbox.append_event_with_outbox (ledger_outbox.py:339-545) \u2014 atomic event + outbox write in one BEGIN IMMEDIATE",
+        "SqliteLedgerOutbox.get_stale_pending (ledger_outbox.py:700-726) \u2014 crash recovery: detect outbox records never delivered",
+        "SqliteLedgerOutbox.retry_failed (ledger_outbox.py:586-662) \u2014 retry with MAX_RETRY_COUNT guard",
+        "SqliteLedgerMigrator (ledger_migrations.py:748-1000) \u2014 versioned, checksum-validated, forward-fix-only migration system",
+        "CritiqueOccurrenceEnvelope (schemas.py:182-312) \u2014 CL1 domain dataclass with semantic_finding_id field that CL2 must restrict for new occurrences",
+        "FindingReconciliationEvent (schemas.py:315-398) \u2014 CL1 reconciliation event with canonical_finding_id, semantic_finding_id, occurrence_ids",
+        "FindingDispositionEvent (schemas.py:401-488) \u2014 CL1 disposition with eight canonical families",
+        "InlinePayloadPolicy / RetentionPayloadPolicy (payload_policy.py:157-340) \u2014 WBC inline/retention schema contracts to be reused",
+        "LedgerEvent / ExecutionAttemptLedger (execution_attempt_ledger.py) \u2014 existing attempt-level event schema that the store is coupled to"
+      ]
+    }
+  ],
+  "gap_notes": [
+    "A1: research failed with Duplicate idempotency key '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce:started' for attempt '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce' has divergent content: divergent_payload.",
+    "A2: research failed with Duplicate idempotency key '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce:started' for attempt '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce' has divergent content: divergent_payload.",
+    "A3: research failed with Duplicate idempotency key '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce:started' for attempt '2b01b0ff-98d5-553a-ad5c-d4d6e668b1ce' has divergent content: divergent_payload."
+  ],
+  "contradiction_notes": [],
+  "overlap_groups": [],
+  "cross_reference": {
+    "performed": true,
+    "checked_files": [
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/__init__.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/cl2_migrations.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ledger_writer.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/m6_importer.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/manifest_store.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/semantic_loop.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/wbc_bridge.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/attempt_ledger_store.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/durable_refs.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/execution_attempt_ledger.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_migrations.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_outbox.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_payload_store.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/payload_policy.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/tests/arnold/workflow/test_attempt_ledger_store.py",
+      "arnold/workflow/attempt_ledger_store.py",
+      "arnold/workflow/execution_attempt_ledger.py",
+      "arnold/workflow/ledger_migrations.py",
+      "arnold/workflow/ledger_outbox.py",
+      "arnold/workflow/payload_policy.py"
+    ],
+    "existing_files": [
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/__init__.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/cl2_migrations.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ledger_writer.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/m6_importer.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/manifest_store.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/semantic_loop.py",
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/wbc_bridge.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/attempt_ledger_store.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/durable_refs.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/execution_attempt_ledger.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_migrations.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_outbox.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/ledger_payload_store.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/arnold/workflow/payload_policy.py",
+      "/workspace/critique-ledger-accountability-v2-20260728/Arnold/tests/arnold/workflow/test_attempt_ledger_store.py",
+      "arnold/workflow/attempt_ledger_store.py",
+      "arnold/workflow/execution_attempt_ledger.py",
+      "arnold/workflow/ledger_migrations.py",
+      "arnold/workflow/ledger_outbox.py",
+      "arnold/workflow/payload_policy.py"
+    ],
+    "missing_files": [],
+    "shared_files": [
+      "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py"
+    ],
+    "to_be_built_files": []
+  },
+  "stage_metrics": {
+    "triage": {
+      "cost_usd": 0.038307724,
+      "prompt_tokens": 747252,
+      "completion_tokens": 11920,
+      "total_tokens": 759172,
+      "elapsed_time_ms": 221087
+    },
+    "fanout": {
+      "cost_usd": 0.044268384,
+      "prompt_tokens": 529472,
+      "completion_tokens": 6440,
+      "total_tokens": 535912,
+      "elapsed_time_ms": 153414
+    },
+    "distill": {
+      "cost_usd": 0.022287776,
+      "prompt_tokens": 147776,
+      "completion_tokens": 11008,
+      "total_tokens": 158784,
+      "elapsed_time_ms": 221148
+    }
+  }
+}

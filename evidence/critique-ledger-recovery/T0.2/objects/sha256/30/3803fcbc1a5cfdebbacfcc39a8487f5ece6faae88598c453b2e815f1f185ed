@@ -1,0 +1,59 @@
+{
+  "schema_version": "megaplan-critique-custody-v1",
+  "iteration": 1,
+  "produced_at": "2026-07-31T15:51:39Z",
+  "plan_artifact": "plan_v1.md",
+  "plan_sha256": "sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922",
+  "critique_artifact": "critique_v1.json",
+  "critique_sha256": "sha256:123e23aa31332e4c64165f50d2282fa5bd675460b2196329ae437d05c9c212c8",
+  "critique_payload_digest": "sha256:5aac511e1ba8d347c689e9b2d75bbd660d7cd2fee6419818fdeac3808d5bc75f",
+  "raw_sources": [
+    {
+      "artifact": "critique_raw_v1.txt",
+      "sha256": "sha256:83a00300ad6a2502c3fd8f04f50b47f5ce60496614534ebf6bf9fc85c85e1b0d"
+    },
+    {
+      "artifact": "critique_check_all_locations_producer_v1.json",
+      "sha256": "sha256:68ca75da5663708a636f915728b2e12205026c8abd423d83f3e302f0076fee68"
+    },
+    {
+      "artifact": "critique_check_correctness_producer_v1.json",
+      "sha256": "sha256:a7ff2408640dcdc959d8dc80d69c5826725ac2c9444f1768d04ee2fcbe0104da"
+    },
+    {
+      "artifact": "critique_check_issue_hints_producer_v1.json",
+      "sha256": "sha256:bdd746eb510202e1990078fc27c0973add8e470b56a9fb5dba24ff8ec2c392ba"
+    },
+    {
+      "artifact": "critique_check_prerequisite_ordering_producer_v1.json",
+      "sha256": "sha256:9efa3eb4bd14487ea3a290b48f20a4ada8cbffeaa7acd1e49ca1879c92ccd306"
+    },
+    {
+      "artifact": "critique_check_scope_producer_v1.json",
+      "sha256": "sha256:80a0779ba72a5bd907ed741e93875ca73ac8f466e579fbea524cad8833f80112"
+    },
+    {
+      "artifact": "critique_check_verification_producer_v1.json",
+      "sha256": "sha256:e27849b49c1663464eeda3bfcd2e00e389c6062deb8b1c27ad8dfc7604a7501e"
+    }
+  ],
+  "expected_check_ids": [
+    "issue_hints",
+    "correctness",
+    "scope",
+    "all_locations",
+    "verification",
+    "prerequisite_ordering"
+  ],
+  "finding_count": 0,
+  "finding_ids": [],
+  "flag_ids": [],
+  "findings": [],
+  "normalization": {
+    "flagged_check_findings": 0,
+    "canonical_flags": 0,
+    "loss_count": 0
+  },
+  "admitted": true,
+  "receipt_digest": "sha256:a4683ed124941abb099aaa60800eed806ca102eb338c5a35b3a38f70392199cf"
+}

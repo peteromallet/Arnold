@@ -1,0 +1,66 @@
+{
+  "triage_framing": "CL2 must implement WBC-backed ledger persistence, import, and replay per the amended CL1 contract, but the CL1 implementation (critique_ledger/schemas.py, semantic_loop.py) exists only in the cancelled archive at /workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold \u2014 it has not been ported to the current workspace. The CL1 handoff (cl1-contract-oracle.json) is similarly archive-only and carries accepted_for_cl2: false with five blocking reasons (missing review sign-off, M6 prerequisite incoherence, proof-index failure, ownership blockers, portfolio gate blocker). The 2026-07-28 safety amendment has been folded into the current CL2 brief but the v1 schemas have not been additively versioned to enforce the semantic_finding_id deprecation. The WBC SQLite persistence substrate (attempt_ledger_store, ledger_migrations, payload_policy) is built in the current workspace, but the critique-ledger domain layer is absent. The cancelled CL2 archive also contains uncommitted CL2 implementation work (cl2_migrations, m6_importer, ledger_writer, wbc_bridge, manifest_store) that must be audited per the user direction. Four task-defined open questions remain: backend atomicity, plan-local compatibility files, partial-parse admission, and replay indexes.",
+  "areas": [
+    {
+      "id": "A1",
+      "area": "CL1 contract/oracle porting and handoff acceptance path",
+      "brief": "The CL1 implementation (arnold/critique_ledger/schemas.py defining CritiqueOccurrenceEnvelope, FindingReconciliationEvent, FindingDispositionEvent, DomainBriefingEnvelope, LedgerRevisionManifest plus semantic_loop.py) and the CL1 handoff (cl1-contract-oracle.json) exist only in the cancelled archive, not in the current workspace. The handoff has accepted_for_cl2: false with five blocking reasons. Determine: (a) the complete file manifest that must be ported from the archive to the current workspace, (b) which handoff blockers are procedural vs technical and whether the constraint 'consume only an accepted CL1 handoff' can be satisfied by accepting the handoff as-is with noted blockers or whether a re-review/amendment is required, (c) what the safety amendment changes about the CL1 contract that the archived handoff does not yet reflect, and (d) the minimum viable path to an accepted CL1 contract baseline that CL2 can consume.",
+      "suggested_files": [
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/docs/critique-ledger/handoffs/cl1-contract-oracle.json",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/semantic_loop.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/__init__.py",
+        ".megaplan/initiatives/critique-ledger/briefs/cl1-contract-and-m6-oracle.md",
+        ".megaplan/initiatives/critique-ledger/decisions/reconciliation-safety-amendment-20260728.md",
+        ".megaplan/initiatives/critique-ledger/notes/replacement-lineage-20260728.md",
+        "arnold/workflow/execution_attempt_ledger.py"
+      ]
+    },
+    {
+      "id": "A2",
+      "area": "Cancelled CL2 archive audit and selective-port assessment",
+      "brief": "The cancelled CL2 run (cl2-wbc-backed-ledger-20260724-0351, blocked at iteration 7) left uncommitted implementation artifacts in the archive: cl2_migrations.py, m6_importer.py, ledger_writer.py, wbc_bridge.py, and manifest_store.py in arnold/critique_ledger/. The user direction explicitly requires 'preserve and audit the cancelled CL2 archive; never adopt its uncommitted work implicitly.' Produce: (a) a complete inventory of every uncommitted CL2 artifact with file hashes, (b) a per-artifact assessment of whether it satisfies the amended contract (reconciliation corrections/supersession, independent audit events, plan-region/dependency anchors, tripwire state, response/outcome events, active-action projection, per-round accountability projection, freshness vectors) or was written against the pre-amendment CL2 scope, (c) identification of any artifacts that can be ported as-is, any that need amendment, and any that must be rejected, and (d) an explicit boundary list of what the current CL2 must NOT implicitly adopt from the cancelled run.",
+      "suggested_files": [
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/cl2_migrations.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/m6_importer.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/ledger_writer.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/wbc_bridge.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/manifest_store.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260724-0351/state.json",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260724-0351/prep_triage.json",
+        ".megaplan/initiatives/critique-ledger/notes/replacement-lineage-20260728.md",
+        ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md"
+      ]
+    },
+    {
+      "id": "A3",
+      "area": "CL1 schema additive versioning plan (v1\u2192v2 occurrence/reconciliation contract)",
+      "brief": "The task requires additively versioning the CL1 schema so new raw occurrences cannot author semantic_finding_id, retaining the old field only for explicit legacy reads. The archived v1 schemas (cl.schema.v1) define CritiqueOccurrenceEnvelope with semantic_finding_id as a first-class field. Produce: (a) the concrete v1\u2192v2 delta \u2014 exactly which fields change, which are deprecated, which new fields are added per the safety amendment (supersedes_event_id, plan-region anchors, tripwire state, etc.), (b) the v2 schema version identifier (e.g., cl.schema.v2) and CompatibilityProfile enum additions, (c) the legacy-read compatibility contract (how v1 records with semantic_finding_id are read under v2, and the ParseStatus/legacy_unknown boundary for partial-parse admission), (d) the migration rules that must be encoded as additive DDL (never drop columns) in the ledger_migrations framework, and (e) a cross-reference proving every safety-amendment locked decision maps to a concrete schema field or constraint.",
+      "suggested_files": [
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+        ".megaplan/initiatives/critique-ledger/decisions/reconciliation-safety-amendment-20260728.md",
+        ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+        "arnold/workflow/ledger_migrations.py",
+        "arnold/workflow/execution_attempt_ledger.py",
+        "arnold/workflow/payload_policy.py"
+      ]
+    },
+    {
+      "id": "A4",
+      "area": "WBC backend atomicity sufficiency for critique-ledger domain events",
+      "brief": "The task's open question asks 'Which landed backend satisfies one transaction, and where is durable prepare/outbox reconciliation required?' The existing SqliteAttemptLedgerStore provides BEGIN IMMEDIATE transactional appends with idempotency-key dedup, monotonic sequence, and exactly-one-terminal enforcement \u2014 but this is designed for ExecutionAttemptLedger events, not critique-ledger domain events (occurrence envelopes, reconciliation/disposition events, response/outcome events, audit events, ledger revision manifests). Assess: (a) whether the existing store can be extended or adapted for critique-ledger domain writes in one transaction, (b) what multi-table atomicity is needed (occurrence insert + revision manifest publish + projection update), (c) whether the existing SqliteLedgerOutbox satisfies the durable prepare/outbox reconciliation requirement, (d) what indexes the existing schema provides and what additional indexes are necessary for domain/round replay within the two-week scope (answering the open question 'What indexes are necessary within the two-week scope for domain/round replay?'), and (e) whether any new store/adapter code is needed beyond what already exists in attempt_ledger_store.py and ledger_migrations.py.",
+      "suggested_files": [
+        "arnold/workflow/attempt_ledger_store.py",
+        "arnold/workflow/ledger_outbox.py",
+        "arnold/workflow/ledger_payload_store.py",
+        "arnold/workflow/ledger_migrations.py",
+        "arnold/workflow/payload_policy.py",
+        "arnold/workflow/durable_refs.py",
+        "arnold/workflow/execution_attempt_ledger.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/schemas.py",
+        "/workspace/.paused-epics/critique-ledger-m9-glm-20260723/Arnold/arnold/critique_ledger/semantic_loop.py",
+        "tests/arnold/workflow/test_attempt_ledger_store.py"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+   1050       1 Fri Jul 31 17:44:52 2026 /usr/bin/python3 /opt/astrid-blender-render/blender_render_server.py
+   1105       1 Fri Jul 31 17:44:52 2026 /usr/bin/python3 /usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal
+   2769    1487 Fri Jul 31 17:45:31 2026 tmux new-session -d -s heartbeat -c /workspace bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}; cd "$runtime_src"; exec "$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat"'
+   2770    2769 Fri Jul 31 17:45:31 2026 bash /workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat
+   2788    1487 Fri Jul 31 17:45:31 2026 /root/.pyenv/versions/3.11.11/bin/python3 /usr/local/bin/healthserver.py
+2817763    2769 Sun Aug  2 00:16:16 2026 bash /tmp/arnold-watchdog.3Sn4dqcl
+2817817 2817763 Sun Aug  2 00:16:18 2026 /workspace/runtime-venvs/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/supervisor/runtimes/69c2fda7464ce53cba175b0754ee518a8afbfffdf71371eef571a24ea3f6a354/bin/python3 -P - /workspace/.megaplan/watchdog.lock /tmp/arnold-watchdog.3Sn4dqcl
+2817818 2817817 Sun Aug  2 00:16:18 2026 bash /tmp/arnold-watchdog.3Sn4dqcl

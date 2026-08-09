@@ -1,0 +1,135 @@
+{
+  "schema": "megaplan.candidate_graph_admission",
+  "schema_version": 1,
+  "candidate_id": "candidate:1d3cc74b461dc97a10c4de919b63e82d4f32b8d76bddfcb2e6cabe4b44ff15eb",
+  "candidate_graph_hash": "1d3cc74b461dc97a10c4de919b63e82d4f32b8d76bddfcb2e6cabe4b44ff15eb",
+  "task_contract_hash": "sha256:40bf4a7d041ac760ceae8eed7307d96fe85156318b5bdf9c7bd0abd6debc9737",
+  "admitted": false,
+  "failure_fingerprint": "df8d70a86056ab08cf72127fb3f750fb2e611f8b644d04793977cdf43a9b6617",
+  "diagnostics": [
+    {
+      "code": "critical_path_infeasible",
+      "message": "Estimated critical path exceeds 80% of the configured execute-phase timeout."
+    },
+    {
+      "code": "dispatch_budget_infeasible",
+      "message": "Estimated sequential batch dispatch exceeds 80% of the configured execute-phase timeout."
+    }
+  ],
+  "observed_at": "2026-07-31T18:26:38Z",
+  "report": {
+    "schema_version": "megaplan-task-feasibility-v2",
+    "task_contract_hash": "sha256:40bf4a7d041ac760ceae8eed7307d96fe85156318b5bdf9c7bd0abd6debc9737",
+    "plan_hash": "sha256:a1205a6b67313430f0a1874f860ada10333d487bf4eb44708a7a2ce33cd19366",
+    "seed_epoch": null,
+    "task_count": 37,
+    "edge_count": 65,
+    "root_count": 1,
+    "max_width": 5,
+    "batches": [
+      [
+        "T1"
+      ],
+      [
+        "T2",
+        "T3"
+      ],
+      [
+        "T4",
+        "T5"
+      ],
+      [
+        "T6",
+        "T8"
+      ],
+      [
+        "T7",
+        "T9",
+        "T12",
+        "T27"
+      ],
+      [
+        "T10",
+        "T13",
+        "T14"
+      ],
+      [
+        "T11",
+        "T15"
+      ],
+      [
+        "T16",
+        "T17",
+        "T28"
+      ],
+      [
+        "T18",
+        "T19",
+        "T29"
+      ],
+      [
+        "T20",
+        "T21",
+        "T30"
+      ],
+      [
+        "T22",
+        "T23",
+        "T35"
+      ],
+      [
+        "T24",
+        "T25",
+        "T31"
+      ],
+      [
+        "T26",
+        "T32",
+        "T33",
+        "T34",
+        "T36"
+      ],
+      [
+        "T37"
+      ]
+    ],
+    "critical_path_task_ids": [
+      "T1",
+      "T3",
+      "T5",
+      "T6",
+      "T12",
+      "T14",
+      "T15",
+      "T17",
+      "T18",
+      "T21",
+      "T23",
+      "T31",
+      "T36",
+      "T37"
+    ],
+    "critical_path_task_count": 14,
+    "critical_path_minutes": 172.0,
+    "seriality": 0.378378,
+    "estimated_dispatch_minutes": 176.0,
+    "execute_phase_timeout_minutes": 60.0,
+    "warnings": [
+      {
+        "code": "task_count_high",
+        "message": "Task count exceeds 24; inspect scope."
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "critical_path_infeasible",
+        "message": "Estimated critical path exceeds 80% of the configured execute-phase timeout."
+      },
+      {
+        "code": "dispatch_budget_infeasible",
+        "message": "Estimated sequential batch dispatch exceeds 80% of the configured execute-phase timeout."
+      }
+    ],
+    "admitted": false
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "megaplan-critique-clearance-v1",
+  "produced_at": "2026-07-31T18:34:35Z",
+  "workflow": {
+    "robustness": "thorough",
+    "critique_expected": true,
+    "gate_expected": true
+  },
+  "source_receipts": [
+    {
+      "artifact": "critique_custody_v1.json",
+      "sha256": "sha256:303803fcbc1a5cfdebbacfcc39a8487f5ece6faae88598c453b2e815f1f185ed"
+    }
+  ],
+  "plan_artifact": "plan_v1.md",
+  "plan_sha256": "sha256:9a91d681e0fae305d9e098e4e2c23cdd20ef740f9123946469d5742fc131c922",
+  "finding_count": 0,
+  "finding_ids": [],
+  "resolutions": [],
+  "admitted": true,
+  "clearance_digest": "sha256:ec181aad21aae5a193ae1c3ce39ef501ecc72274766d3d24bd65562ff9e96cec"
+}

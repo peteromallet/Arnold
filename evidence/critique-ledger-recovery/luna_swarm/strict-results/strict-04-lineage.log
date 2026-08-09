@@ -1,0 +1,1087 @@
+Reading additional input from stdin...
+OpenAI Codex v0.144.6
+--------
+workdir: /Users/peteromalley/Documents/Arnold
+model: gpt-5.6-luna
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 019fcd9f-66e3-7a93-9428-3273d24c2453
+--------
+user
+You are a bounded Luna code auditor. Read the compact evidence brief and Sol verdict in `evidence/critique-ledger-recovery/`. Do NOT use rg, find, git, recursive listing, or any subagent. Use at most five `sed`/`nl` reads, only these paths: `arnold_pipelines/megaplan/cloud/cli.py` (lines 5270-5335 and 2350-2395), `arnold_pipelines/megaplan/cloud/template.py` (entrypoint renderer), `arnold_pipelines/megaplan/resident/runtime.py` (lines 350-440), and `tests/cloud/test_cloud_chain_command.py` (runtime-binding test names). Return under 700 words: exact lineage divergence paths, smallest identity envelope, and four acceptance tests. Do not edit.
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+codex
+I’ll audit only the specified evidence and source slices, within the five-read limit, and return the requested lineage, identity envelope, and tests without modifying files.
+exec
+/bin/zsh -lc "sed -n '1,240p' evidence/critique-ledger-recovery/*brief* evidence/critique-ledger-recovery/*verdict*" in /Users/peteromalley/Documents/Arnold
+ exited 1 in 0ms:
+zsh:1: no matches found: evidence/critique-ledger-recovery/*verdict*
+
+exec
+/bin/zsh -lc 'ls -1 evidence/critique-ledger-recovery' in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+T0.0
+T0.2
+T0.4
+luna_swarm
+sol-broader-review-20260804.md
+sol-broader-review-brief-20260804.md
+sol-broader-review-compact-brief-20260804.md
+sol-review-r5-20260804.md
+
+exec
+/bin/zsh -lc "sed -n '1,260p' evidence/critique-ledger-recovery/sol-broader-review-compact-brief-20260804.md evidence/critique-ledger-recovery/sol-review-r5-20260804.md" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+# Sol judgement request (compact evidence-only brief)
+
+Take a firm architectural position from the evidence below. Do not inspect the repository or delegate. Return under 1200 words with: (a) root-cause tree, (b) whether the current fixes are root-level or local mitigation, (c) ranked independent Luna audit directions, (d) shortest safe immediate recovery, and (e) shared-system hardening plus acceptance tests.
+
+## Observed facts
+
+1. The cloud session `critique-ledger-accountability-v3-r5-20260803`, plan `cl2-wbc-backed-ledger-20260803-1357`, failed at VJ8 before worker dispatch. State recorded `pre_dispatch_validation_failed`, `phase=execute`, `worker_dispatched=false`, `exit_code=1`, occurrence `validation-8a0d0d672f63643cc82e`, fingerprint `8a0d0d672f63643cc82ef81841ab9493b87bfe69671c5da9d961dc60c878c4d3`.
+2. The VJ8 suite initially had 126 tests, 122 pass and 4 failures. All four were stale expectations around divergent same-idempotency-key ledger events and exact retry canonicalization. After repairing the implementation/tests, the exact suite is 130 passed.
+3. Recovery was made occurrence-bound: a receipt binds the failure fingerprint, occurrence, job, source revision, passing test result, and runtime code hash. Recovery now rejects stale/mismatched evidence and does not clear real U1/quality blockers. Status now exposes latest_failure and projects `finalized` to execute because finalized is an execute-entry state.
+4. The same plan is now `state=finalized`, `execution_state=ready`, `next_step=execute`, with U1/quality blockers still unresolved and authoritative.
+5. The canonical local `cloud resume` wrapper failed before dispatch. Its SSH provider runs `cd <workspace> && arnold status --plan <plan>`. On the container, `arnold` resolves to `/root/.pyenv/shims/arnold`, whose installed `arnold.cli` exposes a different legacy interface and requires `--artifact-root`. The intended megaplan CLI works only when invoked through `/workspace/runtime-venvs/arnold-wbc-full-20260804/bin/python -m arnold_pipelines.megaplan ...`.
+6. Earlier evidence showed: managed runner lease startup errors were swallowed; marker “launch success” could mean only tmux/state was observed; stale phase_result.json could outrank newer state.latest_failure; resident and chain code used different dirty/pinned runtime lineages; watchdog snapshots could be stale or unreadable; `/whats-cooking` could time out while collecting a snapshot.
+7. Luna audits already found: no remote provider-key preflight; alias/auth allowlists are not one source of truth; resident may import dirty `/workspace/arnold` while the chain uses pinned c116; liveness must be lease/process identity, not tmux; observer responses need bounded work and stale-data labeling.
+
+## Constraints
+
+Do not fabricate CL1/U1 handoffs, resolve quality blockers to force progress, create a new chain, or claim liveness without a fresh lease-bound process identity. The fix must generalize to every cloud megaplan pipeline.
+# Sol review brief: r5 execution block and lease gap
+
+Date: 2026-08-04 UTC
+Scope: `critique-ledger-accountability-v3-r5-20260803`, plan
+`cl2-wbc-backed-ledger-20260803-1357` on the cloud agentbox.
+
+## Decision requested
+
+Give a firm judgement on (a) why this run stopped, (b) whether the intended
+source fix is to update stale tests or to undo the new idempotency behavior,
+(c) the safest resume point, and (d) the durable lease/observer fix so a
+managed run cannot execute without authoritative custody. Distinguish facts
+from inference and do not recommend a blind relaunch.
+
+## Durable evidence
+
+- Cloud process at the time of observation: chain wrapper PID 377534 and
+  chain process PID 377538, launched from the pinned runtime
+  `/workspace/runtime-candidates/arnold-wbc-full-20260804` at revision
+  `c116f38cc83de11a1a508eff6153205504d1ba5a`.
+- At 15:18:31Z, `megaplan introspect` showed `display_state=executing`,
+  `execution_state=executing`, `active_phase=execute`, attempt 6,
+  model `zhipu:glm-5.2`, liveness `progressing` (“last event 1s ago”),
+  `latest_failure=null`, an in-flight `llm_call_start`, and event sequence
+  9223 with fresh token-heartbeat events. `doctor` separately reported phase,
+  LLM liveness, cost, and no orphan process as OK.
+- The active step initially had no `runner_lease`. The marker lease file was
+  still bound to a dead earlier PID 373187 and had expired at 14:26:20Z.
+  The launch command exported `ARNOLD_REPAIR_SESSION` but the managed lease
+  startup failure is swallowed, so the chain was allowed to run unbound.
+- As containment only, a liveness lease sidecar was attached to the already
+  live PID 377538 at 15:20:48Z. It created runner fence 8, target PID 377538,
+  and renewed successfully. This did not restart or duplicate the chain.
+- The chain then exited/block-recorded at 15:21:17Z. At 15:24:48Z the chain
+  PID and sidecar were both gone. `state.json` is authoritative:
+  `current_state=blocked`, with `latest_failure.kind=pre_dispatch_validation_failed`,
+  `phase=execute`, `job_id=VJ8`, `exit_code=1`,
+  `retryable_infrastructure=false`, `worker_dispatched=false`,
+  `suggested_action=Repair the failing validation gate before resuming execute.`
+- The exact gate command was:
+
+  ```text
+  timeout 120s pytest tests/arnold/workflow/test_attempt_ledger_store.py \
+    tests/arnold/workflow/test_attempt_ledger_static_negative_checks.py \
+    --tb=short -q --tb=no --no-header -rA
+  ```
+
+  It returned 1. Re-running against the stopped worktree produced 126 tests:
+  122 passed and 4 failed. All four failures are legacy expectations that a
+  divergent event with the same idempotency key silently deduplicates:
+
+  - `test_append_dedups_on_duplicate_idempotency_key`
+  - `test_duplicate_of_pre_terminal_event_returns_existing_after_terminal`
+  - `test_duplicate_of_terminal_event_returns_existing`
+  - `test_dedup_does_not_persist_duplicate_row`
+
+  Each now raises `arnold.workflow.attempt_ledger_store.IdempotencyConflictError`
+  with “already exists with divergent canonical content.”
+- The worker’s durable batch-5 notes say T6 intentionally added
+  `IdempotencyConflictError` and a shared `canonical_event_json` helper, and
+  explicitly says divergent same-key retries must raise; it also says the
+  outbox path was not yet completed and T4 was not started. The plan’s critique
+  flags likewise require content-safe divergence rather than silent dedup.
+- The same worker notes report a stale editable-runtime import problem during
+  foreground verification: `arnold.workflow` resolved to
+  `/workspace/runtime-candidates/arnold-4ed98585fda8c76a8ebfba04b856b6aa9b685a47-live`
+  instead of the session worktree. The exact re-run from the worktree does
+  import the worktree and exposes the four semantic expectation failures above.
+- Current worktree inspection shows `arnold/workflow/attempt_ledger_store.py`,
+  `arnold/workflow/ledger_outbox.py`, and tests are dirty. The helper is
+  imported by the outbox, but `canonical_event_json` is not currently
+  re-exported from `arnold.workflow` despite the worker note claiming it was.
+
+## Constraints
+
+- Do not treat fresh event/token sidecars as custody authority.
+- Do not kill/relaunch a process while an exact live runner is still active.
+- Do not mutate the blocked plan’s state by hand; resume only through its
+  typed recovery path after the gate contract is repaired.
+- Preserve completed batches T1–T3 and the partial T6 evidence; do not silently
+  discard or replay them.
+
+## Questions Sol must answer
+
+1. Is `IdempotencyConflictError` the correct contract and are these four tests
+   stale, or is the implementation wrong? What exact minimal test/code changes
+   should be made before resume?
+2. Does the uncompleted outbox path make T6 unsafe to accept even after the
+   four expectation tests are updated? What is the smallest coherent repair?
+3. Can this plan resume from the typed VJ8 block without restarting T1–T3,
+   and what receipt/evidence checks must be performed first?
+4. What launch invariant prevents a managed chain from running when lease
+   acquisition fails? Recommend the precise fail-closed startup/lease handoff,
+   stale-owner recovery, and observer classification changes.
+5. Give a short ordered recovery plan and identify anything that must remain a
+   follow-up rather than being smuggled into this resume.
+
+## Fresh evidence gathered after cancelling the first Sol review
+
+- The authoritative cloud observation at `2026-08-04T15:37:00Z` is no longer
+  executing: `introspect` reports `plan_state=blocked`,
+  `display_state=blocked`, `execution_state=blocked`, `active_phase=null`,
+  `liveness=stalled`, and `block_details.recoverable_via=["recover-blocked"]`.
+  The event journal's last event is `2026-08-04T15:21:17.996Z`; there is no
+  chain process and no sidecar. This answers the immediate question: it is not
+  cooking now.
+- The current marker is not authoritative for a live run:
+  `runner_pid=null`, `runner_start_identity=null`, `lease=null`, last marker
+  update `2026-08-04T14:21:43Z`. The target container itself is healthy and has
+  325G free on its host-backed `/workspace` volume. A separate, old container
+  named `megaplan-cloud-agent` is exited with a historical Docker-rootfs
+  `no space left on device` error; it is not the r5 target and must not be
+  confused with the active target container.
+- The current introspect payload retains a stale unmatched `llm_call_start`
+  from `2026-08-04T14:23:35Z` (GLM-5.2) even though the phase is null, the
+  process is gone, and the state is blocked. This is telemetry/projection
+  residue, not evidence of a live model call. It is a second control-plane
+  smell: terminal/block transitions must close or quarantine in-flight-call
+  records.
+- The exact VJ8 command was rerun in the cloud worktree with the pinned runtime.
+  It completed in 11.67s with `126` tests total: `122 passed`, `4 failed`.
+  Running only the four failures shows all raise
+  `arnold.workflow.attempt_ledger_store.IdempotencyConflictError` from
+  `_append_tx` because the same key's canonical event content differs. The
+  tests currently assert silent deduplication. This is a deterministic source
+  contract mismatch, not a provider outage, timeout, or worker-dispatch failure.
+- The plan history shows a pattern rather than a single incident: three
+  critique attempts failed structural validation before one succeeded;
+  finalize had six invalid-schema rejections, then a missing-required-field
+  structural audit failure, a usage-limit failure, and later a successful
+  Sol finalize; execute then hit four `VJ2 exited None` validation failures,
+  a blocked state, and finally the current `VJ8 exited 1` block. The system did
+  preserve these typed history entries, but notification/observer surfaces did
+  not collapse them into one incident lineage.
+- The pinned r5 config confirms the intended routing is
+  `profile=partnered-5-glm`, execute via `hermes:zhipu:glm-5.2`, and finalize
+  via `codex:gpt-5.6-sol:high`. The current VJ8 failure happened before any
+  execute worker was dispatched (`worker_dispatched=false`), so changing the
+  execute model cannot fix this gate.
+
+## Additional questions for the consolidated Sol judgement
+
+6. Given the fresh VJ8 reproduction, decide whether the four tests should be
+   rewritten to assert content-safe divergence, or whether the implementation
+   should preserve legacy silent deduplication. Treat the plan brief's
+   “content-safe” and “divergent same-key retry raises” language as binding
+   evidence, not as an assumption.
+7. Decide whether stale in-flight LLM telemetry after a blocked terminal state
+   is merely an observer bug or evidence that recovery could accidentally
+   resurrect an old call. Recommend the smallest fail-closed repair.
+8. Account for the repeated critique/finalize/VJ2 failures as one incident
+   lineage: what should be automatic retry/fixer behavior, what should be a
+   hard block, and how should notifications be deduplicated?
+9. State the shortest safe path from the current typed block to a resumed run,
+   including the exact evidence gates for the test-contract repair, outbox
+   completion, runtime/lease custody, and one clean VJ8 pass.
+
+## Luna cross-checks (fresh, read-only)
+
+- Credential/lifecycle audit: the current r5 launcher has the GLM/Zhipu keys and
+  base URLs in its isolated empty-parent-env probe; the pinned runtime is
+  `/workspace/runtime-candidates/arnold-wbc-full-20260804` at `c116f38`. The
+  routing ledger shows 8/8 post-13:47 calls selecting and actually using
+  `hermes:zhipu:glm-5.2`, with no fallback. The stale “missing
+  OpenAI credentials” message belongs to an earlier 13:47 relaunch artifact,
+  not the VJ8 failure.
+- State-machine audit: `state.json` and the VJ8 artifact independently prove a
+  deterministic pre-dispatch block (`126 passed, 4 failed`,
+  `worker_dispatched=false`, `retryable_infrastructure=false`). The stale
+  chain-health/session projections still say gated/running, while introspect
+  says blocked; status surfaces are therefore reading incompatible projections.
+  The observer/doctor surface also omits the decisive `latest_failure` detail
+  and suggests a generic force-proceed path, which is unsafe for a validation
+  block.
+- The state-machine audit additionally found T6's `ledger_outbox.py` write not
+  represented in its declared write set and outbox tests not yet run. It
+  recommends an occurrence-scoped `recover-blocked` bound to the VJ8 fingerprint
+  and repair commit, never a generic force-proceed, followed by a fresh lease,
+  one clean VJ8/outbox/static-suite pass, and projection/notification refresh.
+- Route/control-plane audit: the lease gap was real at launch (managed lease
+  acquisition failure was swallowed); attaching a sidecar later proved only
+  liveness, not startup custody. The invariant must be fail-closed: no chain
+  process may dispatch or mutate plan state until it holds a marker-bound lease
+  for its exact PID/start identity/container/fence. Stale owners need an
+  explicit fenced handoff, not a marker overwrite.
+- Recovery audit found another concrete state-machine smell: the current
+  `state.json` VJ8 block is newer and has `resume_cursor.retry_strategy=
+  repair_validation_failure`, but the older `phase_result.json` still says
+  `exit_kind=external_error`. The `_external_error_requires_resume` helper
+  consults that stale phase result as well as the latest failure, so
+  `recover-blocked` may misclassify this deterministic validation failure and
+  demand a generic `resume`. Recovery must bind to the newest failure
+  occurrence (or reject stale phase results) before choosing a transition.
+- Route/observer audit adds two status-surface facts: the target container's
+  PID 1 is only an HTTP health server, not the chain runner; and the resident
+  container/watchdog snapshot writer is not a durable chain supervisor. The
+  `/opt/.../.megaplan/status/cloud-status.json` snapshot is stale (generated
+  2026-08-03 18:10Z) and the watchdog sweep stopped around 17:51Z, explaining
+  `/whats-cooking` stale/duplicate “running” reports. A stale `phase_result.json`
+  also carries the old missing-OpenAI-credentials narrative despite successful
+  GLM calls later in the same run. Status must join artifacts by occurrence ID
+  and freshness, never display an old provider error as the current cause.
+- A later blocker-recovery inspection reports `can_continue=false` and
+  `has_terminal_blockers=true`: synthetic U1 prerequisite blockers cover the
+  pending tasks with zero recorded resolutions, and a quality blocker reports
+  that `finalize.json` still has pending tasks without authoritative execution
+  updates. Therefore `recover-blocked` is not a generic resume button even
+  after VJ8 is repaired. The U1/quality evidence must be resolved or explicitly
+  scoped by an approved transition; it must not be marked resolved merely to
+  bypass the gate.
+
+## Sol execution constraint
+
+The evidence above is complete. Make the judgement from this brief only; do
+not inspect the repository or launch tools. Return a firm, concise decision
+(contract choice, safe recovery order, and durable fixes), with no code edits.
+
+## Sol judgement (GPT-5.6 Sol, high reasoning; 2026-08-04)
+
+Sol's firm conclusion: VJ8 is a deterministic pre-dispatch validation failure,
+not a model, credential, container, disk, timeout, or worker failure. The
+`IdempotencyConflictError` behavior is correct and the four legacy tests must
+be updated to distinguish identical-content deduplication from divergent
+same-key rejection. T6 is not yet coherent: finish the outbox integration,
+declare `ledger_outbox.py` in the write set, resolve the public export claim,
+and run ledger + outbox + static-negative suites together.
+
+Sol's safe order is: preserve T1-T3/T6 receipts; make an immutable repair
+identity; prove the pinned runtime import; obtain one clean VJ8 plus outbox and
+static-suite pass; bind recovery to the newest VJ8 occurrence/fingerprint and
+reject the stale external-error phase result; resolve U1/quality blockers
+without fabricating resolutions; acquire a fresh marker-bound fenced lease;
+then invoke occurrence-scoped `recover-blocked` and resume execute. Do not
+force-proceed or relaunch blindly.
+
+Sol's durable invariant is fail-closed startup: no managed chain may read or
+advance execution state, dispatch a worker, or emit `executing` until the exact
+PID/start identity/container/session owns a current marker-bound fenced lease.
+Lease acquisition/renewal errors must stop dispatch, stale-owner takeover must
+be an explicit fenced CAS, and observers must classify fresh events without a
+matching lease as unowned activity/custody violation. Terminal/block
+transitions must quarantine unmatched LLM telemetry; status and notifications
+must join by occurrence ID and freshness. Automatic repair is appropriate for
+
+exec
+/bin/zsh -lc "sed -n '2350,2395p;5270,5335p' arnold_pipelines/megaplan/cloud/cli.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+def _chain_start_command(
+    remote_spec_path: str,
+    *,
+    project_dir: str | None = None,
+    engine_dir: str | None = None,
+    one_shot: bool = False,
+    no_git_refresh: bool = False,
+    log_relative: str = _CHAIN_LOG_RELATIVE,
+) -> str:
+    """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
+
+    Both ``_run_chain_wrapper`` and ``cloud_supervise_tick`` use this helper
+    so the session name, log path, trusted env var, and shell quoting stay
+    consistent across all entry points.
+    """
+    flags = f"--spec {shlex.quote(remote_spec_path)}"
+    if project_dir:
+        flags += f" --project-dir {shlex.quote(project_dir)}"
+    if one_shot:
+        flags += " --one"
+    if no_git_refresh:
+        flags += " --no-git-refresh"
+    log_target = (
+        shlex.quote(str(PurePosixPath(project_dir) / log_relative))
+        if project_dir
+        else shlex.quote(log_relative)
+    )
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
+    if engine_dir:
+        cwd = shlex.quote(project_dir or engine_dir)
+        engine_path = shlex.quote(engine_dir)
+        prefix += (
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+        )
+    return (
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
+        f">> {log_target} 2>&1"
+    )
+
+
+def _write_session_marker_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
+    if workspace is None:
+        workspace = spec.repo.workspace
+        workspace_source = "spec"
+
+    # --- chain_session ---------------------------------------------------------
+    chain_session: str | None = None
+    session_source: str = "default"
+
+    # 1. chain_state.chain_session
+    cs = getattr(chain_state, "chain_session", None)
+    if isinstance(cs, str) and cs.strip():
+        chain_session = cs
+        session_source = "chain_state"
+    # 2. marker.chain_session
+    elif isinstance(marker.get("chain_session"), str) and marker["chain_session"].strip():
+        chain_session = marker["chain_session"]
+        session_source = "marker"
+    # 3. spec.chain.chain_session
+    elif spec.chain is not None and spec.chain.chain_session:
+        chain_session = spec.chain.chain_session
+        session_source = "spec"
+    # 4. CHAIN_SESSION_NAME
+    if chain_session is None:
+        chain_session = CHAIN_SESSION_NAME
+        session_source = "default"
+
+    # --- extra_repos -----------------------------------------------------------
+    seen: set[str] = set()
+    extra_repos: list[str] = []
+    extra_repos_sources: list[str] = []
+
+    for source_label, source_list in (
+        ("spec", list(spec.extra_repos)),
+        ("chain_state", list(getattr(chain_state, "extra_repos", []))),
+        ("marker", list(marker.get("extra_repos", [])) if isinstance(marker.get("extra_repos"), list) else []),
+    ):
+        for repo in source_list:
+            if isinstance(repo, str) and repo.strip() and repo not in seen:
+                seen.add(repo)
+                extra_repos.append(repo)
+                extra_repos_sources.append(source_label)
+
+    return {
+        "workspace": workspace,
+        "chain_session": chain_session,
+        "extra_repos": extra_repos,
+        "remote_spec": remote_spec,
+        "source": {
+            "workspace": workspace_source,
+            "session": session_source,
+            "extra_repos": extra_repos_sources,
+        },
+    }
+
+
+def _marker_path_no_create(cloud_yaml_path: Path) -> Path:
+    """Return the marker directory path without creating any directories.
+
+    This is intentionally read-only so that status / supervisor reads do not
+    require write access to ``~/.megaplan/cloud/markers/``.
+    """
+    marker_key = hashlib.sha256(str(cloud_yaml_path.resolve()).encode()).hexdigest()[:16]
+    return Path.home() / ".megaplan" / "cloud" / "markers" / marker_key
+
+
+def _load_marker(root: Path, args: argparse.Namespace) -> dict[str, Any] | None:
+
+exec
+/bin/zsh -lc "sed -n '1,260p' arnold_pipelines/megaplan/cloud/template.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+"""Cloud deployment template rendering and staging."""
+
+from __future__ import annotations
+
+import shlex
+import stat
+from importlib import resources
+from pathlib import Path, PurePosixPath
+from string import Template
+
+from arnold_pipelines.megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
+from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
+from arnold_pipelines.megaplan.types import (
+    format_agent_spec,
+    is_premium_placeholder_spec,
+    resolve_premium_placeholder_spec,
+)
+
+
+PLACEHOLDERS = (
+    "REPO_URL",
+    "REPO_BRANCH",
+    "WORKSPACE_PATH",
+    "CODEX_MODEL",
+    "CODEX_REASONING",
+    "CODEX_EMAIL",
+    "MEGAPLAN_REF",
+    "MEGAPLAN_REPO",
+    "MEGAPLAN_INSTALL_SPEC_OVERRIDE",
+    "CODEX_AUTH_METHOD",
+    "CODEX_AUTH_CONFIG_BLOCK",
+    "ROBUSTNESS",
+    "MODE",
+    "IDEA_FILE",
+    "CHAIN_SPEC",
+    "AUTO_PLAN_NAME",
+    "AGENT_ROUTING_BLOCK",
+    "CLAUDE_AUTH_BLOCK",
+    "ENSURE_REPO_BLOCK",
+    "RUNNER_LAUNCH_BLOCK",
+)
+
+_TOOLCHAIN_RECIPES = {
+    "rust": """# Toolchain: rust
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+ENV PATH=/root/.cargo/bin:${PATH}""",
+    "go": """# Toolchain: go
+RUN curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV PATH=/usr/local/go/bin:${PATH}""",
+    "java": """# Toolchain: java
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk \
+    && rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    PATH=${JAVA_HOME}/bin:${PATH}""",
+}
+
+_AUTO_RUNNER = Template(
+    """if [ ! -f "$IDEA_FILE" ]; then
+  echo 'WARN: idea file missing, dropping to idle'
+  tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -l"
+else
+  tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -lc ${AUTO_COMMAND}"
+fi"""
+)
+
+_CHAIN_RUNNER = Template(
+    """if [ ! -f "$CHAIN_SPEC" ]; then
+  echo 'WARN: chain spec missing, dropping to idle'
+  tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -l"
+else
+  tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -lc ${CHAIN_COMMAND}"
+fi"""
+)
+
+_IDLE_RUNNER = Template("""tmux new-session -d -s agent -c ${WORKSPACE_PATH} "bash -l" """)
+
+
+def _entrypoint_template() -> Template:
+    text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("entrypoint.sh.tmpl").read_text(encoding="utf-8")
+    return Template(text)
+
+
+def _render_resource_template(name: str, values: dict[str, str]) -> str:
+    text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath(name).read_text(encoding="utf-8")
+    return Template(text).safe_substitute(values)
+
+
+def _dockerfile_template() -> Template:
+    text = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("Dockerfile").read_text(encoding="utf-8")
+    return Template(text)
+
+
+def _quoted(script: str) -> str:
+    return shlex.quote(script.strip())
+
+
+def render_ensure_repo_command(repo: RepoSpec) -> str:
+    """Render the fixed clone-if-missing command used by cloud entrypoints."""
+    workspace = PurePosixPath(repo.workspace)
+    parent = str(workspace.parent)
+    git_dir = str(workspace / ".git")
+    return " && ".join(
+        [
+            f"mkdir -p {shlex.quote(parent)}",
+            (
+                f"if [ ! -d {shlex.quote(git_dir)} ]; then "
+                f"git clone --branch {shlex.quote(repo.branch)} "
+                f"{shlex.quote(repo.url)} {shlex.quote(repo.workspace)}; "
+                "else true; fi"
+            ),
+        ]
+    )
+
+
+def render_ensure_repos_block(spec: CloudSpec) -> str:
+    """Clone primary + every extra repo if missing, in declared order.
+
+    Each repo lives at its own absolute workspace path so a multi-repo or
+    multi-tenant volume can hold them as siblings on independent branches.
+    """
+    blocks = [render_ensure_repo_command(spec.repo)]
+    for extra in spec.extra_repos:
+        blocks.append(render_ensure_repo_command(extra))
+    return "\n".join(blocks)
+
+
+def _auto_command(spec: CloudSpec) -> str:
+    assert spec.auto is not None
+    plan_dir = f"{spec.repo.workspace}/.megaplan/plans/{spec.auto.plan_name}"
+    script = f"""
+set -euo pipefail
+PLAN_DIR={shlex.quote(plan_dir)}
+if [[ ! -d "$PLAN_DIR" ]]; then
+  IDEA="$(cat "$IDEA_FILE")"
+  arnold init --project-dir {shlex.quote(spec.repo.workspace)} --name {shlex.quote(spec.auto.plan_name)} --auto-approve --robustness {shlex.quote(spec.auto.robustness)} "$IDEA"
+fi
+exec arnold-supervise {shlex.quote(f"auto-{spec.auto.plan_name}")} arnold auto --plan {shlex.quote(spec.auto.plan_name)}
+"""
+    return _quoted(script)
+
+
+def _chain_command(spec: CloudSpec) -> str:
+    assert spec.chain is not None
+    script = f"""
+set -euo pipefail
+exec arnold-supervise chain arnold-chain {shlex.quote(spec.chain.spec)}
+"""
+    return _quoted(script)
+
+
+def _runner_block(spec: CloudSpec) -> str:
+    values = {"WORKSPACE_PATH": shlex.quote(spec.repo.workspace)}
+    if spec.mode == "auto":
+        return _AUTO_RUNNER.safe_substitute(
+            values | {"AUTO_COMMAND": _auto_command(spec)}
+        )
+    if spec.mode == "chain":
+        return _CHAIN_RUNNER.safe_substitute(
+            values | {"CHAIN_COMMAND": _chain_command(spec)}
+        )
+    return _IDLE_RUNNER.safe_substitute(values)
+
+
+def _agent_routing_block(spec: CloudSpec) -> str:
+    default_agent = spec.agents.get("default")
+    selected_vendor = (
+        default_agent
+        if default_agent in {"claude", "codex"}
+        else effective_premium_vendor()
+    )
+    routing = {
+        step: spec.agents.get(step, default_agent or fallback)
+        for step, fallback in DEFAULT_AGENT_ROUTING.items()
+    }
+    return "\n".join(
+        "arnold config set agents."
+        f"{step} "
+        f"{format_agent_spec(resolve_premium_placeholder_spec(agent, selected_vendor)) if is_premium_placeholder_spec(agent) else agent} "
+        ">/dev/null 2>&1 || true"
+        for step, agent in routing.items()
+    )
+
+
+def _claude_auth_block() -> str:
+    # Three auth modes, in priority order:
+    #
+    # 1. CLAUDE_CODE_REFRESH_TOKEN (preferred — uses Max/Pro subscription, fully
+    #    programmatic): install a `claude` shim at /usr/local/bin/claude that
+    #    refreshes the OAuth access token on every invocation, exports it as
+    #    ANTHROPIC_API_KEY, then exec's the real binary. The refresh token
+    #    rotates per use and is persisted to the volume.
+    #
+    # 2. ANTHROPIC_API_KEY (legacy / metered API): claude --bare reads it
+    #    directly; nothing to install. claude setup-token is NOT attempted
+    #    because it requires interactive browser OAuth.
+    #
+    # 3. Neither: claude will fail at first call. Warn loudly.
+    #
+    # See megaplan-cloud skill for full design rationale.
+    return r"""# ── Claude auth: refresh-token shim takes precedence ─────────────────
+CLAUDE_CREDS_DIR=/workspace/.claude-creds
+mkdir -p "$CLAUDE_CREDS_DIR"
+chmod 700 "$CLAUDE_CREDS_DIR"
+
+if [[ -n "${CLAUDE_CODE_REFRESH_TOKEN:-}" ]]; then
+  # Seed the on-volume refresh token from the env on first boot (or if missing).
+  if [[ ! -s "$CLAUDE_CREDS_DIR/refresh_token" ]]; then
+    printf '%s' "$CLAUDE_CODE_REFRESH_TOKEN" > "$CLAUDE_CREDS_DIR/refresh_token"
+    chmod 600 "$CLAUDE_CREDS_DIR/refresh_token"
+  fi
+
+  REAL_CLAUDE=$(command -v claude || true)
+  if [[ -z "$REAL_CLAUDE" ]]; then
+    echo "WARN: claude binary not on PATH; skipping refresh-token shim install"
+  else
+    # Move the real binary aside so we can shadow it (idempotent across reboots).
+    if [[ ! -x /usr/local/bin/claude.real ]]; then
+      cp "$REAL_CLAUDE" /usr/local/bin/claude.real
+      chmod +x /usr/local/bin/claude.real
+    fi
+
+    # Refresh helper (usable standalone, and as `apiKeyHelper` via --settings).
+    cat > /usr/local/bin/claude-key-helper <<'HELPER_EOF'
+#!/usr/bin/env bash
+# Refresh the Claude Code OAuth access token if missing/expiring, then print it
+# to stdout. Refresh token rotates per use and is persisted to the volume.
+set -euo pipefail
+DIR=/workspace/.claude-creds
+mkdir -p "$DIR"
+NOW=$(date +%s)
+EXP=$(cat "$DIR/expires_at" 2>/dev/null || echo 0)
+if [[ ! -s "$DIR/access_token" ]] || [[ "$NOW" -ge $((EXP - 300)) ]]; then
+  RT=$(cat "$DIR/refresh_token" 2>/dev/null || true)
+  if [[ -z "$RT" ]]; then
+    echo "claude-key-helper: no refresh token at $DIR/refresh_token" >&2
+    exit 1
+  fi
+  CID=${CLAUDE_CODE_OAUTH_CLIENT_ID:-9d1c250a-e61b-44d9-88ed-5944d1962f5e}
+  URL=${CLAUDE_CODE_OAUTH_TOKEN_URL:-https://api.anthropic.com/v1/oauth/token}
+  RESP=$(curl -sS --max-time 15 -X POST "$URL" \
+    -H "Content-Type: application/json" \
+    -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$RT\",\"client_id\":\"$CID\"}")
+  AT=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
+  EXPIRES_IN=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("expires_in",0))' 2>/dev/null)
+  NEW_RT=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("refresh_token",""))' 2>/dev/null)
+  if [[ -z "$AT" ]]; then
+    echo "claude-key-helper: refresh failed: $RESP" >&2
+    exit 1
+  fi
+  printf '%s' "$AT" > "$DIR/access_token"
+  echo $((NOW + EXPIRES_IN)) > "$DIR/expires_at"
+  [[ -n "$NEW_RT" ]] && printf '%s' "$NEW_RT" > "$DIR/refresh_token"
+  chmod 600 "$DIR/access_token" "$DIR/refresh_token" "$DIR/expires_at"
+fi
+cat "$DIR/access_token"
+HELPER_EOF
+    chmod +x /usr/local/bin/claude-key-helper
+
+    # Claude shim: refresh on entry, export, exec real binary.
+    cat > /usr/local/bin/claude <<'SHIM_EOF'
+
+exec
+/bin/zsh -lc "sed -n '260,560p' arnold_pipelines/megaplan/cloud/template.py arnold_pipelines/megaplan/resident/runtime.py | sed -n '/template.py/,/runtime.py/p'" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+exec
+/bin/zsh -lc "sed -n '350,440p' arnold_pipelines/megaplan/resident/runtime.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+                        idempotency_key=deterministic_idempotency_key(
+                            "resident-escalation-confirmation",
+                            event.idempotency_key,
+                            confirmation.request_id or event.escalation_id,
+                        ),
+                        metadata={
+                            "escalation_id": event.escalation_id,
+                            "confirmation_required": True,
+                            "request_id": confirmation.request_id,
+                        },
+                    )
+                )
+            return True
+
+        lock_dir = _repair_lock_dir_from_config(self.config, target.session, repair_data_dir)
+        from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter, clear_needs_human_marker
+        from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+
+        lock = acquire_repair_lock(
+            lock_dir,
+            session=f"resident-escalation:{target.session}",
+            target_id=target.target_id,
+            extra={"escalation_id": event.escalation_id, "resume_handler": resume_handler},
+            is_pid_live=_pid_is_live,
+        )
+        if not lock.acquired:
+            self.emitter.log_system_event(
+                level="warn",
+                category="system",
+                event_type="escalation_resume_deferred",
+                message="Escalation answer confirmed but repair lock is busy",
+                details={
+                    "escalation_id": event.escalation_id,
+                    "session": target.session,
+                    "lock_status": lock.status,
+                    "lock_dir": str(lock_dir),
+                },
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-escalation-lock-busy",
+                    event.idempotency_key,
+                    lock.status,
+                ),
+            )
+            return True
+
+        writer = EscalationLedgerWriter()
+        writer.enable(repair_data_dir)
+        resume_status = "unsupported_handler"
+        try:
+            writer.write_answered(
+                target.session,
+                escalation_id=event.escalation_id,
+                responder_user_id=event.subject.user_id,
+                channel_id=event.subject.channel_id or "",
+                message_id=_optional_string(event.raw.get("discord_message_id")) or "",
+                extra={"resume_handler": resume_handler},
+            )
+            marker_path = Path(repair_data_dir) / f"{target.session}.needs-human.json"
+            if resume_handler == "cloud_resume":
+                cloud_result = await self.profile.cloud_backend.run(
+                    CloudToolRequest(
+                        operation="cloud_resume",
+                        target_id=target.current_plan or target.target_id,
+                        arguments={
+                            "plan": target.current_plan or target.target_id,
+                            "cloud_yaml": str(self.config.cloud_yaml_path),
+                        },
+                        confirmed=True,
+                    )
+                )
+                resume_status = cloud_result.classification
+                clear_needs_human_marker(marker_path)
+            writer.write_resume_attempted(
+                target.session,
+                escalation_id=event.escalation_id,
+                action=resume_handler,
+                resume_status=resume_status,
+            )
+        finally:
+            release_repair_lock(lock_dir, owner=lock.owner)
+        return True
+
+    def _build_history(self, conversation_id: str, *, exclude_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
+        """Reconstruct the last N prior messages as user/assistant turns for context.
+
+        ``exclude_ids`` drops the current burst, which is already persisted before
+        the turn runs, so it is not double-counted as history.
+        """
+        if self.config.history_window <= 0:
+            return ()
+        rows = self.store.list_conversation_messages(
+
+exec
+/bin/zsh -lc "sed -n '1,260p' tests/cloud/test_cloud_chain_command.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import tarfile
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import yaml
+
+from arnold_pipelines.megaplan import chain as chain_module
+from arnold_pipelines.megaplan.cloud.cli import (
+    _bootstrap_launch_command,
+    _chain_anchor_uploads,
+    _chain_launch_verification_command,
+    _chain_project_root,
+    _chain_start_command,
+    _cloud_chains_command,
+    _cloud_session_plan_state,
+    _derive_chain_launch_context,
+    _durable_megaplan_uploads,
+    _derive_bootstrap_session_name,
+    _latest_failure_from_plan_status,
+    _materialize_canonical_epic_input,
+    _normalized_chain_upload_spec,
+    _phase_model_by_label_from_preflight,
+    _filter_cloud_sessions_since,
+    _parse_cloud_status_since,
+    _remote_chain_upload_path,
+    _remote_chain_workspace_path,
+    _resolve_resume_workspace,
+    _run_cloud_chains,
+    _run_preflight,
+    _run_sync_megaplan,
+    _run_launch_epic_wrapper,
+    _run_bootstrap_wrapper,
+    _status_should_use_chain,
+    _tmux_chain_launch_command,
+    _validate_chain_spec_location,
+    build_cloud_parser,
+    cloud_chain_status_payload,
+    run_cloud_cli,
+)
+from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value
+from arnold_pipelines.megaplan.cloud.spec import (
+    ChainSubSpec,
+    CloudSpec,
+    CodexSpec,
+    MegaplanSpec,
+    RepoSpec,
+    ResourcesSpec,
+    SshSpec,
+)
+from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
+from arnold_pipelines.megaplan.types import CliError
+
+
+def _cloud_spec() -> CloudSpec:
+    return CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", branch="main"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+
+
+def _cloud_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    build_cloud_parser(subparsers)
+    return parser
+
+
+def test_cloud_status_and_chains_accept_compact_since_flags() -> None:
+    status_args = _cloud_parser().parse_args(["cloud", "status", "--all", "--compact", "--since", "12h"])
+    chains_args = _cloud_parser().parse_args(["cloud", "chains", "--compact", "--since", "12h"])
+
+    assert status_args.cloud_action == "status"
+    assert status_args.all is True
+    assert status_args.compact is True
+    assert status_args.since == "12h"
+    assert chains_args.cloud_action == "chains"
+    assert chains_args.compact is True
+    assert chains_args.since == "12h"
+
+
+def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
+    command = _chain_start_command(
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/arnold",
+    )
+
+    assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
+    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
+    assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+
+
+def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        session_name="demo-chain",
+        identity_digest="abc123",
+    )
+
+    marker_json = re.search(r"printf %s '([^']+)'", command)
+
+    assert marker_json is not None
+    marker = json.loads(marker_json.group(1))
+    assert marker["run_kind"] == "chain"
+
+
+def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {}
+
+
+def test_preflight_phase_model_materialization_keeps_explicit_profile_pins() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": ["prep=hermes:deepseek:deepseek-v4-pro"],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "prep": "hermes:deepseek:deepseek-v4-pro",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["prep=hermes:deepseek:deepseek-v4-pro"]}
+
+
+def test_preflight_phase_model_materialization_keeps_cloud_default_without_profile() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": None,
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:medium",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["execute=codex:medium", "plan=codex:high"]}
+
+
+def test_preflight_phase_model_materialization_preserves_explicit_encoded_chain_without_profile() -> None:
+    encoded_execute = encode_phase_model_value(
+        "execute",
+        ["codex:gpt-5.4", "claude:sonnet"],
+    )
+
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": None,
+                    "explicit_phase_model": [encoded_execute],
+                    "resolved_phase_chains": {
+                        "plan": ["codex:high"],
+                        "execute": ["codex:gpt-5.4", "claude:sonnet"],
+                    },
+                    "resolved_phase_map": {
+                        "plan": "codex:high",
+                        "execute": "codex:gpt-5.4",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": [encoded_execute, "plan=codex:high"]}
+
+
+def test_launch_epic_rejects_missing_north_star(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    brief_dir = app / ".megaplan" / "initiatives" / "demo"
+    brief_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (brief_dir / "m1.md").write_text("M1\n", encoding="utf-8")
+
+    with pytest.raises(Exception) as excinfo:
+        _materialize_canonical_epic_input(
+            root=tmp_path,
+            spec=_cloud_spec(),
+            spec_or_dir=str(brief_dir),
+        )
+
+    assert getattr(excinfo.value, "code", "") == "missing_north_star"
+    assert "NORTHSTAR.md" in getattr(excinfo.value, "message", str(excinfo.value))
+
+
+def test_launch_epic_materializes_canonical_layout_from_brief_dir(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    brief_dir = app / "incoming" / "research-plan-execute-epic"
+    brief_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (brief_dir / "NORTHSTAR.md").write_text("North star\n", encoding="utf-8")
+    (brief_dir / "m1-contracts.md").write_text("M1\n", encoding="utf-8")
+    (brief_dir / "m2-routing.md").write_text("M2\n", encoding="utf-8")
+
+    materialized = _materialize_canonical_epic_input(
+        root=tmp_path,
+        spec=_cloud_spec(),
+        spec_or_dir=str(brief_dir),
+    )
+
+    assert materialized.generated_chain is True
+    assert materialized.slug == "research-plan-execute-epic"
+    assert materialized.spec_path == app / ".megaplan" / "initiatives" / "research-plan-execute-epic" / "chain.yaml"
+    raw = yaml.safe_load(materialized.spec_path.read_text(encoding="utf-8"))
+    assert raw["anchors"] == {"north_star": "NORTHSTAR.md"}
+    assert raw["milestones"][0]["idea"] == ".megaplan/initiatives/research-plan-execute-epic/briefs/m1-contracts.md"
+    assert (materialized.brief_dir / "NORTHSTAR.md").is_file()
+    assert (materialized.brief_dir / "briefs" / "m2-routing.md").is_file()
+    assert str(materialized.spec_path) in materialized.created_files
+
+
+class _LaunchEpicProvider:
+    def __init__(self) -> None:
+        self.uploads: list[tuple[Path, str]] = []
+        self.remote_files: set[str] = set()
+
+exec
+/bin/zsh -lc "sed -n '/runtime/,+3p' tests/cloud/test_cloud_chain_command.py" in /Users/peteromalley/Documents/Arnold
+ succeeded in 0ms:
+from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
+from arnold_pipelines.megaplan.types import CliError
+
+
+    summary = resolve_cloud_chain_runtime_dependencies(
+        chain_spec,
+        project_dir=None,
+        cloud_default_agent="codex",
+    summary = resolve_cloud_chain_runtime_dependencies(
+        chain_spec,
+        project_dir=None,
+        cloud_default_agent="codex",
+    assert "bun" in summary["runtime_commands"]
+    assert "codex" in summary["runtime_commands"]
+    assert "claude" in summary["runtime_commands"]
+    assert "DEEPSEEK_API_KEY" in summary["env_hints"]
+def test_durable_megaplan_uploads_exclude_runtime_state(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    (project / ".megaplan" / "initiatives" / "demo").mkdir(parents=True)
+    (project / ".megaplan" / "tickets").mkdir(parents=True)
+
+codex
+The root divergence is lineage, not ledger semantics:
+
+1. `cloud/template.py::_chain_command` launches `arnold-supervise chain arnold-chain …` from the tmux entrypoint, with no explicit pinned Python/runtime binding.
+2. `cloud/cli.py::_chain_start_command` launches `python -P -m arnold_pipelines.megaplan chain start …`, binds `PYTHONPATH` through `MEGAPLAN_RUNTIME_SRC`/`engine_dir`, and sources `/workspace/.cloud-hot-env`.
+3. `resident/runtime.py` handles `cloud_resume` through `profile.cloud_backend.run(...)`, reaching the cloud wrapper rather than proving the same runtime lineage as the chain launcher.
+4. Recovery/status can join stale `phase_result.json` and marker data against newer `state.json` failures, producing divergent incident identity and potentially the wrong recovery transition.
+5. The chain used pinned `c116`, while resident/foreground imports could resolve dirty editable `/workspace/arnold` or another live checkout. The legacy four ledger tests encode the wrong contract; the implementation’s divergent-key rejection is correct.
+
+The smallest custody identity envelope is:
+
+`session + plan + occurrence/failure fingerprint + job + container identity + PID + process-start identity + source revision/runtime code hash + marker lease fence`.
+
+A process is authoritative only when that exact envelope is represented by a current marker-bound lease. PID, tmux presence, event heartbeats, or a sidecar alone are insufficient.
+
+Four acceptance tests:
+
+1. `test_chain_start_command_sources_cloud_hot_env_before_launch` must assert the chain command binds the selected runtime and emits the trusted-module invocation. Add the matching rendered-entrypoint assertion that template-generated chain launches use that same binding.
+2. Lease acquisition failure must make startup fail closed: no chain execution, state mutation, worker dispatch, or `executing` projection.
+3. A stale-owner takeover must require fenced compare-and-swap on session/container/PID-start identity; an observer must classify fresh unleased activity as a custody violation.
+4. Recovery must accept only the newest VJ8 occurrence/fingerprint, reject stale `phase_result.json`, require one clean ledger+outbox+static suite pass, and preserve unresolved U1/quality blockers. The four stale tests should assert identical-content deduplication but divergent same-key `IdempotencyConflictError`.
+tokens used
+38,107

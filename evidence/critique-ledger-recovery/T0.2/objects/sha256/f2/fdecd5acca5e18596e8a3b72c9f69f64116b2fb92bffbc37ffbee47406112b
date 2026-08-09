@@ -1,0 +1,262 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 0,
+  "current_plan_name": "cl2-wbc-backed-ledger-20260731-1411",
+  "current_milestone_base_sha": null,
+  "target_base_ref": "bf25a699f85315e1a282df55502ba275253411f9",
+  "last_state": "gated",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": null,
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_binding": {
+      "schema": "arnold.megaplan.chain_execution_binding.v1",
+      "bound_at": "2026-07-31T14:11:48Z",
+      "launched_identity": {
+        "schema": "arnold.megaplan.chain_execution_binding.v1",
+        "spec_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+        "chain_spec_sha256": "52e62f1f4f00dfb687ab8dfeb12474015e0803a35d244ccec3472abb115aa36e",
+        "milestone_sequence": [
+          {
+            "index": 0,
+            "label": "cl2-ledger-replay",
+            "idea": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md"
+          },
+          {
+            "index": 1,
+            "label": "cl3-routing-briefings",
+            "idea": ".megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md"
+          },
+          {
+            "index": 2,
+            "label": "cl4-reconcile-role-flow",
+            "idea": ".megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md"
+          },
+          {
+            "index": 3,
+            "label": "cl5-cutover-retirement",
+            "idea": ".megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md"
+          }
+        ],
+        "assets": [
+          {
+            "kind": "north_star",
+            "declared_path": "NORTHSTAR.md",
+            "resolved_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/NORTHSTAR.md",
+            "sha256": "86913f9844fd6a7b4cdc351c921d0bc6360dc339a4503c3eeff8a9790cfc34d6",
+            "exists": true,
+            "semantic_sha256": "86913f9844fd6a7b4cdc351c921d0bc6360dc339a4503c3eeff8a9790cfc34d6"
+          },
+          {
+            "kind": "milestone_brief:0",
+            "declared_path": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+            "resolved_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+            "sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+            "exists": true,
+            "semantic_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f"
+          },
+          {
+            "kind": "milestone_brief:1",
+            "declared_path": ".megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md",
+            "resolved_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md",
+            "sha256": "1fb68674d5c71fba11ed1063615c1bb0862d3472ce6c632c3b22c89ba95f42bd",
+            "exists": true,
+            "semantic_sha256": "1fb68674d5c71fba11ed1063615c1bb0862d3472ce6c632c3b22c89ba95f42bd"
+          },
+          {
+            "kind": "milestone_brief:2",
+            "declared_path": ".megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md",
+            "resolved_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md",
+            "sha256": "965af7bead5c9963defb1a0589f0557039907d98c8bcc197bb13b152c55fb06f",
+            "exists": true,
+            "semantic_sha256": "965af7bead5c9963defb1a0589f0557039907d98c8bcc197bb13b152c55fb06f"
+          },
+          {
+            "kind": "milestone_brief:3",
+            "declared_path": ".megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md",
+            "resolved_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md",
+            "sha256": "9ae3975334a7e40db8f5637ddb496432ae676c3300338108b235bb2cd577eae0",
+            "exists": true,
+            "semantic_sha256": "9ae3975334a7e40db8f5637ddb496432ae676c3300338108b235bb2cd577eae0"
+          }
+        ],
+        "intended_initiative_revision": "ae60c607afbaf40d5545afc2f9d88c27d2e6bbdf",
+        "initiative_path": ".megaplan/initiatives/critique-ledger",
+        "bundle_sha256": "1ce3c6366f05eb3e38520c97896e62ebaee8bc9349b8011a00e3eecae7d87f0d",
+        "runtime": {
+          "import_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "source_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "editable_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "editable_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "direct_url": {
+            "dir_info": {
+              "editable": true
+            },
+            "url": "file:///workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4"
+          },
+          "pth": [
+            {
+              "path": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth",
+              "sha256": "1cd199df811a9218328548267f03db4d9a61d71f53beecdb78f50349c8127ec9",
+              "entries": [
+                "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+                "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+                "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4"
+              ],
+              "readable": true
+            }
+          ],
+          "imports": {
+            "arnold": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold/__init__.py",
+            "arnold_pipelines": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold_pipelines/__init__.py",
+            "megaplan": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold_pipelines/megaplan/__init__.py"
+          },
+          "content_sha256": "0bf3bca29677db3717e6048fff6c461d28ff1085dd2a81baf11655336c253733"
+        },
+        "revision_verification": {
+          "ok": true,
+          "revision": "ae60c607afbaf40d5545afc2f9d88c27d2e6bbdf",
+          "initiative_path": ".megaplan/initiatives/critique-ledger",
+          "checks": [
+            {
+              "kind": "chain_spec",
+              "revision_path": ".megaplan/initiatives/critique-ledger/chain.yaml",
+              "expected_sha256": "0bca6d50dbbdbb8061f4fd9a08b763471990cc4cc404e0d11abcae0c0788de4d",
+              "active_sha256": "0bca6d50dbbdbb8061f4fd9a08b763471990cc4cc404e0d11abcae0c0788de4d",
+              "matches": true
+            },
+            {
+              "kind": "north_star",
+              "revision_path": ".megaplan/initiatives/critique-ledger/NORTHSTAR.md",
+              "expected_sha256": "86913f9844fd6a7b4cdc351c921d0bc6360dc339a4503c3eeff8a9790cfc34d6",
+              "active_sha256": "86913f9844fd6a7b4cdc351c921d0bc6360dc339a4503c3eeff8a9790cfc34d6",
+              "matches": true
+            },
+            {
+              "kind": "milestone_brief:0",
+              "revision_path": ".megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md",
+              "expected_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+              "active_sha256": "b561bbad84c57f0c37879dbad213e6f66ee9e404b4f9e9059bfc956d9058d82f",
+              "matches": true
+            },
+            {
+              "kind": "milestone_brief:1",
+              "revision_path": ".megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md",
+              "expected_sha256": "1fb68674d5c71fba11ed1063615c1bb0862d3472ce6c632c3b22c89ba95f42bd",
+              "active_sha256": "1fb68674d5c71fba11ed1063615c1bb0862d3472ce6c632c3b22c89ba95f42bd",
+              "matches": true
+            },
+            {
+              "kind": "milestone_brief:2",
+              "revision_path": ".megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md",
+              "expected_sha256": "965af7bead5c9963defb1a0589f0557039907d98c8bcc197bb13b152c55fb06f",
+              "active_sha256": "965af7bead5c9963defb1a0589f0557039907d98c8bcc197bb13b152c55fb06f",
+              "matches": true
+            },
+            {
+              "kind": "milestone_brief:3",
+              "revision_path": ".megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md",
+              "expected_sha256": "9ae3975334a7e40db8f5637ddb496432ae676c3300338108b235bb2cd577eae0",
+              "active_sha256": "9ae3975334a7e40db8f5637ddb496432ae676c3300338108b235bb2cd577eae0",
+              "matches": true
+            }
+          ],
+          "errors": []
+        },
+        "ready": true,
+        "errors": []
+      },
+      "runtime_binding": {
+        "schema": "arnold.megaplan.chain_runtime_binding.v1",
+        "bound_at": "2026-07-31T14:11:48Z",
+        "current_identity": {
+          "import_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "source_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "editable_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "editable_revision": "c7bcb06af536acfe759c1b31a785afc19afe92d4",
+          "direct_url": {
+            "dir_info": {
+              "editable": true
+            },
+            "url": "file:///workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4"
+          },
+          "pth": [
+            {
+              "path": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth",
+              "sha256": "1cd199df811a9218328548267f03db4d9a61d71f53beecdb78f50349c8127ec9",
+              "entries": [
+                "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+                "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+                "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4"
+              ],
+              "readable": true
+            }
+          ],
+          "imports": {
+            "arnold": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold/__init__.py",
+            "arnold_pipelines": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold_pipelines/__init__.py",
+            "megaplan": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4/arnold_pipelines/megaplan/__init__.py"
+          },
+          "content_sha256": "0bf3bca29677db3717e6048fff6c461d28ff1085dd2a81baf11655336c253733"
+        },
+        "rebind_events": []
+      }
+    },
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+      "target_root": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+      "work_dir": "/workspace/critique-ledger-accountability-v2-20260728/Arnold",
+      "engine_root": "/workspace/runtime-candidates/arnold-c7bcb06af536acfe759c1b31a785afc19afe92d4",
+      "target_head": "bf25a699f85315e1a282df55502ba275253411f9",
+      "target_base": "bf25a699f85315e1a282df55502ba275253411f9",
+      "target_base_ref": "megaplan/critique-ledger-accountability-v2-20260728",
+      "target_fallback_reason": null
+    },
+    "chain_spec_path": "/workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml",
+    "chain_spec_sha256": "52e62f1f4f00dfb687ab8dfeb12474015e0803a35d244ccec3472abb115aa36e",
+    "_m7_projection_writer": true,
+    "_m7_projection_id": "chain-state",
+    "_m7_projection_first_seen_at": "2026-07-31T14:11:48Z",
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-07-31T18:04:19Z",
+      "plan": "cl2-wbc-backed-ledger-20260731-1411",
+      "current_state": "gated",
+      "latest_failure": null,
+      "last_gate": {},
+      "active_step": null,
+      "pr_number": null,
+      "pr_state": null
+    }
+  },
+  "milestone_boundary_evidence": {
+    "cl2-ledger-replay": {
+      "milestone_label": "cl2-ledger-replay",
+      "milestone_index": 0,
+      "plan_name": "cl2-wbc-backed-ledger-20260731-1411",
+      "contract_id": "chain.milestone.start.1",
+      "contract_boundary_id": "chain_milestone_start",
+      "tip_ref": "bf25a699f85315e1a282df55502ba275253411f9"
+    }
+  },
+  "candidate_invalidation": {}
+}

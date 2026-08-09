@@ -1,0 +1,28 @@
+{
+  "code": "finalized_task_feasibility_failed",
+  "message": "Finalize rejected a candidate task graph before publication (dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_unknown, dependency_graph_invalid, write_overlap_unordered, write_overlap_unordered, write_overlap_unordered, write_overlap_unordered, write_overlap_unordered, write_overlap_unordered, write_overlap_unordered). The last admitted graph and accepted task authority remain unchanged; repair only the candidate graph.",
+  "next_step": "finalize",
+  "diagnostic_codes": [
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_unknown",
+    "dependency_graph_invalid",
+    "write_overlap_unordered",
+    "write_overlap_unordered",
+    "write_overlap_unordered",
+    "write_overlap_unordered",
+    "write_overlap_unordered",
+    "write_overlap_unordered",
+    "write_overlap_unordered"
+  ],
+  "candidate_id": "candidate:dbd6aa3ef9440f707f454148525e81e139cea6048ac7f50a4ac588e71f42c39c",
+  "failure_fingerprint": "8b362be792508b7ce613b0981863151f613f052312e9468ff19dfe9d726f65ab",
+  "occurrences": 1,
+  "circuit_open": false,
+  "report_artifact": "planner_repair.json",
+  "implementation_dispatch_allowed": false
+}

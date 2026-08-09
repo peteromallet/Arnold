@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "50fb3cb55f5bdb6100b1748ebb67b0e7592f106248fc1f57cea57fd4ea370eb5",
+  "created_at": "2026-07-11T19:34:49Z",
+  "source": "lifecycle_failure",
+  "session": "c1-contract-reality-20260711-1433",
+  "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/plans/c1-contract-reality-20260711-1433",
+  "queue_dir": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/plans/c1-contract-reality-20260711-1433",
+    "plan_name": "c1-contract-reality-20260711-1433",
+    "workspace_path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "phase_failed",
+    "current_state": "finalized",
+    "phase_or_step": "execute",
+    "milestone_or_plan": "c1-contract-reality-20260711-1433",
+    "gate_recommendation": "Inspect phase output and resume from the failed phase.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "115f1e94dc7aac2d87da198345306ae8377936a4cdd7ba15376f7e6b1146f693",
+  "root_cause_hint_hash": "719b3f967432507b7d5441be2fc87e0f633c112142abe7530723d50acb8ce6b7",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))"
+}

@@ -1,0 +1,33 @@
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        629734712 629718328         0     100% /
+/dev/sda1        629734712 629718328         0     100% /
+/dev/sda1        629734712 629718328         0     100% /
+Filesystem       Inodes   IUsed    IFree IUse% Mounted on
+/dev/sda1      39438480 6300176 33138304   16% /
+/dev/sda1      39438480 6300176 33138304   16% /
+/dev/sda1      39438480 6300176 33138304   16% /
+sysfs on /sys type sysfs (rw,nosuid,nodev,noexec,relatime)
+proc on /proc type proc (rw,nosuid,nodev,noexec,relatime)
+udev on /dev type devtmpfs (rw,nosuid,relatime,size=16005036k,nr_inodes=4001259,mode=755,inode64)
+devpts on /dev/pts type devpts (rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=000)
+tmpfs on /run type tmpfs (rw,nosuid,nodev,noexec,relatime,size=3208352k,mode=755,inode64)
+efivarfs on /sys/firmware/efi/efivars type efivarfs (rw,nosuid,nodev,noexec,relatime)
+/dev/sda1 on / type ext4 (rw,relatime)
+securityfs on /sys/kernel/security type securityfs (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /dev/shm type tmpfs (rw,nosuid,nodev,inode64)
+tmpfs on /run/lock type tmpfs (rw,nosuid,nodev,noexec,relatime,size=5120k,inode64)
+cgroup2 on /sys/fs/cgroup type cgroup2 (rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot)
+pstore on /sys/fs/pstore type pstore (rw,nosuid,nodev,noexec,relatime)
+bpf on /sys/fs/bpf type bpf (rw,nosuid,nodev,noexec,relatime,mode=700)
+systemd-1 on /proc/sys/fs/binfmt_misc type autofs (rw,relatime,fd=32,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=17446)
+hugetlbfs on /dev/hugepages type hugetlbfs (rw,nosuid,nodev,relatime,pagesize=2M)
+mqueue on /dev/mqueue type mqueue (rw,nosuid,nodev,noexec,relatime)
+debugfs on /sys/kernel/debug type debugfs (rw,nosuid,nodev,noexec,relatime)
+tracefs on /sys/kernel/tracing type tracefs (rw,nosuid,nodev,noexec,relatime)
+fusectl on /sys/fs/fuse/connections type fusectl (rw,nosuid,nodev,noexec,relatime)
+configfs on /sys/kernel/config type configfs (rw,nosuid,nodev,noexec,relatime)
+/dev/sda15 on /boot/efi type vfat (rw,relatime,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro)
+binfmt_misc on /proc/sys/fs/binfmt_misc type binfmt_misc (rw,nosuid,nodev,noexec,relatime)
+overlay on /var/lib/docker/rootfs/overlayfs/277d2e6dbc149e01b25881350238a7b0ff5de78cc27d8ef52c144dca7c35c5ab type overlay (rw,relatime,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/325/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/320/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/319/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/318/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/317/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/316/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/212/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/184/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/129/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/128/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/127/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/126/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/125/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/99/fs,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/326/fs,workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/326/work,nouserxattr)
+nsfs on /run/docker/netns/d4db62c2b664 type nsfs (rw)
+tmpfs on /run/user/0 type tmpfs (rw,nosuid,nodev,relatime,size=3208348k,nr_inodes=802087,mode=700,inode64)
