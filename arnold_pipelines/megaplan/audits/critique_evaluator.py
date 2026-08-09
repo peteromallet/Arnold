@@ -662,7 +662,7 @@ def validate_evaluator_verdict(
                 _bucket.add((_dom or "").strip())
         _overlap = sel_doms & skip_doms
         if _overlap:
-            warnings.append(
+            _reject(
                 f"Overlap between domain_selections and domain_skips: "
                 f"{sorted(_overlap)}."
             )
@@ -678,12 +678,12 @@ def validate_evaluator_verdict(
     critique_mode = payload.get("critique_mode")
     if critique_mode is not None:
         if not isinstance(critique_mode, str) or critique_mode not in {"BLIND", "HISTORY_AWARE"}:
-            warnings.append(
+            _reject(
                 f"`critique_mode` must be BLIND or HISTORY_AWARE, got {critique_mode!r}."
             )
         _allowed = ctx.get("allowed_critique_modes")
         if _allowed is not None and critique_mode not in set(_allowed):
-            warnings.append(
+            _reject(
                 f"`critique_mode` {critique_mode!r} not permitted by "
                 f"accepted context {sorted(_allowed)}."
             )
@@ -692,14 +692,14 @@ def validate_evaluator_verdict(
     if _exp_rev is not None:
         _ctx_rev = ctx.get("expected_revision")
         if _ctx_rev is not None and _exp_rev != _ctx_rev:
-            warnings.append(
+            _reject(
                 f"expected_revision {_exp_rev!r} != accepted context {_ctx_rev!r}."
             )
     _exp_hash = payload.get("expected_briefing_hash")
     if _exp_hash is not None:
         _ctx_hash = ctx.get("expected_briefing_hash")
         if _ctx_hash is not None and _exp_hash != _ctx_hash:
-            warnings.append(
+            _reject(
                 f"expected_briefing_hash {_exp_hash!r} != accepted context {_ctx_hash!r}."
             )
 
@@ -713,7 +713,7 @@ def validate_evaluator_verdict(
                 if _val is None:
                     continue
                 if isinstance(_val, bool) or not isinstance(_val, int) or _val < 0:
-                    warnings.append(
+                    _reject(
                         f"`budgets.{_key}` must be a non-negative integer, got {_val!r}."
                     )
             _cap = ctx.get("max_budget_findings")
@@ -724,7 +724,7 @@ def validate_evaluator_verdict(
                 and not isinstance(_bf, bool)
                 and _bf > _cap
             ):
-                warnings.append(
+                _reject(
                     f"`budgets.max_findings` {_bf} exceeds accepted cap {_cap}."
                 )
 
@@ -754,11 +754,11 @@ def validate_evaluator_verdict(
                 _tgt = _entry.get("target")
                 _reason = _entry.get("reason")
                 if not isinstance(_tgt, str) or not _tgt.strip():
-                    warnings.append(
+                    _reject(
                         f"selection_reasons {_i} is missing a non-empty `target`."
                     )
                 if not isinstance(_reason, str) or not _reason.strip():
-                    warnings.append(
+                    _reject(
                         f"selection_reasons {_i} ({_tgt!r}) is missing a non-empty `reason`."
                     )
 
