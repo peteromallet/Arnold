@@ -4,7 +4,7 @@ Covers:
 * Every legacy-handler or control-only canonical action is present in the matrix.
 * Every matrix entry is classified as either ``terminal_route`` or
   ``additive_config``.
-* Classification sets are disjoint and cover all 12 keys (11 legacy + cutover).
+* Classification sets are disjoint and cover all 13 keys (12 legacy/cutover + reconcile-plan-ledger).
 * No key is double-classified or misclassified as ``additive_config`` when
   it has explicit route bindings in the OVERRIDE step component.
 * Convenience exports (``TERMINAL_ROUTE_ACTIONS``, ``ADDITIVE_CONFIG_ACTIONS``)
@@ -56,7 +56,7 @@ class TestOverrideActionMatrixCompleteness:
 
     def test_all_12_keys_present(self) -> None:
         matrix_keys = frozenset(entry.action for entry in OVERRIDE_ACTION_MATRIX)
-        assert len(matrix_keys) == 12, f"Expected 12 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
+        assert len(matrix_keys) == 13, f"Expected 13 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
         assert matrix_keys == _ALL_KEYS, (
             f"Matrix keys do not match canonical dispatch registries.\n"
             f"  Missing from matrix: {sorted(_ALL_KEYS - matrix_keys)}\n"
@@ -124,7 +124,7 @@ class TestOverrideActionMatrixDisjointClassification:
         )
 
     def test_terminal_route_count(self) -> None:
-        assert len(TERMINAL_ROUTE_ACTIONS) == 7, (
+        assert len(TERMINAL_ROUTE_ACTIONS) == 8, (
             f"Expected 7 terminal-route actions, got {len(TERMINAL_ROUTE_ACTIONS)}: "
             f"{TERMINAL_ROUTE_ACTIONS}"
         )
