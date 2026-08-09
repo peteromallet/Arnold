@@ -1,0 +1,34 @@
+{
+  "schema": "arnold.megaplan.codex-response-evidence.v1",
+  "occurrence": {
+    "plan_name": "cl2-wbc-backed-ledger-20260805-2140",
+    "plan_dir": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140",
+    "phase": "finalize",
+    "plan_iteration": 5,
+    "invocation_id": "79bfce4d64e74c15",
+    "phase_wbc_attempt_id": "cc65bd5d-9be6-5fde-8935-e81eb7183609",
+    "worker_wbc_attempt_id": "63983f56-9c23-5d25-81f7-c49285dee6fd",
+    "nonce": "694ce97def4842cf899d700ca84fff7f",
+    "occurrence_id": "b599a4ae7229981f0be7a96847fa64d58bdcc4831c3de5899d37babd5db8bc16"
+  },
+  "repair_ordinal": 0,
+  "phase": "finalize",
+  "plan_name": "cl2-wbc-backed-ledger-20260805-2140",
+  "invocation_id": "79bfce4d64e74c15",
+  "phase_wbc_attempt_id": "cc65bd5d-9be6-5fde-8935-e81eb7183609",
+  "worker_wbc_attempt_id": "63983f56-9c23-5d25-81f7-c49285dee6fd",
+  "model": "gpt-5.6-sol",
+  "output_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/.megaplan/worker_tmp/response-finalize-b599a4ae7229981f0be7a96847fa64d58bdcc4831c3de5899d37babd5db8bc16-r0.json",
+  "transport": {
+    "sha256": "sha256:e477a8ad8c289f238f1a669feb3e1de9f48c49d3ecf759257a62f465260a46ed",
+    "bytes": 104504,
+    "path": ".megaplan/model-response-evidence/objects/e477a8ad8c289f238f1a669feb3e1de9f48c49d3ecf759257a62f465260a46ed.jsonl"
+  },
+  "selected_terminal_output": {
+    "sha256": "sha256:149c5cef24a9f9590d1319bb0addb20a06d86e539f06ff9260a6f441c7eac5f7",
+    "bytes": 384,
+    "path": ".megaplan/model-response-evidence/objects/149c5cef24a9f9590d1319bb0addb20a06d86e539f06ff9260a6f441c7eac5f7.json"
+  },
+  "selection_status": "accepted",
+  "selection_error": null
+}

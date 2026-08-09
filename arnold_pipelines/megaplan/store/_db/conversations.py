@@ -30,6 +30,7 @@ class DBConversationMixin:
         direction: str,
         content: str,
         discord_message_id: str | None = None,
+        discord_reply_provenance: dict[str, Any] | None = None,
         bot_turn_id: str | None = None,
         has_code_attachment: bool = False,
         has_image_attachment: bool = False,
@@ -67,17 +68,18 @@ class DBConversationMixin:
         row = conn.execute(
             """
             INSERT INTO messages (
-                id, epic_id, conversation_id, idempotency_key, direction, content, discord_message_id, bot_turn_id,
+                id, epic_id, conversation_id, idempotency_key, direction, content, discord_message_id,
+                discord_reply_provenance, bot_turn_id,
                 has_code_attachment, has_image_attachment, in_burst_with,
                 was_voice_message, audio_storage_url, transcription_metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE
             SET idempotency_key = EXCLUDED.idempotency_key
             RETURNING *
             """,
             [
                 str(uuid.uuid4()), epic_id, conversation_id, idempotency_key,
-                direction, content, discord_message_id,
+                direction, content, discord_message_id, _jb(discord_reply_provenance),
                 bot_turn_id, has_code_attachment, has_image_attachment,
                 _jb(list(in_burst_with) if in_burst_with is not None else None),
                 was_voice_message, audio_storage_url, _jb(transcription_metadata),
@@ -100,14 +102,28 @@ class DBConversationMixin:
         ).fetchall()
         return [Message(**row) for row in rows]
 
+    def find_conversation_message_by_discord_id(
+        self, conversation_id: str, discord_message_id: str
+    ) -> Message | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = %s AND discord_message_id = %s",
+            [conversation_id, discord_message_id],
+        ).fetchone()
+        return Message(**row) if row else None
+
     def update_message(self, message_id: str, *, idempotency_key: str | None = None,
         **changes: Any) -> Message:
         conn = self._get_conn()
+        current = conn.execute("SELECT * FROM messages WHERE id = %s", [message_id]).fetchone()
+        if current is not None and current["direction"] == "inbound":
+            for field in ("discord_message_id", "discord_reply_provenance"):
+                if field in changes and current[field] is not None and changes[field] != current[field]:
+                    raise RevisionConflict(f"immutable inbound Discord provenance field: {field}")
         if not changes:
-            row = conn.execute("SELECT * FROM messages WHERE id = %s", [message_id]).fetchone()
-            if row is None:
+            if current is None:
                 raise RevisionConflict(f"Message {message_id!r} not found")
-            return Message(**row)
+            return Message(**current)
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values()) + [message_id]
         row = conn.execute(

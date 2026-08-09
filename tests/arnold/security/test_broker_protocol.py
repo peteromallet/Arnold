@@ -3,15 +3,20 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from pathlib import Path
+
+import pytest
 
 from arnold.security import (
+    BROKER_SOCKET_ENV,
     REDACTED,
     ActionRequest,
     ActionVerdict,
-    BROKER_SOCKET_ENV,
     BrokerClient,
+    BrokerClientError,
     BrokerSecretStore,
     BrokerService,
+    BrokerServiceError,
     UnixBrokerServer,
 )
 
@@ -56,9 +61,11 @@ def test_broker_round_trip_sanitizes_supplied_secret_values() -> None:
     assert response["result"]["metadata"]["action_type"] == "git_push"
 
 
-def test_broker_client_server_unix_round_trip_without_secret_echo(tmp_path) -> None:
+def test_broker_client_server_unix_round_trip_without_secret_echo(
+    short_broker_socket_path: Path,
+) -> None:
     supplied_secret = "sk-unix-secret-token-1234567890"
-    socket_path = tmp_path / "broker.sock"
+    socket_path = short_broker_socket_path
     server = UnixBrokerServer(str(socket_path), service=BrokerService())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -80,6 +87,25 @@ def test_broker_client_server_unix_round_trip_without_secret_echo(tmp_path) -> N
 
     assert result.verdict is ActionVerdict.ALLOW
     assert supplied_secret not in serialized
+
+
+def test_broker_server_rejects_overlong_socket_path_with_actionable_error() -> None:
+    socket_path = "/tmp/" + ("overlong-broker-segment-" * 20) + ".sock"
+    with pytest.raises(
+        BrokerServiceError,
+        match="configure a shorter ARNOLD_BROKER_SOCKET path",
+    ):
+        UnixBrokerServer(socket_path, service=BrokerService())
+
+
+def test_broker_client_rejects_overlong_socket_path_with_actionable_error() -> None:
+    socket_path = "/tmp/" + ("overlong-broker-segment-" * 20) + ".sock"
+    client = BrokerClient(socket_path=socket_path)
+    with pytest.raises(
+        BrokerClientError,
+        match="configure a shorter ARNOLD_BROKER_SOCKET path",
+    ):
+        client._send({"version": 1, "operation": "credential_status"})
 
 
 def test_broker_client_fails_closed_when_configured_socket_unreachable(

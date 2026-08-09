@@ -21,16 +21,19 @@ class DBEpicMixin:
         state: str = "shaping",
         home_backend: str = "file",
         idempotency_key: str | None = None,
+        epic_id: str | None = None,
     ) -> Epic:
         self._require_actor()
         conn = self._get_conn()
+        if epic_id is None:
+            epic_id = str(uuid.uuid4())
         row = conn.execute(
             """
             INSERT INTO epics (id, title, goal, body, state, home_backend, revision)
             VALUES (%s, %s, %s, %s, %s, %s, 1)
             RETURNING *
             """,
-            [str(uuid.uuid4()), title, goal, body, state, home_backend],
+            [epic_id, title, goal, body, state, home_backend],
         ).fetchone()
         return Epic(**row)
 

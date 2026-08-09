@@ -1,5 +1,9 @@
 # M6: Producer-Side Immediate Verification
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 After a boundary producer believes it completed, the parent/controller re-reads
@@ -53,4 +57,3 @@ OUT:
 - semantic-health evaluator
 - repair request custody from M2
 - producer-side tests
-

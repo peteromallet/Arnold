@@ -1,0 +1,41 @@
+{
+  "schema": "arnold.superfixer.blocked_receipt.v1",
+  "decision": "blocked",
+  "disposition": "quarantine",
+  "target": {
+    "session": "critique-ledger-accountability-v3-r7-launch-20260805",
+    "workspace": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+    "plan": "cl2-wbc-backed-ledger-20260805-2140",
+    "occurrence": "sha256:f3b952beb7881acc80f5efc98b1f21b64a911cc6d17dd87b220e1d336b4e55c5"
+  },
+  "occurrence": "sha256:f3b952beb7881acc80f5efc98b1f21b64a911cc6d17dd87b220e1d336b4e55c5",
+  "superfixer_occurrence": "occ_critique_r7_superfixer_retry_20260806_v3_86e40e1e0058ad7934f251c0",
+  "managed_run_id": "subagent-20260806-113119-171252f9",
+  "missing_gates": [
+    "operator/Run Authority signed content-addressed approval for an A-lineage source repair of arnold_pipelines/megaplan/orchestration/critique_custody.py _resolution_for_finding (admit accepted_tradeoff && gate_expected && fixed_claim -> verified_plan_mutation), naming logical occurrence sha256:f3b952beb7881acc80f5efc98b1f21b64a911cc6d17dd87b220e1d336b4e55c5, prior runtime-A identity (d5848010695e28ddb9d9cbee8675d7ebe725caae / content e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6), approved clean A-lineage candidate commit + computed content identity, explicit runtime-B exclusion, exact source scope + focused-test receipt digests",
+    "accepted effect-barrier receipt covering all three prior finalize invocations (2026-08-06T00:53:27Z..00:53:46Z)",
+    "new runner fence rule and complete megaplan-repair-identity-v1 tuple (canonical recovery-dispatch attempt created through an authority-owned seam; no backfill from events/liveness/PID/state)",
+    "authority for exactly one request -> Run Authority decision -> one Custody claim/epoch -> one WBC attempt/effect -> one ordinary-fixer finalize invocation -> real validator + cursor/milestone advancement",
+    "notification suppression/admission identity for the recovery route (zero intents/effects recorded to date)"
+  ],
+  "next_owner": "Run Authority/operator owning chain execution binding and recovery admission; after approval, the Megaplan lifecycle coordinator owns canonical attempt production and the engine-runtime maintainer owns the approved A-lineage patch",
+  "return_condition": "operator-signed content-addressed approval receipt naming logical occurrence sha256:f3b952beb7881acc80f5efc98b1f21b64a911cc6d17dd87b220e1d336b4e55c5, prior runtime-A identity (d5848010695e28ddb9d9cbee8675d7ebe725caae / e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6), approved clean A-lineage candidate commit + content identity, explicit runtime-B exclusion, source scope + focused-test digests, effect-barrier receipt for the three prior finalize invocations, new runner fence + complete megaplan-repair-identity-v1 tuple; then exactly one producer run -> one request -> Run Authority decision -> one Custody claim/epoch -> one WBC attempt/effect -> one override recover-blocked (failure fingerprint 4a772446d29148efccc408bc04eaf07ce5fca741a7e2b1288df78218e4a8bc32) -> one finalize -> real validator + cursor/milestone advancement. Next attempt = first configured active schedule fire after this condition validates.",
+  "handoff_id": "sha256:d5e9aa809be2f7018ece44d891ed0575e82ad1cfdb1df6acd2574a45b7d5bc2c",
+  "follow_up_ticket": "01KZBC4GX4C8SN38Z53RSWZJEG",
+  "effects": {
+    "launched": false,
+    "resumed": false,
+    "restarted": false,
+    "forked": false,
+    "notified": false,
+    "mutated": false,
+    "repair_request_minted": false,
+    "custody_claim": false,
+    "wbc_attempt": false,
+    "provider_effect": false,
+    "epic_edited": false,
+    "schedule_cancelled": false
+  },
+  "authoritative_before_fingerprint": "sha256:a8c4416eb4e87db1d2bf52c2ee18c4f39c050206803f73bcac27867729c0e68b",
+  "authoritative_after_fingerprint": "sha256:a8c4416eb4e87db1d2bf52c2ee18c4f39c050206803f73bcac27867729c0e68b"
+}

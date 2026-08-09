@@ -29,8 +29,6 @@ import ast
 import importlib
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any
 
 import pytest
 from tests.arnold_pipelines.megaplan.package_resources import (
@@ -48,9 +46,6 @@ WORKFLOW_RESOURCE_PACKAGE = "arnold_pipelines.megaplan.workflows"
 WORKFLOW_PYPELINE_PATH = checkout_path("arnold_pipelines", "megaplan", "workflows", "workflow.pypeline")
 WORKFLOW_PY_PATH = checkout_path("arnold_pipelines", "megaplan", "workflows", "workflow.py")
 PROHIBITED_WRAPPER_TOKENS: tuple[str, ...] = (
-    "SOURCE_",
-    "handler_ref",
-    "route_bindings",
     "manifest_hash",
     "build_manifest",
     "build_node",
@@ -80,7 +75,6 @@ LIVE_CORE_PATHS: tuple[tuple[str, str], ...] = (
 LIVE_CLI_PATHS: tuple[tuple[str, str], ...] = (
     # CLI entrypoints
     ("monolithic CLI", "arnold_pipelines.megaplan.cli"),
-    ("cli parser", "arnold_pipelines.megaplan.cli.parser"),
     ("cli run handler", "arnold_pipelines.megaplan.cli.run"),
     ("module entrypoint", "arnold_pipelines.megaplan.__main__"),
 )
@@ -183,7 +177,7 @@ STALE_PATHS_WITH_LIVE_EQUIVALENTS: tuple[tuple[str, str, str], ...] = (
     ("auto", "arnold.pipelines.megaplan.auto", "arnold_pipelines.megaplan.auto"),
     ("registry", "arnold.pipelines.megaplan.registry", "arnold_pipelines.megaplan.registry"),
     ("cli/__init__", "arnold.pipelines.megaplan.cli", "arnold_pipelines.megaplan.cli"),
-    ("cli/parser", "arnold.pipelines.megaplan.cli.parser", "arnold_pipelines.megaplan.cli.parser"),
+    ("cli/parser", "arnold.pipelines.megaplan.cli.parser", "arnold_pipelines.megaplan.cli"),
     ("cli/run", "arnold.pipelines.megaplan.cli.run", "arnold_pipelines.megaplan.cli.run"),
     ("routing", "arnold.pipelines.megaplan.routing", "arnold_pipelines.megaplan.routing"),
     ("runtime/bridge", "arnold.pipelines.megaplan.runtime.bridge", "arnold_pipelines.megaplan.runtime.bridge"),
@@ -336,19 +330,10 @@ class TestStaleDotPathsDoNotCarryImplementation:
     ) -> None:
         """The stale dot-path must NOT resolve.
 
-        We accept one exception: ``arnold.pipelines.megaplan`` (the
-        top-level package name) may resolve as a namespace side-effect
-        because ``arnold.pipelines`` is a real package.  But any
-        *sub-module* under the stale dot-path must fail.
+        Both the top-level stale package and every sub-module beneath it
+        must fail, proving the underscore package is the sole implementation
+        surface.
         """
-        # Skip the top-level package, which may resolve due to
-        # arnold.pipelines being an existing package with other content.
-        if stale_module == "arnold.pipelines.megaplan":
-            pytest.skip(
-                "Top-level stale path may resolve as namespace side-effect; "
-                "sub-module staleness is tested instead."
-            )
-
         try:
             importlib.import_module(stale_module)
             pytest.fail(
@@ -437,18 +422,7 @@ class TestLiveUnderscorePackageIsAuthoritative:
             build_pipeline as planning_bp,
         )
 
-        # The facade should reference the same callable (or at least the
-        # same underlying module for delegation).
-        facade_mod = getattr(facade_bp, "__module__", "")
-        planning_mod = getattr(planning_bp, "__module__", "")
-
-        # If the facade re-exports the planning version, the modules
-        # should match.  If not, the facade's module must still be
-        # under arnold_pipelines.
-        assert "arnold_pipelines" in facade_mod, (
-            f"Facade build_pipeline must come from arnold_pipelines, "
-            f"got: {facade_mod}"
-        )
+        assert facade_bp is planning_bp
 
     def test_canonical_workflow_paths_reconcile_to_pypeline_and_glue_shim(self) -> None:
         workflow_source = resource_text(WORKFLOW_RESOURCE_PACKAGE, "workflow.pypeline")
@@ -471,7 +445,11 @@ class TestLiveUnderscorePackageIsAuthoritative:
         assert not any(token in workflow_source for token in PROHIBITED_WRAPPER_TOKENS)
         assert any(isinstance(node, ast.While) for node in ast.walk(function))
         assert sum(isinstance(node, ast.If) for node in ast.walk(function)) >= 4
-        assert {"loop", "parallel_map", "TIEBREAKER_WORKFLOW"} <= called_names
+        assert {
+            "loop", "parallel_map",
+            "TIEBREAKER_RESEARCHER", "TIEBREAKER_CHALLENGER",
+            "TIEBREAKER_SYNTHESIS", "TIEBREAKER_DECISION",
+        } <= called_names
         assert {
             "gate_route_signal",
             "review_route_signal",

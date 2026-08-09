@@ -11,12 +11,10 @@ already satisfy.  The canonical pipeline must:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import pytest
-
-from arnold.pipeline.native.ir import NativePipeline, NativeProgram
+from arnold.pipeline.native import validate_pipeline_purity
+from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.types import Pipeline as NeutralPipeline
 from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.workflows.planning import AUTHORING_SOURCE_PATH
@@ -129,6 +127,38 @@ class TestCanonicalMegaplanNativeContract:
     ``native_program`` consistent with the subpipeline contract.
     """
 
+    def test_canonical_native_program_passes_routing_purity(self) -> None:
+        """The active native topology proof must pass the purity validator."""
+        from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+
+        native_program = build_and_compile_pipeline().native_program
+        report = validate_pipeline_purity(native_program)
+
+        assert report.ok, [
+            diagnostic.code for diagnostic in report.diagnostics
+        ]
+
+    def test_canonical_dsl_routes_equal_native_topology_routes(self) -> None:
+        """The authored DSL and native projection expose the exact same routes."""
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
+
+        authored_routes = {
+            (route.source, route.label, route.target)
+            for route in build_pipeline().routes
+        }
+        native_routes = {
+            (route["source"], route["label"], route["target"])
+            for route in (
+                build_and_compile_pipeline()
+                .native_program.routing_topology["routes"]
+            )
+        }
+
+        assert authored_routes == native_routes
+
     def test_canonical_has_native_program_like_subpipelines(self) -> None:
         """Canonical megaplan must carry native_program (same contract)."""
         from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
@@ -190,9 +220,13 @@ class TestCanonicalMegaplanNativeContract:
 
         The absolute number is not enforced — just that we can count them.
         """
-        from arnold_pipelines.megaplan.pipeline import build_pipeline
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
 
         pipeline = build_pipeline()
+        compiled = build_and_compile_pipeline()
         # DSL pipelines have .steps, neutral pipelines have .stages
         if hasattr(pipeline, "steps"):
             step_count = len(pipeline.steps)
@@ -204,8 +238,9 @@ class TestCanonicalMegaplanNativeContract:
         assert step_count > 0, (
             "Canonical megaplan pipeline must have steps or stages"
         )
-        assert step_count == 12, (
-            f"Canonical megaplan must have 12 steps; got {step_count}"
+        assert step_count == len(compiled.native_program.instructions), (
+            "Canonical megaplan shell must preserve the visible stage count "
+            f"(pipeline={step_count}, native={len(compiled.native_program.instructions)})"
         )
 
     def test_canonical_metadata_consistent_dsl_vs_native(self) -> None:
@@ -222,6 +257,15 @@ class TestCanonicalMegaplanNativeContract:
         assert metadata.get("product") == "megaplan", (
             "Canonical pipeline metadata must identify product=megaplan"
         )
+        forbidden_routing_keys = {
+            "stage_order",
+            "canonical_stage_order",
+            "megaplan_topology",
+            "phase_order",
+            "native_stage_order",
+            "gate_order",
+        }
+        assert forbidden_routing_keys.isdisjoint(metadata)
         assert canonical["authored_source_path"] == str(workflow_planning.AUTHORING_SOURCE_PATH.resolve())
 
         native_program = getattr(pipeline, "native_program", None)
@@ -235,16 +279,37 @@ class TestCanonicalMegaplanNativeContract:
             )
 
     def test_authoring_source_can_expand_wrapper_nodes_without_breaking_native_shell(self) -> None:
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
+
+        shell = build_and_compile_pipeline()
+        pipeline = build_pipeline()
+        lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+
+        assert len(shell.native_program.instructions) == len(pipeline.steps)
+        assert len(lowered.steps) > len(shell.native_program.instructions)
+        assert {step.id for step in lowered.steps}.issuperset(
+            {"gate_abort", "tiebreaker_finalize", "override_finalize"}
+        )
+
+    def test_native_program_shell_is_projection_not_canonical_traceability_proof(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
 
         shell = build_and_compile_pipeline()
         lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
 
-        assert len(shell.native_program.instructions) == 12
-        assert len(lowered.steps) > len(shell.native_program.instructions)
-        assert {step.id for step in lowered.steps}.issuperset(
-            {"gate_abort", "tiebreaker_finalize", "override_finalize"}
+        instruction_names = {instruction.name for instruction in shell.native_program.instructions}
+        lowered_step_ids = {step.id for step in lowered.steps}
+
+        # The projected shell intentionally collapses wrapper nodes, so it cannot
+        # stand in for row-level correctness proof when canonical source exists.
+        assert {"gate_abort", "tiebreaker_finalize", "override_finalize"} <= lowered_step_ids
+        assert {"gate_abort", "tiebreaker_finalize", "override_finalize"}.isdisjoint(
+            instruction_names
         )
+        assert str(AUTHORING_SOURCE_PATH).endswith("workflow.pypeline")
 
 
 class TestNativeRoutingIndependence:
@@ -374,7 +439,6 @@ def test_substrate_proof_only_native_routing_is_generic() -> None:
                     if isinstance(node, ast.Constant) and isinstance(node.value, str):
                         if node.value == stage:
                             # Found a string literal — check if it's in a docstring
-                            parent = getattr(node, 'parent', None)
                             assert False, (
                                 f"{file_path.name} contains Megaplan stage "
                                 f"name '{stage}' as a string literal — "

@@ -138,7 +138,7 @@ CONFORMANCE_EXPECTATIONS = {
         "proof_artifacts": (
             "arnold_pipelines/megaplan/workflows/workflow.pypeline",
             "tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml",
-            "tests/arnold_pipelines/megaplan/test_compositional_workflow.py",
+            "tests/arnold_pipelines/megaplan/test_native_contract.py",
         ),
     },
     "handler-purity-audit": {

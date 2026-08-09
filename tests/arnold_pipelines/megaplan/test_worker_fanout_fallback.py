@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan._core.worker_fanout import (
     scatter_worker_unit,
     scatter_worker_units,
 )
+from arnold_pipelines.megaplan.custody.phase_wbc import activate_phase_wbc
 from arnold_pipelines.megaplan._core.hermes_fanout import GenericScatterResult
 from arnold_pipelines.megaplan.fallback_chains import ExecuteFallbackUnsafe
 from arnold_pipelines.megaplan.types import AgentMode, CliError
@@ -217,7 +218,6 @@ def test_scatter_worker_units_packs_fallback_metadata_per_worker(monkeypatch) ->
         "arnold_pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
         fake_scatter_gather_processes,
     )
-
     result = scatter_worker_units(
         units=units,
         state={"name": "plan", "config": {"project_dir": "."}},
@@ -227,6 +227,75 @@ def test_scatter_worker_units_packs_fallback_metadata_per_worker(monkeypatch) ->
     )
 
     assert result.ordered_results == [{"id": "a"}, {"id": "b"}]
+
+
+def test_scatter_worker_unit_passes_subprocess_wbc_dispatch(monkeypatch, tmp_path: Path) -> None:
+    state = {
+        "name": "plan-T18",
+        "iteration": 1,
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"current_invocation_id": "inv-T18-subprocess"},
+        "active_step": {"run_id": "run-T18-subprocess"},
+    }
+    activate_phase_wbc(
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        step="review",
+        agent="reviewer",
+    )
+    unit = WorkerUnit(
+        step="critique_evaluator",
+        resolved=_resolved_mode(),
+        prompt="prompt",
+        output_path=tmp_path / "out.json",
+        configured_specs=["codex:gpt-5.5:high", "claude:claude-sonnet-4-6:high"],
+        attempt_index=1,
+        attempted_specs=["codex:gpt-5.5:high", "claude:claude-sonnet-4-6:high"],
+        failed_attempt_reasons=["availability"],
+        fallback_trigger="availability",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_step_with_worker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        captured["wbc_dispatch"] = kwargs.get("wbc_dispatch")
+        return (
+            WorkerResult(
+                payload={"ok": True},
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+            ),
+            "claude",
+            "persistent",
+            True,
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan._core.worker_fanout._render_unit_prompt",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.run_step_with_worker",
+        fake_run_step_with_worker,
+    )
+    index, unit_result, *_ = scatter_worker_unit(
+        7,
+        unit,
+        state=state,  # type: ignore[arg-type]
+        plan_dir=tmp_path,
+        root=tmp_path,
+        args=argparse.Namespace(phase_model=[]),
+        isolation="process",
+    )
+
+    assert index == 7
+    assert isinstance(unit_result, WorkerUnitResult)
+    spec = captured["wbc_dispatch"]
+    assert spec is not None
+    assert spec.writer_id == "megaplan.worker_dispatch.subprocess"
+    assert spec.expected_source_version.endswith(
+        ":subprocess:review:claude:claude-sonnet-4-6:high:1"
+    )
 
 
 def test_agent_mode_iter_remains_four_values() -> None:
@@ -352,9 +421,57 @@ def test_scatter_worker_unit_does_not_advance_for_forbidden_failure_classes(
     assert calls == 1
 
 
-def test_scatter_worker_unit_does_not_advance_to_same_provider_family(
+@pytest.mark.parametrize(
+    "error",
+    [
+        CliError("worker_timeout", "timed out"),
+        CliError("rate_limit", "rate limit"),
+        CliError("unsupported_model", "unsupported model"),
+    ],
+)
+def test_scatter_worker_unit_advances_same_family_for_read_only_operational_failure(
     monkeypatch,
+    error: CliError,
 ) -> None:
+    calls = 0
+
+    def fake_run_step_with_worker(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise error
+        return (
+            _worker_result({"attempt": "same-family"}),
+            kwargs["resolved"].agent,
+            "persistent",
+            True,
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.run_step_with_worker",
+        fake_run_step_with_worker,
+    )
+
+    result = scatter_worker_unit(
+        0,
+        _chain_unit(
+            configured_specs=[
+                "codex:gpt-5.6-sol:high",
+                "codex:gpt-5.6-terra:high",
+            ]
+        ),
+        state={"name": "plan", "config": {"project_dir": "."}},
+        plan_dir=Path("."),
+        root=Path("."),
+        args=argparse.Namespace(phase_model=[]),
+    )
+
+    assert calls == 2
+    assert result[1].payload == {"attempt": "same-family"}
+    assert result[1].attempt_index == 1
+
+
+def test_scatter_worker_unit_keeps_writing_same_family_failure_fail_closed(monkeypatch) -> None:
     calls = 0
 
     def fake_run_step_with_worker(*args, **kwargs):
@@ -370,12 +487,14 @@ def test_scatter_worker_unit_does_not_advance_to_same_provider_family(
     with pytest.raises(CliError):
         scatter_worker_unit(
             0,
-            _chain_unit(
-                configured_specs=[
-                    "hermes:deepseek:deepseek-v4-pro",
-                    "hermes:deepseek:deepseek-r1",
-                    "claude:claude-sonnet-4-6:high",
-                ]
+            dataclasses.replace(
+                _chain_unit(
+                    configured_specs=[
+                        "codex:gpt-5.6-sol:high",
+                        "codex:gpt-5.6-terra:high",
+                    ]
+                ),
+                read_only=False,
             ),
             state={"name": "plan", "config": {"project_dir": "."}},
             plan_dir=Path("."),

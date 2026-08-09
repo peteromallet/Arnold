@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+#
+# arnold-close — per-epic runtime lifecycle: TWO-PHASE CLOSE
+#
+# Provenance: fixer-unification design 2026-08-07, Phase 5
+#   design: docs/runtime-and-fixer-unification-design-20260807.md
+#     - §4 Phase 5 (safe GC + close protocol — the ONLY deletion phase) + §6 row 14
+#     - §2 design rule 6: GC on close — close verifies everything committed and
+#       pushed, then atomically sets manifest.state=closed
+#   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
+#
+# Usage: arnold-close <slug> <manifest-path>
+#
+#   Phase 1 — verify:
+#     a. all git state committed (git status --porcelain empty in the epic worktree)
+#     b. all git state pushed (local HEAD == origin/<epic branch> HEAD)
+#     c. no open lock files under the marker dir (manifest-writer locks
+#        <name>.json.lock are excluded — they are serialization locks, not
+#        runtime liveness)
+#   Phase 2 — atomically set manifest state=closed (runtime_manifest module API
+#     set_state when importable, else direct atomic JSON rewrite).
+#
+#   Prints (does NOT execute) the required backstop-tag step:
+#     git -C <worktree> tag box-snapshot/<slug>-<YYYYMMDD> && git push origin <tag>
+#
+# Environment overrides (all optional):
+#   ARNOLD_ORIGIN_URL         push/verify target (URL or remote name) (default: origin)
+#   ARNOLD_WORKSPACE_MARKERS  marker/lock state root                  (default: $ARNOLD_BASE_DIR/markers)
+#   ARNOLD_BASE_DIR           used only for the markers default        (default: /workspace)
+#
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: arnold-close <slug> <manifest-path>" >&2
+  exit 64
+fi
+
+SLUG="$1"
+MANIFEST="$2"
+
+[[ -f "$MANIFEST" ]] || {
+  echo "arnold-close: manifest '$MANIFEST' not found" >&2
+  exit 1
+}
+
+_json_get() {
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    if not isinstance(d, dict) or key not in d:
+        print("")
+        sys.exit(0)
+    d = d[key]
+if d is None:
+    print("")
+elif isinstance(d, (dict, list)):
+    print(json.dumps(d))
+else:
+    print(str(d))
+' "$1" "$2"
+}
+
+BASE_DIR="${ARNOLD_BASE_DIR:-/workspace}"
+MARKERS="${ARNOLD_WORKSPACE_MARKERS:-$BASE_DIR/markers}"
+REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
+
+WORKTREE="$(_json_get "$MANIFEST" epic.worktree_path)"
+BRANCH="$(_json_get "$MANIFEST" epic.branch)"
+if [[ -z "$WORKTREE" || ! -d "$WORKTREE" ]]; then
+  echo "arnold-close: manifest '$MANIFEST' has no resolvable epic.worktree_path (got '$WORKTREE')" >&2
+  exit 1
+fi
+if [[ -z "$BRANCH" ]]; then
+  echo "arnold-close: manifest '$MANIFEST' is missing epic.branch" >&2
+  exit 1
+fi
+
+# ── Phase 1: verify ----------------------------------------------------------
+# 1a. All git state committed.
+DIRTY="$(git -C "$WORKTREE" status --porcelain)"
+if [[ -n "$DIRTY" ]]; then
+  echo "arnold-close: phase-1 FAILED — worktree '$WORKTREE' is dirty (uncommitted state cannot be closed):" >&2
+  echo "$DIRTY" >&2
+  exit 1
+fi
+
+# 1b. All git state pushed to origin.
+LOCAL_HEAD="$(git -C "$WORKTREE" rev-parse HEAD)"
+ORIGIN_HEAD="$(git -C "$WORKTREE" ls-remote "$REMOTE" "refs/heads/$BRANCH" | awk '{print $1}')"
+if [[ -z "$ORIGIN_HEAD" ]]; then
+  echo "arnold-close: phase-1 FAILED — refs/heads/$BRANCH does not exist on '$REMOTE'; push before closing (nothing authoritative runs unpushed)" >&2
+  exit 1
+fi
+if [[ "$LOCAL_HEAD" != "$ORIGIN_HEAD" ]]; then
+  echo "arnold-close: phase-1 FAILED — local HEAD $LOCAL_HEAD != origin/$BRANCH $ORIGIN_HEAD; push before closing" >&2
+  exit 1
+fi
+
+# 1c. No open lock files under the marker dir. Manifest-writer locks
+#     (<name>.json.lock) are excluded: they are writer-serialization locks that
+#     persist after a write, not runtime liveness indicators.
+if [[ -d "$MARKERS" ]]; then
+  OPEN_LOCKS="$(find "$MARKERS" -name '*.lock' ! -name '*.json.lock' 2>/dev/null || true)"
+  if [[ -n "$OPEN_LOCKS" ]]; then
+    echo "arnold-close: phase-1 FAILED — open lock files under '$MARKERS':" >&2
+    echo "$OPEN_LOCKS" >&2
+    exit 1
+  fi
+fi
+
+# ── Phase 2: atomically set manifest state=closed -----------------------------
+if python3 -c '
+import sys
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+    load_manifest,
+    set_state,
+    write_manifest,
+)
+path = sys.argv[1]
+write_manifest(set_state(load_manifest(path), "closed"), path)
+' "$MANIFEST" >/dev/null 2>&1 && [[ "$(_json_get "$MANIFEST" state)" == "closed" ]]; then
+  : # runtime_manifest authoritative writer closed the manifest
+else
+  echo "arnold-close: runtime_manifest unavailable/failed; setting state=closed directly (fallback)" >&2
+  NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  python3 - "$MANIFEST" "$NOW" <<'PY'
+import json, os, sys, tempfile
+
+path, now = sys.argv[1:3]
+with open(path) as fh:
+    m = json.load(fh)
+m["state"] = "closed"
+m.setdefault("timestamps", {})["closed"] = now
+m["timestamps"]["updated"] = now
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".runtime-manifest-", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w") as fh:
+        json.dump(m, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PY
+fi
+[[ "$(_json_get "$MANIFEST" state)" == "closed" ]] || {
+  echo "arnold-close: FAILED to set state=closed in '$MANIFEST'" >&2
+  exit 1
+}
+
+# ── Backstop tag instruction (printed, NOT executed) --------------------------
+STAMP="$(date +%Y%m%d)"
+echo "arnold-close: epic '$SLUG' closed — manifest '$MANIFEST' now state=closed"
+echo "arnold-close: REQUIRED NEXT STEP (not executed by this script):"
+echo "  git -C '$WORKTREE' tag box-snapshot/$SLUG-$STAMP"
+echo "  git -C '$WORKTREE' push '$REMOTE' box-snapshot/$SLUG-$STAMP"
+echo "arnold-close: after the backstop tag lands on origin, run arnold-gc-sweep with --restore-proven to reclaim the runtime."

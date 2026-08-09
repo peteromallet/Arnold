@@ -1,0 +1,52 @@
+schema: megaplan.archived_initiative_source_index.v1
+launchable: false
+retired_as_independent_chain: true
+superseded_path: .megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
+downstream_path: .megaplan/initiatives/native-workflow-platformization/chain.yaml
+bootstrap_path: .megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
+reason: >-
+  The accepted completion sequencing inserts C1 and shadow-only C2 directly
+  into Native Parity after amended S2F and before S2R. S2R GO-0 is the sole
+  authoritative kernel enablement. The former M1-M5 chain is a normative
+  design and traceability source, not an executable epic.
+source_index:
+  north_star: NORTHSTAR.md
+  supersession_crosswalk: evidence/SUPERSESSION_CROSSWALK.yaml
+  decision_snapshot: decisions/standardized-completion-spec-proposal.md
+  source_ticket: notes/source-ticket.md
+  historical_briefs:
+    - briefs/m1.md
+    - briefs/m2.md
+    - briefs/m3.md
+    - briefs/m4.md
+    - briefs/m5.md
+active_critical_path:
+  - accepted/consolidated Custody M11 plus bounded-projection handoff
+  - accepted milestone-gate bootstrap plus downstream-spec-readiness.json
+  - Native S1
+  - amended Native S2F
+  - inserted Native C1
+  - inserted Native C2 (shadow/non-authoritative)
+  - Native S2R GO-0 (sole authoritative kernel enablement)
+  - Native S3A through S7
+  - Platform S1
+  - Platform S2A
+  - Platform S2B
+  - Platform S3
+  - Platform S4
+  - Platform S5
+  - Platform S6
+required_active_dependencies:
+  - id: completion-bootstrap
+    kind: chain_completed
+    chain: .megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
+    require_manifest: true
+    required_artifact: .megaplan/initiatives/megaplan-chain-milestone-gates/downstream-spec-readiness.json
+  - id: custody-m11-live-evidence
+    kind: chain_completed
+    chain: .megaplan/initiatives/custody-control-plane/chain.yaml
+    milestone: m11-conformance-and-legacy-retirement
+    require_manifest: true
+    required_artifact: .megaplan/initiatives/custody-control-plane/bounded-incident-projection-handoff.json
+    supersession_policy: preserve_exact_content_address_and_never_orphan
+active_proof_index: evidence/SUPERSESSION_CROSSWALK.yaml#proof_rules

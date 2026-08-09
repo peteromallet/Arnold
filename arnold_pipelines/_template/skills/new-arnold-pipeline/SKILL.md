@@ -12,7 +12,8 @@ description: Steps to create a new Arnold native-first pipeline package from the
    projected `Pipeline` with a non-null `native_program`.
 3. Edit `pipelines.py`: replace the skeleton `@phase` functions with real
    logic. Use `@pipeline`, `@phase`, `@decision`, `parallel`,
-   `compile_pipeline`, and `project_graph` from `arnold.pipeline.native`.
+   `compile_pipeline`, and `project_graph` from the public `arnold.pipeline`
+   authoring surface.
 4. Run `arnold pipelines check <your_pipeline>` to validate the package
    against the native-first authoring contract (metadata, driver, native
    program, and graph projection).

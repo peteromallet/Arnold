@@ -305,6 +305,18 @@ def _pytest_command(command: str | None) -> str:
         pass
     elif "pytest" not in command:
         return command
+    elif "pytest" in parts:
+        # PATH-independent rewrite: a leading ``timeout``/``env`` wrapper would
+        # otherwise leave ``pytest`` resolved via PATH, which fails when the
+        # launch env omits the pyenv shims.  Rewrite the executable token to the
+        # running interpreter so validation never depends on PATH.
+        rewritten: list[str] = []
+        for token in parts:
+            if token == "pytest":
+                rewritten.extend([sys.executable, "-m", "pytest"])
+            else:
+                rewritten.append(token)
+        parts = rewritten
     parts = ["-rA" if p == "-rN" else p for p in parts]
     present = set(parts)
     for flag in ("--tb=no", "-q", "--no-header", "-rA"):

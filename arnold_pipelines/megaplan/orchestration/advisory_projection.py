@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
-from arnold_pipelines.megaplan._core.io import atomic_write_json, sha256_file
+from arnold_pipelines.megaplan._core.io import (
+    ProjectionCursor,
+    _projection_canonical_dumps,
+    atomic_write_json,
+    now_utc,
+    sha256_file,
+)
 
 ADVISORY_PATH_PROJECTION_LIMIT = 40
 BULK_OPERATION_SAMPLE_LIMIT = 5
+
+REBUILD_METADATA_SCHEMA_VERSION = 1
 
 
 def _artifact_ref_for_json_file(plan_dir: Path, name: str) -> dict[str, Any]:
@@ -110,3 +119,109 @@ def summarize_path_list_for_prose(
     shown = ", ".join(paths[:k])
     suffix = f" — full set via ArtifactRef {artifact_name}" if plan_dir is not None else ""
     return f"{n} paths (showing {k}): {shown}{suffix}"
+
+
+# ---------------------------------------------------------------------------
+# Rebuild metadata & digest helpers (pure, no side effects)
+# ---------------------------------------------------------------------------
+
+
+def compute_advisory_projection_digest(projection: Mapping[str, Any]) -> str:
+    """Compute a deterministic SHA-256 digest of an advisory projection view.
+
+    The digest is computed over the canonical (stable, sorted-key,
+    no-whitespace) JSON representation of *projection*, making it
+    byte-for-byte comparable across rebuilds.
+
+    Parameters
+    ----------
+    projection:
+        A projection dict produced by advisory path projection
+        (e.g. the return value of :func:`_project_advisory_path_list`).
+
+    Returns
+    -------
+    str
+        ``"sha256:<hex>"`` digest string.
+    """
+    canonical = _projection_canonical_dumps(dict(projection))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def capture_advisory_source_cursor(source_path: str | Path) -> ProjectionCursor:
+    """Capture a :class:`ProjectionCursor` for an advisory source file.
+
+    This function is **read-only** — it never mutates the source file.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the source file driving the advisory projection
+        (e.g. a plan directory artifact or path-list sidecar).
+
+    Returns
+    -------
+    ProjectionCursor
+        An immutable cursor capturing the source file state.
+    """
+    from arnold_pipelines.megaplan._core.io import _projection_cursor_from_path
+
+    return _projection_cursor_from_path(Path(source_path))
+
+
+def advisory_rebuild_metadata(
+    source_path: str | Path,
+    *,
+    projection_digest: str = "",
+    computed_at: str | None = None,
+) -> dict[str, Any]:
+    """Produce rebuild metadata for an advisory projection.
+
+    Pure function — never mutates source evidence.  The caller is
+    responsible for attaching the returned metadata to a projection view.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the advisory source file.
+    projection_digest:
+        Pre-computed digest of the projection view.
+    computed_at:
+        ISO-8601 rebuild timestamp (default: ``now_utc()``).
+
+    Returns
+    -------
+    dict
+        Metadata dict with ``source_cursor``, ``rebuilt_at``,
+        ``freshness_seconds``, ``lag_seconds``, optional
+        ``projection_digest``, and ``rebuild_schema_version``.
+    """
+    from datetime import datetime
+
+    cursor = capture_advisory_source_cursor(source_path)
+    rebuilt_at = computed_at or now_utc()
+
+    freshness_seconds = 0.0
+
+    try:
+        source_path_obj = Path(source_path)
+        if source_path_obj.exists():
+            source_mtime = source_path_obj.stat().st_mtime
+            rebuild_epoch = datetime.fromisoformat(rebuilt_at).timestamp()
+            lag_seconds = max(0.0, rebuild_epoch - source_mtime)
+        else:
+            lag_seconds = 0.0
+    except (OSError, ValueError):
+        lag_seconds = 0.0
+
+    metadata: dict[str, Any] = {
+        "rebuild_schema_version": REBUILD_METADATA_SCHEMA_VERSION,
+        "source_cursor": cursor.to_dict(),
+        "rebuilt_at": rebuilt_at,
+        "freshness_seconds": freshness_seconds,
+        "lag_seconds": lag_seconds,
+    }
+    if projection_digest:
+        metadata["projection_digest"] = projection_digest
+
+    return metadata

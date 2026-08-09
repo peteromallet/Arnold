@@ -136,8 +136,8 @@ The JSON payload is filtered to the same sessions and includes
 
 | Field | Required | Default | Meaning |
 |---|---|---:|---|
-| `codex.model` | no | `gpt-5.4` | Written into `/root/.codex/config.toml` on boot. |
-| `codex.reasoning` | no | `high` | Reasoning level written into `/root/.codex/config.toml` on boot. |
+| `codex.model` | no | `gpt-5.6-sol` | Written into `/root/.codex/config.toml` on boot. |
+| `codex.reasoning` | no | `medium` | Reasoning level (`minimal` through `max`) written into `/root/.codex/config.toml` on boot. |
 | `megaplan.codex_auth` | no | `chatgpt` | `chatgpt` forces the ChatGPT-subscription OAuth (`preferred_auth_method=chatgpt`; codex uses `chatgpt.com/backend-api/codex` even when `OPENAI_API_KEY` is set) and seeds your local `~/.codex`/`~/.hermes` OAuth onto the volume. `apikey` opts into standard API-key billing. See the "Codex auth" section in the cloud skill. |
 
 > **Codex auth gotcha:** without `codex_auth=chatgpt`, a stray `OPENAI_API_KEY` makes the codex CLI use API-key mode → `api.openai.com` billing → `ERROR: Quota exceeded. Check your plan and billing details.` even with a working ChatGPT subscription.
@@ -257,6 +257,13 @@ The command prints the structured payload on stdout and the same human-readable 
 ### `python -m arnold_pipelines.megaplan cloud status`
 
 Without `--chain`, `cloud status` still runs remote `python -m arnold_pipelines.megaplan status` and prints that JSON payload unchanged.
+
+Status payloads keep the durable lifecycle value in `plan_state` (or the
+legacy-compatible `state`) and expose presentation separately through
+`active_phase`, `execution_state`, and `display_state`. In particular, a live
+execute step is displayed as `executing` while its correct durable
+`plan_state` remains `finalized`. Progress remains a projection: 30% for work
+through finalize plus 70% apportioned by completed finalized-task complexity.
 
 ### `python -m arnold_pipelines.megaplan cloud supervise --chain`
 
@@ -437,6 +444,16 @@ This redaction applies to:
 - OpenSSH project/docs: https://www.openssh.com/
 - Config & environment map: [docs/configuration.md](configuration.md)
 
+The cloud image also includes a pinned Railway CLI for application deployments
+from the runner; Railway is not a Megaplan cloud provider. Its user
+configuration directory is `/root/.railway`, backed by the persistent
+`/workspace/.creds/railway` directory. Authenticate interactively with
+`railway login --browserless`, or use exactly one Railway-supported environment
+variable (`RAILWAY_TOKEN` for a project/environment or `RAILWAY_API_TOKEN` for
+account/workspace operations). Do not place either token in `cloud.yaml` or the
+repository. A legacy `/workspace/.creds/railway-config.json` seed is imported
+only when the persistent config is absent.
+
 ## M1 Cloud-Safe Repair Substrate
 
 The M1 substrate wraps the existing watchdog, repair loop, auditor, and Discord
@@ -467,6 +484,35 @@ default; the resolver and redaction are on.
 
 All flags accept `0`/`false`/`no`/`off` to disable.  Unset uses the M1 default.
 
+### Six-hour true-stall escalation
+
+The six-hour progress auditor still gathers and renders deterministic evidence
+without repair authority. After report inputs are complete, a separate effect
+controller may act only when both `ARNOLD_AUTONOMY=1` and
+`ARNOLD_AUDIT_AUTOFIX_ENABLED=1` are present and a coherent true-stall gate
+proves all of the following: live-process state, a consistent session marker,
+the marker-resolved chain JSON, current plan/events state, chain-log freshness,
+and PR/CI state when applicable. Fresh progress or heartbeat, an operator
+pause, a human gate, completion, or an external wait is a hard no-op.
+
+Eligible findings must also prove failed L1 custody and a due-but-failed L2
+backstop using the TRACKED/FIXED/INTENT/CONTEXT audit. The controller sends a
+typed request through `arnold-repair-trigger`; it never launches a worker
+directly. The resulting D9 `gpt-5.6-sol` root-cause run has a D9 child ceiling
+and is not reported as dispatched until its canonical
+`arnold-managed-agent-run-v2` manifest, worker-start history, request/session/
+finding links, and durable run ID validate.
+
+Escalation state under
+`/workspace/.megaplan/progress-auditor-escalations/` correlates the finding,
+session, evidence digest, request, managed run, retry lineage, cooldown,
+circuit breaker, outcome artifact, and later re-verification. Recovery closes
+only after the failed fixer and missed backstop are repaired, the ordinary
+canonical recovery path is re-triggered, a later audit proves the original run
+advanced, and no completion or safety guard was weakened. The controller does
+not stop or quarantine the original chain by default; blocker-scoped custody is
+the duplicate-effect fence.
+
 ### Wrapper deployment note
 
 The editable-install sync updates the Python package but does **not** refresh
@@ -481,6 +527,55 @@ for w in arnold-repair-loop arnold-watchdog arnold-progress-auditor arnold-disco
 done
 ```
 
+## Reconcile an unreceipted resident-only listener
+
+Use cloud resident-reconcile-down only when a finite listener-only recovery
+container is live but its original launch transaction has no canonical
+fence/start receipt. The command is deliberately not a general container
+adoption API.
+
+The transaction has two durable phases. First it takes the host custody lock
+and proves the exact stopped predecessor, resident container and image,
+listener command, sanitized environment digest, seed directory and digest,
+runtime commit/tree/archive digest, runtime Python digest, workspace
+device/inode, consumed-seed marker, readiness log, singleton listener, mounts,
+security profile, and process argv. It then publishes an immutable truthful
+adoption receipt. It does not invent historical recovery, source-fence, start,
+or health receipts.
+
+Second, the command passes that adoption receipt to the ordinary resident-down
+exact-ID/name compare-and-swap removal path. A durable down intent precedes the
+stop, retries converge after stop/remove/receipt interruption, a name rebound
+is never touched, and source-fence rollback is recorded as not_applicable
+because no fence is fabricated.
+
+All values below are independent operator pins gathered read-only from the
+preserved host. Any mismatch fails before docker stop or docker rm.
+
+    python -m arnold_pipelines.megaplan cloud resident-reconcile-down \
+      --cloud-yaml /path/to/exact/cloud.yaml \
+      --outage-epoch <epoch> \
+      --expected-source-container-id <64-hex-source-id> \
+      --expected-source-image-id sha256:<64-hex> \
+      --expected-resident-image-id sha256:<64-hex> \
+      --expected-resident-container-id <64-hex-resident-id> \
+      --expected-resident-command-sha256 <64-hex> \
+      --expected-resident-env-sha256 <64-hex> \
+      --expected-recovery-seed-host-dir /var/lib/arnold/megaplan-resident-recovery/<source-id>/<epoch>/seed \
+      --expected-recovery-seed-sha256 <64-hex-canonical-seed-digest> \
+      --expected-runtime-path /workspace/runtime-candidates/<exact-runtime> \
+      --expected-runtime-commit <40-hex> \
+      --expected-runtime-tree <40-hex> \
+      --expected-runtime-content-sha256 <64-hex-git-archive-digest> \
+      --expected-runtime-python-path /absolute/image/python \
+      --expected-runtime-python-sha256 <64-hex> \
+      --expected-workspace-device <integer> \
+      --expected-workspace-inode <integer>
+
+Do not use this command when canonical recovery receipts exist; use
+resident-down for that case. Do not delete or rewrite a partial reconciliation
+receipt. A corrupt or mismatched receipt is an operator-review stop.
+
 ## Related Runbooks And Design Notes
 
 - **Cloud chain smoke**: [docs/ops/cloud-chain-smoke.md](ops/cloud-chain-smoke.md) — end-to-end smoke tests for cloud chain operations.
@@ -491,3 +586,30 @@ done
 ## Migration From `reigh-megaplan-dev`
 
 The historical migration runbook is archived at [docs/archive/cloud-migration-from-reigh.md](archive/cloud-migration-from-reigh.md). The important rule is: write `MIGRATED.md` first, then remove siblings while preserving that pointer file.
+
+## Session-scoped retirement
+
+`cloud retire-chain` is an archival control-plane operation for one exact,
+zero-progress chain that is already under a durable operator pause and has been
+superseded by a distinct completed chain. It is not a stop or deletion command:
+it never sends signals, never kills tmux, never removes a workspace, and never
+changes plan, chain, Git, or completion artifacts.
+
+The command fails closed unless all of the following are proven at the same
+time: exact target and superseding marker identities plus caller-supplied
+SHA-256 fences; distinct workspaces/specs with no sibling sharing the target;
+paused target marker, chain, and plan state at milestone zero; completed
+superseding chain matching an all-done completion manifest; every supplied
+milestone commit landed on the named base ref; no tmux, process, pidfile, repair
+queue, or shared repair-index ownership. `--on-box` uses the same checks without
+SSH transport.
+
+On success, only the target marker and exact target-named sidecars move under
+`<marker-dir>/retired/<session>/<retirement-id>/artifacts/`. The workspace and
+all run evidence remain in place. The returned JSON identifies the archive,
+`tombstone.json`, its SHA-256, every archived artifact and digest, supersession
+evidence, safety checks, and a freshly generated postcondition proving the
+session no longer appears in the actionable cloud-session registry. On the
+agentbox's canonical registry, the same fresh projection is atomically
+published to the derived resident status cache. Repeating the same SHA-fenced
+request returns the existing tombstone idempotently and refreshes that cache.

@@ -4,7 +4,7 @@ When ordinary repair fails as a system, meta-repair diagnoses the
 repair-system failure, builds a redacted Codex/DeepSeek prompt, and
 prepares evidence for the meta-repair loop to act on.
 
-Trigger types (six specified + explicit non-trigger):
+Trigger types (twelve specified + explicit non-trigger):
     1. repair_timeout            – repair took longer than its allotted budget
     2. persistent_recurring_retry – same failure repeats across attempts
     3. state_inspection_failure   – resolver/snapshot failed to read state
@@ -12,6 +12,14 @@ Trigger types (six specified + explicit non-trigger):
     5. partial_liveness_recurrence – partial-liveness across >=2 watchdog ticks
     6. discord_delivery_failure   – Discord delivery failed for a TRUE_BLOCKER
        human escalation
+    7. l1_custody_failure         – L1 could not establish canonical
+       request/blocker/claim custody
+    8. repair_goal_owner_missing – durable repair goal has no valid owner
+    9. repair_context_target_mismatch – repair handoff targets stale custody
+   10. repair_goal_circuit_breaker – repeated goal mechanism must replan
+   11. post_fixer_recovery_gate_failed – L1 terminalized without satisfying
+       the durable recovery acceptance contract
+   12. l3_progress_auditor       – validated typed L3 true-stall escalation
 
 Non-trigger: healthy repair, non-system error, stale evidence, etc.
 """
@@ -23,9 +31,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+import re
 import subprocess
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
+from arnold_pipelines.megaplan.cloud import feature_flags
+from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+    liveness_from_current_target,
+)
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    render_process_custody_policy,
+    render_profile_integrity_policy,
+    render_fast_path_policy,
+)
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -41,8 +59,10 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     REPAIRING,
     SUCCESS_OUTCOMES,
     TRUE_HUMAN_BLOCKER,
+    append_attempt_record,
     atomic_write_json,
     build_verification_record,
+    classify_recovery_verification,
     classify_verification_outcome,
     compute_deadline,
     is_budget_exhausted,
@@ -51,6 +71,15 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     remaining_budget_secs,
     update_session_index,
 )
+
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +95,7 @@ META_REPAIR_BUDGET_SECS: int = 5400  # 90 minutes, longer than ordinary repair
 
 
 class MetaRepairTrigger(str, Enum):
-    """The six specified meta-repair trigger types."""
+    """The specified meta-repair trigger types."""
 
     REPAIR_TIMEOUT = "repair_timeout"
     PERSISTENT_RECURRING_RETRY = "persistent_recurring_retry"
@@ -74,6 +103,12 @@ class MetaRepairTrigger(str, Enum):
     MODEL_TOOL_LAUNCH_FAILURE = "model_tool_launch_failure"
     PARTIAL_LIVENESS_RECURRENCE = "partial_liveness_recurrence"
     DISCORD_DELIVERY_FAILURE = "discord_delivery_failure"
+    L1_CUSTODY_FAILURE = "l1_custody_failure"
+    REPAIR_GOAL_OWNER_MISSING = "repair_goal_owner_missing"
+    REPAIR_CONTEXT_TARGET_MISMATCH = "repair_context_target_mismatch"
+    REPAIR_GOAL_CIRCUIT_BREAKER = "repair_goal_circuit_breaker"
+    POST_FIXER_RECOVERY_GATE_FAILED = "post_fixer_recovery_gate_failed"
+    L3_PROGRESS_AUDITOR = "l3_progress_auditor"
 
 
 # Canonical ordering for display / prompt ordering
@@ -84,11 +119,168 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE: 4,
     MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE: 5,
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
+    MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
+    MetaRepairTrigger.REPAIR_GOAL_OWNER_MISSING: 8,
+    MetaRepairTrigger.REPAIR_CONTEXT_TARGET_MISMATCH: 9,
+    MetaRepairTrigger.REPAIR_GOAL_CIRCUIT_BREAKER: 10,
+    MetaRepairTrigger.POST_FIXER_RECOVERY_GATE_FAILED: 11,
+    MetaRepairTrigger.L3_PROGRESS_AUDITOR: 12,
 }
 
+# Outcomes that suppress another meta-repair dispatch.  Fresh activity remains
+# provisional recovery evidence, but it is not itself a repair-system failure.
 _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
     {LIVE_WITH_FRESH_ACTIVITY}
 )
+
+
+def extract_reported_repair_custody(
+    response: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Extract structured change/test claims from a meta-repair response.
+
+    The meta-repair agent returns concise Markdown rather than a schema.  Keep
+    its claims explicitly labelled as reported evidence; downstream consumers
+    can then distinguish them from install-sync and retrigger verification.
+    """
+
+    changes: list[dict[str, str]] = []
+    tests: list[dict[str, str]] = []
+    seen_changes: set[str] = set()
+    seen_tests: set[str] = set()
+
+    for line in response.splitlines():
+        lowered = line.lower()
+        if any(token in lowered for token in ("change made", "changed", "patched", "fixed")):
+            for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", line):
+                path = match.group(1).split(":", 1)[0].strip()
+                if path and path not in seen_changes:
+                    seen_changes.add(path)
+                    changes.append({"file": path, "status": "reported"})
+
+        if any(token in lowered for token in ("pytest", "py_compile")):
+            commands = re.findall(r"`([^`]*(?:pytest|py_compile)[^`]*)`", line)
+            for command in commands:
+                command = command.strip()
+                if not command or command in seen_tests:
+                    continue
+                seen_tests.add(command)
+                result = "reported_pass" if any(
+                    token in lowered for token in ("passed", "passes", "validation passed", "tests passed")
+                ) else "reported"
+                tests.append({"command": command, "result": result})
+
+    return changes, tests
+
+
+def verify_meta_repair_commit_custody(
+    repo: str | Path,
+    *,
+    baseline_head: str,
+    verdict: str,
+    push_required: bool,
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Fail closed unless a meta-repair change has durable git custody.
+
+    ``FIXED`` requires a new, clean commit on a named local branch.  When push
+    policy is enabled, the same commit must already be published at the
+    corresponding remote branch.  Non-fix verdicts must not leave tracked
+    source changes or move HEAD.
+    """
+
+    root = Path(repo)
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    baseline = str(baseline_head or "").strip()
+    normalized_verdict = str(verdict or "").strip()
+    result: dict[str, Any] = {
+        "accepted": False,
+        "outcome": "commit_custody_failed",
+        "reason": "",
+        "baseline_head": baseline,
+        "current_head": "",
+        "branch": "",
+        "local_reachable": False,
+        "remote_reachable": False,
+        "push_required": bool(push_required),
+    }
+
+    current_proc = git("rev-parse", "HEAD")
+    if current_proc.returncode != 0 or not current_proc.stdout.strip():
+        result["reason"] = "meta-repair source HEAD is unavailable"
+        return result
+    current = current_proc.stdout.strip()
+    result["current_head"] = current
+
+    status_proc = git("status", "--porcelain", "--untracked-files=no")
+    if status_proc.returncode != 0 or status_proc.stdout.strip():
+        result["reason"] = "meta-repair left tracked source changes uncommitted"
+        return result
+
+    if not baseline:
+        result["reason"] = "pre-dispatch source HEAD was not captured"
+        return result
+
+    changed = bool(baseline) and current != baseline
+    if not normalized_verdict.startswith("FIXED"):
+        if changed:
+            result["reason"] = "non-FIXED verdict moved source HEAD"
+            return result
+    elif not changed:
+        result["reason"] = "FIXED verdict produced no new source commit"
+        return result
+
+    branch_proc = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+    result["branch"] = branch
+    if not branch:
+        result["reason"] = "source commit is on detached HEAD"
+        return result
+
+    branch_proc = git("rev-parse", f"refs/heads/{branch}")
+    local_reachable = (
+        branch_proc.returncode == 0 and branch_proc.stdout.strip() == current
+    )
+    result["local_reachable"] = local_reachable
+    if not local_reachable:
+        result["reason"] = "new source commit is not the named branch tip"
+        return result
+
+    if push_required:
+        remote_proc = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
+        remote_head = ""
+        if remote_proc.returncode == 0 and remote_proc.stdout.strip():
+            remote_head = remote_proc.stdout.split()[0]
+        result["remote_reachable"] = remote_head == current
+        if not result["remote_reachable"]:
+            result["reason"] = "new source commit is not published at the remote branch tip"
+            return result
+    else:
+        result["remote_reachable"] = False
+
+    if not normalized_verdict.startswith("FIXED"):
+        result.update(
+            accepted=True,
+            outcome="no_source_change",
+            reason="non-FIXED verdict preserved source custody",
+        )
+        return result
+
+    result.update(
+        accepted=True,
+        outcome="commit_custody_verified",
+        reason="new source commit has durable branch custody",
+    )
+    return result
 
 
 def authoritative_terminal_snapshot_reason(snapshot: Mapping[str, Any] | None) -> str:
@@ -247,9 +439,122 @@ def load_redacted_evidence(
                 ][-max_attempts:]
             except Exception:
                 pass
+    partial_liveness_history = _scope_partial_liveness_history_to_current_attempt(
+        partial_liveness_history,
+        repair_data,
+    )[-max_attempts:]
     evidence["partial_liveness_history"] = partial_liveness_history
 
     return evidence
+
+
+def _repair_data_current_attempt_floor(repair_data: Mapping[str, Any]) -> float | None:
+    """Return the timestamp floor for the currently tracked repair attempt."""
+
+    latest: float | None = None
+
+    def consider(value: Any) -> None:
+        nonlocal latest
+        parsed = _parse_meta_timestamp(value)
+        if parsed is None:
+            return
+        if latest is None or parsed > latest:
+            latest = parsed
+
+    current_recurrence = repair_data.get("current_recurrence")
+    if isinstance(current_recurrence, Mapping):
+        consider(current_recurrence.get("dispatched_at"))
+
+    current_attempt_id = str(repair_data.get("current_attempt_id") or "").strip()
+    for collection_key in ("attempts", "iterations"):
+        records = repair_data.get(collection_key)
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            record_attempt_id = str(record.get("attempt_id") or "").strip()
+            if current_attempt_id and record_attempt_id != current_attempt_id:
+                continue
+            consider(record.get("dispatched_at"))
+            consider(record.get("recorded_at"))
+            consider(record.get("attempted_at"))
+            consider(record.get("updated_at"))
+    return latest
+
+
+def _repair_data_current_plan_name(repair_data: Mapping[str, Any]) -> str:
+    current_signature = repair_data.get("current_signature")
+    if not isinstance(current_signature, Mapping):
+        current_signature = {}
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    latest_failure = failure_context.get("plan_latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        latest_failure = {}
+    chain_state = failure_context.get("chain_state_summary")
+    if not isinstance(chain_state, Mapping):
+        chain_state = {}
+    return (
+        _meta_safe_text(current_signature.get("milestone_or_plan"))
+        or _meta_safe_text(advancement.get("milestone_or_plan"))
+        or _meta_safe_text(repair_data.get("plan_name"))
+        or _meta_safe_text(latest_failure.get("plan_name"))
+        or _meta_safe_text(chain_state.get("current_plan_name"))
+    )
+
+
+def _repair_data_current_run_kind(repair_data: Mapping[str, Any]) -> str:
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    resolver_output = failure_context.get("resolver_output")
+    if not isinstance(resolver_output, Mapping):
+        resolver_output = {}
+    current_refs = resolver_output.get("current_refs")
+    if not isinstance(current_refs, Mapping):
+        current_refs = {}
+    return (
+        _meta_safe_text(repair_data.get("run_kind"))
+        or _meta_safe_text(advancement.get("run_kind"))
+        or _meta_safe_text(current_refs.get("run_kind"))
+    ).lower()
+
+
+def _scope_partial_liveness_history_to_current_attempt(
+    history: Sequence[Mapping[str, Any] | Any],
+    repair_data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep only partial-liveness ticks that belong to the current attempt window."""
+
+    floor = _repair_data_current_attempt_floor(repair_data)
+    current_plan_name = _repair_data_current_plan_name(repair_data)
+    current_run_kind = _repair_data_current_run_kind(repair_data)
+    if floor is None and not current_plan_name and not current_run_kind:
+        return [dict(item) for item in history if isinstance(item, Mapping)]
+
+    filtered: list[dict[str, Any]] = []
+    for item in history:
+        if not isinstance(item, Mapping):
+            continue
+        recorded_at = _parse_meta_timestamp(item.get("recorded_at"))
+        if floor is not None and (recorded_at is None or recorded_at < floor):
+            continue
+        run_kind = _meta_safe_text(item.get("run_kind")).lower()
+        if current_run_kind and run_kind and run_kind != current_run_kind:
+            continue
+        plan_name = _meta_safe_text(item.get("plan_name"))
+        if current_plan_name and plan_name and plan_name != current_plan_name:
+            continue
+        filtered.append(dict(item))
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +564,11 @@ def load_redacted_evidence(
 # Minimum number of attempts with the same failure kind before we consider
 # it a persistent recurring retry pattern.
 _MIN_RECURRING_ATTEMPTS = 3
+
+# Minimum number of attempts with the same unchanged semantic/custody
+# finding fingerprint before escalation.  Defaults to 3; operators may
+# override via the configurable *semantic_fingerprints* threshold parameter.
+_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS = 3
 
 # Minimum number of partial-liveness ticks before we trigger.
 _MIN_PARTIAL_LIVENESS_TICKS = 2
@@ -454,8 +764,11 @@ def classify_repair_system_failure(
     repair_outcome: str = "",
     attempt_outcomes: Sequence[str] = (),
     failure_kinds: Sequence[str] = (),
+    semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
+    has_l1_custody_failure: bool = False,
+    post_fixer_recovery_gate_failed: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -522,6 +835,24 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
+    if (
+        isinstance(current_target_observation, Mapping)
+        and "current_target_liveness" in current_target_observation
+    ):
+        target_liveness = liveness_from_current_target(current_target_observation)
+        if target_liveness.get("known") is not True:
+            rationale.append(
+                "current-target liveness is UNKNOWN; diagnosis may continue but "
+                "meta-repair dispatch, escalation, and retrigger are forbidden"
+            )
+            return MetaRepairClassification(
+                session=session,
+                trigger=None,
+                rationale=tuple(rationale),
+                evidence=deepcopy(dict(evidence)) if evidence else {},
+                attempted_at=now.isoformat(),
+            )
+
     # --- 1. Discord delivery failure (TRUE_BLOCKER gate) --------------------
     if discord_delivery_failed and discord_escalation_is_true_blocker:
         rationale.append(
@@ -545,6 +876,19 @@ def classify_repair_system_failure(
         return MetaRepairClassification(
             session=session,
             trigger=None,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
+    if post_fixer_recovery_gate_failed:
+        rationale.append(
+            "ordinary repair terminalized without satisfying the post-fixer "
+            "recovery gate; completed repair is not canonical cursor advancement"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=MetaRepairTrigger.POST_FIXER_RECOVERY_GATE_FAILED,
             rationale=tuple(rationale),
             evidence=deepcopy(dict(evidence)) if evidence else {},
             attempted_at=now.isoformat(),
@@ -579,12 +923,37 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
+    # A failed L1 investigation/context/receipt boundary is itself a repair
+    # system custody failure.  Route it immediately instead of spending three
+    # deterministic retries on the same unreachable repair path.
+    if has_l1_custody_failure:
+        rationale.append(
+            "ordinary repair could not establish a valid investigation/context custody handoff"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=MetaRepairTrigger.L1_CUSTODY_FAILURE,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
     # --- 3. Persistent recurring retry --------------------------------------
-    if _is_persistent_recurring_retry(failure_kinds, attempt_outcomes):
+    if _is_persistent_recurring_retry(
+        failure_kinds,
+        attempt_outcomes,
+        semantic_fingerprints=semantic_fingerprints,
+    ):
+        fp_detail = (
+            f", fingerprint_repeats={len(semantic_fingerprints)}"
+            if semantic_fingerprints
+            else ""
+        )
         rationale.append(
             f"persistent recurring retry pattern detected "
             f"(failure_kinds={list(failure_kinds)[:5]}, "
-            f"attempt_outcomes={list(attempt_outcomes)[:5]})"
+            f"attempt_outcomes={list(attempt_outcomes)[:5]}"
+            f"{fp_detail})"
         )
         return MetaRepairClassification(
             session=session,
@@ -656,38 +1025,90 @@ def _is_persistent_recurring_retry(
     failure_kinds: Sequence[str],
     attempt_outcomes: Sequence[str],
     min_attempts: int = _MIN_RECURRING_ATTEMPTS,
+    semantic_fingerprints: Sequence[str] = (),
 ) -> bool:
-    """Return True when the same failure kind repeats without success."""
-    if len(failure_kinds) < min_attempts:
-        return False
+    """Return True when the same failure kind or unchanged semantic fingerprint
+    repeats without success across attempts.
 
-    # Look for the same non-empty failure kind repeating in the most
-    # recent attempts.
-    recent = list(failure_kinds)[: min(len(failure_kinds), 10)]
+    The check gates on two independent signals:
+
+    * **failure-kind recurrence** — the same non-empty failure kind appears
+      in at least *min_attempts* recent attempts without a success outcome.
+    * **semantic-fingerprint recurrence** — the same non-empty
+      semantic/custody finding fingerprint appears in at least
+      *min_attempts* (or ``_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS``, whichever
+      is larger) recent attempts without a success outcome.
+
+    Empty fingerprints (resolved / no findings) are never counted.
+    """
+    # Pre-compute the success guard once for both checks
     recent_outcomes = list(attempt_outcomes)[: min(len(attempt_outcomes), 10)]
-
-    # Count occurrences of the most common recent failure kind
-    kind_counts: dict[str, int] = {}
-    for kind in recent:
-        if kind and kind.strip():
-            kind_counts[kind] = kind_counts.get(kind, 0) + 1
-
-    if not kind_counts:
-        return False
-
-    most_common_kind, count = max(kind_counts.items(), key=lambda item: item[1])
-    if count < min_attempts:
-        return False
-
-    # Also check that none of the recent outcomes are success
     recent_non_empty = [o for o in recent_outcomes if o and o.strip()]
     has_recent_success = any(
         is_success_outcome(o) for o in recent_non_empty
     )
-    if has_recent_success:
+
+    # ── failure-kind recurrence ──────────────────────────────────────
+    if len(failure_kinds) >= min_attempts and not has_recent_success:
+        recent = list(failure_kinds)[: min(len(failure_kinds), 10)]
+        kind_counts: dict[str, int] = {}
+        for kind in recent:
+            if kind and kind.strip():
+                kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        if kind_counts:
+            most_common_kind, count = max(kind_counts.items(), key=lambda item: item[1])
+            if count >= min_attempts:
+                return True
+
+    # ── semantic-fingerprint recurrence ──────────────────────────────
+    if _has_unchanged_semantic_fingerprint_recurrence(
+        semantic_fingerprints,
+        min_attempts=max(min_attempts, _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS),
+    ):
+        if not has_recent_success:
+            return True
+
+    return False
+
+
+def _has_unchanged_semantic_fingerprint_recurrence(
+    fingerprints: Sequence[str],
+    min_attempts: int = _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS,
+) -> bool:
+    """Return True when the same non-empty semantic fingerprint repeats.
+
+    The fingerprint is produced by
+    :func:`arnold_pipelines.megaplan.semantic_health.compute_finding_fingerprint`
+    from the set of semantic/custody findings.  An empty fingerprint
+    (no findings — resolved) is never counted.  Only repeated unchanged
+    non-empty fingerprints trigger.
+
+    Args:
+        fingerprints: Fingerprint strings from recent attempts (most
+            recent first).
+        min_attempts: Minimum occurrences required for escalation
+            (default ``_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS``).
+
+    Returns:
+        ``True`` when the most common non-empty fingerprint appears at
+        least *min_attempts* times in the most recent window.
+    """
+    if not fingerprints or len(fingerprints) < min_attempts:
         return False
 
-    return True
+    # Examine up to the 10 most recent fingerprints
+    recent = list(fingerprints)[: min(len(fingerprints), 10)]
+
+    fp_counts: dict[str, int] = {}
+    for fp in recent:
+        if fp and fp.strip():
+            fp_counts[fp] = fp_counts.get(fp, 0) + 1
+
+    if not fp_counts:
+        return False
+
+    _, count = max(fp_counts.items(), key=lambda item: item[1])
+    return count >= min_attempts
 
 
 def _repair_evidence_superseded_by_current_target(
@@ -890,22 +1311,21 @@ def stale_repair_evidence_reason(
 
 
 def _current_target_has_runtime_proof(current_target_observation: Mapping[str, Any]) -> bool:
+    # Durable plan/chain files and bare heartbeat PIDs outlive process
+    # incarnations.  Only the shared identity-bound view is runtime proof.
+    if "current_target_liveness" in current_target_observation:
+        return liveness_from_current_target(current_target_observation).get("live") is True
+    # Read-only compatibility for historical persisted observations. New
+    # resolver records always carry ``current_target_liveness`` and cannot use
+    # this branch to authorize control.
     active_step = current_target_observation.get("active_step_heartbeat")
     if isinstance(active_step, Mapping) and bool(active_step.get("active")):
         return True
-
-    tmux_process = current_target_observation.get("tmux_process")
-    if isinstance(tmux_process, Mapping) and _meta_safe_text(tmux_process.get("live_status")) == "alive":
-        return True
-
-    for key in ("plan_state", "chain_state"):
-        record = current_target_observation.get(key)
-        if isinstance(record, Mapping) and bool(record.get("present")):
-            return True
-
-    # Historical logs can survive after the target is gone; do not treat them
-    # as proof that another repair/meta-repair attempt is warranted.
-    return False
+    return any(
+        isinstance(current_target_observation.get(key), Mapping)
+        and bool(current_target_observation[key].get("present"))
+        for key in ("plan_state", "chain_state")
+    )
 
 
 def _failure_context_is_mechanical_redrive_only(
@@ -1248,6 +1668,12 @@ def build_meta_repair_prompt(
             parts.append("\n```\n\n")
 
         parts.append("### Instructions\n")
+        parts.append(render_process_custody_policy())
+        parts.append("\n\n")
+        parts.append(render_profile_integrity_policy())
+        parts.append("\n\n")
+        parts.append(render_fast_path_policy())
+        parts.append("\n\n")
         parts.append(
             "Diagnose the root cause of the repair-system failure described above. "
             "Focus on:\n"
@@ -1318,6 +1744,7 @@ class MetaRepairRecord:
     meta_repair_id: str
     session: str
     trigger: MetaRepairTrigger | None
+    blocker_id: str = ""
     diagnosis: str = ""
     subagent_results: dict[str, Any] = field(default_factory=dict)
     changes: list[dict[str, Any]] = field(default_factory=list)
@@ -1339,6 +1766,7 @@ class MetaRepairRecord:
             "meta_repair_id": self.meta_repair_id,
             "session": self.session,
             "trigger": self.trigger.value if self.trigger is not None else None,
+            "blocker_id": self.blocker_id,
             "diagnosis": self.diagnosis,
             "subagent_results": self.subagent_results,
             "changes": self.changes,
@@ -1363,6 +1791,7 @@ class MetaRepairRecord:
             meta_repair_id=str(data.get("meta_repair_id", "")),
             session=str(data.get("session", "")),
             trigger=trigger,
+            blocker_id=str(data.get("blocker_id", "")),
             diagnosis=str(data.get("diagnosis", "")),
             subagent_results=dict(data.get("subagent_results", {})),
             changes=list(data.get("changes", [])),
@@ -1381,12 +1810,18 @@ def persist_meta_repair_record(
     *,
     repair_data_dir: str | Path,
     secret_names: Sequence[str] = (),
+    verdict: MetaRepairVerdict | None = None,
 ) -> Path:
     """Persist a meta-repair record to ``repair-data/meta/<meta_repair_id>.json``.
 
     The retrigger command in the persisted payload is redacted via
     :func:`redact_text` before writing.  The parent ``meta/`` directory
     is created if it does not exist.
+
+    When *verdict* is provided, a separate ``meta_repair_verdict.json``
+    artifact is written alongside the record following the same verdict
+    discipline as ordinary repair, including original finding linkage,
+    retrigger command evidence, durable refs, and failure reasons.
 
     Returns:
         The path to the written JSON file.
@@ -1406,6 +1841,29 @@ def persist_meta_repair_record(
 
     file_path = meta_dir / f"{record.meta_repair_id}.json"
     atomic_write_json(file_path, payload)
+
+    # Persist the meta-repair verdict alongside the record
+    if verdict is not None:
+        verdict_path = meta_dir / _META_REPAIR_COMPLETION_REQUIRED_ARTIFACT
+        save_meta_repair_verdict(verdict_path, verdict, redactor=None)
+
+    sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+    append_attempt_record(
+        sidecar_dir,
+        {
+            "session_id": record.session,
+            "attempt_id": record.meta_repair_id,
+            "actor": "meta_repair",
+            "state": _meta_repair_attempt_state(record.outcome),
+            "outcome": record.outcome,
+            "trigger": record.trigger.value if record.trigger is not None else "",
+            "blocker_id": record.blocker_id,
+            "record_path": str(file_path),
+            "verdict_kind": verdict.verdict_kind if verdict is not None else "",
+            "recorded_at": record.created_at,
+        },
+    )
+
     update_session_index(
         repair_root / "index.json",
         record.session,
@@ -1415,9 +1873,25 @@ def persist_meta_repair_record(
             "latest_meta_outcome": record.outcome,
             "latest_meta_record_path": str(file_path),
             "latest_meta_recorded_at": record.created_at,
+            "latest_meta_verdict_kind": (
+                verdict.verdict_kind if verdict is not None else ""
+            ),
         },
     )
     return file_path
+
+
+def _meta_repair_attempt_state(outcome: str) -> str:
+    normalized = str(outcome or "").strip().lower()
+    if not normalized:
+        return "failed"
+    if normalized in {"repairing", "running", "pending", "in_progress"}:
+        return "running"
+    if normalized in {"fixed", "complete", "completed", "recovered"}:
+        return "succeeded"
+    if is_success_outcome(normalized):
+        return "succeeded"
+    return "failed"
 
 
 def load_meta_repair_record(
@@ -1440,6 +1914,340 @@ def load_meta_repair_record(
         return MetaRepairRecord.from_dict(data)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Meta-repair completion verdict evidence
+# ---------------------------------------------------------------------------
+
+_META_REPAIR_COMPLETION_BOUNDARY_ID = "meta_repair_completion"
+_META_REPAIR_COMPLETION_ROW_ID = "repair.meta_complete.1"
+_META_REPAIR_COMPLETION_REQUIRED_ARTIFACT = "meta_repair_verdict.json"
+
+MetaRepairVerdictKind = Literal["fixed", "escalated", "no_fix", "stale", "no_verdict"]
+META_REPAIR_VERDICT_FIXED: MetaRepairVerdictKind = "fixed"
+META_REPAIR_VERDICT_ESCALATED: MetaRepairVerdictKind = "escalated"
+META_REPAIR_VERDICT_NO_FIX: MetaRepairVerdictKind = "no_fix"
+META_REPAIR_VERDICT_STALE: MetaRepairVerdictKind = "stale"
+META_REPAIR_VERDICT_NO_VERDICT: MetaRepairVerdictKind = "no_verdict"
+META_REPAIR_VERDICT_KINDS: frozenset[MetaRepairVerdictKind] = frozenset(
+    {
+        META_REPAIR_VERDICT_FIXED,
+        META_REPAIR_VERDICT_ESCALATED,
+        META_REPAIR_VERDICT_NO_FIX,
+        META_REPAIR_VERDICT_STALE,
+        META_REPAIR_VERDICT_NO_VERDICT,
+    }
+)
+
+# Map wrapper verdict strings to meta-repair verdict kinds.
+_VERDICT_TO_META_VERDICT_KIND: dict[str, MetaRepairVerdictKind] = {
+    "FIXED": META_REPAIR_VERDICT_FIXED,
+    "ESCALATE": META_REPAIR_VERDICT_ESCALATED,
+    "NO_FIX": META_REPAIR_VERDICT_NO_FIX,
+}
+
+
+@dataclass(frozen=True)
+class MetaRepairVerdict:
+    """Structured meta-repair completion verdict evidence.
+
+    Carries the original finding/blocker linkage, retrigger command evidence,
+    attempted actions, before/after evidence refs, durable refs, and failure
+    reasons so that downstream consumers (auditor, custody, status) can
+    decide whether a meta-repair outcome is trustworthy.
+
+    Follows the same verdict discipline as ordinary repair
+    (:class:`arnold_pipelines.megaplan.cloud.repair_contract.RepairVerdict`)
+    but adds meta-repair-specific evidence dimensions.
+    """
+
+    verdict_kind: MetaRepairVerdictKind
+    blocker_id: str
+    attempted_actions: tuple[str, ...] = ()
+    before_evidence_refs: tuple[str, ...] = ()
+    after_evidence_refs: tuple[str, ...] = ()
+    durable_refs: tuple[str, ...] = ()
+    evidence_timestamp: str = ""
+    contract_id: str = _META_REPAIR_COMPLETION_ROW_ID
+    boundary_id: str = _META_REPAIR_COMPLETION_BOUNDARY_ID
+    session: str = ""
+    request_id: str = ""
+    outcome: str = ""
+    stale_detected: bool = False
+    no_verdict_detected: bool = False
+    stale_reason: str = ""
+    no_verdict_reason: str = ""
+    # Meta-repair-specific evidence dimensions
+    retrigger_command_evidence: str = ""
+    failure_reasons: tuple[str, ...] = ()
+    original_finding_linkage: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verdict_kind": self.verdict_kind,
+            "blocker_id": self.blocker_id,
+            "attempted_actions": list(self.attempted_actions),
+            "before_evidence_refs": list(self.before_evidence_refs),
+            "after_evidence_refs": list(self.after_evidence_refs),
+            "durable_refs": list(self.durable_refs),
+            "evidence_timestamp": self.evidence_timestamp,
+            "contract_id": self.contract_id,
+            "boundary_id": self.boundary_id,
+            "session": self.session,
+            "request_id": self.request_id,
+            "outcome": self.outcome,
+            "stale_detected": self.stale_detected,
+            "no_verdict_detected": self.no_verdict_detected,
+            "stale_reason": self.stale_reason,
+            "no_verdict_reason": self.no_verdict_reason,
+            "retrigger_command_evidence": self.retrigger_command_evidence,
+            "failure_reasons": list(self.failure_reasons),
+            "original_finding_linkage": self.original_finding_linkage,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "MetaRepairVerdict":
+        verdict_kind = str(payload.get("verdict_kind", "")).strip()
+        if verdict_kind not in META_REPAIR_VERDICT_KINDS:
+            verdict_kind = META_REPAIR_VERDICT_NO_VERDICT
+        return cls(
+            verdict_kind=cast(MetaRepairVerdictKind, verdict_kind),
+            blocker_id=str(payload.get("blocker_id", "")).strip(),
+            attempted_actions=tuple(
+                str(item).strip()
+                for item in (payload.get("attempted_actions") or [])
+                if str(item).strip()
+            ),
+            before_evidence_refs=tuple(
+                str(item).strip()
+                for item in (payload.get("before_evidence_refs") or [])
+                if str(item).strip()
+            ),
+            after_evidence_refs=tuple(
+                str(item).strip()
+                for item in (payload.get("after_evidence_refs") or [])
+                if str(item).strip()
+            ),
+            durable_refs=tuple(
+                str(item).strip()
+                for item in (payload.get("durable_refs") or [])
+                if str(item).strip()
+            ),
+            evidence_timestamp=str(payload.get("evidence_timestamp", "")).strip(),
+            contract_id=str(payload.get("contract_id", "")).strip()
+            or _META_REPAIR_COMPLETION_ROW_ID,
+            boundary_id=str(payload.get("boundary_id", "")).strip()
+            or _META_REPAIR_COMPLETION_BOUNDARY_ID,
+            session=str(payload.get("session", "")).strip(),
+            request_id=str(payload.get("request_id", "")).strip(),
+            outcome=str(payload.get("outcome", "")).strip(),
+            stale_detected=bool(payload.get("stale_detected")),
+            no_verdict_detected=bool(payload.get("no_verdict_detected")),
+            stale_reason=str(payload.get("stale_reason", "")).strip(),
+            no_verdict_reason=str(payload.get("no_verdict_reason", "")).strip(),
+            retrigger_command_evidence=str(
+                payload.get("retrigger_command_evidence", "")
+            ).strip(),
+            failure_reasons=tuple(
+                str(item).strip()
+                for item in (payload.get("failure_reasons") or [])
+                if str(item).strip()
+            ),
+            original_finding_linkage=str(
+                payload.get("original_finding_linkage", "")
+            ).strip(),
+        )
+
+
+def build_meta_repair_verdict(
+    *,
+    record: MetaRepairRecord | None = None,
+    verdict: str = "",
+    session: str = "",
+    request_id: str = "",
+    blocker_id: str = "",
+    attempted_actions: tuple[str, ...] | None = None,
+    before_evidence_refs: tuple[str, ...] | None = None,
+    after_evidence_refs: tuple[str, ...] | None = None,
+    durable_refs: tuple[str, ...] | None = None,
+    retrigger_command_evidence: str = "",
+    failure_reasons: tuple[str, ...] | None = None,
+    original_finding_linkage: str = "",
+    timestamp: str | None = None,
+) -> MetaRepairVerdict:
+    """Build a structured meta-repair completion verdict from available evidence.
+
+    When *record* is provided, the verdict kind is derived from the record's
+    outcome via the canonical verdict-to-kind table.  When it is absent or the
+    outcome is unrecognized, the verdict defaults to ``no_verdict``.
+
+    Staleness and no-verdict detection are run against the record and appended
+    as structured flags.
+    """
+    normalized_verdict = str(verdict or "").strip()
+    effective_session = session
+    effective_outcome = ""
+    effective_trigger: MetaRepairTrigger | None = None
+    effective_created_at = ""
+    effective_diagnosis = ""
+    effective_retrigger_evidence = retrigger_command_evidence
+    effective_failure_reasons = tuple(failure_reasons or ())
+    effective_finding_linkage = original_finding_linkage
+
+    if record is not None:
+        effective_session = effective_session or record.session
+        effective_outcome = record.outcome
+        effective_trigger = record.trigger
+        effective_created_at = record.created_at
+        effective_diagnosis = record.diagnosis
+        if not effective_retrigger_evidence and record.retrigger_command:
+            effective_retrigger_evidence = record.retrigger_command
+        if not effective_failure_reasons and record.diagnosis:
+            effective_failure_reasons = (record.diagnosis[:4000],)
+        if not effective_finding_linkage and effective_trigger is not None:
+            effective_finding_linkage = (
+                f"meta-repair:{effective_trigger.value}:{effective_session}"
+            )
+
+    # Derive verdict kind from wrapper verdict string
+    verdict_kind: MetaRepairVerdictKind = META_REPAIR_VERDICT_NO_VERDICT
+    for prefix, kind in _VERDICT_TO_META_VERDICT_KIND.items():
+        if normalized_verdict.startswith(prefix):
+            verdict_kind = kind
+            break
+
+    # If verdict kind is still no_verdict but we have an outcome, try mapping
+    if verdict_kind == META_REPAIR_VERDICT_NO_VERDICT and effective_outcome:
+        outcome_lower = effective_outcome.lower()
+        if outcome_lower in ("fixed", "complete", "completed", "recovered"):
+            verdict_kind = META_REPAIR_VERDICT_FIXED
+        elif outcome_lower in ("escalated", "needs_human", "escalate"):
+            verdict_kind = META_REPAIR_VERDICT_ESCALATED
+        elif outcome_lower in (
+            "no_fix", "no_change", "verifier_rejected",
+            "install_sync_failed",
+        ):
+            verdict_kind = META_REPAIR_VERDICT_NO_FIX
+
+    # Stale detection
+    stale_detected = False
+    stale_reason = ""
+    if record is not None and effective_created_at:
+        try:
+            created_dt = datetime.fromisoformat(
+                effective_created_at.replace("Z", "+00:00")
+            )
+            age_secs = (datetime.now(timezone.utc) - created_dt).total_seconds()
+            if age_secs > META_REPAIR_BUDGET_SECS * 2:
+                stale_detected = True
+                stale_reason = (
+                    f"meta-repair record age {age_secs:.0f}s exceeds "
+                    f"stale threshold {META_REPAIR_BUDGET_SECS * 2}s"
+                )
+        except (ValueError, TypeError):
+            stale_detected = True
+            stale_reason = "unparseable meta-repair record timestamp"
+
+    # No-verdict detection
+    no_verdict_detected = False
+    no_verdict_reason = ""
+    if verdict_kind == META_REPAIR_VERDICT_NO_VERDICT:
+        no_verdict_detected = True
+        if not normalized_verdict:
+            no_verdict_reason = "no verdict string provided for meta-repair"
+        elif not record:
+            no_verdict_reason = (
+                f"unrecognized verdict {normalized_verdict!r} "
+                "with no meta-repair record"
+            )
+        else:
+            no_verdict_reason = (
+                f"unrecognized verdict {normalized_verdict!r} "
+                f"outcome={effective_outcome!r}"
+            )
+
+    evidence_ts = timestamp or effective_created_at
+    if not evidence_ts:
+        evidence_ts = datetime.now(timezone.utc).isoformat()
+
+    return MetaRepairVerdict(
+        verdict_kind=verdict_kind,
+        blocker_id=blocker_id or effective_finding_linkage,
+        attempted_actions=attempted_actions or (),
+        before_evidence_refs=before_evidence_refs or (),
+        after_evidence_refs=after_evidence_refs or (),
+        durable_refs=durable_refs or (),
+        evidence_timestamp=evidence_ts,
+        contract_id=_META_REPAIR_COMPLETION_ROW_ID,
+        boundary_id=_META_REPAIR_COMPLETION_BOUNDARY_ID,
+        session=effective_session,
+        request_id=request_id,
+        outcome=effective_outcome or normalized_verdict,
+        stale_detected=stale_detected,
+        no_verdict_detected=no_verdict_detected,
+        stale_reason=stale_reason,
+        no_verdict_reason=no_verdict_reason,
+        retrigger_command_evidence=effective_retrigger_evidence,
+        failure_reasons=effective_failure_reasons,
+        original_finding_linkage=effective_finding_linkage,
+    )
+
+
+def save_meta_repair_verdict(
+    path: str | Path,
+    verdict: MetaRepairVerdict,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate and atomically persist a meta-repair verdict JSON artifact.
+
+    The verdict is persisted alongside the meta-repair record so that
+    downstream custody/auditor/status consumers can read it without
+    recomputing the mapping.
+    """
+    prepared = verdict.to_dict()
+    if redactor is not None:
+        _redact_meta_verdict_payload(prepared, redactor)
+    atomic_write_json(path, prepared)
+    return prepared
+
+
+def validate_meta_repair_verdict_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate and normalize a meta-repair verdict payload.
+
+    Raises ``ValueError`` on bad input.
+    """
+    if not isinstance(payload, Mapping):
+        raise ValueError("meta-repair verdict must be a JSON object")
+    verdict_kind = str(payload.get("verdict_kind", "")).strip()
+    if not verdict_kind:
+        raise ValueError(
+            "meta-repair verdict missing required field 'verdict_kind'"
+        )
+    if verdict_kind not in META_REPAIR_VERDICT_KINDS:
+        raise ValueError(
+            f"unknown meta-repair verdict kind {verdict_kind!r}; "
+            f"expected one of {sorted(META_REPAIR_VERDICT_KINDS)}"
+        )
+    return dict(payload)
+
+
+def _redact_meta_verdict_payload(
+    payload: dict[str, Any],
+    redactor: Callable[[str], str],
+) -> None:
+    """Redact string values in *payload* in-place."""
+    for key, value in payload.items():
+        if isinstance(value, str) and value:
+            payload[key] = redactor(value)
+        elif isinstance(value, list):
+            payload[key] = [
+                redactor(item) if isinstance(item, str) else item
+                for item in value
+            ]
 
 
 # ---------------------------------------------------------------------------
@@ -1501,10 +2309,56 @@ def retrigger_ordinary_repair(
     timeout_secs: float | None = None,
     runner: Callable[..., Any] | None = None,
     release_lock: Callable[..., bool] | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> RetriggerExecutionResult:
     """Release the ordinary repair lock, then invoke the primary repair loop."""
     if not command:
         raise ValueError("command must not be empty")
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        normalize_repair_identity,
+    )
+
+    if normalize_repair_identity(repair_identity) is None:
+        raise PermissionError(
+            "ordinary repair retrigger requires the current normalized repair identity"
+        )
+
+    # ── M7 shadow validation before repair retrigger ────────────────────
+    if _M7_VALIDATOR_AVAILABLE:
+        try:
+            import hashlib as _hashlib
+            retrigger_target = {
+                "environment": "retrigger",
+                "session": str(cwd or "unknown"),
+                "chain": "retrigger",
+                "plan_revision": "retrigger",
+                "phase": "retrigger",
+                "task": str(expected_lock_pid or "unknown"),
+                "attempt": "1",
+                "normalized_failure_kind": "retrigger",
+                "blocker_or_phase_result_hash": _hashlib.sha256(
+                    " ".join(str(p) for p in command).encode("utf-8")
+                ).hexdigest()[:16],
+                "fence": "0",
+            }
+            _ = validate_action_boundary_simple(
+                action_type="repair",
+                target=retrigger_target,
+                run_authority_grant_id=f"retrigger:{cwd}",
+                coordinator_fence_token=0,
+                wbc_attempt_reference="retrigger",
+            )
+        except Exception:
+            pass  # shadow-only; never block
+    # ────────────────────────────────────────────────────────────────────
+
+    # Releasing the L1 lock and starting another repair process are both L2
+    # effects.  Keep the check adjacent to those effects so direct and fallback
+    # callers cannot bypass the master autonomy gate.
+    if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L2):
+        raise PermissionError(
+            "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+        )
 
     effective_release = release_repair_lock if release_lock is None else release_lock
     lock_released = False
@@ -1572,16 +2426,28 @@ def verify_retrigger_success(
     snapshot_reason = authoritative_terminal_snapshot_reason(
         verification.get("post_snapshot")
     )
-    # L2 can hand a genuinely live target back to ordinary supervision.  Only
-    # a COMPLETE outcome *closes* custody, and only that terminal claim needs
-    # the all-milestones/no-worker authoritative snapshot.
+    observation = verification.get("observation")
+    if not isinstance(observation, Mapping):
+        observation = verification
+    observation = dict(observation)
+    if retrigger_result is not None:
+        observation.setdefault("returncode", retrigger_result.returncode)
+        observation.setdefault("subprocess_succeeded", retrigger_result.returncode == 0)
+    original_blocker = verification.get("original_blocker")
+    recovery = classify_recovery_verification(
+        original_blocker=(
+            original_blocker if isinstance(original_blocker, Mapping) else None
+        ),
+        observation=observation,
+        repair_completed_at=verification.get("repair_completed_at"),
+    )
+
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and (
-            normalized_outcome == LIVE_WITH_FRESH_ACTIVITY
-            or (normalized_outcome == COMPLETE and not snapshot_reason)
-        )
+        and normalized_outcome == COMPLETE
+        and not snapshot_reason
+        and recovery["authorizes_verified_recovered"] is True
     )
 
     rejection_reason = ""
@@ -1594,17 +2460,24 @@ def verify_retrigger_success(
         )
     elif normalized_outcome == COMPLETE and snapshot_reason:
         rejection_reason = snapshot_reason
+    elif recovery["authorizes_verified_recovered"] is not True:
+        rejection_reason = str(recovery["reason"])
     elif normalized_outcome == PARTIAL_LIVENESS:
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome not in {COMPLETE, LIVE_WITH_FRESH_ACTIVITY}:
+    elif normalized_outcome != COMPLETE:
         rejection_reason = f"outcome {normalized_outcome!r} cannot close repair custody"
 
     verification_record = build_verification_record(
         normalized_outcome,
         pre_snapshot=verification.get("pre_snapshot"),
         post_snapshot=verification.get("post_snapshot"),
+        original_blocker=(
+            original_blocker if isinstance(original_blocker, Mapping) else None
+        ),
+        observation=observation,
+        repair_completed_at=verification.get("repair_completed_at"),
         delta_summary=str(verification.get("delta_summary", "")),
     )
     verification_record.update(
@@ -1613,6 +2486,12 @@ def verify_retrigger_success(
             "accepted": accepted,
             "retriggered": retriggered,
             "rejection_reason": rejection_reason,
+            "recovery_verification": recovery,
+            "recovery_status": recovery["status"],
+            "unknown_type": recovery["unknown_type"],
+            "original_blocker": dict(original_blocker) if isinstance(original_blocker, Mapping) else {},
+            "observation": observation,
+            "repair_completed_at": verification.get("repair_completed_at"),
         }
     )
     if raw_outcome == "running":
@@ -1641,13 +2520,16 @@ def derive_meta_repair_effective_outcome(
     """
 
     normalized_verdict = str(verdict or "").strip()
+    verification = dict(post_retrigger_verification or {})
+    commit_custody = verification.get("commit_custody")
+    if isinstance(commit_custody, Mapping) and commit_custody.get("accepted") is False:
+        return "commit_custody_failed"
     if not normalized_verdict.startswith("FIXED"):
         return normalized_verdict or "UNKNOWN"
 
     if str(install_sync_status or "").strip().lower() == "failed":
         return "install_sync_failed"
 
-    verification = dict(post_retrigger_verification or {})
     accepted = bool(verification.get("accepted"))
     outcome = str(verification.get("outcome") or "").strip().lower()
 
@@ -1663,6 +2545,101 @@ def derive_meta_repair_effective_outcome(
 # ---------------------------------------------------------------------------
 
 
+def _shadow_validate_meta_repair_boundary(
+    *,
+    session: str,
+    trigger: str,
+    repair_data_dir: str | Path,
+    blocker_id: str = "",
+    plan_name: str = "",
+    remote_spec: str = "",
+) -> dict[str, Any]:
+    """Run the M7 shadow validator before meta-repair dispatch (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the meta-repair context,
+    calls ``validate_action_boundary_simple`` with ``action_type="repair"``,
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        target_dict = {
+            "environment": "meta-repair",
+            "session": session or "unknown",
+            "chain": str(remote_spec or plan_name or "unknown"),
+            "plan_revision": plan_name or "unknown",
+            "phase": "meta_repair",
+            "task": blocker_id or "unknown",
+            "attempt": "1",
+            "normalized_failure_kind": trigger or "unknown",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                (blocker_id or session).encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": "0",
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id=f"meta-repair:{session}",
+            coordinator_fence_token=0,
+            wbc_attempt_reference=blocker_id or session,
+        )
+
+        # Emit typed events based on the validation result
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
+
+
 def evaluate_meta_repair_triggers(
     session: str,
     *,
@@ -1670,8 +2647,11 @@ def evaluate_meta_repair_triggers(
     repair_outcome: str = "",
     attempt_outcomes: Sequence[str] = (),
     failure_kinds: Sequence[str] = (),
+    semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
+    has_l1_custody_failure: bool = False,
+    post_fixer_recovery_gate_failed: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -1713,8 +2693,11 @@ def evaluate_meta_repair_triggers(
         repair_outcome=repair_outcome,
         attempt_outcomes=attempt_outcomes,
         failure_kinds=failure_kinds,
+        semantic_fingerprints=semantic_fingerprints,
         has_state_inspection_error=has_state_inspection_error,
         has_model_tool_launch_error=has_model_tool_launch_error,
+        has_l1_custody_failure=has_l1_custody_failure,
+        post_fixer_recovery_gate_failed=post_fixer_recovery_gate_failed,
         partial_liveness_ticks=partial_liveness_ticks,
         discord_delivery_failed=discord_delivery_failed,
         discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
@@ -1723,6 +2706,21 @@ def evaluate_meta_repair_triggers(
 
     if not classification.should_dispatch:
         return classification, None
+
+    # ── M7 shadow validation before meta-repair dispatch ────────────────
+    trigger_label = classification.trigger_label
+    m7_shadow = _shadow_validate_meta_repair_boundary(
+        session=session,
+        trigger=trigger_label,
+        repair_data_dir=repair_data_dir,
+        blocker_id=str(classification.evidence.get("repair_data", {}).get("blocker_id", ""))
+        if isinstance(classification.evidence, Mapping)
+        else "",
+    )
+    # Attach shadow validation to classification evidence for diagnostics
+    if isinstance(classification.evidence, dict):
+        classification.evidence["m7_shadow_validation"] = m7_shadow
+    # ────────────────────────────────────────────────────────────────────
 
     prompt = build_meta_repair_prompt(
         classification,
@@ -1734,16 +2732,28 @@ def evaluate_meta_repair_triggers(
 
 
 __all__ = [
-    "derive_meta_repair_effective_outcome",
     "META_REPAIR_BUDGET_SECS",
+    "_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS",
+    "META_REPAIR_VERDICT_FIXED",
+    "META_REPAIR_VERDICT_ESCALATED",
+    "META_REPAIR_VERDICT_NO_FIX",
+    "META_REPAIR_VERDICT_STALE",
+    "META_REPAIR_VERDICT_NO_VERDICT",
+    "META_REPAIR_VERDICT_KINDS",
     "MetaRepairClassification",
     "MetaRepairRecord",
     "MetaRepairTrigger",
+    "MetaRepairVerdict",
+    "MetaRepairVerdictKind",
     "RetriggerExecutionResult",
+    "_shadow_validate_meta_repair_boundary",
     "build_meta_repair_prompt",
+    "build_meta_repair_verdict",
     "classify_repair_system_failure",
     "compute_meta_deadline",
+    "derive_meta_repair_effective_outcome",
     "evaluate_meta_repair_triggers",
+    "_has_unchanged_semantic_fingerprint_recurrence",
     "is_meta_budget_exhausted",
     "is_model_tool_launch_failure_status",
     "load_meta_repair_record",
@@ -1751,7 +2761,9 @@ __all__ = [
     "persist_meta_repair_record",
     "remaining_meta_budget_secs",
     "retrigger_ordinary_repair",
+    "save_meta_repair_verdict",
     "stale_repair_evidence_reason",
     "trigger_priority",
+    "validate_meta_repair_verdict_payload",
     "verify_retrigger_success",
 ]

@@ -5,10 +5,35 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Callable
+from types import MappingProxyType
 
 from arnold_pipelines.megaplan._core import load_flag_registry, save_flag_registry
 from arnold_pipelines.megaplan.orchestration.critique_status import is_unverifiable_check
 from arnold_pipelines.megaplan.types import FlagRecord, FlagRegistry
+
+
+FLAG_NORMALIZATION_POLICY = MappingProxyType(
+    {
+        "allowed_categories": (
+            "correctness",
+            "security",
+            "completeness",
+            "performance",
+            "maintainability",
+            "doc-quality",
+            "other",
+            "verifiability",
+        ),
+        "default_category": "other",
+        "default_severity_hint": "uncertain",
+        "severity_hint_to_severity": {
+            "likely-significant": "significant",
+            "likely-minor": "minor",
+            "uncertain": "significant",
+        },
+        "unexpected_severity_default": "significant",
+    }
+)
 
 
 def next_flag_number(flags: list[FlagRecord]) -> int:
@@ -25,14 +50,11 @@ def make_flag_id(number: int) -> str:
 
 
 def resolve_severity(hint: str) -> str:
-    if hint == "likely-significant":
-        return "significant"
-    if hint == "likely-minor":
-        return "minor"
-    if hint == "uncertain":
-        return "significant"
+    resolved = FLAG_NORMALIZATION_POLICY["severity_hint_to_severity"].get(hint)
+    if resolved is not None:
+        return str(resolved)
     logging.getLogger("megaplan").warning(f"Unexpected severity_hint: {hint!r}, defaulting to significant")
-    return "significant"
+    return str(FLAG_NORMALIZATION_POLICY["unexpected_severity_default"])
 
 
 def _coerce_flag_text(value: Any) -> str:
@@ -49,12 +71,12 @@ def _coerce_flag_text(value: Any) -> str:
 
 
 def normalize_flag_record(raw_flag: dict[str, Any], fallback_id: str) -> FlagRecord:
-    category = raw_flag.get("category", "other")
-    if category not in {"correctness", "security", "completeness", "performance", "maintainability", "other"}:
-        category = "other"
-    severity_hint = raw_flag.get("severity_hint") or "uncertain"
-    if severity_hint not in {"likely-significant", "likely-minor", "uncertain"}:
-        severity_hint = "uncertain"
+    category = raw_flag.get("category", FLAG_NORMALIZATION_POLICY["default_category"])
+    if category not in FLAG_NORMALIZATION_POLICY["allowed_categories"]:
+        category = FLAG_NORMALIZATION_POLICY["default_category"]
+    severity_hint = raw_flag.get("severity_hint") or FLAG_NORMALIZATION_POLICY["default_severity_hint"]
+    if severity_hint not in FLAG_NORMALIZATION_POLICY["severity_hint_to_severity"]:
+        severity_hint = FLAG_NORMALIZATION_POLICY["default_severity_hint"]
     raw_id = raw_flag.get("id")
     return {
         "id": fallback_id if raw_id in {None, "", "FLAG-000"} else raw_id,
@@ -106,9 +128,52 @@ def _synthesize_flags_from_checks(
                     "category": category_map.get(check_id, "correctness"),
                     "severity_hint": severity,
                     "evidence": finding.get("detail", ""),
+                    "source_check_id": check_id,
                 }
             )
     return synthetic_flags
+
+
+def synthesize_critique_flags(critique: dict[str, Any]) -> list[dict[str, Any]]:
+    """Materialize every flagged check finding as a durable top-level flag.
+
+    Critique workers may express the same finding in both ``checks`` and
+    ``flags``.  Preserve the explicit flag and add a synthetic flag only when
+    no explicit flag from the same check carries the same evidence.  This is
+    deliberately idempotent because custody preparation and registry update
+    both call it at different persistence boundaries.
+    """
+    from arnold_pipelines.megaplan.audits.robustness import (
+        build_check_category_map,
+        get_check_by_id,
+    )
+
+    raw_flags = critique.setdefault("flags", [])
+    if not isinstance(raw_flags, list):
+        return []
+    synthetic = _synthesize_flags_from_checks(
+        critique.get("checks", []),
+        category_map=build_check_category_map(),
+        get_check_def=get_check_by_id,
+        id_prefix="CRITIQUE",
+    )
+    for candidate in synthetic:
+        source_check_id = candidate.get("source_check_id")
+        evidence = _coerce_flag_text(candidate.get("evidence"))
+        already_present = False
+        for flag in raw_flags:
+            if not isinstance(flag, dict) or _coerce_flag_text(flag.get("evidence")) != evidence:
+                continue
+            existing_source = flag.get("source_check_id")
+            if existing_source not in {None, "", source_check_id}:
+                continue
+            if not existing_source:
+                flag["source_check_id"] = source_check_id
+            already_present = True
+            break
+        if not already_present:
+            raw_flags.append(candidate)
+    return raw_flags
 
 
 def _apply_flag_updates(
@@ -218,16 +283,7 @@ def update_flags_after_critique(
     iteration: int,
     skip_flag_ids: frozenset[str] | None = None,
 ) -> FlagRegistry:
-    from arnold_pipelines.megaplan.audits.robustness import build_check_category_map, get_check_by_id
-
-    critique.setdefault("flags", []).extend(
-        _synthesize_flags_from_checks(
-            critique.get("checks", []),
-            category_map=build_check_category_map(),
-            get_check_def=get_check_by_id,
-            id_prefix="CRITIQUE",
-        )
-    )
+    synthesize_critique_flags(critique)
     return _apply_flag_updates(
         critique,
         plan_dir=plan_dir,
@@ -334,5 +390,10 @@ def update_flags_after_gate(
             by_id[flag_id]["status"] = "verified"
             by_id[flag_id]["verified"] = True
             by_id[flag_id]["verified_in"] = "gate.json"
+        by_id[flag_id]["gate_resolution"] = {
+            "action": action,
+            "evidence": _coerce_flag_text(res.get("evidence")),
+            "rationale": _coerce_flag_text(res.get("rationale")),
+        }
     save_flag_registry(plan_dir, registry)
     return registry

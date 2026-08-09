@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import os
 import re
 import subprocess
 import tarfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +16,7 @@ import yaml
 
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
+    _atomic_marker_write_command,
     _bootstrap_launch_command,
     _chain_anchor_uploads,
     _chain_launch_verification_command,
@@ -25,26 +29,33 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
     _materialize_canonical_epic_input,
+    _megaplan_refresh_command,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
     _filter_cloud_sessions_since,
     _parse_cloud_status_since,
+    _provider_for_action,
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
     _run_cloud_chains,
+    _run_chain_wrapper,
+    _run_epic_chain_wrapper,
     _run_preflight,
     _run_sync_megaplan,
     _run_launch_epic_wrapper,
     _run_bootstrap_wrapper,
     _status_should_use_chain,
     _tmux_chain_launch_command,
+    _tmux_chain_stop_for_fresh_command,
     _validate_chain_spec_location,
+    _verify_configured_megaplan_ref_advertised,
     build_cloud_parser,
     cloud_chain_status_payload,
     run_cloud_cli,
 )
 from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value
+from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 from arnold_pipelines.megaplan.cloud.spec import (
     ChainSubSpec,
     CloudSpec,
@@ -54,8 +65,32 @@ from arnold_pipelines.megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
-from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 from arnold_pipelines.megaplan.types import CliError
+
+
+def test_on_box_chain_uses_direct_agentbox_transport() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    provider = _provider_for_action(
+        _cloud_spec(),
+        argparse.Namespace(cloud_action="chain", on_box=True, session=None),
+    )
+
+    assert isinstance(provider, OnBoxProvider)
+
+
+def test_fresh_chain_stop_is_identity_guarded_before_reset() -> None:
+    command = _tmux_chain_stop_for_fresh_command(
+        session_name="demo-chain",
+        marker_path="/workspace/.megaplan/cloud-sessions/demo-chain.json",
+        identity_digest="digest-123",
+    )
+
+    assert "tmux has-session -t demo-chain" in command
+    assert "grep -F digest-123" in command
+    assert "tmux kill-session -t demo-chain" in command
+    assert "refusing fresh reset" in command
+    assert "exit 17" in command
 
 
 def _cloud_spec() -> CloudSpec:
@@ -70,6 +105,29 @@ def _cloud_spec() -> CloudSpec:
         secrets=[],
         ssh=SshSpec(host="testhost"),
     )
+
+
+def _running_container_observation() -> dict[str, object]:
+    return {
+        "status": "available",
+        "lifecycle": "running",
+        "collector": {"status": "available", "reason": None},
+    }
+
+
+def _go_prelaunch_capacity() -> dict[str, object]:
+    return {
+        "status": "go",
+        "verdict": "GO",
+        "checks": {
+            "byte_floor": True,
+            "inode_floor": True,
+            "reserve_fsync": True,
+            "sqlite_wal": True,
+            "receipt_atomic_fsync": True,
+            "cleanup": True,
+        },
+    }
 
 
 def _cloud_parser() -> argparse.ArgumentParser:
@@ -92,6 +150,39 @@ def test_cloud_status_and_chains_accept_compact_since_flags() -> None:
     assert chains_args.since == "12h"
 
 
+def test_sync_megaplan_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    args = _cloud_parser().parse_args(
+        ["cloud", "sync-megaplan", "initiative/chain.yaml", "--on-box"]
+    )
+
+    assert args.cloud_action == "sync-megaplan"
+    assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
+
+
+def test_cloud_exec_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    args = _cloud_parser().parse_args(
+        ["cloud", "exec", "printf on-box", "--on-box"]
+    )
+
+    assert args.cloud_action == "exec"
+    assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
+
+
+def test_cloud_chain_accepts_prepare_only() -> None:
+    args = _cloud_parser().parse_args(
+        ["cloud", "chain", "initiative/chain.yaml", "--prepare-only"]
+    )
+
+    assert args.cloud_action == "chain"
+    assert args.prepare_only is True
+
+
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     command = _chain_start_command(
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
@@ -99,11 +190,36 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
         engine_dir="/workspace/arnold",
     )
 
-    assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
-    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    pin_at = command.index(
+        'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"'
+    )
+    hot_env_at = command.index(
+        "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;"
+    )
+    assert pin_at < hot_env_at
+    assert 'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
-    assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
+    assert (
+        'cd /workspace/project && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+        'PYTHONPATH="$ENGINE_DIR"' in command
+    )
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+
+
+def test_managed_chain_start_exports_canonical_repair_route() -> None:
+    command = _chain_start_command(
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/arnold",
+        repair_session="demo-chain",
+        repair_run_kind="chain",
+        repair_marker_dir="/workspace/.megaplan/cloud-sessions",
+    )
+
+    assert "ARNOLD_REPAIR_QUEUE_ROOT" in command
+    assert "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions" in command
+    assert "ARNOLD_REPAIR_SESSION=demo-chain" in command
+    assert "ARNOLD_REPAIR_RUN_KIND=chain" in command
 
 
 def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
@@ -114,11 +230,249 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
         identity_digest="abc123",
     )
 
-    marker_json = re.search(r"printf %s '([^']+)'", command)
+    marker_json = re.search(r"payload = json.loads\('([^']+)'\)", command)
 
     assert marker_json is not None
     marker = json.loads(marker_json.group(1))
     assert marker["run_kind"] == "chain"
+    assert marker["notification_context"]["audience"] == "test_only"
+    assert marker["notification_context"]["reason"] == "pytest_environment"
+
+
+def test_atomic_marker_writer_can_be_followed_by_shell_operator(tmp_path: Path) -> None:
+    marker = tmp_path / "markers" / "demo.json"
+    command = _atomic_marker_write_command(
+        str(marker),
+        {"session": "demo", "run_kind": "chain"},
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", f"{command}; test -s {marker}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(marker.read_text()) == {
+        "run_kind": "chain",
+        "session": "demo",
+    }
+
+
+def test_tmux_chain_launch_command_is_valid_shell() -> None:
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        session_name="demo-chain",
+        identity_digest="abc123",
+    )
+
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
+    command = _megaplan_refresh_command(_cloud_spec())
+
+    assert '[ ! -e "$SRC/.git" ]' in command
+    assert '[ -e "$SRC/.git" ]' in command
+    assert '[ -d "$SRC/.git" ]' not in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"' in command
+
+
+def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() -> None:
+    spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(
+            ref="local-runtime",
+            src_path="/workspace/local-runtime",
+        ),
+    )
+
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        spec=spec,
+        refresh_editable_install=False,
+    )
+
+    assert "git push" not in command
+    assert "git fetch" not in command
+    assert "git pull" not in command
+    assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' in command
+    assert "runtime_provenance --expected-root" in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"' in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"' in command
+
+
+def _runtime_probe_shim(tmp_path: Path, *, provenance_exit: int = 0) -> Path:
+    shim = tmp_path / "bin" / "python"
+    shim.parent.mkdir(parents=True)
+    shim.write_text(
+        "#!/bin/sh\n"
+        "printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$PYTHONPATH\" \"$MEGAPLAN_RUNTIME_SRC\" "
+        "\"$MEGAPLAN_LAUNCH_RUNTIME_SRC\" \"$MEGAPLAN_LAUNCH_RUNTIME_REVISION\" "
+        "\"${HOT_ENV_SOURCED-unset}\" \"${PYTHONHOME-unset}\" \"$*\" >> \"$RUNTIME_CAPTURE\"\n"
+        "if [ \"$HOT_ENV_SOURCED\" = 1 ] && [ -z \"$ZHIPU_API_KEY\" ]; then exit 3; fi\n"
+        "case \"$*\" in\n"
+        "  *arnold_pipelines.megaplan.cloud.runtime_provenance*) "
+        f"exit {provenance_exit} ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return shim
+
+
+def test_isolated_chain_launch_keeps_refresh_pin_across_poisoned_hot_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    accepted = tmp_path / "accepted-runtime"
+    stale = tmp_path / "stale-runtime"
+    accepted.mkdir()
+    stale.mkdir()
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text(
+        "\n".join(
+            [
+                f"export MEGAPLAN_RUNTIME_SRC={stale}",
+                f"export MEGAPLAN_LAUNCH_RUNTIME_SRC={stale}",
+                "export MEGAPLAN_LAUNCH_RUNTIME_REVISION=stale-revision",
+                f"export PYTHONPATH={stale}",
+                f"export PYTHONHOME={stale}",
+                "export HOT_ENV_SOURCED=1",
+                "export ZHIPU_API_KEY=sentinel",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path)
+    capture = tmp_path / "capture.txt"
+    revision = "a" * 40
+    command = cloud_cli._chain_start_command(
+        str(tmp_path / "chain.yaml"),
+        project_dir=str(tmp_path),
+        engine_dir="/fallback/runtime",
+        log_relative="chain.log",
+        require_pinned_runtime_binding=True,
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "MEGAPLAN_LAUNCH_RUNTIME_SRC": str(accepted),
+            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": revision,
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    assert len(observations) == 2
+    for observation in observations:
+        (
+            pythonpath,
+            runtime_src,
+            launch_src,
+            launch_revision,
+            hot_env_sourced,
+            pythonhome,
+            _args,
+        ) = observation.split("|", 6)
+        assert pythonpath == str(accepted)
+        assert runtime_src == str(accepted)
+        assert launch_src == str(accepted)
+        assert launch_revision == revision
+        assert hot_env_sourced == "1"
+        assert pythonhome == "unset"
+    assert "runtime_provenance" in observations[0]
+    assert f"--expected-revision {revision}" in observations[0]
+    assert "chain start" in observations[1]
+
+
+def test_isolated_chain_launch_fails_closed_before_chain_on_runtime_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text("export MEGAPLAN_RUNTIME_SRC=/stale/runtime\n", encoding="utf-8")
+    monkeypatch.setattr(cloud_cli, "_CLOUD_HOT_ENV_PATH", str(hot_env))
+    shim = _runtime_probe_shim(tmp_path, provenance_exit=2)
+    capture = tmp_path / "capture.txt"
+    accepted = tmp_path / "accepted-runtime"
+    accepted.mkdir()
+    command = cloud_cli._chain_start_command(
+        str(tmp_path / "chain.yaml"),
+        project_dir=str(tmp_path),
+        engine_dir="/fallback/runtime",
+        log_relative="chain.log",
+        require_pinned_runtime_binding=True,
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNTIME_CAPTURE": str(capture),
+            "MEGAPLAN_LAUNCH_RUNTIME_SRC": str(accepted),
+            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": "a" * 40,
+        },
+    )
+
+    assert result.returncode == 24
+    observations = capture.read_text(encoding="utf-8").splitlines()
+    assert len(observations) == 1
+    assert "runtime_provenance" in observations[0]
+    assert "chain start" not in observations[0]
+    assert "isolated_chain_runtime_binding_drift" in (
+        tmp_path / "chain.log"
+    ).read_text(encoding="utf-8")
+
+
+def test_isolated_chain_spec_enables_post_hot_env_runtime_gate() -> None:
+    spec = replace(
+        _cloud_spec(),
+        isolated_chain_runner=True,
+        isolated_chain_runner_image_id="sha256:" + "a" * 64,
+    )
+
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        spec=spec,
+        refresh_editable_install=False,
+    )
+
+    assert "isolated_chain_runtime_binding_drift" in command
+    assert "--expected-root" in command
+    assert "--expected-revision" in command
+    assert ". /workspace/.cloud-hot-env" in command
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
@@ -300,10 +654,7 @@ class _LaunchEpicProvider:
             }
             return subprocess.CompletedProcess([], 0, json.dumps(result) + "\n", "")
         if "tmux new-session" in command or "session already running for this chain" in command:
-            marker_match = re.search(r"printf %s ('(?:[^']|'\"'\"')*') > ([^;]+);", command)
-            assert marker_match, command
-            marker_payload = json.loads(shlex_split_one(marker_match.group(1)))
-            marker_path = shlex_split_one(marker_match.group(2))
+            marker_path, marker_payload = _parse_marker_write(command)
             self.markers[marker_path] = marker_payload
             return subprocess.CompletedProcess([], 0, "started session\n", "")
         return subprocess.CompletedProcess([], 0, "", "")
@@ -315,6 +666,16 @@ def shlex_split_one(value: str) -> str:
     parsed = shlex.split(value)
     assert len(parsed) == 1
     return parsed[0]
+
+
+def _parse_marker_write(command: str) -> tuple[str, dict]:
+    marker_match = re.search(
+        r"path = pathlib\.Path\((?P<path>'(?:\\'|[^'])*')\)\s+payload = json\.loads\((?P<payload>'(?:\\'|[^'])*')\)",
+        command,
+        re.DOTALL,
+    )
+    assert marker_match, command
+    return ast.literal_eval(marker_match.group("path")), json.loads(ast.literal_eval(marker_match.group("payload")))
 
 
 def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
@@ -358,6 +719,8 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     marker = next(marker for marker in provider.markers.values() if marker["remote_spec"] == remote_spec)
     assert marker["run_kind"] == "chain"
     assert marker["allow_human_gates"] is False
+    assert marker["should_run"] is True
+    assert marker["operator_pause"] is None
     assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files
@@ -397,7 +760,10 @@ def test_bootstrap_launch_command_writes_plan_marker_and_relaunch_command() -> N
     assert '"run_kind": "plan"' in command
     assert '"plan_name": "per-workflow-window-chat-cloud-20260628"' in command
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in command
-    assert "arnold init --project-dir /workspace/vibecomfy-per-workflow-window-chat-20260628" in command
+    assert (
+        "python3 -P -m arnold_pipelines.megaplan init --project-dir "
+        "/workspace/vibecomfy-per-workflow-window-chat-20260628"
+    ) in command
     assert "--name per-workflow-window-chat-cloud-20260628" in command
 
 
@@ -538,9 +904,9 @@ def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
     )
 
     phase_map = summary["milestones"][0]["resolved_phase_map"]
-    assert phase_map["plan"] == "codex:high"
-    assert phase_map["revise"] == "codex:high"
-    assert phase_map["execute"] == "codex"
+    assert phase_map["plan"] == "codex:gpt-5.6-sol:high"
+    assert phase_map["revise"] == "codex:gpt-5.6-sol:high"
+    assert phase_map["execute"] == "codex:gpt-5.6-sol:high"
 
 
 def test_cloud_preflight_reports_dependencies_for_every_spec_in_each_chain() -> None:
@@ -670,6 +1036,12 @@ def test_cloud_preflight_reports_remote_imports_profile_warning_and_expected_spe
     commands: list[str] = []
 
     class PreflightProvider:
+        def observe_container(self):
+            return _running_container_observation()
+
+        def observe_prelaunch_capacity(self):
+            return _go_prelaunch_capacity()
+
         def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
             commands.append(command)
             if "MEGAPLAN_IMPORT_CHECK" in command:
@@ -701,6 +1073,8 @@ def test_cloud_preflight_reports_remote_imports_profile_warning_and_expected_spe
     assert payload["canonical_layout"] is True
     assert payload["remote"]["expected_remote_spec"].endswith("/.megaplan/initiatives/demo/chain.yaml")
     assert payload["remote"]["import_check"]["status"] == "ok"
+    assert payload["remote"]["host_predeploy_verdict"] == "GO"
+    assert payload["remote"]["collector_launch_verdict"] == "GO"
     assert any("Codex-only cloud workers should use profile all-codex" in warning for warning in payload["warnings"])
     assert any("MEGAPLAN_IMPORT_CHECK" in command for command in commands)
 
@@ -727,6 +1101,12 @@ def test_cloud_preflight_fails_on_stale_remote_import(
     )
 
     class StaleProvider:
+        def observe_container(self):
+            return _running_container_observation()
+
+        def observe_prelaunch_capacity(self):
+            return _go_prelaunch_capacity()
+
         def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
             if "MEGAPLAN_IMPORT_CHECK" in command:
                 payload = {
@@ -755,6 +1135,369 @@ def test_cloud_preflight_fails_on_stale_remote_import(
     assert rc == 1
     assert payload["success"] is False
     assert "missing modern arnold_pipelines.megaplan import" in payload["errors"]
+
+
+def test_cloud_preflight_reports_engine_ref_check_when_remote_checks_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "briefs").mkdir()
+    (spec_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._verify_configured_megaplan_ref_advertised",
+        lambda *_a, **_k: {
+            "status": "ok",
+            "repo": "https://github.com/example/arnold.git",
+            "requested_ref": "editible-install",
+            "advertised_ref": "refs/heads/editible-install",
+            "commit": "abc123",
+            "ref_kind": "branch",
+        },
+    )
+
+    class PreflightProvider:
+        def observe_container(self):
+            return _running_container_observation()
+
+        def observe_prelaunch_capacity(self):
+            return _go_prelaunch_capacity()
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            if "MEGAPLAN_IMPORT_CHECK" in command:
+                payload = {
+                    "checks": {
+                        "arnold_pipelines.megaplan": True,
+                        "arnold_pipelines.megaplan.cli": True,
+                        "arnold.pipelines.megaplan": False,
+                    },
+                    "errors": [],
+                }
+                return subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+            return subprocess.CompletedProcess([], 0, "\n", "")
+
+    rc = _run_preflight(
+        project,
+        argparse.Namespace(
+            spec=str(spec_path),
+            skip_remote=False,
+            allow_loose_chain_spec=False,
+            cloud_yaml=str(project / "cloud.yaml"),
+        ),
+        replace(
+            _cloud_spec(),
+            megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install"),
+        ),
+        PreflightProvider(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["remote"]["engine_ref_check"]["advertised_ref"] == "refs/heads/editible-install"
+
+
+def test_verify_configured_megaplan_ref_accepts_full_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._ls_remote_refs",
+        lambda repo, refs: subprocess.CompletedProcess(
+            [],
+            0,
+            "abc123\trefs/heads/editible-install\n",
+            "",
+        ),
+    )
+
+    result = _verify_configured_megaplan_ref_advertised(
+        replace(
+            _cloud_spec(),
+            megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="refs/heads/editible-install"),
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert result["advertised_ref"] == "refs/heads/editible-install"
+    assert result["ref_kind"] == "full_ref"
+
+
+def test_verify_configured_megaplan_ref_accepts_fetchable_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._probe_remote_commit",
+        lambda repo, requested: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    result = _verify_configured_megaplan_ref_advertised(
+        replace(
+            _cloud_spec(),
+            megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref=commit),
+        )
+    )
+
+    assert result == {
+        "status": "ok",
+        "repo": "https://github.com/example/arnold.git",
+        "requested_ref": commit,
+        "commit": commit,
+        "ref_kind": "commit",
+        "verification": "fetch",
+    }
+
+
+def test_verify_configured_megaplan_ref_rejects_unfetchable_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    commit = "b" * 40
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._probe_remote_commit",
+        lambda repo, requested: subprocess.CompletedProcess([], 128, "", "fatal: not our ref"),
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        _verify_configured_megaplan_ref_advertised(
+            replace(
+                _cloud_spec(),
+                megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref=commit),
+            )
+        )
+
+    assert excinfo.value.code == "engine_commit_unfetchable"
+    assert excinfo.value.extra["engine_ref_check"]["reason"] == "raw_sha_unfetchable"
+
+
+def test_verify_configured_megaplan_ref_rejects_ambiguous_short_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._ls_remote_refs",
+        lambda repo, refs: subprocess.CompletedProcess(
+            [],
+            0,
+            "abc123\trefs/heads/editible-install\n"
+            "def456\trefs/tags/editible-install\n",
+            "",
+        ),
+    )
+
+    spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install")
+    )
+    with pytest.raises(CliError) as excinfo:
+        _verify_configured_megaplan_ref_advertised(spec)
+
+    assert excinfo.value.code == "engine_ref_ambiguous"
+
+
+class _RefFailureProvider:
+    def __init__(self) -> None:
+        self.uploads: list[tuple[Path, str]] = []
+        self.markers: dict[str, dict] = {}
+
+    def upload_file(self, src: Path, dest: str) -> None:
+        self.uploads.append((src, dest))
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        if "MEGAPLAN_MARKER_WRITE" in command:
+            marker_path, marker_payload = _parse_marker_write(command)
+            self.markers[marker_path] = marker_payload
+            return subprocess.CompletedProcess([], 0, "", "")
+        if "MEGAPLAN_PRELAUNCH_MARKER_GUARD" in command:
+            return subprocess.CompletedProcess(
+                [],
+                0,
+                json.dumps(
+                    {
+                        "session_alive": False,
+                        "marker_present": False,
+                        "identity_matches": False,
+                        "marker_read_error": "",
+                    }
+                )
+                + "\n",
+                "",
+            )
+        raise AssertionError(command)
+
+
+def test_cloud_chain_persists_failed_launch_outcome_when_engine_ref_is_not_advertised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "briefs").mkdir()
+    (spec_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_a, **_k: None)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._run_remote_dependency_check", lambda *_a, **_k: [])
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._remote_repo_head", lambda *_a, **_k: {"branch": "main", "head": "abc123"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._verify_configured_megaplan_ref_advertised",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CliError(
+                "engine_ref_not_advertised",
+                "Configured cloud megaplan.ref 'editible-install' is not advertised by https://github.com/example/arnold.git.",
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": "https://github.com/example/arnold.git",
+                        "requested_ref": "editible-install",
+                    }
+                },
+            )
+        ),
+    )
+
+    provider = _RefFailureProvider()
+    cloud_spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install")
+    )
+    with pytest.raises(CliError) as excinfo:
+        _run_chain_wrapper(
+            project,
+            argparse.Namespace(
+                spec=str(spec_path),
+                idea_dir=None,
+                fresh=False,
+                no_git_refresh=False,
+                no_editable_install_sync=True,
+                force_clean_editable_install=False,
+                allow_loose_chain_spec=False,
+                allow_template_placeholders=False,
+                allow_human_gates=False,
+                cloud_yaml=str(project / "cloud.yaml"),
+                _canonicalized_epic=True,
+                _generated_canonical_files=[],
+            ),
+            cloud_spec,
+            provider,
+        )
+
+    assert excinfo.value.code == "engine_ref_not_advertised"
+    assert provider.markers
+    marker = next(iter(provider.markers.values()))
+    assert marker["remote_spec"].endswith("/.megaplan/initiatives/demo/chain.yaml")
+    assert marker["launch_outcome"]["status"] == "failed"
+    assert marker["launch_outcome"]["code"] == "engine_ref_not_advertised"
+    assert "not advertised" in marker["launch_outcome"]["detail"]
+
+
+def test_cloud_epic_chain_persists_failed_launch_outcome_when_engine_ref_is_not_advertised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "app"
+    child_dir = project / ".megaplan" / "initiatives" / "child"
+    parent_dir = project / ".megaplan" / "initiatives" / "demo"
+    child_dir.mkdir(parents=True)
+    parent_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (child_dir / "NORTHSTAR.md").write_text("child north star\n", encoding="utf-8")
+    (child_dir / "briefs").mkdir()
+    (child_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    child_spec = child_dir / "chain.yaml"
+    child_spec.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/child/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+    (parent_dir / "NORTHSTAR.md").write_text("parent north star\n", encoding="utf-8")
+    epic_spec = parent_dir / "epic-chain.yaml"
+    epic_spec.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "epics:\n"
+        "  - id: child\n"
+        "    spec: ../child/chain.yaml\n"
+        "on_failure:\n"
+        "  abort: stop_epic_chain\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_a, **_k: None)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._verify_configured_megaplan_ref_advertised",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CliError(
+                "engine_ref_not_advertised",
+                "Configured cloud megaplan.ref 'editible-install' is not advertised by https://github.com/example/arnold.git.",
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": "https://github.com/example/arnold.git",
+                        "requested_ref": "editible-install",
+                    }
+                },
+            )
+        ),
+    )
+
+    class EpicRefFailureProvider(_RefFailureProvider):
+        def upload_archive(self, src: Path, dest: str) -> None:
+            self.uploads.append((src, dest))
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            if command.startswith("rm -rf "):
+                return subprocess.CompletedProcess([], 0, "", "")
+            return super().ssh_exec(command)
+
+    provider = EpicRefFailureProvider()
+    cloud_spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install"),
+    )
+    with pytest.raises(CliError) as excinfo:
+        _run_epic_chain_wrapper(
+            project,
+            argparse.Namespace(
+                spec=str(epic_spec),
+                fresh=False,
+                no_editable_install_sync=True,
+                one=False,
+                cloud_yaml=str(project / "cloud.yaml"),
+            ),
+            cloud_spec,
+            provider,
+        )
+
+    assert excinfo.value.code == "engine_ref_not_advertised"
+    assert provider.markers
+    marker = next(iter(provider.markers.values()))
+    assert marker["run_kind"] == "epic_chain"
+    assert marker["launch_outcome"]["status"] == "failed"
+    assert marker["launch_outcome"]["code"] == "engine_ref_not_advertised"
 
 
 def test_sync_megaplan_uses_derived_chain_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1067,7 +1810,7 @@ def test_cloud_resume_uses_resume_command_for_failed_plan(monkeypatch, tmp_path:
     ]
 
 
-def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> None:
+def test_cloud_chain_status_payload_keeps_live_process_diagnostic_only() -> None:
     remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
     chain_yaml = (
         "milestones:\n"
@@ -1106,9 +1849,11 @@ def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> Non
         ),
     )
 
-    assert payload["runner"]["status"] == "alive"
-    assert payload["runner"]["tmux_status"] == "missing"
-    assert payload["runner"]["process_status"] == "alive"
+    assert payload["runner"]["status"] == "unknown"
+    assert payload["runner"]["authority"] == "canonical_current_target"
+    assert payload["runner"]["diagnostic_tmux_status"] == "missing"
+    assert payload["runner"]["diagnostic_process_status"] == "alive"
+    assert payload["runner"]["mutation_permitted"] is False
     assert payload["effective_status"] == "running"
 
 
@@ -1159,6 +1904,11 @@ def test_cloud_chains_command_includes_should_run_and_watchdog_repair_state() ->
     assert '"watchdog_repairing"' in script
     assert '"should_be_running"' in script
     assert "def _should_be_running(payload):" in script
+    assert 'if payload.get("should_run") is False:' in script
+    assert (
+        'isinstance(operator_pause, dict) and operator_pause.get("active") is True'
+        in script
+    )
     assert "should_be_running_count" in script
     assert "watchdog_repairing_count" in script
 
@@ -1533,8 +2283,9 @@ def test_cloud_chain_status_payload_tmux_alive_sets_tmux_evidence_and_process_un
 
     assert payload["tmux_evidence"]["status"] == "alive"
     assert payload["process_evidence"]["status"] == "unknown"
-    assert payload["runner"]["tmux_status"] == "alive"
-    assert payload["runner"]["process_status"] == "unknown"
+    assert payload["runner"]["diagnostic_tmux_status"] == "alive"
+    assert payload["runner"]["diagnostic_process_status"] == "unknown"
+    assert payload["runner"]["status"] == "unknown"
 
 
 def test_cloud_chain_status_payload_active_step_from_plan_status() -> None:

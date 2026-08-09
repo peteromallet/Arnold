@@ -28,8 +28,16 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     escalation_ledger_on,
     meta_repair_commit_enabled,
     meta_repair_commit_on,
+    meta_repair_push_enabled,
+    meta_repair_push_on,
     meta_repair_enabled,
     meta_repair_on,
+    meta_repair_push_enabled,
+    meta_repair_push_on,
+    MUTATION_PATH_L1,
+    MUTATION_PATH_L2,
+    MUTATION_PATH_L3,
+    mutation_authorized,
     redaction_enabled,
     redaction_on,
     repair_request_queue_enabled,
@@ -149,7 +157,7 @@ class TestRedactionOptOut:
 
 
 class TestExplicitOptIn:
-    """Most behaviour-changing flags still require opt-in; repair dispatch defaults on."""
+    """Authority ledgers require opt-in; repair dispatch defaults on."""
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -166,6 +174,10 @@ class TestExplicitOptIn:
     def test_repair_trigger_on_by_default(self) -> None:
         with _clear_env():
             assert repair_trigger_enabled() is True
+
+    def test_autonomy_off_by_default(self) -> None:
+        with _clear_env():
+            assert autonomy_enabled() is False
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -304,6 +316,53 @@ class TestFlagIndependence:
 
 
 # ---------------------------------------------------------------------------
+# Master-plus-path mutation authorization
+# ---------------------------------------------------------------------------
+
+
+_MUTATION_PATHS = (
+    (MUTATION_PATH_L1, "ARNOLD_REPAIR_TRIGGER_ENABLED"),
+    (MUTATION_PATH_L2, "ARNOLD_META_REPAIR_ENABLED"),
+    (MUTATION_PATH_L3, "ARNOLD_AUDIT_AUTOFIX_ENABLED"),
+)
+_MUTATION_CLASSES = ("state", "source", "commit", "push", "subprocess")
+
+
+class TestMutationAuthorization:
+    """Every mutation class needs the master gate and its relevant path gate."""
+
+    @pytest.mark.parametrize("path,path_env", _MUTATION_PATHS)
+    @pytest.mark.parametrize("mutation_class", _MUTATION_CLASSES)
+    @pytest.mark.parametrize(
+        ("master_enabled", "path_enabled"),
+        ((False, False), (False, True), (True, False), (True, True)),
+    )
+    def test_master_and_path_matrix(
+        self,
+        path: str,
+        path_env: str,
+        mutation_class: str,
+        master_enabled: bool,
+        path_enabled: bool,
+    ) -> None:
+        """All L1/L2/L3 effects authorize only for the true/true row."""
+        with _set_env(
+            ARNOLD_AUTONOMY="1" if master_enabled else "0",
+            **{path_env: "1" if path_enabled else "0"},
+        ):
+            assert mutation_authorized(path) is (master_enabled and path_enabled), (
+                f"{path} {mutation_class} mutation must require master and path gates"
+            )
+            # Observation is intentionally not part of mutation authorization.
+            assert resolver_observe_enabled() is True
+            assert repair_request_queue_enabled() is True
+
+    def test_unknown_mutation_path_fails_closed(self) -> None:
+        with _set_env(ARNOLD_AUTONOMY="1"):
+            assert mutation_authorized("unknown") is False
+
+
+# ---------------------------------------------------------------------------
 # Integration: EscalationLedgerWriter respects the centralized flag
 # ---------------------------------------------------------------------------
 
@@ -355,7 +414,7 @@ class TestResolverObserveIntegration:
                 "test-session",
                 marker_dir="/nonexistent/markers",
             )
-            assert result["schema_version"] == 1
+            assert result["schema_version"] == 2
             assert result["session"] == "test-session"
             assert result["authoritative_source"] == "resolver_observe_disabled"
             assert "resolver observe disabled" in result["rationale"][0]
@@ -409,6 +468,16 @@ class TestM5Defaults:
         with _clear_env():
             assert meta_repair_commit_enabled() is True
             assert meta_repair_commit_on() is True
+
+    def test_meta_repair_push_defaults_off(self) -> None:
+        with _clear_env():
+            assert meta_repair_push_enabled() is False
+            assert meta_repair_push_on() is False
+
+    def test_meta_repair_push_requires_explicit_opt_in(self) -> None:
+        with _set_env(ARNOLD_META_REPAIR_PUSH_ENABLED="1"):
+            assert meta_repair_push_enabled() is True
+            assert meta_repair_push_on() is True
 
     def test_audit_autofix_commit_defaults_on(self) -> None:
         with _clear_env():

@@ -5,7 +5,7 @@ This document captures how to use your Grok API key and the public endpoint **ou
 ## Endpoint & Auth (the values to share/copy)
 
 - **Base URL**: `https://api.x.ai/v1`
-- **Auth**: `Authorization: Bearer $XAI_API_KEY` (raw HTTP)  
+- **Auth**: `Authorization: Bearer $XAI_API_KEY` (raw HTTP)
   or `api_key=os.getenv("XAI_API_KEY")` (SDK)
 - **Primary model**: `grok-4.5` (current flagship per xAI; great for code + general tasks)
 - **Get key**: https://console.x.ai/team/default/api-keys

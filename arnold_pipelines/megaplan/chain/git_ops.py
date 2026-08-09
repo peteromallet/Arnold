@@ -11,21 +11,15 @@ import time
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan._core import list_batch_artifacts
 
 _MISSING_REMOTE_REF_MARKERS = (
     "couldn't find remote ref",
     "could not find remote ref",
     "remote ref does not exist",
-)
-
-_MISSING_PR_MARKERS = (
-    "could not resolve to a pullrequest",
-    "could not resolve to a pull request",
-    "pull request not found",
-    "no pull requests found",
 )
 
 _NON_FAST_FORWARD_PUSH_MARKERS = (
@@ -34,6 +28,14 @@ _NON_FAST_FORWARD_PUSH_MARKERS = (
     "fetch first",
     "stale info",
     "failed to push some refs",
+)
+
+_MISSING_PR_MARKERS = (
+    "could not resolve to a pullrequest",
+    "could not resolve to a pull request",
+    "pull request not found",
+    "no pull requests found",
+    "pull request was not found",
 )
 
 _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
@@ -62,6 +64,30 @@ class CommitResult:
     previous_sha: str | None = None
     base_branch: str | None = None
     audit_notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PRTransitionEvidence:
+    # Durable evidence captured at PR ready/merge transition points.
+    # Records PR head, last pushed tip, merge commit, CI/readiness state,
+    # and timestamps. tip_containment_applicable is True when the merge
+    # strategy produces a git merge commit whose ancestry can contain the
+    # PR tip. Squash merges produce single-parent commits where git ancestry
+    # does not imply tip containment -- for those, pinned_pr_head serves as
+    # the authoritative record of what was merged.
+
+    pr_number: int
+    pr_head_sha: str | None = None
+    last_pushed_tip: str | None = None
+    merge_commit_sha: str | None = None
+    ci_readiness_state: str | None = None
+    evidence_timestamp: str | None = None
+    contract_id: str | None = None
+    tip_containment_applicable: bool | None = None
+    tip_containment_verified: bool | None = None
+    tip_containment_reason: str | None = None
+    pinned_pr_head: str | None = None
+    validation_evidence: Mapping[str, Any] | None = None
 
 
 def _compat():
@@ -890,6 +916,70 @@ def _checkout_milestone_branch(
             if ancestor.returncode == 0:
                 writer(f"[chain] {branch} already contains {fork_point}\n")
             elif ancestor.returncode == 1:
+                common = _compat().subprocess.run(
+                    ["git", "merge-base", "HEAD", fork_point],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                if common.returncode != 0 or not common.stdout.strip():
+                    writer(
+                        f"[chain] git merge-base HEAD {fork_point} -> rc={common.returncode}; "
+                        f"no common ancestor with existing milestone branch {branch}; "
+                        "skipping automatic rebase to preserve the repair relaunch.\n"
+                    )
+                    return base_sha
+                if expected_base_ref:
+                    branch_has_expected = _compat().subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", expected_base_ref, "HEAD"],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    fork_has_expected = _compat().subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", expected_base_ref, fork_point],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    writer(
+                        "[chain] git merge-base --is-ancestor "
+                        f"{expected_base_ref} HEAD -> rc={branch_has_expected.returncode}\n"
+                    )
+                    writer(
+                        "[chain] git merge-base --is-ancestor "
+                        f"{expected_base_ref} {fork_point} -> rc={fork_has_expected.returncode}\n"
+                    )
+                    if (
+                        branch_has_expected.returncode == 0
+                        and fork_has_expected.returncode == 1
+                    ):
+                        writer(
+                            "[chain] skipping automatic rebase for existing milestone "
+                            f"branch {branch}: {fork_point} no longer contains the "
+                            f"recorded target base {expected_base_ref}; preserving "
+                            "the existing branch history for repair relaunch.\n"
+                        )
+                        return expected_base_ref
+                    if (
+                        branch_has_expected.returncode == 1
+                        and fork_has_expected.returncode == 0
+                    ):
+                        writer(
+                            "[chain] skipping automatic rebase for existing milestone "
+                            f"branch {branch}: HEAD does not contain the recorded "
+                            f"target base {expected_base_ref}, but {fork_point} does; "
+                            "the branch history was built on a different root and "
+                            "cannot be rebased onto the current base. Preserving the "
+                            "existing branch for repair relaunch.\n"
+                        )
+                        return expected_base_ref
                 rebase = _compat().subprocess.run(
                     ["git", "rebase", fork_point],
                     cwd=str(root),
@@ -1067,7 +1157,7 @@ def _claimed_paths(root: Path, plan_name: str) -> set[str]:
     artifacts = [
         plan_dir / "finalize.json",
         plan_dir / "execution.json",
-        *sorted(plan_dir.glob("execution_batch_*.json")),
+        *sorted(list_batch_artifacts(plan_dir)),
     ]
     for artifact in artifacts:
         if not artifact.exists():
@@ -1112,7 +1202,16 @@ def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str
         for part in path.parts[:-1]:
             cursor = cursor / part
             if (cursor / ".git").exists():
-                rel_to_repo = Path(*path.parts[len(cursor.relative_to(root).parts):])
+                try:
+                    rel_parts = cursor.relative_to(root).parts
+                except (OSError, ValueError):
+                    _compat()._warn_chain_fallback(
+                        "M3A_WARN_NESTED_REPO_PATHS",
+                        reason="path_normalization",
+                        context={"raw_path": raw_path},
+                    )
+                    break
+                rel_to_repo = Path(*path.parts[len(rel_parts):])
                 repo_paths.setdefault(cursor, set()).add(rel_to_repo.as_posix())
                 break
     return repo_paths
@@ -1919,7 +2018,75 @@ def _commit_and_push_phase(
 
 
 def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
+    """Mark a PR as ready for review and capture readiness evidence."""
     _compat()._run_command(root, ["gh", "pr", "ready", str(pr_number)], writer=writer, error_code="gh_pr_ready_failed")
+
+
+def _capture_pr_ready_evidence(
+    root: Path,
+    pr_number: int,
+    *,
+    writer,
+    ci_readiness_state: str | None = None,
+    validation_evidence: Mapping[str, Any] | None = None,
+) -> PRTransitionEvidence:
+    """Capture PR-ready transition evidence.
+
+    Records the PR head, last pushed tip, and CI/readiness state at the
+    moment the PR is marked ready.  Tip containment is not checked at this
+    point (no merge commit yet).
+    """
+    pr_head_sha, last_pushed_tip = _capture_pr_head_evidence(root, pr_number, writer=writer)
+    if ci_readiness_state is None:
+        ci_readiness_state = "ready"  # default when explicitly marked ready
+    return _build_pr_transition_evidence(
+        pr_number=pr_number,
+        contract_id="pr.ready.1",
+        pr_head_sha=pr_head_sha,
+        last_pushed_tip=last_pushed_tip,
+        ci_readiness_state=ci_readiness_state,
+        validation_evidence=validation_evidence,
+    )
+
+
+def _capture_pr_merged_evidence(
+    root: Path,
+    pr_number: int,
+    *,
+    writer,
+    pr_head_sha: str | None = None,
+    validation_evidence: Mapping[str, Any] | None = None,
+) -> PRTransitionEvidence:
+    """Capture PR-merged transition evidence with tip containment check.
+
+    After merge, captures the merge commit sha, checks whether the merge
+    strategy supports tip containment (multi-parent merge commit), and if so,
+    verifies the PR head is an ancestor.  For squash merges, pins the PR head
+    as authoritative evidence since git ancestry cannot prove containment.
+    """
+    merge_commit_sha = _capture_merge_commit_evidence(root, pr_number, writer=writer)
+    if pr_head_sha is None:
+        pr_head_sha_captured, _ = _capture_pr_head_evidence(root, pr_number, writer=writer)
+        pr_head_sha = pr_head_sha_captured
+
+    applicable = None
+    verified = None
+    reason = None
+    if merge_commit_sha and pr_head_sha:
+        applicable, verified, reason = _check_merge_tip_containment(
+            root, merge_commit_sha, pr_head_sha, writer=writer
+        )
+
+    return _build_pr_transition_evidence(
+        pr_number=pr_number,
+        contract_id="pr.merged.1",
+        pr_head_sha=pr_head_sha,
+        merge_commit_sha=merge_commit_sha,
+        tip_containment_applicable=applicable,
+        tip_containment_verified=verified,
+        tip_containment_reason=reason,
+        validation_evidence=validation_evidence,
+    )
 
 
 def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
@@ -2074,6 +2241,203 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
     if not isinstance(value, str):
         raise CliError("gh_pr_view_failed", "gh pr view did not return a string state")
     return value.lower()
+
+
+def _capture_pr_head_evidence(root: Path, pr_number: int, *, writer) -> tuple[str | None, str | None]:
+    """Capture the PR head sha and last-pushed-tip for a PR number.
+
+    Returns (pr_head_sha, last_pushed_tip).  pr_head_sha is the HEAD of the PR
+    branch on origin; last_pushed_tip is the last commit pushed to that branch.
+    Both are None when gh is unavailable.
+    """
+    try:
+        proc = _compat().subprocess.run(
+            [
+                "gh", "pr", "view", str(pr_number),
+                "--json", "headRefOid,commits",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        writer(f"[chain] gh pr view #{pr_number} head evidence failed: {exc}\n")
+        return None, None
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        writer(f"[chain] gh pr view #{pr_number} head evidence -> rc={proc.returncode}: {detail}\n")
+        return None, None
+
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        writer(f"[chain] gh pr view #{pr_number} head evidence non-JSON: {exc}\n")
+        return None, None
+
+    if not isinstance(payload, dict):
+        return None, None
+
+    pr_head_sha = _sha_from_payload(payload.get("headRefOid"))
+    commits = payload.get("commits")
+    last_pushed_tip: str | None = None
+    if isinstance(commits, list) and commits:
+        last_commit = commits[-1]
+        if isinstance(last_commit, dict):
+            last_pushed_tip = _sha_from_payload(last_commit.get("oid"))
+
+    return pr_head_sha, last_pushed_tip
+
+
+def _capture_merge_commit_evidence(root: Path, pr_number: int, *, writer) -> str | None:
+    """After merge, capture the merge commit sha from the PR.
+
+    Returns the merge commit sha (mergeCommit.oid) when the PR is merged and
+    the merge commit is available.  Returns None when the PR is not merged or
+    the merge commit cannot be resolved.
+    """
+    try:
+        proc = _compat().subprocess.run(
+            [
+                "gh", "pr", "view", str(pr_number),
+                "--json", "state,mergedAt,mergeCommit",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        writer(f"[chain] gh pr view #{pr_number} merge commit evidence failed: {exc}\n")
+        return None
+
+    if proc.returncode != 0:
+        return None
+
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    state = (payload.get("state") or "").lower()
+    if state != "merged":
+        return None
+
+    merge_commit = payload.get("mergeCommit")
+    if isinstance(merge_commit, dict):
+        return _sha_from_payload(merge_commit.get("oid"))
+    return None
+
+
+def _check_merge_tip_containment(
+    root: Path,
+    merge_commit_sha: str,
+    pr_head_sha: str | None,
+    *,
+    writer,
+) -> tuple[bool | None, bool | None, str | None]:
+    """Determine whether tip containment is applicable and verified.
+
+    A merge commit (multi-parent) can contain the PR tip in its ancestry:
+    ``git merge-base --is-ancestor <pr_head> <merge_commit>`` will return 0.
+
+    A squash merge produces a single-parent commit on the base branch whose
+    git ancestry does not contain the PR head — containment is *not applicable*
+    and we must rely on pinned PR head evidence instead.
+
+    Returns (applicable, verified, reason).
+    """
+    if not merge_commit_sha or not pr_head_sha:
+        return None, None, "missing merge commit or PR head for tip containment check"
+
+    # Check if this is a merge commit (has >1 parent) or a squash (1 parent).
+    try:
+        proc = _compat().subprocess.run(
+            ["git", "cat-file", "-p", merge_commit_sha],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        writer(f"[chain] git cat-file -p {merge_commit_sha} failed: {exc}\n")
+        return None, None, f"git cat-file failed: {exc}"
+
+    if proc.returncode != 0:
+        return None, None, f"git cat-file -p exited {proc.returncode}"
+
+    parent_lines = [line for line in proc.stdout.splitlines() if line.startswith("parent ")]
+    is_merge_commit = len(parent_lines) > 1
+
+    if not is_merge_commit:
+        # Squash or single-parent commit: containment not applicable.
+        return False, None, "squash merge (single parent) — tip containment not applicable; pinned PR head required"
+
+    # Multi-parent merge commit: check ancestry.
+    try:
+        ancestor = _compat().subprocess.run(
+            ["git", "merge-base", "--is-ancestor", pr_head_sha, merge_commit_sha],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        writer(f"[chain] git merge-base --is-ancestor failed: {exc}\n")
+        return True, None, f"ancestry check failed: {exc}"
+
+    if ancestor.returncode == 0:
+        return True, True, f"PR head {pr_head_sha[:12]} is an ancestor of merge commit {merge_commit_sha[:12]}"
+    elif ancestor.returncode == 1:
+        return True, False, f"PR head {pr_head_sha[:12]} is NOT an ancestor of merge commit {merge_commit_sha[:12]}"
+    else:
+        detail = (ancestor.stderr or ancestor.stdout or "").strip()
+        return True, None, f"ancestry check error: {detail}"
+
+
+def _sha_from_payload(value: object) -> str | None:
+    """Extract a git sha from a JSON payload value."""
+    if isinstance(value, str) and len(value) >= 7 and all(c in "0123456789abcdef" for c in value.lower()):
+        return value.lower()
+    return None
+
+
+def _build_pr_transition_evidence(
+    *,
+    pr_number: int,
+    contract_id: str,
+    pr_head_sha: str | None = None,
+    last_pushed_tip: str | None = None,
+    merge_commit_sha: str | None = None,
+    ci_readiness_state: str | None = None,
+    tip_containment_applicable: bool | None = None,
+    tip_containment_verified: bool | None = None,
+    tip_containment_reason: str | None = None,
+    validation_evidence: Mapping[str, Any] | None = None,
+) -> PRTransitionEvidence:
+    """Construct a PRTransitionEvidence record with an evidence timestamp."""
+    return PRTransitionEvidence(
+        pr_number=pr_number,
+        pr_head_sha=pr_head_sha,
+        last_pushed_tip=last_pushed_tip,
+        merge_commit_sha=merge_commit_sha,
+        ci_readiness_state=ci_readiness_state,
+        evidence_timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        contract_id=contract_id,
+        tip_containment_applicable=tip_containment_applicable,
+        tip_containment_verified=tip_containment_verified,
+        tip_containment_reason=tip_containment_reason,
+        pinned_pr_head=pr_head_sha if tip_containment_applicable is False else None,
+        validation_evidence=dict(validation_evidence) if validation_evidence else None,
+    )
 
 
 def _reconcile_terminal_pr_state(

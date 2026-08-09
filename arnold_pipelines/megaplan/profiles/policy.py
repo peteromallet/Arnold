@@ -48,6 +48,7 @@ KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 ROBUSTNESS_ALIASES: dict[str, str] = {
     "tiny": "bare",
+    "medium": "light",
     "standard": "full",
     "robust": "thorough",
     "superrobust": "extreme",
@@ -64,6 +65,7 @@ PROFILE_METADATA_KEYS = frozenset({
     "max_tasks_per_batch",
     "adaptive_critique",
     "critic_model",
+    "critique_routing",
 })
 
 SYSTEM_DEFAULT_PROFILE = "partnered"

@@ -21,7 +21,6 @@ import json
 import logging
 import os
 import platform
-import signal
 import socket
 import subprocess
 import sys
@@ -31,7 +30,7 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
-from arnold_pipelines.megaplan.runtime.process import kill_group
+from arnold.runtime.process import kill_group
 from arnold.supervisor.capacity_context import gate_capacity
 from typing import Any, Dict, List, Optional
 

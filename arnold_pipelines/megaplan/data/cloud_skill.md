@@ -3,6 +3,11 @@ name: megaplan-cloud
 description: Run megaplan plans and chains on the Hetzner agentbox via the ssh provider, with a persistent workspace volume. Use when the run needs to outlast a local terminal session, span multiple repos, or share a long-lived dev box across concurrent chains. Covers `cloud.yaml` fields, `extra_repos[]` + `chain_session` multi-tenancy, the operator loop, the direct-`chain-start` recipe for the ssh box, and the gotchas that wedge fresh runs.
 ---
 
+> **Authority status (M11):** Zero-authority history. All cloud deployment and
+> repair authority has been migrated to canonical delegation. This skill is
+> retained as non-runnable reference — it must not be used to materialize
+> commands or grant deployment/repair authority.
+
 # Megaplan Cloud
 
 `megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. For this environment, use **`provider: ssh`** against the Hetzner agentbox. Do not launch Megaplan work on other cloud providers unless the user explicitly asks for legacy-provider debugging. `local` is scaffolded; the ssh provider is the working path. See **SSH provider — Hetzner agentbox** below.
@@ -99,6 +104,11 @@ and verifies that the marker's `remote_spec` resolves on the box. If that
 verification fails, the command fails instead of leaving an orphaned chain.
 `cloud launch-epic` remains a compatibility/materialization helper for older
 brief directories; prefer `initiative new` plus `cloud chain` for new work.
+
+When already inside the target agentbox/container, add `--on-box` to that
+canonical `cloud chain` command. It bypasses SSH transport only: canonical
+validation, workspace/session setup, tmux launch, watchdog registration, and
+launch verification still run. Do not substitute a raw `chain start` command.
 
 Canonical chain layout on the box:
 

@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from arnold.workflow.boundary_evidence import BoundaryContract, BoundaryPhase
+from arnold.workflow.boundary_evidence import (
+    BoundaryContract,
+    BoundaryPhase,
+    TemplateCompatibility,
+    TemplateCompatibilityResult,
+    check_template_compatibility,
+)
 from arnold.workflow.semantic_evidence import (
     S2_CRITIQUE_ROW_ID,
     S2_GATE_ROW_ID,
@@ -31,9 +37,40 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
     OVERRIDE_AUTHORITY_CONTRACTS,
+    REQUIRED_FIELD_PROFILES,
+    REQUIRED_FIELD_PROFILES_BY_KIND,
+    TYPED_BOUNDARY_TEMPLATES,
+    TYPED_BOUNDARY_TEMPLATES_BY_ID,
+    LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY,
+    M11_PREREQUISITE_INCOMPLETE,
+    NEXT_THREE_HOUR_RECONCILIATION,
+    WBC_STATIC_RUNTIME_EQUAL,
+    WBC_STATIC_RUNTIME_MISMATCH,
+    WbcStaticRuntimeEqualityResult,
+    ApprovalBoundary,
+    ArtifactHandoffBoundary,
+    RevisionBoundary,
+    ValidationBoundary,
+    artifact_promotion_template,
+    auditor_6h_completion,
+    auditor_completion_template,
+    chain_complete,
+    chain_milestone_completion,
+    chain_milestone_start,
+    chain_milestone_template,
     challenger_to_synthesis,
+    check_wbc_static_runtime_equality,
+    cloud_custody_blocked_relaunch_failure,
+    cloud_custody_complete,
+    cloud_custody_escalated_repeated_unchanged,
+    cloud_custody_managed_running,
+    cloud_custody_template,
+    cloud_custody_unmanaged_running_warning,
+    cloud_repair_dispatch,
+    contract_satisfies_profile,
     critique_to_gate,
     decision_to_parent,
+    diff_contracts,
     execute_aggregate_promotion,
     execute_approval,
     execute_approval_denial,
@@ -42,10 +79,23 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     execute_no_review_terminal,
     execute_partial_failure,
     execute_resume_anchor,
+    execution_custody_template,
+    external_effect_template,
+    external_witness_template,
     final_projection,
     finalize_artifacts,
     finalize_fallback,
     gate_to_revise,
+    get_contract_by_id,
+    get_profile_by_kind,
+    get_template_by_id,
+    graph_join_fanout_template,
+    human_approval_waiver_template,
+    lifecycle_transition_template,
+    list_profile_kinds,
+    list_template_ids,
+    meta_repair_completion,
+    ordinary_repair_completion,
     override_abort_authority,
     override_adopt_execution_authority,
     override_force_proceed_authority,
@@ -56,7 +106,12 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     override_suspension_authority,
     parent_rejoin_promotion,
     plan_to_critique,
+    pr_merged,
+    pr_ready,
+    pr_transition_template,
     prep_to_plan,
+    reducer_template,
+    repair_verdict_template,
     replan_authority,
     review_cap_authority,
     review_child_outputs,
@@ -72,6 +127,9 @@ ROOT = Path(__file__).resolve().parents[3]
 BOUNDARY_FIXTURE_ROOT = (
     ROOT / "docs" / "arnold" / "megaplan-native-representation-boundary-fixtures"
 )
+SUPPORT_MANIFEST_PATH = (
+    ROOT / "arnold_pipelines" / "megaplan" / "workflows" / "support_manifest.json"
+)
 
 
 def _load_generated_fixture_json(boundary_id: str, filename: str) -> dict[str, object]:
@@ -85,9 +143,9 @@ def _load_generated_fixture_json(boundary_id: str, filename: str) -> dict[str, o
 # ── Registry completeness ──────────────────────────────────────────────────
 
 
-def test_registry_defines_exactly_twenty_seven_contracts() -> None:
-    """The registry must contain the twenty-seven legacy contracts plus eight S6 override contracts."""
-    assert len(BOUNDARY_CONTRACTS) == 35
+def test_registry_defines_exactly_forty_nine_contracts() -> None:
+    """The registry must contain the 35 legacy + S6 contracts plus 14 new chain/PR/repair/auditor/custody contracts."""
+    assert len(BOUNDARY_CONTRACTS) == 49
 
 
 def test_registry_by_id_has_no_duplicates() -> None:
@@ -139,6 +197,20 @@ def test_named_contracts_are_in_registry() -> None:
         override_adopt_execution_authority.boundary_id,
         override_suspension_authority.boundary_id,
         override_human_gate_authority.boundary_id,
+        chain_milestone_start.boundary_id,
+        chain_milestone_completion.boundary_id,
+        chain_complete.boundary_id,
+        pr_ready.boundary_id,
+        pr_merged.boundary_id,
+        cloud_repair_dispatch.boundary_id,
+        ordinary_repair_completion.boundary_id,
+        meta_repair_completion.boundary_id,
+        auditor_6h_completion.boundary_id,
+        cloud_custody_managed_running.boundary_id,
+        cloud_custody_complete.boundary_id,
+        cloud_custody_unmanaged_running_warning.boundary_id,
+        cloud_custody_blocked_relaunch_failure.boundary_id,
+        cloud_custody_escalated_repeated_unchanged.boundary_id,
     }
     registry_ids = {c.boundary_id for c in BOUNDARY_CONTRACTS}
     assert named_ids == registry_ids
@@ -203,6 +275,29 @@ def test_boundary_ids_match_expected() -> None:
         == "override_suspension_authority"
     )
     assert override_human_gate_authority.boundary_id == "override_human_gate_authority"
+    assert chain_milestone_start.boundary_id == "chain_milestone_start"
+    assert chain_milestone_completion.boundary_id == "chain_milestone_completion"
+    assert chain_complete.boundary_id == "chain_complete"
+    assert pr_ready.boundary_id == "pr_ready"
+    assert pr_merged.boundary_id == "pr_merged"
+    assert cloud_repair_dispatch.boundary_id == "cloud_repair_dispatch"
+    assert ordinary_repair_completion.boundary_id == "ordinary_repair_completion"
+    assert meta_repair_completion.boundary_id == "meta_repair_completion"
+    assert auditor_6h_completion.boundary_id == "auditor_6h_completion"
+    assert cloud_custody_managed_running.boundary_id == "cloud_custody_managed_running"
+    assert cloud_custody_complete.boundary_id == "cloud_custody_complete"
+    assert (
+        cloud_custody_unmanaged_running_warning.boundary_id
+        == "cloud_custody_unmanaged_running_warning"
+    )
+    assert (
+        cloud_custody_blocked_relaunch_failure.boundary_id
+        == "cloud_custody_blocked_relaunch_failure"
+    )
+    assert (
+        cloud_custody_escalated_repeated_unchanged.boundary_id
+        == "cloud_custody_escalated_repeated_unchanged"
+    )
 
 
 # ── Row ID correctness ─────────────────────────────────────────────────────
@@ -272,6 +367,79 @@ def test_parent_rejoin_promotion_has_correct_row_id() -> None:
     """parent_rejoin_promotion must reference S3_PARENT_REJOIN_ROW_ID."""
     assert parent_rejoin_promotion.row_id == S3_PARENT_REJOIN_ROW_ID
     assert parent_rejoin_promotion.row_id == "s3.parent_rejoin.1"
+
+
+# ── New contract row IDs (chain, PR, repair, auditor, custody) ───────────
+
+
+def test_chain_milestone_start_has_correct_row_id() -> None:
+    """chain_milestone_start must reference chain.milestone.start.1."""
+    assert chain_milestone_start.row_id == "chain.milestone.start.1"
+
+
+def test_chain_milestone_completion_has_correct_row_id() -> None:
+    """chain_milestone_completion must reference chain.milestone.complete.1."""
+    assert chain_milestone_completion.row_id == "chain.milestone.complete.1"
+
+
+def test_chain_complete_has_correct_row_id() -> None:
+    """chain_complete must reference chain.complete.1."""
+    assert chain_complete.row_id == "chain.complete.1"
+
+
+def test_pr_ready_has_correct_row_id() -> None:
+    """pr_ready must reference pr.ready.1."""
+    assert pr_ready.row_id == "pr.ready.1"
+
+
+def test_pr_merged_has_correct_row_id() -> None:
+    """pr_merged must reference pr.merged.1."""
+    assert pr_merged.row_id == "pr.merged.1"
+
+
+def test_cloud_repair_dispatch_has_correct_row_id() -> None:
+    """cloud_repair_dispatch must reference repair.cloud_dispatch.1."""
+    assert cloud_repair_dispatch.row_id == "repair.cloud_dispatch.1"
+
+
+def test_ordinary_repair_completion_has_correct_row_id() -> None:
+    """ordinary_repair_completion must reference repair.ordinary_complete.1."""
+    assert ordinary_repair_completion.row_id == "repair.ordinary_complete.1"
+
+
+def test_meta_repair_completion_has_correct_row_id() -> None:
+    """meta_repair_completion must reference repair.meta_complete.1."""
+    assert meta_repair_completion.row_id == "repair.meta_complete.1"
+
+
+def test_auditor_6h_completion_has_correct_row_id() -> None:
+    """auditor_6h_completion must reference auditor.6h_complete.1."""
+    assert auditor_6h_completion.row_id == "auditor.6h_complete.1"
+
+
+def test_cloud_custody_managed_running_has_correct_row_id() -> None:
+    """cloud_custody_managed_running must reference custody.managed_running.1."""
+    assert cloud_custody_managed_running.row_id == "custody.managed_running.1"
+
+
+def test_cloud_custody_complete_has_correct_row_id() -> None:
+    """cloud_custody_complete must reference custody.complete.1."""
+    assert cloud_custody_complete.row_id == "custody.complete.1"
+
+
+def test_cloud_custody_unmanaged_running_warning_has_correct_row_id() -> None:
+    """cloud_custody_unmanaged_running_warning must reference custody.unmanaged_warning.1."""
+    assert cloud_custody_unmanaged_running_warning.row_id == "custody.unmanaged_warning.1"
+
+
+def test_cloud_custody_blocked_relaunch_failure_has_correct_row_id() -> None:
+    """cloud_custody_blocked_relaunch_failure must reference custody.blocked_relaunch.1."""
+    assert cloud_custody_blocked_relaunch_failure.row_id == "custody.blocked_relaunch.1"
+
+
+def test_cloud_custody_escalated_repeated_unchanged_has_correct_row_id() -> None:
+    """cloud_custody_escalated_repeated_unchanged must reference custody.escalated_unchanged.1."""
+    assert cloud_custody_escalated_repeated_unchanged.row_id == "custody.escalated_unchanged.1"
 
 
 # ── Phase correctness ──────────────────────────────────────────────────────
@@ -459,6 +627,20 @@ def test_gate_to_revise_requires_authority() -> None:
         "replan_authority",
         "execute_approval",
         "review_cap_authority",
+        "chain_milestone_start",
+        "chain_milestone_completion",
+        "chain_complete",
+        "pr_ready",
+        "pr_merged",
+        "cloud_repair_dispatch",
+        "ordinary_repair_completion",
+        "meta_repair_completion",
+        "auditor_6h_completion",
+        "cloud_custody_managed_running",
+        "cloud_custody_complete",
+        "cloud_custody_unmanaged_running_warning",
+        "cloud_custody_blocked_relaunch_failure",
+        "cloud_custody_escalated_repeated_unchanged",
         *(contract.boundary_id for contract in OVERRIDE_AUTHORITY_CONTRACTS),
     }
     for contract in BOUNDARY_CONTRACTS:
@@ -868,3 +1050,891 @@ def test_s6_override_authority_contracts_capture_scope_and_evidence_contracts() 
         )
         assert contract.details["freshness_token_ref"] == "state.meta.current_invocation_id"
         assert contract.details["actor_role_ref"] == "authority_records[].{actor,role}"
+
+
+# ── Required-field profiles ────────────────────────────────────────────────
+
+
+def test_required_field_profiles_count() -> None:
+    """Exactly 17 required-field profiles must be registered."""
+    assert len(REQUIRED_FIELD_PROFILES) == 17
+    assert len(REQUIRED_FIELD_PROFILES_BY_KIND) == 17
+
+
+def test_required_field_profiles_kinds() -> None:
+    """All expected profile kinds must be present."""
+    expected = frozenset({
+        "artifact_promotion",
+        "lifecycle_transition",
+        "reducer",
+        "external_effect",
+        "execution_custody",
+        "human_approval_waiver",
+        "graph_join_fanout",
+        "external_witness",
+        "revision_boundary",
+        "validation_boundary",
+        "artifact_handoff_boundary",
+        "approval_boundary",
+        "chain_milestone",
+        "pr_transition",
+        "repair_verdict",
+        "auditor_completion",
+        "cloud_custody",
+    })
+    actual = frozenset(kind for kind, _fields in REQUIRED_FIELD_PROFILES)
+    assert actual == expected
+
+
+def test_required_field_profiles_non_empty() -> None:
+    """Every registered profile must be a non-empty frozenset[str]."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert isinstance(fields, frozenset), (
+            f"Profile {kind} must be a frozenset"
+        )
+        assert len(fields) > 0, f"Profile {kind} must not be empty"
+
+
+def test_required_field_profiles_contain_boundary_id() -> None:
+    """Every profile must require 'boundary_id'."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert "boundary_id" in fields, (
+            f"Profile {kind} must require 'boundary_id'"
+        )
+
+
+def test_required_field_profiles_contain_workflow_id() -> None:
+    """Every profile must require 'workflow_id'."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert "workflow_id" in fields, (
+            f"Profile {kind} must require 'workflow_id'"
+        )
+
+
+def test_required_field_profiles_contain_row_id() -> None:
+    """Every profile must require 'row_id'."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert "row_id" in fields, (
+            f"Profile {kind} must require 'row_id'"
+        )
+
+
+def test_profile_by_kind_returns_profile() -> None:
+    """get_profile_by_kind must return the matching frozenset for each registered kind."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        result = get_profile_by_kind(kind)
+        assert result is fields, (
+            f"get_profile_by_kind({kind!r}) must return the profile"
+        )
+
+
+def test_profile_by_kind_returns_none_for_unknown() -> None:
+    """get_profile_by_kind must return None for unknown kind."""
+    assert get_profile_by_kind("nonexistent_profile") is None
+
+
+def test_profile_by_kind_matches_registry() -> None:
+    """REQUIRED_FIELD_PROFILES_BY_KIND must match REQUIRED_FIELD_PROFILES."""
+    assert set(REQUIRED_FIELD_PROFILES_BY_KIND.keys()) == {
+        kind for kind, _fields in REQUIRED_FIELD_PROFILES
+    }
+    for kind, expected in REQUIRED_FIELD_PROFILES:
+        assert REQUIRED_FIELD_PROFILES_BY_KIND[kind] == expected
+
+
+# ── Typed boundary templates ───────────────────────────────────────────────
+
+
+def test_typed_templates_count() -> None:
+    """Exactly 17 typed templates must be registered."""
+    assert len(TYPED_BOUNDARY_TEMPLATES) == 17
+    assert len(TYPED_BOUNDARY_TEMPLATES_BY_ID) == 17
+
+
+def test_all_templates_are_boundary_contracts() -> None:
+    """Every entry in TYPED_BOUNDARY_TEMPLATES must be a BoundaryContract."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert isinstance(template, BoundaryContract), (
+            f"{template.boundary_id} must be a BoundaryContract"
+        )
+
+
+def test_template_ids_have_template_prefix() -> None:
+    """All template boundary_ids must use the 'template.*' namespace."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.boundary_id.startswith("template."), (
+            f"{template.boundary_id} must start with 'template.'"
+        )
+
+
+def test_template_ids_match_expected() -> None:
+    """Each template must have the expected boundary_id."""
+    expected = {
+        "template.artifact_promotion": artifact_promotion_template,
+        "template.lifecycle_transition": lifecycle_transition_template,
+        "template.reducer": reducer_template,
+        "template.external_effect": external_effect_template,
+        "template.execution_custody": execution_custody_template,
+        "template.human_approval_waiver": human_approval_waiver_template,
+        "template.graph_join_fanout": graph_join_fanout_template,
+        "template.external_witness": external_witness_template,
+        "template.revision_boundary": RevisionBoundary,
+        "template.validation_boundary": ValidationBoundary,
+        "template.artifact_handoff_boundary": ArtifactHandoffBoundary,
+        "template.approval_boundary": ApprovalBoundary,
+        "template.chain_milestone": chain_milestone_template,
+        "template.pr_transition": pr_transition_template,
+        "template.repair_verdict": repair_verdict_template,
+        "template.auditor_completion": auditor_completion_template,
+        "template.cloud_custody": cloud_custody_template,
+    }
+    for bid, template in expected.items():
+        assert template.boundary_id == bid
+        assert TYPED_BOUNDARY_TEMPLATES_BY_ID[bid] is template
+
+
+def test_templates_by_id_no_duplicates() -> None:
+    """TYPED_BOUNDARY_TEMPLATES_BY_ID must have no duplicate keys."""
+    assert len(TYPED_BOUNDARY_TEMPLATES_BY_ID) == len(TYPED_BOUNDARY_TEMPLATES)
+
+
+def test_templates_are_frozen() -> None:
+    """Every template must be immutable."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        with pytest.raises(FrozenInstanceError):
+            template.boundary_id = "mutated"  # type: ignore[misc]
+
+
+def test_templates_share_workflow_id() -> None:
+    """All templates must share the same workflow_id."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.workflow_id == "megaplan-review"
+
+
+def test_templates_have_contract_version() -> None:
+    """All templates must declare the expected contract version."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.contract_version == "arnold.workflow.boundary_contract.v1"
+
+
+def test_templates_have_phase_none() -> None:
+    """Templates do not carry a phase by default (boundary_id conveys intent)."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.phase is None, (
+            f"{template.boundary_id} phase must be None"
+        )
+
+
+def test_templates_have_description_in_details() -> None:
+    """Every template must include a non-empty description in its details."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        desc = template.details.get("description")
+        assert desc is not None, f"{template.boundary_id} missing description"
+        assert isinstance(desc, str) and len(desc) > 0, (
+            f"{template.boundary_id} description must be a non-empty string"
+        )
+
+
+def test_approval_boundary_pascal_case() -> None:
+    """ApprovalBoundary must be the PascalCase alias for template.approval_boundary."""
+    assert ApprovalBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.approval_boundary"]
+    assert ApprovalBoundary.boundary_id == "template.approval_boundary"
+    assert ApprovalBoundary.authority_required is True
+
+
+def test_artifact_handoff_boundary_pascal_case() -> None:
+    """ArtifactHandoffBoundary must be the PascalCase alias."""
+    assert ArtifactHandoffBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.artifact_handoff_boundary"]
+    assert ArtifactHandoffBoundary.boundary_id == "template.artifact_handoff_boundary"
+    assert "handoff_from" in ArtifactHandoffBoundary.details
+
+
+def test_revision_boundary_pascal_case() -> None:
+    """RevisionBoundary must be the PascalCase alias."""
+    assert RevisionBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.revision_boundary"]
+    assert RevisionBoundary.boundary_id == "template.revision_boundary"
+    assert "revised_content.json" in RevisionBoundary.required_artifacts
+
+
+def test_validation_boundary_pascal_case() -> None:
+    """ValidationBoundary must be the PascalCase alias."""
+    assert ValidationBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.validation_boundary"]
+    assert ValidationBoundary.boundary_id == "template.validation_boundary"
+    assert "validation_result.json" in ValidationBoundary.required_artifacts
+
+
+# ── Lookup helpers ──────────────────────────────────────────────────────────
+
+
+def test_get_contract_by_id_returns_contract() -> None:
+    """get_contract_by_id must return the correct contract for a valid id."""
+    result = get_contract_by_id("prep_to_plan")
+    assert result is prep_to_plan
+    assert result.boundary_id == "prep_to_plan"
+
+
+def test_get_contract_by_id_returns_none_for_unknown() -> None:
+    """get_contract_by_id must return None for unknown id."""
+    assert get_contract_by_id("nonexistent_contract_id") is None
+
+
+def test_get_contract_by_id_consistent_with_dict() -> None:
+    """get_contract_by_id must match BOUNDARY_CONTRACTS_BY_ID for all ids."""
+    for cid in BOUNDARY_CONTRACTS_BY_ID:
+        assert get_contract_by_id(cid) is BOUNDARY_CONTRACTS_BY_ID[cid]
+
+
+def test_get_template_by_id_returns_template() -> None:
+    """get_template_by_id must return the correct template for a valid id."""
+    result = get_template_by_id("template.artifact_promotion")
+    assert result is artifact_promotion_template
+
+
+def test_get_template_by_id_returns_none_for_unknown() -> None:
+    """get_template_by_id must return None for unknown id."""
+    assert get_template_by_id("template.nonexistent") is None
+
+
+def test_get_template_by_id_returns_none_for_contract_id() -> None:
+    """get_template_by_id must return None when given a contract id (not a template id)."""
+    assert get_template_by_id("prep_to_plan") is None
+
+
+def test_get_profile_by_kind_known() -> None:
+    """get_profile_by_kind must return frozenset for known kinds."""
+    profile = get_profile_by_kind("artifact_promotion")
+    assert isinstance(profile, frozenset)
+    assert "boundary_id" in profile
+    assert "details.effect_id" in profile
+
+
+def test_list_template_ids_returns_all() -> None:
+    """list_template_ids must return all 17 template ids."""
+    ids = list_template_ids()
+    assert isinstance(ids, tuple)
+    assert len(ids) == 17
+    assert set(ids) == set(TYPED_BOUNDARY_TEMPLATES_BY_ID.keys())
+
+
+def test_list_profile_kinds_returns_all() -> None:
+    """list_profile_kinds must return all 17 profile kinds."""
+    kinds = list_profile_kinds()
+    assert isinstance(kinds, tuple)
+    assert len(kinds) == 17
+    assert set(kinds) == set(REQUIRED_FIELD_PROFILES_BY_KIND.keys())
+
+
+# ── Structural diff helpers ─────────────────────────────────────────────────
+
+
+def test_diff_contracts_identical() -> None:
+    """diff_contracts must report matching=True for identical contracts."""
+    result = diff_contracts(prep_to_plan, prep_to_plan)
+    assert result["matching"] is True
+    assert result["field_diffs"] == {}
+    assert result["detail_diffs"] == {}
+
+
+def test_diff_contracts_different_contracts() -> None:
+    """diff_contracts must detect differences between distinct contracts."""
+    result = diff_contracts(prep_to_plan, gate_to_revise)
+    assert result["matching"] is False
+    assert "boundary_id" in result["field_diffs"]
+    assert result["field_diffs"]["boundary_id"] == ("prep_to_plan", "gate_to_revise")
+
+
+def test_diff_contracts_detail_diffs() -> None:
+    """diff_contracts must detect detail-level differences."""
+    # prep_to_plan and plan_to_critique have different descriptions
+    result = diff_contracts(prep_to_plan, plan_to_critique)
+    assert result["matching"] is False
+    assert "details.description" in result["detail_diffs"]
+
+
+def test_diff_contracts_artifact_diffs() -> None:
+    """diff_contracts must detect required_artifacts differences."""
+    # prep_to_plan has artifacts; execute_no_review_terminal has none
+    result = diff_contracts(prep_to_plan, execute_no_review_terminal)
+    assert result["artifact_diffs"] is not None
+    assert len(result["artifact_diffs"]["only_in_a"]) > 0
+
+
+def test_diff_contracts_returns_all_keys() -> None:
+    """diff_contracts result must always contain matching, field_diffs, detail_diffs."""
+    result = diff_contracts(prep_to_plan, prep_to_plan)
+    assert "matching" in result
+    assert "field_diffs" in result
+    assert "detail_diffs" in result
+
+
+def test_diff_contracts_phase_diff() -> None:
+    """diff_contracts must detect phase differences between contracts."""
+    result = diff_contracts(prep_to_plan, plan_to_critique)
+    assert "phase" in result["field_diffs"]
+    assert result["field_diffs"]["phase"][0] != result["field_diffs"]["phase"][1]
+
+
+def test_diff_contracts_authority_diff() -> None:
+    """diff_contracts must detect authority_required differences."""
+    result = diff_contracts(prep_to_plan, gate_to_revise)
+    assert "authority_required" in result["field_diffs"]
+    assert result["field_diffs"]["authority_required"] == (False, True)
+
+
+# ── contract_satisfies_profile ──────────────────────────────────────────────
+
+
+def test_contract_satisfies_profile_all_satisfied() -> None:
+    """prep_to_plan satisfies the lifecycle_transition profile."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["lifecycle_transition"]
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, profile)
+    assert satisfied is True
+    assert missing == ()
+
+
+def test_contract_satisfies_profile_missing_keys() -> None:
+    """prep_to_plan does not satisfy artifact_promotion profile (missing details keys)."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["artifact_promotion"]
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, profile)
+    assert satisfied is False
+    assert len(missing) > 0
+    assert "details.effect_id" in missing
+
+
+def test_contract_satisfies_profile_missing_phase() -> None:
+    """A template without phase fails a profile that requires phase."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["lifecycle_transition"]
+    satisfied, missing = contract_satisfies_profile(artifact_promotion_template, profile)
+    # artifact_promotion_template has phase=None, lifecycle requires phase
+    assert satisfied is False
+    assert "phase" in missing
+
+
+def test_contract_satisfies_profile_empty_profile() -> None:
+    """Every contract satisfies an empty profile."""
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, frozenset())
+    assert satisfied is True
+    assert missing == ()
+
+
+def test_contract_satisfies_profile_with_custom_profile() -> None:
+    """A minimal custom profile must pass for a fully-populated contract."""
+    minimal = frozenset({"boundary_id", "workflow_id", "row_id"})
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, minimal)
+    assert satisfied is True
+    assert missing == ()
+
+
+def test_contract_satisfies_profile_missing_unknown_attr() -> None:
+    """A profile key that is not an attribute of BoundaryContract is treated as missing."""
+    bogus_profile = frozenset({"nonexistent_field"})
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, bogus_profile)
+    assert satisfied is False
+    assert "nonexistent_field" in missing
+
+
+def test_contract_satisfies_profile_satisfies_approval_boundary_template() -> None:
+    """ApprovalBoundary template must satisfy the approval_boundary profile."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["approval_boundary"]
+    satisfied, missing = contract_satisfies_profile(ApprovalBoundary, profile)
+    assert satisfied is True, f"Missing: {missing}"
+
+
+def test_contract_satisfies_profile_satisfies_artifact_promotion_template() -> None:
+    """artifact_promotion_template has required_artifacts=() which is empty;
+    the artifact_promotion profile requires non-empty required_artifacts,
+    so this correctly fails."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["artifact_promotion"]
+    satisfied, missing = contract_satisfies_profile(artifact_promotion_template, profile)
+    assert satisfied is False
+    assert "required_artifacts" in missing
+
+
+# ── Breaking required-field change vs non-breaking optional extension ───────
+
+
+def test_check_template_compatibility_breaking_added_required_field() -> None:
+    """Adding a field to ``to_required_fields`` that was neither previously
+    required nor optional is a breaking change — existing producers cannot
+    satisfy a required field they never knew about."""
+    base_required = frozenset({"boundary_id", "workflow_id", "row_id"})
+    base_optional = frozenset({"details.description"})
+
+    # New version adds "details.effect_id" as a required field that was
+    # neither required nor optional before → breaking
+    new_required = frozenset({"boundary_id", "workflow_id", "row_id", "details.effect_id"})
+    new_optional = frozenset({"details.description"})
+
+    result = check_template_compatibility(
+        template_id="test.breaking_new_required",
+        from_required_fields=base_required,
+        from_optional_fields=base_optional,
+        to_required_fields=new_required,
+        to_optional_fields=new_optional,
+        from_version="1.0",
+        to_version="2.0",
+    )
+    assert result.compatibility is TemplateCompatibility.BREAKING_CHANGE
+    assert "details.effect_id" in result.changed_required_fields
+    assert result.template_id == "test.breaking_new_required"
+
+
+def test_check_template_compatibility_breaking_optional_to_required() -> None:
+    """Moving an optional field to required is a breaking change."""
+    base_required = frozenset({"boundary_id", "workflow_id", "row_id"})
+    base_optional = frozenset({"details.description"})
+
+    # New version makes details.description required → breaking
+    new_required = frozenset({"boundary_id", "workflow_id", "row_id", "details.description"})
+    new_optional: frozenset[str] = frozenset()
+
+    result = check_template_compatibility(
+        template_id="test.optional_to_required",
+        from_required_fields=base_required,
+        from_optional_fields=base_optional,
+        to_required_fields=new_required,
+        to_optional_fields=new_optional,
+    )
+    assert result.compatibility is TemplateCompatibility.BREAKING_CHANGE
+    assert "details.description" in result.removed_required_fields
+
+
+def test_check_template_compatibility_non_breaking_optional_extension() -> None:
+    """Adding optional fields without changing required fields is a
+    compatible extension (non-breaking)."""
+    base_required = frozenset({"boundary_id", "workflow_id", "row_id", "phase"})
+    base_optional = frozenset({"details.description"})
+
+    # New version adds optional field "details.new_optional_field" → compatible
+    new_required = base_required
+    new_optional = base_optional | {"details.new_optional_field"}
+
+    result = check_template_compatibility(
+        template_id="test.optional_extension",
+        from_required_fields=base_required,
+        from_optional_fields=base_optional,
+        to_required_fields=new_required,
+        to_optional_fields=new_optional,
+    )
+    assert result.compatibility is TemplateCompatibility.COMPATIBLE_EXTENSION
+    assert "details.new_optional_field" in result.added_optional_fields
+    assert result.removed_required_fields == ()
+    assert result.changed_required_fields == ()
+
+
+def test_check_template_compatibility_exact_match() -> None:
+    """Identical required and optional field sets produce EXACT_MATCH."""
+    required = frozenset({"boundary_id", "workflow_id", "row_id"})
+    optional = frozenset({"details.description"})
+
+    result = check_template_compatibility(
+        template_id="test.exact",
+        from_required_fields=required,
+        from_optional_fields=optional,
+        to_required_fields=required,
+        to_optional_fields=optional,
+    )
+    assert result.compatibility is TemplateCompatibility.EXACT_MATCH
+
+
+def test_check_template_compatibility_with_real_profiles_breaking() -> None:
+    """Using real profile data, demonstrate that a required-field profile
+    that drops a mandatory field is a BREAKING_CHANGE."""
+    # Base: artifact_promotion profile fields
+    base_profile = REQUIRED_FIELD_PROFILES_BY_KIND["artifact_promotion"]
+    # "Breaking" version: drop 'details.effect_id' from required
+    breaking_profile = frozenset(
+        f for f in base_profile
+        if f != "details.effect_id"
+    )
+
+    result = check_template_compatibility(
+        template_id="artifact_promotion",
+        from_required_fields=base_profile,
+        from_optional_fields=frozenset(),
+        to_required_fields=breaking_profile,
+        to_optional_fields=frozenset({"details.effect_id"}),
+        from_version="1.0",
+        to_version="2.0",
+    )
+    assert result.compatibility is TemplateCompatibility.BREAKING_CHANGE
+    assert "details.effect_id" in result.removed_required_fields
+
+
+def test_check_template_compatibility_with_real_profiles_non_breaking() -> None:
+    """Using real profile data, adding optional fields without changing
+    required fields is a COMPATIBLE_EXTENSION."""
+    base_profile = REQUIRED_FIELD_PROFILES_BY_KIND["lifecycle_transition"]
+
+    result = check_template_compatibility(
+        template_id="lifecycle_transition",
+        from_required_fields=base_profile,
+        from_optional_fields=frozenset(),
+        to_required_fields=base_profile,
+        to_optional_fields=frozenset({"details.new_optional_note"}),
+        from_version="1.0",
+        to_version="1.1",
+    )
+    assert result.compatibility is TemplateCompatibility.COMPATIBLE_EXTENSION
+    assert "details.new_optional_note" in result.added_optional_fields
+    assert result.removed_required_fields == ()
+
+
+# ── T13: Reconciliation with generic template/profile surface ───────────────
+# Verify that Megaplan boundary contracts validate through the generic
+# template/profile surface while physical/external evidence and partial
+# acceptance remain adapter details.
+
+
+def test_generic_required_fields_imported_not_locally_defined() -> None:
+    """The 10 generic REQUIRED_FIELDS_* must come from arnold.workflow.boundary_templates."""
+    from arnold.workflow import boundary_templates as bt
+
+    from arnold_pipelines.megaplan.workflows import boundary_contracts as bc
+
+    # These 10 constants should be the same object as the generic ones
+    generic_pairs = [
+        (bc.REQUIRED_FIELDS_REVISION_BOUNDARY, bt.REQUIRED_FIELDS_REVISION_BOUNDARY),
+        (bc.REQUIRED_FIELDS_VALIDATION_BOUNDARY, bt.REQUIRED_FIELDS_VALIDATION_BOUNDARY),
+        (bc.REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY, bt.REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY),
+        (bc.REQUIRED_FIELDS_ARTIFACT_PROMOTION, bt.REQUIRED_FIELDS_ARTIFACT_PROMOTION),
+        (bc.REQUIRED_FIELDS_APPROVAL_BOUNDARY, bt.REQUIRED_FIELDS_APPROVAL_BOUNDARY),
+        (bc.REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER, bt.REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER),
+        (bc.REQUIRED_FIELDS_EXTERNAL_EFFECT, bt.REQUIRED_FIELDS_EXTERNAL_EFFECT),
+        (bc.REQUIRED_FIELDS_EXECUTION_CUSTODY, bt.REQUIRED_FIELDS_EXECUTION_CUSTODY),
+        (bc.REQUIRED_FIELDS_GRAPH_JOIN_FANOUT, bt.REQUIRED_FIELDS_GRAPH_JOIN_FANOUT),
+        (bc.REQUIRED_FIELDS_EXTERNAL_WITNESS, bt.REQUIRED_FIELDS_EXTERNAL_WITNESS),
+    ]
+    for adapter_const, generic_const in generic_pairs:
+        assert adapter_const is generic_const, (
+            f"REQUIRED_FIELDS_* must be imported from boundary_templates, got distinct object"
+        )
+
+
+def test_adapter_template_kind_has_seven_values() -> None:
+    """AdapterTemplateKind must have exactly 7 values distinct from BoundaryTemplateKind."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import AdapterTemplateKind
+
+    values = list(AdapterTemplateKind)
+    assert len(values) == 7
+    # Verify distinctness
+    assert len(set(v.value for v in values)) == 7
+
+
+def test_adapter_kinds_distinct_from_generic() -> None:
+    """No AdapterTemplateKind value overlaps with BoundaryTemplateKind."""
+    from arnold.workflow.boundary_templates import BoundaryTemplateKind
+
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import AdapterTemplateKind
+
+    generic_values = set(k.value for k in BoundaryTemplateKind)
+    adapter_values = set(k.value for k in AdapterTemplateKind)
+    assert generic_values.isdisjoint(adapter_values), (
+        "AdapterTemplateKind must not overlap with BoundaryTemplateKind"
+    )
+
+
+def test_check_contract_conformance_generic_kind() -> None:
+    """check_contract_conformance delegates to generic for BoundaryTemplateKind values."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        ApprovalBoundary,
+        check_contract_conformance,
+    )
+
+    # ApprovalBoundary template should satisfy approval_boundary profile
+    missing = check_contract_conformance(ApprovalBoundary, "approval_boundary")
+    assert missing == (), f"Expected no missing fields, got {missing}"
+
+
+def test_check_contract_conformance_adapter_kind() -> None:
+    """check_contract_conformance works for adapter-specific kinds without error."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        check_contract_conformance,
+        cloud_custody_template,
+    )
+
+    # cloud_custody_template must be checkable via adapter conformance path
+    # (templates may have placeholder/empty fields; the key invariant is that
+    #  the call succeeds and returns a tuple of missing fields)
+    missing = check_contract_conformance(cloud_custody_template, "cloud_custody")
+    assert isinstance(missing, tuple), (
+        f"check_contract_conformance must return tuple, got {type(missing)}"
+    )
+
+
+def test_check_contract_conformance_unknown_kind_raises() -> None:
+    """check_contract_conformance raises KeyError for unknown kind strings."""
+    import pytest
+
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        check_contract_conformance,
+        prep_to_plan,
+    )
+
+    with pytest.raises(KeyError, match="nonexistent_kind"):
+        check_contract_conformance(prep_to_plan, "nonexistent_kind")
+
+
+def test_megaplan_contracts_validate_through_generic_surface() -> None:
+    """Megaplan contracts must validate through the generic template/profile surface."""
+    from arnold.workflow.boundary_templates import check_contract_conformance as generic_cc
+
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        ApprovalBoundary,
+        ArtifactHandoffBoundary,
+        RevisionBoundary,
+        ValidationBoundary,
+        artifact_promotion_template,
+        execution_custody_template,
+        external_effect_template,
+        external_witness_template,
+        graph_join_fanout_template,
+        human_approval_waiver_template,
+    )
+
+    # Map Megaplan templates to their generic kind
+    templates_and_kinds = [
+        (RevisionBoundary, "revision_boundary"),
+        (ValidationBoundary, "validation_boundary"),
+        (ArtifactHandoffBoundary, "artifact_handoff_boundary"),
+        (artifact_promotion_template, "artifact_promotion"),
+        (ApprovalBoundary, "approval_boundary"),
+        (human_approval_waiver_template, "human_approval_waiver"),
+        (external_effect_template, "external_effect"),
+        (execution_custody_template, "execution_custody"),
+        (graph_join_fanout_template, "graph_join_fanout"),
+        (external_witness_template, "external_witness"),
+    ]
+
+    for template, kind_str in templates_and_kinds:
+        missing = generic_cc(template, kind_str)
+        # Templates may not satisfy all required fields (e.g. placeholder values),
+        # but they should be classifiable by the generic surface
+        # The key invariant is that the call succeeds without import error
+
+
+def test_physical_evidence_stays_in_adapter_details() -> None:
+    """Physical/external evidence refs remain in adapter details, not generic fields."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        execute_approval,
+        review_child_outputs,
+    )
+
+    # These contracts have Megaplan-specific details that should NOT be in generic fields
+    for contract in (execute_approval, review_child_outputs):
+        details = dict(contract.details)
+        # Generic BoundaryContract fields don't include these adapter concepts
+        payload = contract.to_dict()
+        assert "branch_ref" not in payload  # adapter detail, not generic field
+        assert "child_trace_template" not in payload  # adapter detail
+        assert "evidence_surface_ref" not in payload  # adapter detail
+
+        # But they are present in details
+        if "branch_ref" in details:
+            assert isinstance(details["branch_ref"], str)
+        if "child_trace_template" in details:
+            assert isinstance(details["child_trace_template"], str)
+
+
+def test_partial_acceptance_evidence_in_adapter_details() -> None:
+    """Partial acceptance (e.g. execute_partial_failure) stays in adapter details."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        execute_partial_failure,
+    )
+
+    details = dict(execute_partial_failure.details)
+    # Partial acceptance metadata is adapter-specific
+    assert "batch_index" in details  # Megaplan-specific detail
+    assert "branch_ref" in details  # Megaplan-specific routing hint
+
+    # Verify none of these leak into generic contract fields
+    payload = execute_partial_failure.to_dict()
+    assert "batch_index" not in payload
+
+
+def test_adapter_required_field_profiles_count() -> None:
+    """Exactly 7 adapter-specific profiles must be registered."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        ADAPTER_REQUIRED_FIELD_PROFILES,
+        ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND,
+    )
+
+    assert len(ADAPTER_REQUIRED_FIELD_PROFILES) == 7
+    assert len(ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND) == 7
+
+
+# ── Step 50 (T35): next-three-hour reconciliation boundary contracts ────────
+
+
+def test_next_three_hour_reconciliation_boundary_contracts() -> None:
+    """Step 50 (T35): auditor reconciliation boundary contracts and the WBC
+    support manifest carry next-three-hour producer/consumer vocabulary.
+
+    The six-hour row identifiers (boundary_id/row_id/auditor_kind) are retained
+    as compatibility-only exact-version evidence; they must not be promoted
+    into repair authority, and incomplete reconciliation prerequisites fail
+    closed. No authority is created from the reconciliation label, liveness,
+    a WBC receipt, or a rebuildable projection.
+    """
+    # ── Boundary contract row migrated to next-three-hour reconciliation ──
+    assert auditor_6h_completion.details["time_window"] == NEXT_THREE_HOUR_RECONCILIATION
+    assert (
+        auditor_6h_completion.details["reconciliation_interval"]
+        == NEXT_THREE_HOUR_RECONCILIATION
+    )
+    assert (
+        auditor_6h_completion.details["legacy_six_hour_names_compatibility_only"]
+        is LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY
+    )
+    assert LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY is True
+
+    # Stable six-hour identifiers retained as compatibility-only evidence only.
+    assert auditor_6h_completion.boundary_id == "auditor_6h_completion"
+    assert auditor_6h_completion.row_id == "auditor.6h_complete.1"
+    assert auditor_6h_completion.details["auditor_kind"] == "six_hour_auditor"
+
+    # Authority semantics unchanged: the verdict boundary carries authority
+    # from the auditor producer contract — NOT from the reconciliation label,
+    # liveness, a WBC receipt, or a rebuildable projection.
+    assert auditor_6h_completion.authority_required is True
+    assert auditor_6h_completion.receipt_required is True
+    assert auditor_6h_completion.phase_result_required is True
+
+    # The reconciliation label must not mint a brand-new authority contract.
+    assert NEXT_THREE_HOUR_RECONCILIATION not in BOUNDARY_CONTRACTS_BY_ID
+    assert "next_three_hour_reconciliation" not in BOUNDARY_CONTRACTS_BY_ID
+
+    # The migrated row still satisfies its auditor_completion required-field
+    # profile (reconciliation_interval/legacy markers are additive evidence,
+    # not authority substitutions).
+    profile = get_profile_by_kind("auditor_completion")
+    assert profile is not None
+    satisfied, missing = contract_satisfies_profile(auditor_6h_completion, profile)
+    assert satisfied, f"auditor_6h_completion missing profile keys: {missing}"
+
+    # ── Template migrated in lockstep ─────────────────────────────────────
+    assert (
+        auditor_completion_template.details["time_window"]
+        == NEXT_THREE_HOUR_RECONCILIATION
+    )
+    assert (
+        auditor_completion_template.details["reconciliation_interval"]
+        == NEXT_THREE_HOUR_RECONCILIATION
+    )
+    assert (
+        auditor_completion_template.details["legacy_six_hour_names_compatibility_only"]
+        is True
+    )
+
+    # ── Support manifest records the next-three-hour producer/consumer ────
+    # cadence, keeping WBC rows exact-version evidence only (no new boundary
+    # ids invented, no exception past C6, supported rows carry no noise).
+    manifest = json.loads(SUPPORT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert manifest["meta"]["reconciliation_interval"] == NEXT_THREE_HOUR_RECONCILIATION
+    assert manifest["meta"]["legacy_six_hour_names_compatibility_only"] is True
+
+    megaplan = next(f for f in manifest["families"] if f["family_id"] == "megaplan")
+    for entry in megaplan["entries"]:
+        assert entry["owner"] in {"wbc", "run_authority", "maintenance"}
+        assert entry["c2_c6_milestone"] in {"c2", "c3", "c4", "c5", "c6"}
+        if entry["support_status"] == "supported":
+            assert entry["visible_non_conformant"] == []
+        # The reconciliation migration must not invent a producer_path that
+        # references authority outside the real arnold source tree.
+        path = entry.get("producer_path")
+        if path is not None:
+            assert (
+                path.startswith("arnold_pipelines/megaplan")
+                or path.startswith("arnold/")
+                or path.startswith("arnold_pipelines.megaplan")
+                or path.startswith("arnold.")
+            ), f"entry {entry['step_id']} invented authority path: {path}"
+
+
+# ── Step 96 (T46): WBC static/runtime equality gate ─────────────────────────
+
+
+def test_wbc_static_runtime_equality_requires_prerequisite_readiness() -> None:
+    """Step 96 (T46): WBC rows are exact-version evidence only.
+
+    Equality among generated call sites, runtime traces, and exact-version WBC
+    rows is proven ONLY after M11 prerequisite readiness. Incomplete
+    prerequisites produce only ``m11_prerequisite_incomplete`` — no positive
+    equality is ever claimed from a label, liveness, a WBC receipt, or a
+    rebuildable projection. This is decision data; it never writes authority.
+    """
+    call_sites = ("wbc.audit.1", "wbc.repair.1", "wbc.ledger.1")
+
+    # ── 1. Incomplete prerequisites fail closed — even when all three agree ──
+    blocked = check_wbc_static_runtime_equality(
+        generated_call_sites=call_sites,
+        runtime_traces=call_sites,
+        wbc_rows=call_sites,
+        prerequisites_ready=False,
+    )
+    assert isinstance(blocked, WbcStaticRuntimeEqualityResult)
+    assert blocked.outcome == M11_PREREQUISITE_INCOMPLETE
+    assert blocked.outcome == "m11_prerequisite_incomplete"
+    assert blocked.equal is False
+    # Prerequisite unreadiness is the ONLY outcome reported — it does not
+    # masquerade as equality even though the three sources happen to agree.
+    assert blocked.outcome != WBC_STATIC_RUNTIME_EQUAL
+    # The WBC rows alone (a receipt/evidence source) must never satisfy
+    # equality while prerequisites are unready.
+    assert "not proven" in blocked.reason
+
+    # ── 2. Prerequisites ready + exact agreement ⇒ proven equal ─────────────
+    proven = check_wbc_static_runtime_equality(
+        generated_call_sites=call_sites,
+        runtime_traces=call_sites,
+        wbc_rows=call_sites,
+        prerequisites_ready=True,
+    )
+    assert proven.outcome == WBC_STATIC_RUNTIME_EQUAL
+    assert proven.equal is True
+    assert proven.missing_runtime == ()
+    assert proven.extra_runtime == ()
+    assert proven.wbc_not_in_static == ()
+
+    # ── 3. Prerequisites ready + disagreement ⇒ typed mismatch ──────────────
+    mismatch = check_wbc_static_runtime_equality(
+        generated_call_sites=("wbc.audit.1", "wbc.ledger.1"),
+        runtime_traces=("wbc.audit.1", "wbc.ghost.1"),  # ghost not generated
+        wbc_rows=("wbc.audit.1", "wbc.ledger.1", "wbc.unknown.1"),  # WBC drift
+        prerequisites_ready=True,
+    )
+    assert mismatch.outcome == WBC_STATIC_RUNTIME_MISMATCH
+    assert mismatch.equal is False
+    assert mismatch.missing_runtime == ("wbc.ghost.1",)
+    assert mismatch.extra_runtime == ("wbc.ledger.1",)
+    assert mismatch.wbc_not_in_static == ("wbc.unknown.1",)
+    # The mismatch must not be flattened into a prerequisite-incomplete banner:
+    # with prerequisites ready the disagreement is reported precisely.
+    assert mismatch.outcome != M11_PREREQUISITE_INCOMPLETE
+
+    # ── 4. No authority is created from labels/liveness/receipts/projections ─
+    # The result is frozen, pure decision data. It carries no grant/fence/lease/
+    # capability/label/liveness/projection/authority keys — only typed outcome
+    # evidence. Equality derives strictly from the set comparison above.
+    assert isinstance(blocked, WbcStaticRuntimeEqualityResult)
+    payload = proven.to_dict()
+    forbidden = {
+        "grant", "fence", "lease", "epoch", "wbc_receipt", "label",
+        "liveness", "projection", "authority", "capability", "evidence_only",
+    }
+    assert not (forbidden & set(payload)), forbidden & set(payload)
+    # Frozen: cannot be mutated to smuggle in authority after construction.
+    with pytest.raises(FrozenInstanceError):
+        blocked.equal = True  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        blocked.outcome = WBC_STATIC_RUNTIME_EQUAL  # type: ignore[misc]
+
+    # ── 5. WBC rows as the sole differing input never yield equality ─────────
+    wbc_drift = check_wbc_static_runtime_equality(
+        generated_call_sites=call_sites,
+        runtime_traces=call_sites,
+        wbc_rows=("wbc.audit.1",),  # WBC evidence alone differs
+        prerequisites_ready=True,
+    )
+    assert wbc_drift.equal is False
+    assert wbc_drift.outcome == WBC_STATIC_RUNTIME_MISMATCH

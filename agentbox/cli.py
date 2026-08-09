@@ -44,6 +44,7 @@ from agentbox.operation_views import (
 from agentbox.guardian.service import GuardianService
 from agentbox.cleanup import apply_cleanup, survey_cleanup
 from agentbox.reconcile import reconcile
+from agentbox.reset_notifications import list_reset_notifications, reset_notification_root
 from agentbox.run_dirs import run_dir_paths
 from agentbox.services import list_services, restart_service, service_logs
 from agentbox.tmux import attach_argv, inspect_session
@@ -192,10 +193,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     services_restart = services_subparsers.add_parser(
         "restart",
-        help="Restart a service (requires systemctl and privileges).",
+        help="Restart a service through its guarded local supervisor.",
     )
     services_restart.add_argument("service", help="Service name.")
     services_restart.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    services_notifications = services_subparsers.add_parser(
+        "reset-notifications",
+        help="Show durable Discord resident reset-confirmation delivery state.",
+    )
+    services_notifications.add_argument("--limit", type=_positive_int, default=20)
+    services_notifications.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
     notify_parser = subparsers.add_parser(
         "notify",
@@ -482,7 +490,20 @@ def _services(config: Any, args: argparse.Namespace, *, json_output: bool) -> in
         _emit(service_logs(args.service, lines=args.lines), json_output=json_output)
         return 0
     if command == "restart":
-        _emit(restart_service(args.service), json_output=json_output)
+        result = restart_service(
+            args.service,
+            notification_root=reset_notification_root(config.workspace_root),
+        )
+        _emit(result, json_output=json_output)
+        return 0 if result.get("ok") else 1
+    if command == "reset-notifications":
+        _emit(
+            list_reset_notifications(
+                notification_root=reset_notification_root(config.workspace_root),
+                limit=args.limit,
+            ),
+            json_output=json_output,
+        )
         return 0
     return _diagnostic(f"unknown services command: {command}", json_output=json_output)
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -14,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, replace
 from importlib import resources
@@ -23,7 +26,10 @@ from typing import Any, Mapping
 
 import yaml
 
-from arnold_pipelines.megaplan.cloud.auth import seed_codex_oauth
+from arnold_pipelines.megaplan.cloud.auth import (
+    seed_codex_oauth,
+    seed_isolated_git_credentials,
+)
 from arnold_pipelines.megaplan.cloud.providers.base import (
     DeployReport,
     DeployStepReport,
@@ -34,6 +40,9 @@ from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud import status_format, status_snapshot
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
+from arnold_pipelines.megaplan.finite_canary_policy import (
+    finite_canary_policy_is_exact,
+)
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
@@ -41,6 +50,33 @@ from arnold_pipelines.megaplan.types import CliError
 
 load_spec = load_cloud_spec
 CLOUD_STATUS_CLI_MAX_AGE_S = 5 * 60
+_ZERO_RECOVERY_CLOUD_ACTIONS = {
+    "build",
+    "deploy",
+    "capacity-inventory",
+    "reclaim-dangling-build-cache",
+    "logs",
+    "run-zero-recovery-canary",
+    "zero-recovery-canary-status",
+    "zero-recovery-preflight",
+    "resident-recover",
+    "resident-down",
+    "resident-reconcile-down",
+}
+_ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS = {
+    "build",
+    "deploy",
+    "preflight",
+    "sync-megaplan",
+    "chain",
+    "status",
+    "logs",
+    "chains",
+    "capacity-inventory",
+}
+_ISOLATED_CHAIN_RUNNER_PIN_REQUIRED_ACTIONS = (
+    _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS - {"build", "capacity-inventory"}
+)
 
 # Cloud deployments always drive phases via subprocess (remote SSH exec);
 # the substrate is pinned here so the cloud CLI explicitly declares its
@@ -50,6 +86,236 @@ cloud_substrate: str = "subprocess_isolated"
 _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"\bTODO(?:_[A-Z0-9]+)+\b|<box-ip>|TODO_SSH_HOST|TODO_REPO_URL"
 )
+_RAW_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def _validate_zero_recovery_canary_spec(
+    root: Path, raw_path: str, raw_cloud_path: str | None, spec: CloudSpec
+) -> dict[str, Any]:
+    path = (root / raw_path).resolve() if not Path(raw_path).is_absolute() else Path(raw_path).resolve()
+    expected = (
+        root
+        / ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml"
+    ).resolve()
+    if path != expected or not path.is_file():
+        raise CliError(
+            "zero_recovery_canary_invalid", "the exact tracked canary.yaml is required"
+        )
+    initiative = expected.parent
+    expected_cloud = (initiative / "cloud.yaml").resolve()
+    cloud_path = (
+        (root / raw_cloud_path).resolve()
+        if raw_cloud_path and not Path(raw_cloud_path).is_absolute()
+        else Path(raw_cloud_path).resolve()
+        if raw_cloud_path
+        else (root / "cloud.yaml").resolve()
+    )
+    if cloud_path != expected_cloud or not cloud_path.is_file():
+        raise CliError(
+            "zero_recovery_canary_invalid", "the exact tracked canary cloud.yaml is required"
+        )
+    try:
+        node = yaml.compose(path.read_text(encoding="utf-8"))
+
+        def reject_duplicate_yaml(value: yaml.Node) -> None:
+            if isinstance(value, yaml.MappingNode):
+                keys: set[str] = set()
+                for key_node, item_node in value.value:
+                    key = key_node.value
+                    if key in keys:
+                        raise ValueError(f"duplicate YAML field: {key}")
+                    keys.add(key)
+                    reject_duplicate_yaml(item_node)
+            elif isinstance(value, yaml.SequenceNode):
+                for item_node in value.value:
+                    reject_duplicate_yaml(item_node)
+
+        if node is None:
+            raise ValueError("empty YAML")
+        reject_duplicate_yaml(node)
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as exc:
+        raise CliError(
+            "zero_recovery_canary_invalid", f"canary spec is not strict YAML: {exc}"
+        ) from exc
+    required = {
+        "schema", "canary_id", "engine_commit", "engine_tree", "brief",
+        "north_star", "plan_name", "phases", "terminal_state", "model_spec",
+        "robustness", "adaptive_critique", "receipts", "policy",
+    }
+    receipts = payload.get("receipts") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != required
+        or payload.get("schema") != "arnold.megaplan.finite_canary.v1"
+        or payload.get("canary_id") != "critique-ledger-safe-v3-canary"
+        or payload.get("engine_commit") != spec.megaplan.ref
+        or not isinstance(payload.get("engine_tree"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", payload.get("engine_tree"))
+        or payload.get("brief")
+        != ".megaplan/initiatives/critique-ledger-safe-v3-canary/briefs/cl2-ledger-persistence-and-replay.md"
+        or payload.get("north_star")
+        != ".megaplan/initiatives/critique-ledger-safe-v3-canary/NORTHSTAR.md"
+        or payload.get("plan_name") != "critique-ledger-cl2-planning-canary"
+        or payload.get("phases") != ["init", "plan", "critique", "gate", "finalize"]
+        or payload.get("terminal_state") != "finalized"
+        or payload.get("model_spec") != "codex:gpt-5.6-sol:high"
+        or payload.get("robustness") != "full"
+        or payload.get("adaptive_critique") is not False
+        or not finite_canary_policy_is_exact(payload.get("policy"))
+        or receipts
+        != {
+            "directory": ".megaplan/initiatives/critique-ledger-safe-v3-canary/receipts",
+            "content_addressed": True,
+        }
+        or spec.provider != "ssh"
+        or spec.mode != "idle"
+        or not spec.zero_recovery_canary
+        or spec.secrets != []
+        or spec.extra_repos != ()
+        or spec.megaplan.codex_auth != "chatgpt"
+        or spec.codex.model != "gpt-5.6-sol"
+        or spec.codex.reasoning != "high"
+        or spec.agents != {"default": "codex"}
+        or spec.toolchains not in (None, [])
+        or not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", spec.repo.url)
+    ):
+        raise CliError(
+            "zero_recovery_canary_invalid", "canary spec or cloud binding mismatch"
+        )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=False
+    )
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=root, capture_output=True, text=True, check=False
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    parent = subprocess.run(
+        ["git", "rev-parse", "HEAD^"], cwd=root, capture_output=True, text=True, check=False
+    )
+    engine_tree = subprocess.run(
+        ["git", "rev-parse", f"{payload['engine_commit']}^{{tree}}"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    manifest_diff = subprocess.run(
+        ["git", "diff", "--name-only", f"{payload['engine_commit']}..HEAD"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    allowed_manifest_delta = {
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/proof-map.json",
+        ".megaplan/initiatives/critique-ledger-safe-v3-canary/traceability.json",
+    }
+    if (
+        head.returncode != 0
+        or tree.returncode != 0
+        or status.returncode != 0
+        or parent.returncode != 0
+        or engine_tree.returncode != 0
+        or manifest_diff.returncode != 0
+        or status.stdout
+        or not re.fullmatch(r"[0-9a-f]{40}", head.stdout.strip())
+        or not re.fullmatch(r"[0-9a-f]{40}", tree.stdout.strip())
+        or parent.stdout.strip() != payload["engine_commit"]
+        or engine_tree.stdout.strip() != payload["engine_tree"]
+        or set(manifest_diff.stdout.splitlines()) != allowed_manifest_delta
+    ):
+        raise CliError(
+            "zero_recovery_canary_invalid",
+            "launching checkout must be clean with exact Git commit/tree identity",
+        )
+    tracked_inputs = {
+        payload["brief"],
+        payload["north_star"],
+        *allowed_manifest_delta,
+    }
+    for relative in tracked_inputs:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        dirty = subprocess.run(
+            ["git", "diff", "--quiet", "--", relative], cwd=root, check=False
+        )
+        if tracked.returncode != 0 or dirty.returncode != 0:
+            raise CliError(
+                "zero_recovery_canary_invalid", f"canary input is untracked or dirty: {relative}"
+            )
+    def strict_json(path_to_read: Path) -> dict[str, Any]:
+        def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON field: {key}")
+                result[key] = value
+            return result
+
+        value = json.loads(
+            path_to_read.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicates,
+        )
+        if not isinstance(value, dict):
+            raise ValueError("manifest is not an object")
+        return value
+
+    try:
+        proof = strict_json(initiative / "proof-map.json")
+        trace = strict_json(initiative / "traceability.json")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CliError(
+            "zero_recovery_canary_invalid", f"strict proof/trace manifest required: {exc}"
+        ) from exc
+    proof_implementation = proof.get("implementation")
+    proof_launch = proof.get("launch_manifest")
+    if (
+        set(proof) != {"schema", "implementation", "launch_manifest", "claims", "excluded_claims"}
+        or proof.get("schema") != "arnold.megaplan.finite_canary_proof_map.v1"
+        or proof_implementation != {
+            "commit": payload["engine_commit"], "tree": payload["engine_tree"]
+        }
+        or not isinstance(proof_launch, dict)
+        or proof_launch.get("required_parent") != payload["engine_commit"]
+        or proof_launch.get("allowed_delta")
+        != ["canary.yaml", "cloud.yaml", "proof-map.json", "traceability.json"]
+    ):
+        raise CliError("zero_recovery_canary_invalid", "proof-map binding mismatch")
+    expected_trace_fields = {
+        "schema", "implementation_commit", "implementation_tree",
+        "launch_manifest_binding", "launch_manifest_parent",
+        "canary_spec", "brief_source", "copied_brief", "fresh_workspace",
+        "predecessor_workspace", "workspace_bind_source",
+        "predecessor_container", "canary_container",
+    }
+    if (
+        set(trace) != expected_trace_fields
+        or trace.get("schema") != "arnold.megaplan.finite_canary_traceability.v1"
+        or trace.get("implementation_commit") != payload["engine_commit"]
+        or trace.get("implementation_tree") != payload["engine_tree"]
+        or trace.get("launch_manifest_binding")
+        != {"method": "derived_clean_head_at_admission"}
+        or trace.get("launch_manifest_parent") != payload["engine_commit"]
+        or trace.get("canary_spec") != str(path.relative_to(root))
+        or trace.get("copied_brief") != payload["brief"]
+        or trace.get("fresh_workspace") != spec.repo.workspace
+        or trace.get("predecessor_workspace")
+        != (spec.ssh.workspace_dir if spec.ssh else None)
+        or trace.get("workspace_bind_source")
+        != spec.zero_recovery_workspace_dir
+        or trace.get("predecessor_container") != spec.zero_recovery_predecessor_container
+        or trace.get("canary_container") != (spec.ssh.container if spec.ssh else None)
+    ):
+        raise CliError("zero_recovery_canary_invalid", "traceability binding mismatch")
+    payload["_admission_source_commit"] = head.stdout.strip()
+    payload["_admission_source_tree"] = tree.stdout.strip()
+    payload["_admission_manifest_sha256"] = {
+        relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
+        for relative in sorted(allowed_manifest_delta)
+    }
+    return payload
 
 
 def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
@@ -75,6 +341,88 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
 
     cloud_sub.add_parser("build", parents=[shared], help="Build the cloud image")
     cloud_sub.add_parser("deploy", parents=[shared], help="Deploy the cloud runner")
+    cloud_sub.add_parser(
+        "capacity-inventory",
+        parents=[shared],
+        help="Read fixed host/filesystem/Docker capacity evidence without reclaiming data",
+    )
+    reclaim_parser = cloud_sub.add_parser(
+        "reclaim-dangling-build-cache",
+        parents=[shared],
+        help="Dry-run or explicitly apply the fixed zero-recovery bootstrap reclaim",
+    )
+    reclaim_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Explicitly apply the freshly prepared fixed proposal",
+    )
+    run_zero_parser = cloud_sub.add_parser(
+        "run-zero-recovery-canary",
+        parents=[shared],
+        help="Run the one tracked finite canary with fixed auth and command routing",
+    )
+    run_zero_parser.add_argument("canary_spec")
+    zero_status_parser = cloud_sub.add_parser(
+        "zero-recovery-canary-status",
+        parents=[shared],
+        help="Read the fixed finite-canary receipt state without container exec",
+    )
+    zero_status_parser.add_argument("canary_spec")
+    zero_preflight_parser = cloud_sub.add_parser(
+        "zero-recovery-preflight",
+        parents=[shared],
+        help="Issue a fresh read-only zero-recovery predeploy transaction",
+    )
+    zero_preflight_parser.add_argument("canary_spec")
+    resident_recover_parser = cloud_sub.add_parser(
+        "resident-recover",
+        parents=[shared],
+        help="Start one CAS-bound listener-only Discord resident from a preserved SSH container",
+    )
+    resident_recover_parser.add_argument("--outage-epoch", required=True)
+    resident_recover_parser.add_argument("--expected-source-container-id", required=True)
+    resident_recover_parser.add_argument("--expected-source-image-id", required=True)
+    resident_recover_parser.add_argument("--expected-resident-image-id", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-path", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-commit", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-tree", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-python-path", required=True)
+    resident_recover_parser.add_argument("--expected-runtime-python-sha256", required=True)
+    resident_recover_parser.add_argument(
+        "--health-timeout-seconds", type=int, default=45
+    )
+    resident_down_parser = cloud_sub.add_parser(
+        "resident-down",
+        parents=[shared],
+        help="Stop/remove the exact resident-only container for one durable outage epoch",
+    )
+    resident_down_parser.add_argument("--outage-epoch", required=True)
+    resident_down_parser.add_argument("--expected-source-container-id", required=True)
+    resident_down_parser.add_argument("--expected-source-image-id", required=True)
+    resident_down_parser.add_argument("--expected-resident-image-id", required=True)
+    resident_down_parser.add_argument("--expected-resident-container-id", required=True)
+    resident_reconcile_parser = cloud_sub.add_parser(
+        "resident-reconcile-down",
+        parents=[shared],
+        help="Prove, adopt, and remove one exact unreceipted listener-only resident",
+    )
+    resident_reconcile_parser.add_argument("--outage-epoch", required=True)
+    resident_reconcile_parser.add_argument("--expected-source-container-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-source-image-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-image-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-container-id", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-command-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-resident-env-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-recovery-seed-host-dir", required=True)
+    resident_reconcile_parser.add_argument("--expected-recovery-seed-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-path", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-commit", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-tree", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-content-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-python-path", required=True)
+    resident_reconcile_parser.add_argument("--expected-runtime-python-sha256", required=True)
+    resident_reconcile_parser.add_argument("--expected-workspace-device", required=True, type=int)
+    resident_reconcile_parser.add_argument("--expected-workspace-inode", required=True, type=int)
 
     quickstart_parser = cloud_sub.add_parser(
         "quickstart",
@@ -150,6 +498,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     chain_parser.add_argument("spec", help="Local chain spec path")
     chain_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Launch from inside the agentbox without SSH, preserving cloud tmux/marker/watchdog setup",
+    )
+    chain_parser.add_argument(
         "--idea-dir",
         default=None,
         help="Directory containing local idea files referenced by the chain spec",
@@ -176,6 +529,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
             "Skip the pre-launch push that merges the current local HEAD into "
             "the cloud editable install branch."
         ),
+    )
+    chain_parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Upload and normalize canonical chain inputs without starting a runner.",
     )
     chain_parser.add_argument(
         "--force-clean-editable-install",
@@ -225,6 +583,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         ),
     )
     sync_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Sync from inside the agentbox without SSH.",
+    )
+    sync_parser.add_argument(
         "--workspace",
         default=None,
         help="Explicit remote workspace override. Use only for manual migration.",
@@ -247,6 +610,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Validate, canonicalize, upload, launch, and watchdog-verify a cloud epic",
     )
     launch_epic_parser.add_argument("spec_or_dir", help="Local chain.yaml or epic brief directory")
+    launch_epic_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Launch from inside the agentbox without SSH, preserving cloud tmux/marker/watchdog setup",
+    )
     launch_epic_parser.add_argument(
         "--slug",
         default=None,
@@ -415,6 +783,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Run an arbitrary remote command",
     )
     exec_parser.add_argument("command", help="Command string to execute remotely")
+    exec_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Run inside the current agentbox without bouncing through SSH.",
+    )
 
     resume_parser = cloud_sub.add_parser(
         "resume",
@@ -422,6 +795,65 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Resume the remote plan's next step",
     )
     resume_parser.add_argument("--plan", help="Optional plan name to resume")
+
+    pause_chain_parser = cloud_sub.add_parser(
+        "pause-chain", parents=[shared], help="Durably pause one chain and stop only its runner"
+    )
+    pause_chain_parser.add_argument("--reason", required=True)
+    pause_chain_parser.add_argument("--actor", default="operator")
+
+    resume_chain_parser = cloud_sub.add_parser(
+        "resume-chain", parents=[shared], help="Explicitly resume a durably paused chain"
+    )
+    resume_chain_parser.add_argument("--actor", default="operator")
+    resume_chain_parser.add_argument(
+        "--no-start",
+        action="store_true",
+        help="clear pause authority without starting the remote chain runner",
+    )
+
+    retire_chain_parser = cloud_sub.add_parser(
+        "retire-chain",
+        parents=[shared],
+        help="Archive and tombstone one exact zero-progress paused chain superseded by a completed chain",
+    )
+    retire_chain_parser.add_argument("--session", required=True)
+    retire_chain_parser.add_argument("--expect-marker-sha256", required=True)
+    retire_chain_parser.add_argument("--superseded-by", required=True)
+    retire_chain_parser.add_argument("--expect-superseding-marker-sha256", required=True)
+    retire_chain_parser.add_argument("--completion-manifest", required=True)
+    retire_chain_parser.add_argument("--completion-manifest-sha256", required=True)
+    retire_chain_parser.add_argument("--git-repo", required=True)
+    retire_chain_parser.add_argument("--base-ref", default="origin/main")
+    retire_chain_parser.add_argument("--landed-commit", action="append", required=True)
+    retire_chain_parser.add_argument("--reason", required=True)
+    retire_chain_parser.add_argument("--actor", default="operator")
+    retire_chain_parser.add_argument(
+        "--marker-dir", default="/workspace/.megaplan/cloud-sessions"
+    )
+    retire_chain_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Run against the local agentbox control plane instead of using SSH transport",
+    )
+
+    retire_status_parser = cloud_sub.add_parser(
+        "retire-stale-status",
+        parents=[shared],
+        help="Tombstone one exact deleted-workspace marker in the status projection only",
+    )
+    retire_status_parser.add_argument("--session", required=True)
+    retire_status_parser.add_argument("--expect-marker-sha256", required=True)
+    retire_status_parser.add_argument("--reason", required=True)
+    retire_status_parser.add_argument("--actor", default="operator")
+    retire_status_parser.add_argument(
+        "--marker-dir", default="/workspace/.megaplan/cloud-sessions"
+    )
+    retire_status_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Run against the local agentbox control plane instead of using SSH transport",
+    )
 
     cloud_sub.add_parser("down", parents=[shared], help="Pause the deployment without deleting volume")
 
@@ -470,13 +902,126 @@ def _add_repo_override_args(parser: argparse.ArgumentParser) -> None:
 def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
     try:
         action = getattr(args, "cloud_action")
+        selected_cloud = (
+            Path(args.cloud_yaml).expanduser()
+            if getattr(args, "cloud_yaml", None)
+            else root / "cloud.yaml"
+        )
         if action == "init":
+            canonical_zero_recovery_cloud = (
+                root
+                / ".megaplan/initiatives/critique-ledger-safe-v3-canary/cloud.yaml"
+            ).resolve()
+            if selected_cloud.resolve() == canonical_zero_recovery_cloud:
+                raise CliError(
+                    "zero_recovery_action_denied",
+                    "cloud init cannot create or overwrite the canonical zero-recovery profile",
+                )
+            if selected_cloud.is_file():
+                try:
+                    existing_spec = _load_cloud_spec(root, args)
+                except CliError:
+                    existing_spec = None
+                if existing_spec is not None:
+                    if existing_spec.zero_recovery_canary:
+                        raise CliError(
+                            "zero_recovery_action_denied",
+                            "cloud init cannot overwrite an admitted zero-recovery profile",
+                        )
+                    if existing_spec.isolated_chain_runner:
+                        raise CliError(
+                            "isolated_chain_runner_action_denied",
+                            "cloud init cannot overwrite an isolated chain-runner profile",
+                        )
             return _run_init(root, args)
+        early_spec: CloudSpec | None = None
+        if selected_cloud.is_file():
+            early_spec = _load_cloud_spec(root, args)
+            if (
+                early_spec.zero_recovery_canary
+                and action not in _ZERO_RECOVERY_CLOUD_ACTIONS
+            ):
+                raise CliError(
+                    "zero_recovery_action_denied",
+                    f"cloud {action} is not available in the zero-recovery profile",
+                )
+            if (
+                early_spec.isolated_chain_runner
+                and action not in _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS
+            ):
+                raise CliError(
+                    "isolated_chain_runner_action_denied",
+                    f"cloud {action} is not available in the isolated chain-runner profile",
+                )
         if action == "quickstart":
             return _run_quickstart(root, args)
 
-        spec = _load_cloud_spec(root, args)
+        if action == "retire-chain" and bool(getattr(args, "on_box", False)):
+            return _run_session_retirement(args)
+        if action == "retire-stale-status" and bool(getattr(args, "on_box", False)):
+            return _run_status_retirement(args)
+
+        spec = early_spec or _load_cloud_spec(root, args)
+        if spec.zero_recovery_canary and action not in _ZERO_RECOVERY_CLOUD_ACTIONS:
+            raise CliError(
+                "zero_recovery_action_denied",
+                f"cloud {action} is not available in the zero-recovery profile",
+            )
+        if (
+            spec.isolated_chain_runner
+            and action not in _ISOLATED_CHAIN_RUNNER_CLOUD_ACTIONS
+        ):
+            raise CliError(
+                "isolated_chain_runner_action_denied",
+                f"cloud {action} is not available in the isolated chain-runner profile",
+            )
+        if spec.isolated_chain_runner:
+            if (
+                action in _ISOLATED_CHAIN_RUNNER_PIN_REQUIRED_ACTIONS
+                and spec.isolated_chain_runner_image_id is None
+            ):
+                raise CliError(
+                    "isolated_chain_runner_image_pin_required",
+                    f"cloud {action} requires isolated_chain_runner_image_id: sha256:<64 hex>",
+                )
+            if action in {"chain", "sync-megaplan"} and bool(
+                getattr(args, "on_box", False)
+            ):
+                raise CliError(
+                    "isolated_chain_runner_action_denied",
+                    f"cloud {action} --on-box bypasses the isolated SSH launch boundary",
+                )
+            if (
+                action == "chain"
+                and not bool(getattr(args, "prepare_only", False))
+                and not bool(getattr(args, "fresh", False))
+            ):
+                raise CliError(
+                    "isolated_chain_runner_fresh_required",
+                    "isolated cloud chain launches require --fresh",
+                )
+        canary_admission: dict[str, Any] | None = None
+        if spec.zero_recovery_canary:
+            raw_canary_spec = getattr(args, "canary_spec", None) or (
+                ".megaplan/initiatives/critique-ledger-safe-v3-canary/canary.yaml"
+            )
+            canary_admission = _validate_zero_recovery_canary_spec(
+                root, raw_canary_spec, getattr(args, "cloud_yaml", None), spec
+            )
         provider = _provider_for_action(spec, args)
+        if spec.isolated_chain_runner and (
+            action in {"chain", "sync-megaplan", "status", "logs", "chains"}
+            or (action == "preflight" and not bool(getattr(args, "skip_remote", False)))
+        ):
+            attest_runtime = getattr(
+                provider, "attest_isolated_chain_runner_runtime", None
+            )
+            if attest_runtime is None:
+                raise CliError(
+                    "isolated_chain_runner_attestation_unavailable",
+                    "provider lacks isolated chain-runner runtime attestation",
+                )
+            attest_runtime()
 
         if action == "chain":
             with _materialized_deploy_dir(spec):
@@ -504,16 +1049,238 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             with _materialized_deploy_dir(spec) as deploy_dir:
                 return provider.build(deploy_dir)
 
+        if action == "capacity-inventory":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "capacity_inventory_unavailable",
+                    "host capacity inventory is only available for the SSH provider",
+                )
+            observe = getattr(provider, "observe_capacity_inventory", None)
+            if observe is None:
+                raise CliError(
+                    "capacity_inventory_unavailable",
+                    "SSH provider does not expose the fixed capacity inventory",
+                )
+            payload = observe()
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0 if payload.get("status") == "available" else 1
+
+        if action == "reclaim-dangling-build-cache":
+            if spec.provider != "ssh" or not spec.zero_recovery_canary:
+                raise CliError(
+                    "zero_recovery_bootstrap_invalid",
+                    "bootstrap reclaim requires SSH zero_recovery_canary=true",
+                )
+            prepare = getattr(provider, "prepare_zero_recovery_bootstrap_reclaim", None)
+            if prepare is None:
+                raise CliError(
+                    "zero_recovery_bootstrap_invalid",
+                    "SSH provider does not expose bootstrap reclaim",
+                )
+            proposal = prepare()
+            if getattr(args, "apply", False):
+                apply_reclaim = getattr(
+                    provider, "apply_zero_recovery_bootstrap_reclaim", None
+                )
+                if apply_reclaim is None:
+                    raise CliError(
+                        "zero_recovery_bootstrap_invalid",
+                        "SSH provider does not expose bootstrap reclaim",
+                    )
+                payload = apply_reclaim(proposal)
+            else:
+                payload = proposal
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0
+
+        if action == "run-zero-recovery-canary":
+            auth_path = Path.home() / ".codex" / "auth.json"
+            try:
+                auth_payload = auth_path.read_text(encoding="utf-8")
+
+                def reject_auth_duplicates(
+                    pairs: list[tuple[str, Any]],
+                ) -> dict[str, Any]:
+                    result: dict[str, Any] = {}
+                    for key, value in pairs:
+                        if key in result:
+                            raise ValueError(f"duplicate auth field: {key}")
+                        result[key] = value
+                    return result
+
+                parsed_auth = json.loads(
+                    auth_payload, object_pairs_hook=reject_auth_duplicates
+                )
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                raise CliError(
+                    "zero_recovery_auth_unavailable",
+                    "a readable strict ~/.codex/auth.json is required",
+                ) from exc
+            if (
+                spec.megaplan.codex_auth != "chatgpt"
+                or not isinstance(parsed_auth, dict)
+                or parsed_auth.get("auth_mode") != "chatgpt"
+            ):
+                raise CliError(
+                    "zero_recovery_auth_invalid",
+                    "finite canary permits only Codex ChatGPT OAuth",
+                )
+            execute_canary = getattr(provider, "execute_zero_recovery_canary", None)
+            if execute_canary is None or canary_admission is None:
+                raise CliError(
+                    "zero_recovery_canary_unavailable",
+                    "provider lacks the fixed finite-canary route",
+                )
+            return execute_canary(
+                auth_payload,
+                source_commit=canary_admission["_admission_source_commit"],
+                source_tree=canary_admission["_admission_source_tree"],
+                manifest_sha256=canary_admission["_admission_manifest_sha256"],
+            )
+
+        if action == "zero-recovery-canary-status":
+            read_status = getattr(provider, "zero_recovery_canary_status", None)
+            if read_status is None:
+                raise CliError(
+                    "zero_recovery_canary_unavailable",
+                    "provider lacks the fixed finite-canary status route",
+                )
+            if canary_admission is None:
+                raise CliError(
+                    "zero_recovery_canary_unavailable", "canary admission is required"
+                )
+            status_payload = read_status(
+                source_commit=canary_admission["_admission_source_commit"],
+                source_tree=canary_admission["_admission_source_tree"],
+            )
+            sys.stdout.write(json.dumps(status_payload, indent=2) + "\n")
+            return (
+                0
+                if status_payload.get("status") in {"available", "in_progress"}
+                else 1
+            )
+
+        if action == "zero-recovery-preflight":
+            prepare = getattr(
+                provider, "prepare_zero_recovery_predeploy_transaction", None
+            )
+            if prepare is None:
+                raise CliError(
+                    "zero_recovery_predeploy_invalid",
+                    "provider lacks zero-recovery preflight",
+                )
+            sys.stdout.write(json.dumps(prepare(), indent=2) + "\n")
+            return 0
+
+        if action == "resident-recover":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "resident_recovery_unavailable",
+                    "resident-only recovery is available only through the SSH provider",
+                )
+            recover = getattr(provider, "resident_recover", None)
+            if recover is None:
+                raise CliError(
+                    "resident_recovery_unavailable",
+                    "SSH provider does not expose resident-only recovery",
+                )
+            payload = recover(
+                outage_epoch=args.outage_epoch,
+                expected_source_container_id=args.expected_source_container_id,
+                expected_source_image_id=args.expected_source_image_id,
+                expected_resident_image_id=args.expected_resident_image_id,
+                expected_runtime_path=args.expected_runtime_path,
+                expected_runtime_commit=args.expected_runtime_commit,
+                expected_runtime_tree=args.expected_runtime_tree,
+                expected_runtime_python_path=args.expected_runtime_python_path,
+                expected_runtime_python_sha256=args.expected_runtime_python_sha256,
+                health_timeout_seconds=args.health_timeout_seconds,
+            )
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0 if payload.get("status") == "healthy" else 1
+
+        if action == "resident-down":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "resident_down_unavailable",
+                    "resident-only down is available only through the SSH provider",
+                )
+            down = getattr(provider, "resident_down", None)
+            if down is None:
+                raise CliError(
+                    "resident_down_unavailable",
+                    "SSH provider does not expose resident-only down",
+                )
+            payload = down(
+                outage_epoch=args.outage_epoch,
+                expected_source_container_id=args.expected_source_container_id,
+                expected_source_image_id=args.expected_source_image_id,
+                expected_resident_image_id=args.expected_resident_image_id,
+                expected_resident_container_id=args.expected_resident_container_id,
+            )
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0
+
+        if action == "resident-reconcile-down":
+            if spec.provider != "ssh":
+                raise CliError(
+                    "resident_reconcile_unavailable",
+                    "resident reconciliation is available only through the SSH provider",
+                )
+            reconcile = getattr(provider, "resident_reconcile_down", None)
+            if reconcile is None:
+                raise CliError(
+                    "resident_reconcile_unavailable",
+                    "SSH provider does not expose resident reconciliation",
+                )
+            payload = reconcile(
+                outage_epoch=args.outage_epoch,
+                expected_source_container_id=args.expected_source_container_id,
+                expected_source_image_id=args.expected_source_image_id,
+                expected_resident_image_id=args.expected_resident_image_id,
+                expected_resident_container_id=args.expected_resident_container_id,
+                expected_resident_command_sha256=args.expected_resident_command_sha256,
+                expected_resident_env_sha256=args.expected_resident_env_sha256,
+                expected_recovery_seed_host_dir=args.expected_recovery_seed_host_dir,
+                expected_recovery_seed_sha256=args.expected_recovery_seed_sha256,
+                expected_runtime_path=args.expected_runtime_path,
+                expected_runtime_commit=args.expected_runtime_commit,
+                expected_runtime_tree=args.expected_runtime_tree,
+                expected_runtime_content_sha256=args.expected_runtime_content_sha256,
+                expected_runtime_python_path=args.expected_runtime_python_path,
+                expected_runtime_python_sha256=args.expected_runtime_python_sha256,
+                expected_workspace_device=args.expected_workspace_device,
+                expected_workspace_inode=args.expected_workspace_inode,
+            )
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0
+
         if action == "deploy":
             secrets = {name: os.environ.get(name, "") for name in spec.secrets}
             with _materialized_deploy_dir(spec) as deploy_dir:
-                result = provider.deploy(deploy_dir, secrets=secrets)
+                if spec.zero_recovery_canary:
+                    prepare = getattr(
+                        provider, "prepare_zero_recovery_predeploy_transaction", None
+                    )
+                    if prepare is None:
+                        raise CliError(
+                            "zero_recovery_predeploy_unavailable",
+                            "provider cannot produce a zero-recovery predeploy transaction",
+                        )
+                    transaction = prepare()
+                    result = provider.deploy(
+                        deploy_dir,
+                        secrets=secrets,
+                        predeploy_transaction=transaction,
+                    )
+                else:
+                    result = provider.deploy(deploy_dir, secrets=secrets)
                 report = _coerce_deploy_report(result, spec=spec, deploy_dir=deploy_dir)
                 report.steps = [
                     *_deploy_context_steps(deploy_dir),
                     *report.steps,
                 ]
-            if report.exit_code == 0:
+            if report.exit_code == 0 and not spec.zero_recovery_canary:
                 seed_messages: list[str] = []
                 seed_result = seed_codex_oauth(spec, provider, writer=seed_messages.append)
                 report.steps.append(
@@ -525,6 +1292,23 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                         metadata=seed_result,
                     )
                 )
+                if spec.isolated_chain_runner:
+                    git_seed_messages: list[str] = []
+                    git_seed_result = seed_isolated_git_credentials(
+                        spec,
+                        provider,
+                        required=False,
+                        writer=git_seed_messages.append,
+                    )
+                    report.steps.append(
+                        DeployStepReport(
+                            name="seed isolated Git auth",
+                            status="ok",
+                            detail=_oauth_seed_detail(git_seed_result),
+                            stderr="".join(git_seed_messages),
+                            metadata=git_seed_result,
+                        )
+                    )
             _emit_deploy_report(report, secret_names=spec.secrets, env=os.environ)
             return report.exit_code
 
@@ -574,6 +1358,61 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return 0
 
+        if action in {"pause-chain", "resume-chain"}:
+            marker = _load_marker(root, args)
+            if not isinstance(marker, dict):
+                raise CliError("missing_marker", "No canonical last-chain marker is available")
+            workspace = str(marker.get("workspace") or "").strip()
+            remote_spec = str(marker.get("remote_spec") or "").strip()
+            session = str(marker.get("chain_session") or marker.get("session") or "").strip()
+            marker_path = str(marker.get("marker_path") or "").strip()
+            if not marker_path and session:
+                marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session}.json")
+            if not all((workspace, remote_spec, session, marker_path)):
+                raise CliError("invalid_marker", "Chain marker lacks workspace/spec/session custody")
+            argv = [
+                "python3", "-P", "-m", "arnold_pipelines.megaplan.cloud.operator_control",
+                "pause" if action == "pause-chain" else "resume",
+                "--spec", remote_spec, "--workspace", workspace,
+                "--session", session, "--marker", marker_path,
+                "--actor", str(getattr(args, "actor", None) or "operator"),
+            ]
+            if action == "pause-chain":
+                argv.extend(["--reason", str(args.reason)])
+            elif bool(getattr(args, "no_start", False)):
+                argv.append("--no-start")
+            result = provider.ssh_exec(shlex.join(argv))
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return result.returncode
+
+        if action == "retire-chain":
+            command = shlex.join(
+                [
+                    "python3",
+                    "-P",
+                    "-m",
+                    "arnold_pipelines.megaplan.cloud.session_retirement",
+                    *_session_retirement_argv(args),
+                ]
+            )
+            result = provider.ssh_exec(command)
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return result.returncode
+
+        if action == "retire-stale-status":
+            command = shlex.join(
+                [
+                    "python3",
+                    "-P",
+                    "-m",
+                    "arnold_pipelines.megaplan.cloud.status_retirement",
+                    *_status_retirement_argv(args),
+                ]
+            )
+            result = provider.ssh_exec(command)
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return result.returncode
+
         if action == "down":
             return provider.down()
 
@@ -595,6 +1434,63 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         raise CliError("invalid_args", f"Unknown cloud action: {action}")
     except CliError as exc:
         return _emit_error(exc)
+
+
+def _session_retirement_argv(args: argparse.Namespace) -> list[str]:
+    argv = [
+        "--marker-dir",
+        str(args.marker_dir),
+        "--session",
+        str(args.session),
+        "--expect-marker-sha256",
+        str(args.expect_marker_sha256),
+        "--superseded-by",
+        str(args.superseded_by),
+        "--expect-superseding-marker-sha256",
+        str(args.expect_superseding_marker_sha256),
+        "--completion-manifest",
+        str(args.completion_manifest),
+        "--completion-manifest-sha256",
+        str(args.completion_manifest_sha256),
+        "--git-repo",
+        str(args.git_repo),
+        "--base-ref",
+        str(args.base_ref),
+        "--reason",
+        str(args.reason),
+        "--actor",
+        str(args.actor),
+    ]
+    for commit in args.landed_commit:
+        argv.extend(["--landed-commit", str(commit)])
+    return argv
+
+
+def _run_session_retirement(args: argparse.Namespace) -> int:
+    from arnold_pipelines.megaplan.cloud.session_retirement import main
+
+    return main(_session_retirement_argv(args))
+
+
+def _status_retirement_argv(args: argparse.Namespace) -> list[str]:
+    return [
+        "--marker-dir",
+        str(args.marker_dir),
+        "--session",
+        str(args.session),
+        "--expect-marker-sha256",
+        str(args.expect_marker_sha256),
+        "--reason",
+        str(args.reason),
+        "--actor",
+        str(args.actor),
+    ]
+
+
+def _run_status_retirement(args: argparse.Namespace) -> int:
+    from arnold_pipelines.megaplan.cloud.status_retirement import main
+
+    return main(_status_retirement_argv(args))
 
 
 def _cloud_yaml_path(root: Path, args: argparse.Namespace) -> Path:
@@ -629,6 +1525,16 @@ def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSp
 
 
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
+    if bool(getattr(args, "on_box", False)):
+        action = getattr(args, "cloud_action", None)
+        if action not in {"chain", "exec", "launch-epic", "sync-megaplan"}:
+            raise CliError(
+                "invalid_args",
+                "--on-box is supported only for cloud chain, exec, launch-epic, and sync-megaplan",
+            )
+        from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+        return OnBoxProvider(spec)
     # Gate session overrides on provider capability, not on a provider-name special case.
     base_provider = get_provider(spec.provider, spec)
     session_name = getattr(args, "session", None)
@@ -911,7 +1817,7 @@ def _run_quickstart(root: Path, args: argparse.Namespace) -> int:
         "provider": "ssh",
         "repo": {"url": repo_url, "branch": base_branch, "workspace": workspace},
         "agents": {"default": args.vendor},
-        "codex": {"model": "gpt-5.4", "reasoning": args.depth},
+        "codex": {"model": "gpt-5.6-sol", "reasoning": args.depth},
         "chain_session": slug,
         "mode": "idle",
         "chain": {"spec": f"{workspace}/.megaplan/initiatives/{slug}/chain.yaml"},
@@ -1383,6 +2289,91 @@ def _run_remote_megaplan_import_check(provider) -> dict[str, Any]:
     return payload
 
 
+def _provider_container_observation(provider) -> dict[str, Any] | None:
+    method = getattr(provider, "observe_container", None)
+    if method is None:
+        return None
+    try:
+        payload = method()
+    except (CliError, OSError, ValueError) as exc:
+        return {
+            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "status": "unknown",
+            "lifecycle": "unknown",
+            "collector": {"status": "unavailable", "reason": "container_state_unknown"},
+            "diagnostic": str(exc),
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schema": "arnold.cloud.ssh_container_observation.v1",
+            "status": "unknown",
+            "lifecycle": "unknown",
+            "collector": {"status": "unavailable", "reason": "container_state_unknown"},
+            "diagnostic": "provider returned a non-object container observation",
+        }
+    return payload
+
+
+def _provider_prelaunch_capacity(provider) -> dict[str, Any]:
+    method = getattr(provider, "observe_prelaunch_capacity", None)
+    if method is None:
+        return {
+            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "status": "unknown",
+            "verdict": "NO-GO",
+            "errors": ["provider_prelaunch_capacity_observer_unavailable"],
+        }
+    try:
+        payload = method()
+    except (CliError, OSError, ValueError) as exc:
+        return {
+            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "status": "unknown",
+            "verdict": "NO-GO",
+            "errors": [str(exc)],
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schema": "arnold.cloud.ssh_workspace_prelaunch.v1",
+            "status": "unknown",
+            "verdict": "NO-GO",
+            "errors": ["provider returned a non-object capacity observation"],
+        }
+    return payload
+
+
+def _container_collector_ready(observation: Mapping[str, Any] | None) -> bool:
+    if not isinstance(observation, Mapping):
+        return False
+    collector = observation.get("collector")
+    return (
+        observation.get("status") == "available"
+        and observation.get("lifecycle") == "running"
+        and isinstance(collector, Mapping)
+        and collector.get("status") == "available"
+    )
+
+
+def _collector_unavailable_error(
+    observation: Mapping[str, Any],
+    *,
+    capacity: Mapping[str, Any] | None = None,
+) -> CliError:
+    lifecycle = str(observation.get("lifecycle") or "unknown")
+    return CliError(
+        "provider_collector_unavailable",
+        f"container lifecycle is {lifecycle}; docker-exec collector is unavailable",
+        extra={
+            "container_observation": dict(observation),
+            **(
+                {"prelaunch_capacity": dict(capacity)}
+                if isinstance(capacity, Mapping)
+                else {}
+            ),
+        },
+    )
+
+
 def _cloud_profile_warnings(preflight_summary: Mapping[str, Any], spec: CloudSpec) -> list[str]:
     warnings: list[str] = []
     required_agents = {
@@ -1768,10 +2759,11 @@ def _cloud_chain_launch_provenance(
     repo_head: dict[str, str | None],
     tmux_result,
     editable_install_sync: dict[str, Any] | None = None,
+    engine_ref_check: dict[str, Any] | None = None,
     verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
-    return {
+    payload = {
         "success": True,
         "event": "cloud_chain_launched",
         "remote_spec": ctx.remote_spec_path,
@@ -1797,6 +2789,7 @@ def _cloud_chain_launch_provenance(
             "ref": spec.megaplan.ref,
             "install_source": "cloud_image_runtime",
             "editable_install_sync": editable_install_sync or {"status": "skipped"},
+            "engine_ref_check": engine_ref_check or {"status": "unknown"},
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
@@ -1812,6 +2805,12 @@ def _cloud_chain_launch_provenance(
         },
         "verification": verification or {},
     }
+    from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        payload["resident_delegation"] = resident_delegation
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -1825,6 +2824,25 @@ _CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
 _CHAIN_VERIFY_ATTEMPTS = 6
 _CHAIN_VERIFY_SLEEP_SECONDS = 5
 _EDITABLE_INSTALL_BRANCH = "editible-install"
+
+
+def _cloud_source_sync_branch(spec: CloudSpec) -> str | None:
+    """Choose the branch whose source checkout this run actually executes.
+
+    A chain with an explicitly isolated ``megaplan.src_path`` owns its runtime
+    checkout and must not publish that checkout into the shared resident
+    ``editible-install`` branch.  Publish to the configured source ref instead
+    (or skip the git publication when the ref is an immutable commit SHA).
+    Shared/default source paths retain the historical resident-branch sync.
+    """
+
+    source_path = str(spec.megaplan.src_path or "").rstrip("/")
+    ref = str(spec.megaplan.ref or "").strip()
+    if source_path and source_path != "/workspace/arnold":
+        if re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+            return None
+        return ref or None
+    return _EDITABLE_INSTALL_BRANCH
 
 
 @dataclass(frozen=True)
@@ -2256,6 +3274,356 @@ def _tail_text(text: str, *, max_lines: int = 20, max_chars: int = 4000) -> str:
     return tail
 
 
+def _git_ref_probe_env(url: str) -> dict[str, str]:
+    env = dict(os.environ)
+    token = os.environ.get("GITHUB_TOKEN")
+    if (
+        token
+        and url.startswith("https://github.com/")
+        and "@github.com/" not in url
+    ):
+        try:
+            count = int(env.get("GIT_CONFIG_COUNT", "0"))
+        except ValueError:
+            count = 0
+        credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env[f"GIT_CONFIG_KEY_{count}"] = "http.https://github.com/.extraheader"
+        env[f"GIT_CONFIG_VALUE_{count}"] = f"Authorization: Basic {credentials}"
+        env["GIT_CONFIG_COUNT"] = str(count + 1)
+    return env
+
+
+def _ls_remote_refs(repo: str, refs: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "ls-remote", "--refs", repo, *refs],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+        env=_git_ref_probe_env(repo),
+    )
+
+
+def _probe_remote_commit(repo: str, commit: str) -> subprocess.CompletedProcess[str]:
+    """Prove that a raw configured commit is fetchable from the source remote."""
+    with TemporaryDirectory(prefix="megaplan-engine-ref-") as raw_dir:
+        worktree = Path(raw_dir)
+        initialized = subprocess.run(
+            ["git", "init", "--quiet", str(worktree)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if initialized.returncode != 0:
+            return initialized
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                str(worktree),
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                repo,
+                commit,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+            env=_git_ref_probe_env(repo),
+        )
+
+
+def _verify_configured_megaplan_ref_advertised(spec: CloudSpec) -> dict[str, Any]:
+    repo = (spec.megaplan.repo or "").strip()
+    ref = spec.megaplan.ref.strip()
+    if not repo:
+        return {
+            "status": "skipped",
+            "reason": "megaplan.repo not configured",
+            "repo": "",
+            "requested_ref": ref,
+        }
+    if not ref:
+        raise CliError("engine_ref_invalid", "cloud megaplan.ref must not be empty")
+    if _RAW_GIT_SHA_RE.fullmatch(ref):
+        result = _probe_remote_commit(repo, ref)
+        if result.returncode != 0:
+            message = redact(
+                _tail_text(result.stderr or result.stdout),
+                ("GITHUB_TOKEN",),
+                env=os.environ,
+            )
+            raise CliError(
+                "engine_commit_unfetchable",
+                (
+                    f"Configured cloud megaplan.ref commit {ref!r} cannot be fetched "
+                    f"from {repo}: {message or 'git fetch failed'}"
+                ),
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": repo,
+                        "requested_ref": ref,
+                        "reason": "raw_sha_unfetchable",
+                        "stderr_tail": message,
+                    }
+                },
+            )
+        return {
+            "status": "ok",
+            "repo": repo,
+            "requested_ref": ref,
+            "commit": ref,
+            "ref_kind": "commit",
+            "verification": "fetch",
+        }
+
+    exact_refs = [ref] if ref.startswith("refs/") else [f"refs/heads/{ref}", f"refs/tags/{ref}"]
+    result = _ls_remote_refs(repo, exact_refs)
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if result.returncode != 0 and not lines:
+        message = redact(
+            _tail_text(result.stderr or result.stdout),
+            ("GITHUB_TOKEN",),
+            env=os.environ,
+        )
+        raise CliError(
+            "engine_ref_probe_failed",
+            (
+                f"Could not verify cloud megaplan.ref {ref!r} against {repo}: "
+                f"{message or 'git ls-remote failed'}"
+            ),
+            extra={
+                "engine_ref_check": {
+                    "status": "failed",
+                    "repo": repo,
+                    "requested_ref": ref,
+                    "reason": "ls_remote_failed",
+                    "stderr_tail": message,
+                }
+            },
+        )
+
+    advertised: dict[str, str] = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            advertised[parts[1]] = parts[0]
+    matches = [(name, sha) for name, sha in advertised.items() if name in exact_refs]
+    if ref.startswith("refs/"):
+        if not matches:
+            raise CliError(
+                "engine_ref_not_advertised",
+                (
+                    f"Configured cloud megaplan.ref {ref!r} is not advertised by "
+                    f"{repo}. Use an existing branch, tag, or exact full ref."
+                ),
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": repo,
+                        "requested_ref": ref,
+                        "reason": "full_ref_missing",
+                        "checked_refs": exact_refs,
+                    }
+                },
+            )
+        advertised_ref, sha = matches[0]
+        return {
+            "status": "ok",
+            "repo": repo,
+            "requested_ref": ref,
+            "advertised_ref": advertised_ref,
+            "commit": sha,
+            "ref_kind": "full_ref",
+        }
+
+    if len(matches) > 1:
+        raise CliError(
+            "engine_ref_ambiguous",
+            (
+                f"Configured cloud megaplan.ref {ref!r} matches multiple advertised refs "
+                f"on {repo}: {', '.join(name for name, _sha in matches)}. "
+                "Use a full refs/heads/* or refs/tags/* name."
+            ),
+            extra={
+                "engine_ref_check": {
+                    "status": "failed",
+                    "repo": repo,
+                    "requested_ref": ref,
+                    "reason": "ambiguous_short_ref",
+                    "matches": [{"ref": name, "commit": sha} for name, sha in matches],
+                }
+            },
+        )
+    if not matches:
+        raise CliError(
+            "engine_ref_not_advertised",
+            (
+                f"Configured cloud megaplan.ref {ref!r} is not advertised by {repo}. "
+                "Use an existing branch, tag, or exact full ref."
+            ),
+            extra={
+                "engine_ref_check": {
+                    "status": "failed",
+                    "repo": repo,
+                    "requested_ref": ref,
+                    "reason": "short_ref_missing",
+                    "checked_refs": exact_refs,
+                }
+            },
+        )
+    advertised_ref, sha = matches[0]
+    return {
+        "status": "ok",
+        "repo": repo,
+        "requested_ref": ref,
+        "advertised_ref": advertised_ref,
+        "commit": sha,
+        "ref_kind": "branch" if advertised_ref.startswith("refs/heads/") else "tag",
+    }
+
+
+def _launch_outcome_payload(
+    *,
+    status: str,
+    code: str,
+    detail: str | None = None,
+    verification: Mapping[str, Any] | None = None,
+    stderr_tail: str | None = None,
+    log_tail: list[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": status,
+        "code": code,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if detail:
+        payload["detail"] = detail
+    if verification is not None:
+        payload["verification"] = dict(verification)
+    if stderr_tail:
+        payload["stderr_tail"] = stderr_tail
+    if log_tail:
+        payload["log_tail"] = log_tail
+    return payload
+
+
+def _atomic_marker_write_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
+    payload_json = json.dumps(marker_payload, sort_keys=True)
+    script = f"""
+import json, os, pathlib, tempfile
+
+path = pathlib.Path({marker_path!r})
+payload = json.loads({payload_json!r})
+current = {{}}
+if path.exists():
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        loaded = {{}}
+    if isinstance(loaded, dict):
+        current.update(loaded)
+current.update(payload)
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(current, indent=2, sort_keys=True) + "\\n")
+os.replace(tmp_name, path)
+"""
+    # The marker writer is embedded before ``;`` or ``&&`` in several larger
+    # shell commands. Group it so the heredoc terminator remains on a line by
+    # itself while the caller can safely append an operator to the closing
+    # brace. The group preserves the Python process exit status.
+    return (
+        "{\n"
+        f"python3 - <<'MEGAPLAN_MARKER_WRITE'\n{script.strip()}\n"
+        "MEGAPLAN_MARKER_WRITE\n"
+        "}"
+    )
+
+
+def _prelaunch_marker_guard_command(ctx: "ChainLaunchContext") -> str:
+    script = f"""
+import json, pathlib, subprocess
+
+marker_path = pathlib.Path({ctx.marker_path!r})
+session = {ctx.session_name!r}
+identity_digest = {ctx.digest!r}
+session_alive = subprocess.run(
+    ["tmux", "has-session", "-t", session],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+).returncode == 0
+marker = {{}}
+marker_present = marker_path.is_file()
+marker_read_error = ""
+if marker_present:
+    try:
+        loaded = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        marker_read_error = str(exc)
+        loaded = {{}}
+    if isinstance(loaded, dict):
+        marker = loaded
+identity_matches = marker.get("identity_digest") == identity_digest if marker else False
+print(json.dumps({{
+    "session_alive": session_alive,
+    "marker_present": marker_present,
+    "identity_matches": identity_matches,
+    "marker_read_error": marker_read_error,
+}}, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_PRELAUNCH_MARKER_GUARD'\n{script.strip()}\nMEGAPLAN_PRELAUNCH_MARKER_GUARD"
+
+
+def _run_prelaunch_marker_guard(provider, ctx: "ChainLaunchContext") -> dict[str, Any]:
+    result = provider.ssh_exec(_prelaunch_marker_guard_command(ctx))
+    raw = (result.stdout or "").strip().splitlines()
+    try:
+        payload = json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        payload = {
+            "session_alive": False,
+            "marker_present": False,
+            "identity_matches": False,
+            "marker_read_error": f"guard output was not JSON: {exc}",
+        }
+    return payload
+
+
+def _persist_remote_launch_outcome(
+    provider,
+    *,
+    ctx: "ChainLaunchContext",
+    marker_payload: dict[str, Any],
+    launch_outcome: dict[str, Any],
+    allow_live_session: bool = True,
+) -> None:
+    if not allow_live_session:
+        guard = _run_prelaunch_marker_guard(provider, ctx)
+        if guard.get("session_alive"):
+            return
+        if guard.get("marker_present") and not guard.get("identity_matches"):
+            return
+    payload = dict(marker_payload)
+    payload["launch_outcome"] = launch_outcome
+    payload["updated_at"] = launch_outcome.get("observed_at")
+    result = provider.ssh_exec(_atomic_marker_write_command(ctx.marker_path, payload))
+    if result.returncode != 0:
+        raise CliError(
+            "launch_marker_write_failed",
+            (result.stderr or result.stdout or f"failed to update session marker {ctx.marker_path}").strip(),
+            extra={
+                "marker_path": ctx.marker_path,
+                "launch_outcome": launch_outcome,
+            },
+        )
+
+
 def _step_payload(
     step: DeployStepReport,
     *,
@@ -2355,6 +3723,10 @@ def _chain_start_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
+    repair_session: str | None = None,
+    repair_run_kind: str = "chain",
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
+    require_pinned_runtime_binding: bool = False,
 ) -> str:
     """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
 
@@ -2374,17 +3746,61 @@ def _chain_start_command(
         if project_dir
         else shlex.quote(log_relative)
     )
+    # The editable refresh runs immediately before this command and exports a
+    # private launch pin.  Capture it as readonly *before* an ordinary launch
+    # loads the mutable box-wide hot env: that file legitimately changes
+    # resident/watchdog selectors and may still advertise an older runtime.
+    # Isolated launches still need provider credentials from the box-wide hot
+    # env (for example ZHIPU/GLM keys).  Source it too, then reassert the
+    # refresh-verified runtime pin below so stale selectors cannot replace the
+    # accepted engine identity.
     prefix = (
+        'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"; '
+        'PINNED_LAUNCH_RUNTIME_REVISION="${MEGAPLAN_LAUNCH_RUNTIME_REVISION:-}"; '
+        'readonly PINNED_LAUNCH_RUNTIME_SRC PINNED_LAUNCH_RUNTIME_REVISION; '
+    )
+    prefix += (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += _managed_run_env_prefix(
+            repair_session,
+            run_kind=repair_run_kind,
+            marker_dir=repair_marker_dir,
+        )
     if engine_dir:
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
-            f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+            'if [ -n "$PINNED_LAUNCH_RUNTIME_SRC" ]; then '
+            'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$PINNED_LAUNCH_RUNTIME_SRC"; '
+            'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$PINNED_LAUNCH_RUNTIME_REVISION"; '
+            'export MEGAPLAN_RUNTIME_SRC="$PINNED_LAUNCH_RUNTIME_SRC"; '
+            'fi; '
+        )
+        if require_pinned_runtime_binding:
+            prefix += (
+                'if [ -z "$PINNED_LAUNCH_RUNTIME_SRC" ] || '
+                '[ -z "$PINNED_LAUNCH_RUNTIME_REVISION" ]; then '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: missing refresh-verified runtime pin" >> {log_target}; '
+                'exit 24; '
+                'fi; '
+                'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 '
+                'PYTHONPATH="$PINNED_LAUNCH_RUNTIME_SRC" '
+                'python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance '
+                '--expected-root "$PINNED_LAUNCH_RUNTIME_SRC" '
+                '--expected-revision "$PINNED_LAUNCH_RUNTIME_REVISION" '
+                f'>> {log_target} 2>&1; then '
+                f'echo "[megaplan-launch] isolated_chain_runtime_binding_drift: active imports disagree with refresh-verified runtime" >> {log_target}; '
+                'exit 24; '
+                'fi; '
+            )
+        prefix += (
+            f'cd {cwd} && env -u PYTHONHOME PYTHONSAFEPATH=1 '
+            'PYTHONPATH="$ENGINE_DIR" '
         )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
@@ -2393,8 +3809,28 @@ def _chain_start_command(
 
 
 def _write_session_marker_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
-    marker_json = json.dumps(marker_payload, sort_keys=True)
-    return f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker_path)}"
+    return _atomic_marker_write_command(marker_path, marker_payload)
+
+
+def _managed_run_env_prefix(
+    session: str,
+    *,
+    run_kind: str,
+    marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
+) -> str:
+    """Return the one launcher-to-runner owner-lease environment contract."""
+
+    return (
+        # Never accept a box-wide or parent-shell publisher claim. The Python
+        # owner sets these only after it has acquired the per-session fence;
+        # its genuine children inherit them after launch.
+        "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; "
+        "export ARNOLD_REPAIR_QUEUE_ROOT="
+        '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
+        f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}; "
+        f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}; "
+        f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(run_kind)}; "
+    )
 
 
 def _plan_auto_command(
@@ -2403,12 +3839,20 @@ def _plan_auto_command(
     workspace: str,
     engine_dir: str | None = None,
     log_relative: str,
+    repair_session: str | None = None,
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
     prefix = (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += _managed_run_env_prefix(
+            repair_session,
+            run_kind="plan",
+            marker_dir=repair_marker_dir,
+        )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
         prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
@@ -2419,7 +3863,8 @@ def _plan_auto_command(
     else:
         command = (
             f"cd {shlex.quote(workspace)} && "
-            f"arnold auto --plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
+            f"python3 -P -m arnold_pipelines.megaplan auto "
+            f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
         )
     return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
 
@@ -2432,25 +3877,30 @@ def _megaplan_refresh_command(
 ) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
-    ref = _EDITABLE_INSTALL_BRANCH
+    ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
     lines = [
         "set -e",
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
+        # Never inherit a previously selected runtime when the configured
+        # checkout is absent or refresh fails before producing a new receipt.
+        "unset MEGAPLAN_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_REVISION RUNTIME_REVISION",
         f"SRC={shlex.quote(src)}",
         f"REPO={shlex.quote(repo)}",
         f"REF={shlex.quote(ref)}",
         f"RUNTIME_SRC={shlex.quote(runtime_src_path or '')}",
-        'if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then',
-        '  mkdir -p "$(dirname "$SRC")"',
-        '  CLONE_URL="$REPO"',
-        '  if [ -n "${GITHUB_TOKEN:-}" ]; then',
-        '    case "$CLONE_URL" in',
-        '      https://github.com/*) CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${CLONE_URL#https://github.com/}" ;;',
-        "    esac",
-        "  fi",
-        '  git clone --branch "$REF" "$CLONE_URL" "$SRC"',
+        'UPSTREAM_URL="$REPO"',
+        'if [ -n "$UPSTREAM_URL" ] && [ -n "${GITHUB_TOKEN:-}" ]; then',
+        '  case "$UPSTREAM_URL" in',
+        '    https://github.com/*) UPSTREAM_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${UPSTREAM_URL#https://github.com/}" ;;',
+        "  esac",
         "fi",
-        'if [ -d "$SRC/.git" ]; then',
+        # Linked Git worktrees expose ``.git`` as a file. Treat both a normal
+        # checkout directory and a worktree gitfile as an existing source.
+        'if [ -n "$REPO" ] && [ ! -e "$SRC/.git" ]; then',
+        '  mkdir -p "$(dirname "$SRC")"',
+        '  git clone --branch "$REF" "$UPSTREAM_URL" "$SRC"',
+        "fi",
+        'if [ -e "$SRC/.git" ]; then',
         '  git -C "$SRC" fetch origin "$REF"',
         '  BRANCH="$(git -C "$SRC" branch --show-current)"',
         '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
@@ -2469,8 +3919,11 @@ def _megaplan_refresh_command(
         '      rm -rf "$RUNTIME_SRC"',
         '      mkdir -p "$(dirname "$RUNTIME_SRC")"',
         '      git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"',
-        '      git -C "$RUNTIME_SRC" fetch origin "$REF"',
-        '      git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"',
+        '      MIRROR_REMOTE="$UPSTREAM_URL"',
+        '      if [ -z "$MIRROR_REMOTE" ]; then MIRROR_REMOTE="$(git -C "$SRC" remote get-url origin)"; fi',
+        '      git -C "$RUNTIME_SRC" remote set-url origin "$MIRROR_REMOTE"',
+        '      git -C "$RUNTIME_SRC" fetch origin "+refs/heads/$REF:refs/remotes/origin/$REF"',
+        '      git -C "$RUNTIME_SRC" checkout --detach "refs/remotes/origin/$REF"',
         '      export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
         "    else",
         '      echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
@@ -2496,10 +3949,51 @@ def _megaplan_refresh_command(
         "    exit 20",
         "  fi",
         '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        '  RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
+        '  env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         "else",
-        '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
+        '  echo "[megaplan-refresh] source clone missing at $SRC"',
+        "  exit 21",
         "fi",
+        # Preserve the refresh-verified source across the later cloud hot-env
+        # load, which may still advertise an older resident runtime.
+        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"',
+        'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"',
         'echo "[megaplan-refresh] done"',
+        "true",
+    ]
+    return "\n".join(lines)
+
+
+def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
+    """Activate an already-landed editable runtime without remote git mutation."""
+    src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
+    ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
+    lines = [
+        "set -e",
+        'echo "[megaplan-runtime] $(date -Iseconds) validating current source"',
+        f"SRC={shlex.quote(src)}",
+        f"REF={shlex.quote(ref)}",
+        'if [ ! -e "$SRC/.git" ]; then',
+        '  echo "[megaplan-runtime] source checkout missing at $SRC"',
+        "  exit 21",
+        "fi",
+        'BRANCH="$(git -C "$SRC" branch --show-current)"',
+        'if [ "$BRANCH" != "$REF" ]; then',
+        '  echo "[megaplan-runtime] expected branch $REF at $SRC, observed ${BRANCH:-detached}"',
+        "  exit 22",
+        "fi",
+        'if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
+        '  echo "[megaplan-runtime] refusing dirty tracked source at $SRC"',
+        "  exit 19",
+        "fi",
+        'export MEGAPLAN_RUNTIME_SRC="$SRC"',
+        'pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        'RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
+        'env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
+        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"',
+        'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="$RUNTIME_REVISION"',
+        'echo "[megaplan-runtime] current source accepted at $RUNTIME_REVISION"',
         "true",
     ]
     return "\n".join(lines)
@@ -2513,22 +4007,30 @@ def _refresh_then_chain_start_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     force_clean_editable_install: bool = False,
+    refresh_editable_install: bool = True,
     log_relative: str = _CHAIN_LOG_RELATIVE,
+    repair_session: str | None = None,
+    repair_run_kind: str = "chain",
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     runtime_src_path = (
         str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
         if project_dir
         else None
     )
-    refresh = _megaplan_refresh_command(
-        spec,
-        force_clean_editable_install=force_clean_editable_install,
-        runtime_src_path=runtime_src_path,
+    refresh = (
+        _megaplan_refresh_command(
+            spec,
+            force_clean_editable_install=force_clean_editable_install,
+            runtime_src_path=runtime_src_path,
+        )
+        if refresh_editable_install
+        else _megaplan_use_current_runtime_command(spec)
     )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
-        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
+        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir, require_pinned_runtime_binding=bool(spec and spec.isolated_chain_runner))}"
     )
 
 
@@ -2539,6 +4041,7 @@ def _tmux_chain_launch_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     force_clean_editable_install: bool = False,
+    refresh_editable_install: bool = True,
     session_name: str | None = None,
     spec: CloudSpec | None = None,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -2557,6 +4060,7 @@ def _tmux_chain_launch_command(
     name = session_name or CHAIN_SESSION_NAME
     if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
         log_relative = f".megaplan/cloud-chain-{name}.log"
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
@@ -2564,9 +4068,12 @@ def _tmux_chain_launch_command(
         one_shot=one_shot,
         no_git_refresh=no_git_refresh,
         force_clean_editable_install=force_clean_editable_install,
+        refresh_editable_install=refresh_editable_install,
         log_relative=log_relative,
+        repair_session=name,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(marker).parent),
     )
-    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     digest = identity_digest or ""
     marker_payload = marker_payload or {
         "session": name,
@@ -2574,7 +4081,31 @@ def _tmux_chain_launch_command(
         "remote_spec": remote_spec_path,
         "identity_digest": digest,
         "run_kind": "chain",
+        "run_id": str(uuid.uuid4()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
+    from arnold_pipelines.megaplan.notification_safety import (
+        notification_context_for_current_execution,
+    )
+
+    notification_context = notification_context_for_current_execution()
+    if notification_context is not None:
+        marker_payload = dict(marker_payload)
+        marker_payload.setdefault("notification_context", notification_context)
+    from arnold_pipelines.megaplan.resident.provenance import (
+        DELEGATION_CONTEXT_ENV,
+        encoded_provenance,
+        safe_provenance_projection,
+    )
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        marker_payload = dict(marker_payload)
+        marker_payload.setdefault("resident_delegation", resident_delegation)
+        chain_cmd = (
+            f"export {DELEGATION_CONTEXT_ENV}="
+            f"{shlex.quote(encoded_provenance(resident_delegation))}; {chain_cmd}"
+        )
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
         f"{shlex.quote(str(PurePosixPath(marker).parent))}"
@@ -2587,7 +4118,7 @@ def _tmux_chain_launch_command(
         "exit 17; "
         "fi; "
         "else "
-        f"{_write_session_marker_command(marker, marker_payload)}; "
+        f"{_write_session_marker_command(marker, marker_payload)}\n"
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
         f"echo {shlex.quote(f'started {name} session')}; "
         "fi"
@@ -2657,6 +4188,8 @@ def _epic_chain_start_command(
     engine_dir: str | None = None,
     one_shot: bool = False,
     log_relative: str,
+    repair_session: str | None = None,
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     flags = f"--spec {shlex.quote(remote_spec_path)} --project-dir {shlex.quote(workspace)}"
     if one_shot:
@@ -2666,10 +4199,16 @@ def _epic_chain_start_command(
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += _managed_run_env_prefix(
+            repair_session,
+            run_kind="epic_chain",
+            marker_dir=repair_marker_dir,
+        )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
             f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
@@ -2686,6 +4225,8 @@ def _refresh_then_epic_chain_start_command(
     workspace: str,
     one_shot: bool = False,
     log_relative: str,
+    repair_session: str | None = None,
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     refresh = _megaplan_refresh_command(
         spec,
@@ -2695,7 +4236,7 @@ def _refresh_then_epic_chain_start_command(
     log_target = str(PurePosixPath(workspace) / log_relative)
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_target)} 2>&1 || true; "
-        f"{_epic_chain_start_command(remote_spec_path, workspace=workspace, engine_dir=engine_dir, one_shot=one_shot, log_relative=log_relative)}"
+        f"{_epic_chain_start_command(remote_spec_path, workspace=workspace, engine_dir=engine_dir, one_shot=one_shot, log_relative=log_relative, repair_session=repair_session, repair_marker_dir=repair_marker_dir)}"
     )
 
 
@@ -2717,7 +4258,23 @@ def _tmux_epic_chain_launch_command(
         workspace=workspace,
         one_shot=one_shot,
         log_relative=log_relative,
+        repair_session=session_name,
+        repair_marker_dir=str(PurePosixPath(marker_path).parent),
     )
+    from arnold_pipelines.megaplan.resident.provenance import (
+        DELEGATION_CONTEXT_ENV,
+        encoded_provenance,
+        safe_provenance_projection,
+    )
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        marker_payload = dict(marker_payload)
+        marker_payload.setdefault("resident_delegation", resident_delegation)
+        epic_chain_cmd = (
+            f"export {DELEGATION_CONTEXT_ENV}="
+            f"{shlex.quote(encoded_provenance(resident_delegation))}; {epic_chain_cmd}"
+        )
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
         f"{shlex.quote(str(PurePosixPath(marker_path).parent))}"
@@ -2730,9 +4287,35 @@ def _tmux_epic_chain_launch_command(
         "exit 17; "
         "fi; "
         "else "
-        f"{_write_session_marker_command(marker_path, marker_payload)}; "
+        f"{_write_session_marker_command(marker_path, marker_payload)}\n"
         f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(workspace)} {shlex.quote(epic_chain_cmd)}; "
         f"echo {shlex.quote(f'started {session_name} session')}; "
+        "fi"
+    )
+
+
+def _tmux_chain_stop_for_fresh_command(
+    *,
+    session_name: str,
+    marker_path: str,
+    identity_digest: str,
+) -> str:
+    """Stop only the runner owned by the chain that is about to be reset.
+
+    A fresh launch must never erase durable chain state underneath a live
+    driver.  The marker identity check also prevents ``--fresh`` from killing
+    an unrelated session that happens to share a tmux name.
+    """
+    return (
+        f"if tmux has-session -t {shlex.quote(session_name)} 2>/dev/null; then "
+        f"if [ -f {shlex.quote(marker_path)} ] && "
+        f"grep -F {shlex.quote(identity_digest)} {shlex.quote(marker_path)} >/dev/null 2>&1; then "
+        f"tmux kill-session -t {shlex.quote(session_name)} 2>/dev/null; "
+        f"echo {shlex.quote(f'stopped {session_name} session for fresh launch')}; "
+        "else "
+        f"echo {shlex.quote(f'ERROR: {session_name} session marker does not match requested chain; refusing fresh reset')}; "
+        "exit 17; "
+        "fi; "
         "fi"
     )
 
@@ -2758,13 +4341,17 @@ def _tmux_chain_restart_command(
     name = session_name or CHAIN_SESSION_NAME
     if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
         log_relative = f".megaplan/cloud-chain-{name}.log"
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
+        project_dir=workspace,
         one_shot=True,
         log_relative=log_relative,
+        repair_session=name,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(marker).parent),
     )
-    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "
@@ -3143,18 +4730,85 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
     missing_env = _missing_configured_secrets(spec, os.environ)
     remote: dict[str, Any] = {"skipped": bool(getattr(args, "skip_remote", False))}
     if not remote["skipped"]:
-        import_check = _run_remote_megaplan_import_check(provider)
-        missing_commands = _run_remote_dependency_check(
-            provider,
-            list(preflight_summary.get("runtime_commands", [])),
-        )
+        ssh_host_prelaunch = spec.provider == "ssh"
+        if ssh_host_prelaunch:
+            container_observation = _provider_container_observation(provider)
+            capacity_observation = _provider_prelaunch_capacity(provider)
+            if container_observation is None:
+                container_observation = {
+                    "schema": "arnold.cloud.ssh_container_observation.v1",
+                    "status": "unknown",
+                    "lifecycle": "unknown",
+                    "collector": {"status": "unavailable", "reason": "observer_unavailable"},
+                }
+            remote["container_observation"] = container_observation
+            remote["prelaunch_capacity"] = capacity_observation
+            lifecycle = container_observation.get("lifecycle")
+            collector_ready = _container_collector_ready(container_observation)
+            capacity_ready = capacity_observation.get("verdict") == "GO"
+            host_predeploy_ready = (
+                lifecycle in {"running", "stopped"}
+                and container_observation.get("status") == "available"
+                and capacity_ready
+            )
+            remote["host_predeploy_verdict"] = (
+                "GO" if host_predeploy_ready else "NO-GO"
+            )
+            remote["collector_launch_verdict"] = (
+                "GO" if collector_ready else "NO-GO"
+            )
+            remote_checks_ready = collector_ready and capacity_ready
+        else:
+            lifecycle = "not-applicable"
+            collector_ready = True
+            capacity_ready = True
+            remote_checks_ready = True
+        errors = []
+        if not collector_ready:
+            errors.append(
+                f"container lifecycle is {lifecycle or 'unknown'}; remote exec collector unavailable"
+            )
+        if not capacity_ready:
+            errors.append(
+                "host workspace prelaunch capacity/durability observation is NO-GO"
+            )
+        if remote_checks_ready:
+            try:
+                engine_ref_check = _verify_configured_megaplan_ref_advertised(spec)
+            except CliError as exc:
+                engine_ref_check = dict(exc.extra.get("engine_ref_check") or {})
+                engine_ref_check.setdefault("status", "failed")
+                remote["engine_ref_check"] = engine_ref_check
+                errors.append(exc.message)
+            else:
+                remote["engine_ref_check"] = engine_ref_check
+        else:
+            remote["engine_ref_check"] = {
+                "status": "unavailable",
+                "reason": "host_or_collector_preflight_no_go",
+            }
+        if remote_checks_ready:
+            import_check = _run_remote_megaplan_import_check(provider)
+            missing_commands = _run_remote_dependency_check(
+                provider,
+                list(preflight_summary.get("runtime_commands", [])),
+            )
+        else:
+            import_check = {
+                "status": "unavailable",
+                "checks": {},
+                "errors": [],
+                "reason": "host_or_collector_preflight_no_go",
+            }
+            missing_commands = []
         remote.update(
             {
                 "import_check": import_check,
                 "missing_commands": missing_commands,
             }
         )
-    errors: list[str] = []
+    else:
+        errors = []
     if placeholder_findings and not bool(getattr(args, "allow_template_placeholders", False)):
         errors.append(
             "template placeholders remain; edit them or pass --allow-template-placeholders"
@@ -3479,15 +5133,23 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     if bool(getattr(args, "no_editable_install_sync", False)):
         editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
     else:
-        editable_install_sync = _sync_launch_head_to_editable_install_branch(
-            _arnold_engine_repo_root(),
-            branch=_EDITABLE_INSTALL_BRANCH,
-            ignore_dirty_paths=generated_canonical_files,
-        )
+        sync_branch = _cloud_source_sync_branch(spec)
+        if sync_branch is None:
+            editable_install_sync = {
+                "status": "skipped",
+                "reason": "isolated_runtime_immutable_ref",
+                "source_ref": spec.megaplan.ref,
+            }
+        else:
+            editable_install_sync = _sync_launch_head_to_editable_install_branch(
+                _arnold_engine_repo_root(),
+                branch=sync_branch,
+                ignore_dirty_paths=generated_canonical_files,
+            )
         sys.stderr.write(
             "cloud chain editable-install sync: "
             f"status={editable_install_sync.get('status')} "
-            f"branch={editable_install_sync.get('branch')} "
+            f"branch={editable_install_sync.get('branch') or sync_branch} "
             f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
         )
     driver_overrides: dict[str, Any] = {}
@@ -3560,6 +5222,8 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             },
         )
 
+    if spec.isolated_chain_runner:
+        seed_isolated_git_credentials(spec, provider, required=True)
     _ensure_repo_checkout(launch_spec, provider, relay=False)
     required_commands = list(preflight_summary.get("runtime_commands", []))
     missing_commands = _run_remote_dependency_check(provider, required_commands)
@@ -3591,6 +5255,109 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    if bool(getattr(args, "prepare_only", False)):
+        payload = {
+            "success": True,
+            "event": "cloud_chain_prepared",
+            "remote_spec": remote_spec_path,
+            "chain_session": launch_ctx.session_name,
+            "workspace": launch_ctx.workspace,
+            "repo_head": repo_head,
+            "uploaded_idea_count": len(uploads),
+            "runner_started": False,
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 0
+    launch_session = launch_ctx.session_name
+    session_name = launch_ctx.session_name
+    launch_started_at = datetime.now(timezone.utc).isoformat()
+    marker_payload = {
+        "session": launch_ctx.session_name,
+        "workspace": launch_ctx.workspace,
+        "remote_spec": launch_ctx.remote_spec_path,
+        "identity_digest": launch_ctx.digest,
+        "chain_slug": launch_ctx.slug,
+        "run_kind": "chain",
+        "run_id": str(uuid.uuid4()),
+        "allow_human_gates": bool(getattr(args, "allow_human_gates", False)),
+        "relaunch_command": _refresh_then_chain_start_command(
+            remote_spec_path,
+            spec=launch_spec,
+            project_dir=launch_ctx.workspace,
+            log_relative=launch_ctx.log_relative,
+            no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
+            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+            refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
+            repair_session=launch_session,
+            repair_run_kind="chain",
+            repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
+        ),
+        "editable_source_branch": launch_spec.megaplan.ref,
+        "editable_source_head": (
+            editable_install_sync.get("editable_head")
+            or editable_install_sync.get("launch_head")
+        ),
+        "editable_install_sync": editable_install_sync,
+        "started_at": launch_started_at,
+        "launch_outcome": _launch_outcome_payload(
+            status="starting",
+            code="launch_in_progress",
+            detail="cloud chain launch is preparing the remote session",
+        ),
+    }
+    if bool(getattr(args, "fresh", False)):
+        # A fresh launch explicitly supersedes any prior pause for this exact
+        # identity. Atomic marker writes merge existing fields, so overwrite
+        # both controls instead of leaving a stale should_run=false marker.
+        marker_payload["should_run"] = True
+        marker_payload["operator_pause"] = None
+    try:
+        engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
+    except CliError as exc:
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=exc.code,
+            detail=exc.message,
+            verification={
+                "status": "pre_tmux_ref_check_failed",
+                **(exc.extra.get("engine_ref_check") or {}),
+            },
+            stderr_tail=str((exc.extra.get("engine_ref_check") or {}).get("stderr_tail") or ""),
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+            allow_live_session=False,
+        )
+        exc.extra.setdefault("launch_outcome", launch_outcome)
+        exc.extra.setdefault(
+            "launch_custody",
+            {
+                "workspace": launch_ctx.workspace,
+                "remote_spec": remote_spec_path,
+                "marker_path": launch_ctx.marker_path,
+                "chain_session": launch_ctx.session_name,
+            },
+        )
+        raise
+    marker_payload["engine_ref_check"] = engine_ref_check
+    if bool(getattr(args, "fresh", False)):
+        stop_result = provider.ssh_exec(
+            _tmux_chain_stop_for_fresh_command(
+                session_name=launch_ctx.session_name,
+                marker_path=launch_ctx.marker_path,
+                identity_digest=launch_ctx.digest,
+            )
+        )
+        if stop_result.returncode != 0:
+            _relay_output(stop_result, secret_names=spec.secrets, env=os.environ)
+            raise CliError(
+                "chain_session_collision" if stop_result.returncode == 17 else "provider_failed",
+                (stop_result.stderr or stop_result.stdout or "remote fresh-session stop failed").strip(),
+            )
+
     reset_result = provider.ssh_exec(
         _chain_state_reset_command(
             workspace=launch_ctx.workspace,
@@ -3606,32 +5373,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             f"remote chain state reset check failed (exit {reset_result.returncode})",
         )
 
-    launch_session = launch_ctx.session_name
-    session_name = launch_ctx.session_name
-    marker_payload = {
-        "session": launch_ctx.session_name,
-        "workspace": launch_ctx.workspace,
-        "remote_spec": launch_ctx.remote_spec_path,
-        "identity_digest": launch_ctx.digest,
-        "chain_slug": launch_ctx.slug,
-        "run_kind": "chain",
-        "allow_human_gates": bool(getattr(args, "allow_human_gates", False)),
-        "relaunch_command": _refresh_then_chain_start_command(
-            remote_spec_path,
-            spec=launch_spec,
-            project_dir=launch_ctx.workspace,
-            log_relative=launch_ctx.log_relative,
-            no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
-            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
-        ),
-        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
-        "editable_source_head": (
-            editable_install_sync.get("editable_head")
-            or editable_install_sync.get("launch_head")
-        ),
-        "editable_install_sync": editable_install_sync,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
     result = provider.ssh_exec(
         _tmux_chain_launch_command(
             launch_ctx.workspace,
@@ -3644,6 +5385,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             marker_payload=marker_payload,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+            refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
@@ -3654,13 +5396,66 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         )
     tracking = _run_watchdog_tracking_verification(provider, launch_ctx)
     if not tracking.get("tracked"):
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code="watchdog_tracking_failed",
+            detail="cloud chain launch completed but watchdog could not prove session custody",
+            verification=tracking,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
         raise CliError(
             "watchdog_tracking_failed",
             "cloud launch completed but watchdog tracking verification failed: "
             + "; ".join(str(item) for item in tracking.get("errors", []) or ["unknown error"]),
-            extra={"watchdog_tracking": tracking},
+            extra={"watchdog_tracking": tracking, "launch_outcome": launch_outcome},
         )
     verification = _run_chain_launch_verification(provider, launch_ctx)
+    if verification.get("status") != "ok":
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=str(verification.get("failure_code") or "launch_not_advanced"),
+            detail=str(
+                verification.get("likely_cause")
+                or "cloud chain launch did not advance past init"
+            ),
+            verification={**verification, "watchdog_tracking": tracking},
+            log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
+        raise CliError(
+            "launch_not_advanced",
+            (
+                "cloud chain launch did not advance past init; "
+                + str(verification.get("likely_cause") or "inspect the remote chain log")
+            ),
+            extra={
+                "verification": {**verification, "watchdog_tracking": tracking},
+                "launch_outcome": launch_outcome,
+            },
+        )
+    success_outcome = _launch_outcome_payload(
+        status="running",
+        code="success",
+        detail="cloud chain launch verified session liveness and state advancement",
+        verification={**verification, "watchdog_tracking": tracking},
+        log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+    )
+    _persist_remote_launch_outcome(
+        provider,
+        ctx=launch_ctx,
+        marker_payload=marker_payload,
+        launch_outcome=success_outcome,
+    )
     provenance = _cloud_chain_launch_provenance(
         spec=spec,
         ctx=launch_ctx,
@@ -3670,6 +5465,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         repo_head=repo_head,
         tmux_result=result,
         editable_install_sync=editable_install_sync,
+        engine_ref_check=engine_ref_check,
         verification={**verification, "watchdog_tracking": tracking},
     )
     sys.stderr.write(
@@ -3692,6 +5488,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
                 "editable_install_sync": editable_install_sync,
+                "engine_ref_check": engine_ref_check,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_session,
                 "chain_log": launch_ctx.log_path,
@@ -3810,7 +5607,7 @@ def _epic_chain_launch_verification_command(
     sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
 ) -> str:
     script = f"""
-import json, pathlib, re, subprocess, time
+import json, pathlib, subprocess, time
 workspace = pathlib.Path({workspace!r})
 session = {session_name!r}
 remote_spec = pathlib.Path({remote_spec_path!r})
@@ -3856,6 +5653,30 @@ for idx in range(max(1, attempts)):
         break
     if idx + 1 < attempts:
         time.sleep(sleep_seconds)
+log_tail = []
+if log_path.exists():
+    try:
+        log_tail = log_path.read_text(errors="replace").splitlines()[-80:]
+    except Exception as exc:
+        log_tail = [f"<unable to read epic-chain log: {{exc}}>"]
+tail_text = "\\n".join(log_tail)
+likely = None
+failure_code = None
+if not last.get("session_alive"):
+    likely = "driver exited before epic-chain state advanced; inspect epic-chain log"
+elif not last.get("advanced_past_init"):
+    likely = "epic-chain stayed at init; inspect epic-chain log for engine refresh or startup failures"
+if "[megaplan-refresh] refusing editable install refresh" in tail_text:
+    likely = "editable install refresh failed before epic-chain start"
+    if "tracked changes in source checkout" in tail_text:
+        failure_code = "editable_install_refresh_dirty"
+    elif "local commits not contained" in tail_text:
+        failure_code = "editable_install_refresh_diverged"
+    else:
+        failure_code = "editable_install_refresh_failed"
+last["likely_cause"] = likely
+last["failure_code"] = failure_code
+last["log_tail"] = log_tail
 last["status"] = "ok" if last.get("session_alive") and last.get("spec_present") and last.get("marker_present") and last.get("advanced_past_init") else "warning"
 print(json.dumps(last, sort_keys=True))
 """
@@ -3905,14 +5726,22 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
     if bool(getattr(args, "no_editable_install_sync", False)):
         editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
     else:
-        editable_install_sync = _sync_launch_head_to_editable_install_branch(
-            _arnold_engine_repo_root(),
-            branch=_EDITABLE_INSTALL_BRANCH,
-        )
+        sync_branch = _cloud_source_sync_branch(spec)
+        if sync_branch is None:
+            editable_install_sync = {
+                "status": "skipped",
+                "reason": "isolated_runtime_immutable_ref",
+                "source_ref": spec.megaplan.ref,
+            }
+        else:
+            editable_install_sync = _sync_launch_head_to_editable_install_branch(
+                _arnold_engine_repo_root(),
+                branch=sync_branch,
+            )
         sys.stderr.write(
             "cloud epic-chain editable-install sync: "
             f"status={editable_install_sync.get('status')} "
-            f"branch={editable_install_sync.get('branch')} "
+            f"branch={editable_install_sync.get('branch') or sync_branch} "
             f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
         )
 
@@ -3946,6 +5775,73 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         if archive_path is not None:
             archive_path.unlink(missing_ok=True)
 
+    relaunch_command = _refresh_then_epic_chain_start_command(
+        launch_ctx.remote_spec_path,
+        spec=launch_spec,
+        workspace=launch_ctx.workspace,
+        one_shot=bool(getattr(args, "one", False)),
+        log_relative=launch_ctx.log_relative,
+        repair_session=launch_ctx.session_name,
+        repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
+    )
+    marker_payload = {
+        "session": launch_ctx.session_name,
+        "workspace": launch_ctx.workspace,
+        "remote_spec": launch_ctx.remote_spec_path,
+        "identity_digest": launch_ctx.digest,
+        "chain_slug": launch_ctx.slug,
+        "run_kind": "epic_chain",
+        "run_id": str(uuid.uuid4()),
+        "relaunch_command": relaunch_command,
+        "editable_source_branch": launch_spec.megaplan.ref,
+        "editable_source_head": (
+            editable_install_sync.get("editable_head")
+            or editable_install_sync.get("launch_head")
+        ),
+        "editable_install_sync": editable_install_sync,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "launch_outcome": _launch_outcome_payload(
+            status="starting",
+            code="launch_in_progress",
+            detail="cloud epic-chain launch is preparing the remote session",
+        ),
+    }
+    if bool(getattr(args, "fresh", False)):
+        marker_payload["should_run"] = True
+        marker_payload["operator_pause"] = None
+    try:
+        engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
+    except CliError as exc:
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=exc.code,
+            detail=exc.message,
+            verification={
+                "status": "pre_tmux_ref_check_failed",
+                **(exc.extra.get("engine_ref_check") or {}),
+            },
+            stderr_tail=str((exc.extra.get("engine_ref_check") or {}).get("stderr_tail") or ""),
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+            allow_live_session=False,
+        )
+        exc.extra.setdefault("launch_outcome", launch_outcome)
+        exc.extra.setdefault(
+            "launch_custody",
+            {
+                "workspace": launch_ctx.workspace,
+                "remote_spec": launch_ctx.remote_spec_path,
+                "marker_path": launch_ctx.marker_path,
+                "chain_session": launch_ctx.session_name,
+            },
+        )
+        raise
+    marker_payload["engine_ref_check"] = engine_ref_check
+
     reset_result = provider.ssh_exec(
         _epic_chain_state_reset_command(
             state_path=launch_ctx.state_path,
@@ -3959,29 +5855,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
             f"remote epic-chain state reset failed (exit {reset_result.returncode})",
         )
 
-    relaunch_command = _refresh_then_epic_chain_start_command(
-        launch_ctx.remote_spec_path,
-        spec=launch_spec,
-        workspace=launch_ctx.workspace,
-        one_shot=bool(getattr(args, "one", False)),
-        log_relative=launch_ctx.log_relative,
-    )
-    marker_payload = {
-        "session": launch_ctx.session_name,
-        "workspace": launch_ctx.workspace,
-        "remote_spec": launch_ctx.remote_spec_path,
-        "identity_digest": launch_ctx.digest,
-        "chain_slug": launch_ctx.slug,
-        "run_kind": "epic_chain",
-        "relaunch_command": relaunch_command,
-        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
-        "editable_source_head": (
-            editable_install_sync.get("editable_head")
-            or editable_install_sync.get("launch_head")
-        ),
-        "editable_install_sync": editable_install_sync,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
     result = provider.ssh_exec(
         _tmux_epic_chain_launch_command(
             launch_ctx.workspace,
@@ -4003,13 +5876,66 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         )
     tracking = _run_watchdog_tracking_verification(provider, launch_ctx)
     if not tracking.get("tracked"):
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code="watchdog_tracking_failed",
+            detail="cloud epic-chain launch completed but watchdog could not prove session custody",
+            verification=tracking,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
         raise CliError(
             "watchdog_tracking_failed",
             "cloud epic-chain launch completed but watchdog tracking verification failed: "
             + "; ".join(str(item) for item in tracking.get("errors", []) or ["unknown error"]),
-            extra={"watchdog_tracking": tracking},
+            extra={"watchdog_tracking": tracking, "launch_outcome": launch_outcome},
         )
     verification = _run_epic_chain_launch_verification(provider, launch_ctx)
+    if verification.get("status") != "ok":
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=str(verification.get("failure_code") or "launch_not_advanced"),
+            detail=str(
+                verification.get("likely_cause")
+                or "cloud epic-chain launch did not advance past init"
+            ),
+            verification={**verification, "watchdog_tracking": tracking},
+            log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
+        raise CliError(
+            "launch_not_advanced",
+            (
+                "cloud epic-chain launch did not advance past init; "
+                + str(verification.get("likely_cause") or "inspect the remote epic-chain log")
+            ),
+            extra={
+                "verification": {**verification, "watchdog_tracking": tracking},
+                "launch_outcome": launch_outcome,
+            },
+        )
+    success_outcome = _launch_outcome_payload(
+        status="running",
+        code="success",
+        detail="cloud epic-chain launch verified session liveness and state advancement",
+        verification={**verification, "watchdog_tracking": tracking},
+        log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+    )
+    _persist_remote_launch_outcome(
+        provider,
+        ctx=launch_ctx,
+        marker_payload=marker_payload,
+        launch_outcome=success_outcome,
+    )
     sys.stderr.write(
         "cloud epic-chain launch: "
         f"session={launch_ctx.session_name} "
@@ -4028,7 +5954,13 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "uploaded_roots": list(_DURABLE_MEGAPLAN_DIRS),
         "verification": {**verification, "watchdog_tracking": tracking},
         "editable_install_sync": editable_install_sync,
+        "engine_ref_check": engine_ref_check,
     }
+    from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        payload["resident_delegation"] = resident_delegation
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
 
     marker_path = _marker_dir(_cloud_yaml_path(root, args)) / "last_chain.json"
@@ -4040,6 +5972,7 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
                 "base_branch": epic_chain_spec.base_branch,
                 "provenance": payload,
                 "editable_install_sync": editable_install_sync,
+                "engine_ref_check": engine_ref_check,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_ctx.session_name,
                 "chain_log": launch_ctx.log_path,
@@ -4090,6 +6023,7 @@ def _bootstrap_marker_payload(
         "workspace": workspace,
         "remote_spec": remote_spec,
         "run_kind": "plan",
+        "run_id": str(uuid.uuid4()),
         "plan_name": plan_name,
         "relaunch_command": relaunch_command,
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -4112,6 +6046,8 @@ def _bootstrap_launch_command(
         workspace=workspace,
         engine_dir=engine_dir,
         log_relative=log_relative,
+        repair_session=session_name,
+        repair_marker_dir=str(PurePosixPath(marker_path).parent),
     )
     marker_payload = _bootstrap_marker_payload(
         session_name=session_name,
@@ -4124,8 +6060,10 @@ def _bootstrap_launch_command(
         f"mkdir -p {shlex.quote(str(PurePosixPath(marker_path).parent))} "
         f"{shlex.quote(str(PurePosixPath(workspace) / '.megaplan' / 'cloud-logs'))} && "
         f"{_write_session_marker_command(marker_path, marker_payload)} && "
+        f"{_managed_run_env_prefix(session_name, run_kind='plan', marker_dir=str(PurePosixPath(marker_path).parent))}"
         f"cd {shlex.quote(workspace)} && "
-        f"arnold init --project-dir {shlex.quote(workspace)} "
+        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(engine_dir)}:${{PYTHONPATH:-}} "
+        f"python3 -P -m arnold_pipelines.megaplan init --project-dir {shlex.quote(workspace)} "
         f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
         f"--robustness {shlex.quote(robustness)} --name {shlex.quote(plan_name)}"
     )
@@ -4218,6 +6156,22 @@ def _run_supervise_tick(root: Path, args: argparse.Namespace, spec: CloudSpec, p
 
 def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status`."""
+    observation = _provider_container_observation(provider)
+    capacity = (
+        _provider_prelaunch_capacity(provider) if spec.provider == "ssh" else None
+    )
+    if not _container_collector_ready(observation) or (
+        isinstance(capacity, Mapping) and capacity.get("verdict") != "GO"
+    ):
+        raise _collector_unavailable_error(
+            observation
+            or {
+                "status": "unknown",
+                "lifecycle": "unknown",
+                "collector": {"status": "unavailable", "reason": "observer_unavailable"},
+            },
+            capacity=capacity,
+        )
     return provider.status_payload(
         plan=getattr(args, "plan", None),
         workspace=spec.repo.workspace,
@@ -4628,16 +6582,35 @@ def _payload_for(name):
 def _watchdog_is_repairing(evidence):
     if not isinstance(evidence, dict) or evidence.get("status") != "present":
         return False
-    action = str(evidence.get("action") or "")
-    status = str(evidence.get("watchdog_status") or "")
-    return (
-        action in {{"repair", "meta_repair"}}
-        or status in {{"repair_dispatched", "repairing", "dispatched"}}
-        or "repair" in action
-        or "repair" in status
-    )
+    custody = evidence.get("repair_custody")
+    if not isinstance(custody, dict):
+        return False
+    active_requests = {{str(value) for value in custody.get("active_request_ids", []) if str(value)}}
+    active_claims = {{str(value) for value in custody.get("active_claim_request_ids", []) if str(value)}}
+    if active_requests & active_claims:
+        return True
+    for attempt in custody.get("attempts", []):
+        if not isinstance(attempt, dict) or attempt.get("terminal") is not False:
+            continue
+        if not attempt.get("attempt_id") or not attempt.get("path"):
+            continue
+        request_id = str(attempt.get("request_id") or "")
+        if request_id and request_id in active_requests:
+            return True
+        if attempt.get("source") == "repair_queue_dispatch_attempt" and attempt.get("blocker_id"):
+            return True
+    return False
 
 def _should_be_running(payload):
+    # Explicit operator custody outranks status-shape heuristics. A superseded
+    # session is commonly both ``stopped`` and ``should_run: false``; treating
+    # every stopped session as resumable made the watchdog repeatedly relaunch
+    # intentionally retired work.
+    if payload.get("should_run") is False:
+        return False
+    operator_pause = payload.get("operator_pause")
+    if isinstance(operator_pause, dict) and operator_pause.get("active") is True:
+        return False
     status = payload.get("status")
     if status == "running":
         return True
@@ -5042,16 +7015,53 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
         sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
         return 0
 
+    observation = _provider_container_observation(provider)
+    strict_ssh_observation = spec is not None and spec.provider == "ssh"
+    capacity = _provider_prelaunch_capacity(provider) if strict_ssh_observation else None
+    collector_ready = _container_collector_ready(observation)
+    capacity_ready = not isinstance(capacity, Mapping) or capacity.get("verdict") == "GO"
+    if strict_ssh_observation and (not collector_ready or not capacity_ready):
+        lifecycle = observation.get("lifecycle") if observation is not None else "unknown"
+        reason = (
+            f"container_{lifecycle or 'unknown'}"
+            if not collector_ready
+            else "host_prelaunch_capacity_no_go"
+        )
+        payload = {
+            "success": False,
+            "source": "ssh-host-observer",
+            "container_observation": observation,
+            "prelaunch_capacity": capacity,
+            "collector": {
+                "status": "unavailable",
+                "reason": reason,
+            },
+            "sessions": [],
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 1
+
     # Laptop path: ask the box for the same snapshot its watchdog produced.
     try:
         raw = provider.read_remote_file(str(status_snapshot.DEFAULT_SNAPSHOT_PATH))
         snapshot = json.loads(raw)
     except (CliError, OSError, ValueError) as exc:
-        sys.stderr.write(
-            f"cloud status: snapshot unavailable on box ({exc.__class__.__name__}); "
-            "falling back to legacy remote listing\n"
-        )
-        return _run_cloud_chains(spec, provider, args=args)
+        if spec is None:
+            return _run_cloud_chains(spec, provider, args=args)
+        payload = {
+            "success": False,
+            "source": "ssh-host-observer",
+            "container_observation": observation,
+            "prelaunch_capacity": capacity,
+            "collector": {
+                "status": "unavailable",
+                "reason": "snapshot_collector_unavailable",
+                "diagnostic": str(exc),
+            },
+            "sessions": [],
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 1
     if not isinstance(snapshot, dict):
         sys.stderr.write("cloud status: box snapshot malformed; falling back to legacy remote listing\n")
         return _run_cloud_chains(spec, provider, args=args)
@@ -5062,6 +7072,10 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
             "falling back to legacy remote listing\n"
         )
         return _run_cloud_chains(spec, provider, args=args)
+    if observation is not None:
+        snapshot["container_observation"] = observation
+    if capacity is not None:
+        snapshot["prelaunch_capacity"] = capacity
     _emit_cloud_status_human(snapshot, compact=compact)
     sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
     return 0
@@ -5110,6 +7124,38 @@ def _try_provider_method(provider, method_name: str, *args: Any, **kwargs: Any) 
     if isinstance(result, str):
         return {"status": "unknown", "raw": result}
     return {"status": "unknown", "payload": result}
+
+
+def _provider_plan_status_payload(
+    provider: Any,
+    *,
+    plan: str,
+    workspace: str,
+    session: str,
+) -> dict[str, Any]:
+    """Read plan status, passing cloud identity only to aware providers.
+
+    ``session`` was added to the provider contract so the remote Megaplan
+    runtime can emit a canonical current-target observation.  Signature
+    inspection preserves third-party/read-only provider doubles while keeping
+    the production SSH route explicit; no TypeError fallback can mask a real
+    provider bug.
+    """
+
+    method = getattr(provider, "status_payload", None)
+    kwargs: dict[str, Any] = {"plan": plan, "workspace": workspace}
+    if method is not None:
+        try:
+            parameters = inspect.signature(method).parameters.values()
+        except (TypeError, ValueError):
+            parameters = ()
+        if any(
+            parameter.name == "session"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        ):
+            kwargs["session"] = session
+    return _try_provider_method(provider, "status_payload", **kwargs)
 
 
 def _classify_effective_status(
@@ -5479,6 +7525,113 @@ def _active_step_evidence_from_plan_status(plan_status: Mapping[str, Any]) -> di
     }
 
 
+def _canonical_runner_from_plan_status(
+    plan_status: Mapping[str, Any],
+    *,
+    session: str,
+    workspace: str,
+    remote_spec: str,
+    plan_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Project runner state only from the exact resolved current target.
+
+    Raw tmux and process probes are intentionally absent from this function.
+    They are observer diagnostics and cannot grant or veto control authority.
+    """
+
+    from arnold_pipelines.megaplan.cloud.current_target_liveness import (
+        control_liveness_from_current_target,
+    )
+
+    target = plan_status.get("current_target")
+    target = target if isinstance(target, Mapping) else {}
+    refs = target.get("current_refs")
+    refs = refs if isinstance(refs, Mapping) else {}
+    marker = target.get("marker")
+    marker = marker if isinstance(marker, Mapping) else {}
+    target_plan = target.get("plan_state")
+    target_plan = target_plan if isinstance(target_plan, Mapping) else {}
+
+    mismatches: list[str] = []
+    if not target:
+        mismatches.append("current_target_missing")
+    if str(target.get("target_session") or target.get("session") or "") != session:
+        mismatches.append("session_mismatch")
+    if marker.get("present") is not True:
+        mismatches.append("marker_missing")
+    if str(marker.get("session") or "") != session:
+        mismatches.append("marker_session_mismatch")
+    if str(refs.get("workspace") or marker.get("workspace") or "") != workspace:
+        mismatches.append("workspace_mismatch")
+    if str(refs.get("remote_spec") or marker.get("remote_spec") or "") != remote_spec:
+        mismatches.append("remote_spec_mismatch")
+    if str(refs.get("current_plan_name") or "") != plan_name:
+        mismatches.append("current_plan_mismatch")
+    if target_plan.get("present") is not True:
+        mismatches.append("plan_state_missing")
+    if str(target_plan.get("name") or "") != plan_name:
+        mismatches.append("plan_state_name_mismatch")
+
+    liveness = control_liveness_from_current_target(target, action="mutation")
+    if not mismatches and liveness.get("action_permitted") is True:
+        source = str(liveness.get("source") or "")
+        identity = liveness.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        lease = liveness.get("lease")
+        lease = lease if isinstance(lease, Mapping) else {}
+        if source == "matched_local_process_identity":
+            required = (
+                identity.get("pid"),
+                identity.get("pid_namespace_id"),
+                identity.get("process_start_identity"),
+            )
+            if not all(required):
+                mismatches.append("local_process_incarnation_incomplete")
+        elif source == "fresh_owner_lease":
+            required = (
+                lease.get("target_pid"),
+                lease.get("runner_container_id"),
+                lease.get("pid_namespace_id"),
+                lease.get("target_process_start_identity"),
+                lease.get("run_id"),
+                lease.get("attempt_id"),
+                lease.get("incarnation_id"),
+                lease.get("runner_fence"),
+            )
+            if not all(value is not None and str(value) for value in required):
+                mismatches.append("owner_lease_incarnation_incomplete")
+        else:
+            mismatches.append("unsupported_liveness_authority_source")
+    if mismatches:
+        liveness = control_liveness_from_current_target(None, action="mutation")
+        liveness["reason"] = "current target did not match the exact chain target"
+        liveness["diagnostics"] = mismatches
+
+    state = str(liveness.get("state") or "unknown")
+    action_permitted = bool(liveness.get("action_permitted") is True)
+    exact_target = not mismatches
+    runner_identity = liveness.get("identity")
+    runner_identity = runner_identity if isinstance(runner_identity, Mapping) else {}
+    runner = {
+        "status": state if state in {"alive", "dead"} else "unknown",
+        "state": state,
+        "authority": "canonical_current_target",
+        "exact_target": exact_target,
+        "mutation_permitted": bool(exact_target and action_permitted),
+        "session": session,
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "plan_name": plan_name,
+        "reason": str(liveness.get("reason") or ""),
+        "identity": dict(runner_identity),
+    }
+    # The current-target liveness vocabulary is live/dead/unknown, whereas
+    # the longstanding runner surface uses alive/dead/unknown.
+    if state == "live":
+        runner["status"] = "alive"
+    return runner, liveness
+
+
 def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status --chain`."""
     from arnold_pipelines.megaplan import chain as chain_module
@@ -5490,6 +7643,10 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         project_repair_custody,
     )
     from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+
+    observation = _provider_container_observation(provider)
+    if observation is not None and observation.get("lifecycle") != "running":
+        raise _collector_unavailable_error(observation)
 
     remote_spec = _resolve_remote_chain_spec(root, args, spec)
     marker = _load_marker(root, args)
@@ -5537,22 +7694,29 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     # Plan status via provider.status_payload when a current plan exists.
     plan_status: dict[str, Any]
     if chain_state.current_plan_name:
-        plan_status = _try_provider_method(
+        plan_status = _provider_plan_status_payload(
             provider,
-            "status_payload",
             plan=chain_state.current_plan_name,
             workspace=resolved_workspace,
+            session=resolved_session,
         )
     else:
         plan_status = {"status": "missing", "reason": "no current plan"}
     latest_failure = _latest_failure_from_plan_status(plan_status)
 
-    # Runner / heartbeat info via optional ssh_exec probe. Prefer explicit tmux
-    # liveness but fall back to matching chain process evidence because tmux can
-    # disappear while the chain runner and its child worker remain alive.
-    tmux_evidence: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
-    process_evidence: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
-    runner: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
+    # Raw tmux/process evidence remains useful to an operator, but is never
+    # projected into canonical runner liveness.  Only the remote resolver's
+    # exact current-target record below can authorize control decisions.
+    tmux_evidence: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": "runner probe not implemented",
+        "authoritative": False,
+    }
+    process_evidence: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": "runner probe not implemented",
+        "authoritative": False,
+    }
     try:
         ssh_meth = getattr(provider, "ssh_exec", None)
         if ssh_meth is not None:
@@ -5571,39 +7735,61 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
             )
             stdout = proc.stdout or ""
             if proc.returncode == 0 and "tmux_alive" in stdout:
-                tmux_evidence = {"status": "alive", "session": resolved_session}
-                process_evidence = {"status": "unknown", "remote_spec": remote_spec}
-                runner = {
+                tmux_evidence = {
                     "status": "alive",
                     "session": resolved_session,
-                    "detail": "tmux session present",
-                    "tmux_status": tmux_evidence["status"],
-                    "process_status": process_evidence["status"],
+                    "authoritative": False,
+                }
+                process_evidence = {
+                    "status": "unknown",
+                    "remote_spec": remote_spec,
+                    "authoritative": False,
                 }
             elif proc.returncode == 0 and "process_alive" in stdout:
-                tmux_evidence = {"status": "missing", "session": resolved_session}
-                process_evidence = {"status": "alive", "remote_spec": remote_spec}
-                runner = {
-                    "status": "alive",
+                tmux_evidence = {
+                    "status": "missing",
                     "session": resolved_session,
-                    "detail": "matching chain process present; tmux session absent",
-                    "tmux_status": tmux_evidence["status"],
-                    "process_status": process_evidence["status"],
+                    "authoritative": False,
+                }
+                process_evidence = {
+                    "status": "alive",
+                    "remote_spec": remote_spec,
+                    "authoritative": False,
                 }
             else:
-                tmux_evidence = {"status": "missing", "session": resolved_session}
-                process_evidence = {"status": "dead", "remote_spec": remote_spec}
-                runner = {
-                    "status": "dead",
+                tmux_evidence = {
+                    "status": "missing",
                     "session": resolved_session,
-                    "detail": "tmux session absent and no matching chain process",
-                    "tmux_status": tmux_evidence["status"],
-                    "process_status": process_evidence["status"],
+                    "authoritative": False,
+                }
+                process_evidence = {
+                    "status": "dead",
+                    "remote_spec": remote_spec,
+                    "authoritative": False,
                 }
     except Exception as exc:
-        tmux_evidence = {"status": "unknown", "reason": str(exc), "session": resolved_session}
-        process_evidence = {"status": "unknown", "reason": str(exc), "remote_spec": remote_spec}
-        runner = {"status": "unknown", "reason": str(exc)}
+        tmux_evidence = {
+            "status": "unknown",
+            "reason": str(exc),
+            "session": resolved_session,
+            "authoritative": False,
+        }
+        process_evidence = {
+            "status": "unknown",
+            "reason": str(exc),
+            "remote_spec": remote_spec,
+            "authoritative": False,
+        }
+
+    runner, current_target_liveness = _canonical_runner_from_plan_status(
+        plan_status,
+        session=resolved_session,
+        workspace=resolved_workspace,
+        remote_spec=remote_spec,
+        plan_name=chain_state.current_plan_name or "",
+    )
+    runner["diagnostic_tmux_status"] = tmux_evidence.get("status")
+    runner["diagnostic_process_status"] = process_evidence.get("status")
 
     # Log paths (structured from the resolved workspace).
     chain_log_name = (
@@ -5672,6 +7858,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     repair_custody: dict[str, Any] = {"status": "unavailable", "reason": "local custody evidence unavailable"}
     local_workspace = Path(resolved_workspace)
     marker_dir = local_workspace / ".megaplan" / "cloud-sessions"
+    queue_root = local_workspace / ".megaplan" / "repair-queue"
     repair_data_dir = marker_dir / "repair-data"
     if local_workspace.exists():
         try:
@@ -5685,7 +7872,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
                 plan_state=plan_status,
                 current_target=current_target,
                 canonical_run_state=canonical_run_state,
-                marker_dir=marker_dir,
+                queue_root=queue_root,
                 repair_data_dir=repair_data_dir,
             )
             bucket = projection["custody_bucket"]
@@ -5722,6 +7909,10 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         "plan_status": plan_status,
         "latest_failure": latest_failure,
         "runner": runner,
+        "current_target": plan_status.get("current_target")
+        if isinstance(plan_status.get("current_target"), Mapping)
+        else {},
+        "current_target_liveness": current_target_liveness,
         "marker_evidence": marker_evidence,
         "tmux_evidence": tmux_evidence,
         "process_evidence": process_evidence,

@@ -19,6 +19,15 @@ from arnold_pipelines.megaplan.bakeoff.merge import merge_bakeoff
 from arnold_pipelines.megaplan.bakeoff.metrics import collect_profile_metrics
 from arnold_pipelines.megaplan.bakeoff.state import BakeoffProfileRecord, BakeoffState, load_bakeoff_state
 from arnold_pipelines.megaplan.bakeoff.state import bakeoff_root, save_bakeoff_state
+from arnold_pipelines.megaplan.bakeoff.wbc import (
+    BAKEOFF_COMPARE_SURFACE,
+    BAKEOFF_COMPARE_WRITER_ID,
+    BAKEOFF_PICK_SURFACE,
+    BAKEOFF_PICK_WRITER_ID,
+    BakeoffWbcRule,
+    record_bakeoff_wbc_evidence,
+    validate_bakeoff_transition,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -60,10 +69,32 @@ def handle_compare(root: Path, args: argparse.Namespace) -> int:
         if judge_model is not None
         else None
     )
+    compare_evidence = validate_bakeoff_transition(
+        writer_id=BAKEOFF_COMPARE_WRITER_ID,
+        surface_name=BAKEOFF_COMPARE_SURFACE,
+        transition_name="compare_profiles",
+        subject=state["experiment_id"],
+        source_path=Path(__file__),
+        project_dir=root,
+        rules=(
+            BakeoffWbcRule(
+                "profile_count_nonzero",
+                True,
+                len(state.get("profiles", [])),
+                len(state.get("profiles", [])) > 0,
+            ),
+        ),
+        extra={"judge_model": judge_model},
+    )
     comparison = build_comparison(state, metrics_by_profile, judge_verdict)
     write_comparison(root, comparison)
     state["phase"] = "compared"
     state["judge_model"] = judge_model
+    record_bakeoff_wbc_evidence(
+        state,
+        entry_key=f"compare:{state['experiment_id']}",
+        evidence=compare_evidence,
+    )
     save_bakeoff_state(root, state)
     return 0
 
@@ -78,6 +109,29 @@ def handle_pick(root: Path, args: argparse.Namespace) -> int:
     comparison = read_json(comparison_path)
     profiles = comparison.get("profiles") if isinstance(comparison.get("profiles"), list) else []
     selected = _comparison_profile(profiles, getattr(args, "profile"))
+    pick_evidence = validate_bakeoff_transition(
+        writer_id=BAKEOFF_PICK_WRITER_ID,
+        surface_name=BAKEOFF_PICK_SURFACE,
+        transition_name="pick_profile",
+        subject=state["experiment_id"],
+        source_path=Path(__file__),
+        project_dir=root,
+        rules=(
+            BakeoffWbcRule(
+                "selected_profile_present",
+                True,
+                getattr(args, "profile"),
+                bool(str(getattr(args, "profile") or "").strip()),
+            ),
+            BakeoffWbcRule(
+                "comparison_exists",
+                True,
+                comparison_path.exists(),
+                comparison_path.exists(),
+            ),
+        ),
+        extra={"selected_profile": getattr(args, "profile")},
+    )
     if selected.get("outcome_status") != "done":
         print(
             f"warning: picking profile '{args.profile}' with outcome_status={selected.get('outcome_status')!r}",
@@ -91,6 +145,11 @@ def handle_pick(root: Path, args: argparse.Namespace) -> int:
     atomic_write_text(comparison_path, json_dumps_sorted(comparison))
     state["chosen_profile"] = getattr(args, "profile")
     state["phase"] = "picked"
+    record_bakeoff_wbc_evidence(
+        state,
+        entry_key=f"pick:{state['experiment_id']}",
+        evidence=pick_evidence,
+    )
     save_bakeoff_state(root, state)
     return 0
 

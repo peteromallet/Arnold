@@ -5,8 +5,89 @@ ONE_FLAG="${2:-}"
 CANONICAL_LOG=".megaplan/cloud-chain.log"
 PROJECT_DIR="${MEGAPLAN_PROJECT_DIR:-$(pwd)}"
 ENGINE_DIR="${MEGAPLAN_ENGINE_DIR:-/workspace/arnold}"
+EXPECTED_SESSION="${ARNOLD_CHAIN_SESSION:-${ARNOLD_SUPERVISE_SESSION:-chain}}"
+EXPECTED_PLAN_NAME="${ARNOLD_CHAIN_PLAN_NAME:-${MEGAPLAN_CHAIN_PLAN_NAME:-}}"
+
+# ── pre-flight acceptance gate ───────────────────────────────────────
+# In atomic/enforce mode a completed chain with successors requiring
+# acceptance must carry a validated acceptance receipt for its final
+# milestone.  Restarting without one would re-initialise the successor
+# outside the Python chain flow.
+_check_acceptance_gate() {
+  local spec="$1" workspace="$2" gate_json gate_rc validation_rc validation_message
+  if gate_json="$(PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}" python3 -P - "$spec" "$workspace" "chain_wrapper" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
+import json, sys
+from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
+spec_path, workspace, caller = sys.argv[1:4]
+expected_session = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
+expected_plan_name = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
+result = check_wrapper_acceptance_gate(
+    spec_path,
+    workspace=workspace,
+    caller_kind=caller,
+    expected_session=expected_session,
+    expected_plan_name=expected_plan_name,
+)
+print(json.dumps(result, sort_keys=True))
+PY
+  )"; then
+    gate_rc=0
+  else
+    gate_rc=$?
+  fi
+
+  if [[ -z "$gate_json" ]]; then
+    if [[ "$gate_rc" == "0" ]]; then
+      echo "[arnold-chain] acceptance_gate_empty_output: canonical helper returned no decision" >&2
+    else
+      echo "[arnold-chain] acceptance_gate_helper_failed: canonical helper exited $gate_rc" >&2
+    fi
+    exit 65
+  fi
+
+  # Validate through the canonical helper module.  This is intentionally the
+  # only decision parser: the shell never defaults missing/malformed fields
+  # open and never interprets a raw gate_open value itself.
+  if validation_message="$(PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}" python3 -P - "$gate_json" "$spec" "$workspace" "$EXPECTED_SESSION" "$EXPECTED_PLAN_NAME" <<'PY'
+import sys
+from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
+    AcceptanceGateDecisionError,
+    validate_wrapper_acceptance_decision,
+)
+
+raw, spec_path, workspace, expected_session, expected_plan_name = sys.argv[1:]
+try:
+    validate_wrapper_acceptance_decision(
+        raw,
+        spec_path=spec_path,
+        workspace=workspace,
+        expected_session=expected_session or None,
+        expected_plan_name=expected_plan_name or None,
+    )
+except AcceptanceGateDecisionError as exc:
+    print(f"{exc.code}: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+print("acceptance gate open")
+PY
+  )"; then
+    validation_rc=0
+  else
+    validation_rc=$?
+  fi
+  if [[ "$gate_rc" != "0" || "$validation_rc" != "0" ]]; then
+    if [[ "$gate_rc" != "0" && "$validation_rc" == "0" ]]; then
+      echo "[arnold-chain] acceptance_gate_helper_failed: canonical helper exited $gate_rc" >&2
+    else
+      echo "[arnold-chain] acceptance gate refused: ${validation_message:-canonical decision validation failed}" >&2
+    fi
+    exit 65
+  fi
+}
+
+_check_acceptance_gate "$SPEC" "$PROJECT_DIR"
+
 if [ "$ONE_FLAG" = "--one" ]; then
-    exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
+    exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
 else
-    exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
+    exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
 fi

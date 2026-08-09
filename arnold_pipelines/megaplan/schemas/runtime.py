@@ -5,6 +5,11 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_ADDRESSED_SCHEMA,
+    NORTH_STAR_ACTION_SCHEMA,
+)
 
 STANCE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -119,6 +124,32 @@ TEST_BLAST_RADIUS_SCHEMA: dict[str, Any] = {
     ],
 }
 
+# The model proposes the human-authored portion of the test contract.  The
+# plan/revise handlers then merge it with the deterministic repository floor
+# and persist TEST_BLAST_RADIUS_SCHEMA.  Requiring harness-owned fields in the
+# raw model response makes that augmentation seam impossible to reach.
+TEST_BLAST_RADIUS_PROPOSAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "x-preserve-explicit-required": True,
+    "properties": {
+        key: deepcopy(TEST_BLAST_RADIUS_SCHEMA["properties"][key])
+        for key in (
+            "strategy",
+            "selectors",
+            "changed_surfaces",
+            "full_suite_fallback",
+            "rationale",
+        )
+    },
+    "required": [
+        "strategy",
+        "selectors",
+        "changed_surfaces",
+        "full_suite_fallback",
+        "rationale",
+    ],
+}
+
 CRITIQUE_EVALUATOR_CHECK_IDS: list[str] = [
     "issue_hints",
     "correctness",
@@ -160,7 +191,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "check_id": {"type": "string", "enum": check_ids},
-            "complexity": {"type": "integer"},
+            "complexity": {"type": "integer", "minimum": 1, "maximum": 10},
             "complexity_justification": {"type": "string"},
             "area": {"type": "string"},
         },
@@ -174,7 +205,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
             "check_id": {"type": "string", "const": "other"},
             "area": {"type": "string"},
             "why": {"type": "string"},
-            "complexity": {"type": "integer"},
+            "complexity": {"type": "integer", "minimum": 1, "maximum": 10},
             "complexity_justification": {"type": "string"},
         },
         "required": [
@@ -230,6 +261,75 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                 },
             },
+            # ── CL3 additive evaluator routing contract (all optional) ──────
+            "domain_selections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "why": {"type": "string"},
+                    },
+                    "required": ["domain", "why"],
+                    "additionalProperties": False,
+                },
+            },
+            "domain_skips": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "why": {"type": "string"},
+                    },
+                    "required": ["domain", "why"],
+                    "additionalProperties": False,
+                },
+            },
+            "critique_mode": {
+                "type": "string",
+                "enum": ["BLIND", "HISTORY_AWARE"],
+            },
+            "evidence_targets": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "budgets": {
+                "type": "object",
+                "properties": {
+                    "max_tokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                    "max_latency_seconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                    "max_findings": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "expected_revision": {"type": "string"},
+            "expected_briefing_hash": {"type": "string"},
+            "selection_reasons": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["target", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+            "input_set_hashes": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
         },
         "required": ["selections", "skipped", "evaluator_model"],
         "additionalProperties": False,
@@ -238,6 +338,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
 
 SCHEMAS: dict[str, dict[str, Any]] = {
     "plan.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "plan": {
@@ -265,7 +366,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "changed_surfaces": {"type": "array", "items": {"type": "string"}},
-            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_SCHEMA),
+            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_PROPOSAL_SCHEMA),
         },
         "required": ["plan", "questions", "success_criteria", "assumptions"],
     },
@@ -463,6 +564,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         ],
     },
     "revise.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "plan": {"type": "string"},
@@ -481,6 +583,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "additionalProperties": False,
                 },
             },
+            "north_star_actions_addressed": {
+                "type": "array",
+                "items": deepcopy(NORTH_STAR_ACTION_ADDRESSED_SCHEMA),
+            },
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "success_criteria": {
                 "type": "array",
@@ -496,18 +602,20 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "questions": {"type": "array", "items": {"type": "string"}},
             "changed_surfaces": {"type": "array", "items": {"type": "string"}},
-            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_SCHEMA),
+            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_PROPOSAL_SCHEMA),
         },
         "required": [
             "plan",
             "changes_summary",
             "flags_addressed",
+            "north_star_actions_addressed",
             "assumptions",
             "success_criteria",
             "questions",
         ],
     },
     "gate.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "recommendation": {
@@ -564,6 +672,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "string"},
             },
             "tiebreaker_fuzzy_group_id": {"type": "string"},
+            "north_star_actions": {
+                "type": "array",
+                "items": deepcopy(NORTH_STAR_ACTION_SCHEMA),
+            },
         },
         "required": [
             "recommendation",
@@ -573,6 +685,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "settled_decisions",
             "flag_resolutions",
             "accepted_tradeoffs",
+            "north_star_actions",
         ],
     },
     "critique.json": {
@@ -592,6 +705,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                 "properties": {
                                     "detail": {"type": "string"},
                                     "flagged": {"type": "boolean"},
+                                    "category": {"type": "string"},
+                                    "severity_hint": {"type": "string"},
+                                    "evidence": {"type": "string"},
+                                    "finding_id": {"type": "string"},
                                 },
                                 "required": ["detail", "flagged"],
                             },
@@ -625,6 +742,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                             "enum": ["likely-significant", "likely-minor", "uncertain"],
                         },
                         "evidence": {"type": "string"},
+                        "source_check_id": {"type": "string"},
+                        "producer_category": {"type": "string"},
+                        "producer_severity": {"type": "string"},
                     },
                     "required": ["id", "concern", "category", "severity_hint", "evidence"],
                 },
@@ -710,6 +830,19 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "meta_commentary": {"type": "string"},
+            "critique_custody": {"type": "object"},
+            "critique_resolution_coverage": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {"type": "string"},
+                        "task_ids": {"type": "array", "items": {"type": "string"}},
+                        "resolution_evidence": {"type": "string"},
+                    },
+                    "required": ["finding_id", "task_ids", "resolution_evidence"],
+                },
+            },
             "validation": {
                 "type": "object",
                 "properties": {
@@ -1064,6 +1197,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "issues": {"type": "array", "items": {"type": "string"}},
+            "north_star_actions": {
+                "type": "array",
+                "items": deepcopy(NORTH_STAR_ACTION_SCHEMA),
+            },
             "rework_items": {
                 "type": "array",
                 "items": {
@@ -1163,6 +1300,109 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         ],
     },
 }
+
+
+def _build_finalize_capture_schema() -> dict[str, Any]:
+    """Project the model-owned finalize fields from the persisted artifact.
+
+    ``finalize.json`` also contains fields authored by the harness after model
+    capture.  Sending that persisted schema to a structured-output worker makes
+    the model fabricate custody and baseline evidence and can produce an invalid
+    OpenAI schema for opaque harness objects.  Keep the transport boundary
+    explicit while retaining the legacy task shape accepted by finalize.
+    """
+
+    schema = deepcopy(SCHEMAS["finalize.json"])
+    model_properties = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"]
+    schema["properties"]["task_contract_version"] = {
+        **deepcopy(model_properties["task_contract_version"]),
+        "const": 2,
+    }
+    schema["properties"]["validation_jobs"] = {
+        **deepcopy(model_properties["validation_jobs"]),
+        # The handler, not the model, compiles executable validation jobs.
+        "maxItems": 0,
+    }
+    task_schema = schema["properties"]["tasks"]["items"]
+    model_task_schema = model_properties["tasks"]["items"]
+    v2_task_fields = (
+        "objective",
+        "estimated_minutes",
+        "dependency_reasons",
+        "routing_group",
+        "write_set",
+        "narrow_tests",
+        "checkpoint",
+    )
+    for field in v2_task_fields:
+        task_schema["properties"][field] = deepcopy(
+            model_task_schema["properties"][field]
+        )
+    task_schema["properties"]["estimated_minutes"].update(
+        minimum=1, maximum=15
+    )
+    task_schema["properties"]["dependency_reasons"] = {
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "consumes_output",
+                        "write_conflict",
+                        "human_prerequisite",
+                    ],
+                },
+                "reason": {"type": "string"},
+                "required_output": {"type": "string"},
+            },
+            "required": ["kind", "reason", "required_output"],
+            "additionalProperties": False,
+        },
+    }
+    task_schema["required"] = list(task_schema["required"]) + [
+        field for field in v2_task_fields if field not in task_schema["required"]
+    ]
+    for field in (
+        "critique_custody",
+        "validation",
+        "baseline_test_failures",
+        "baseline_test_command",
+        "baseline_test_note",
+        "suite_runs_ndjson_path",
+    ):
+        schema["properties"].pop(field, None)
+    schema["required"] = list(schema["properties"])
+    return schema
+
+
+def _build_finalize_model_output_schema() -> dict[str, Any]:
+    """Return the model-owned contract with explicit unconstrained array items."""
+
+    schema = deepcopy(FINALIZE_MODEL_OUTPUT_SCHEMA)
+
+    def _complete_arrays(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "array":
+                node.setdefault("items", {})
+            for value in node.values():
+                _complete_arrays(value)
+        elif isinstance(node, list):
+            for value in node:
+                _complete_arrays(value)
+
+    _complete_arrays(schema)
+    return schema
+
+
+# The model-response boundary and the persisted finalize artifact are
+# deliberately distinct.  ``finalize_model_output.json`` is the exact object
+# a worker may author; ``finalize_capture.json`` remains the richer historical
+# projection used by compatibility/export consumers.  The handler alone adds
+# execution evidence before publishing ``finalize.json``.
+SCHEMAS["finalize_model_output.json"] = _build_finalize_model_output_schema()
+SCHEMAS["finalize_capture.json"] = _build_finalize_capture_schema()
 
 
 def _build_execution_doc_schema() -> dict[str, Any]:

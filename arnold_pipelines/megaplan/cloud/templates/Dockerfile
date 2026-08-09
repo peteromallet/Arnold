@@ -22,7 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libreadline-dev \
       libsqlite3-dev \
       libssl-dev \
+      util-linux \
       openssh-client \
+      passwd \
       procps \
       ripgrep \
       sudo \
@@ -72,17 +74,44 @@ ARG CODEX_VERSION="0.144.3"
 RUN . "$NVM_DIR/nvm.sh" \
     && npm i -g "@openai/codex@${CODEX_VERSION}" @anthropic-ai/claude-code @railway/cli@4.12.0 \
     && NVBIN=$(ls -d /root/.nvm/versions/node/*/bin | head -1) \
-    && ln -sf "$NVBIN/codex"  /usr/local/bin/codex \
-    && ln -sf "$NVBIN/claude" /usr/local/bin/claude \
-    && ln -sf "$NVBIN/railway" /usr/local/bin/railway \
+    && NODE_ROOT=$(dirname "$NVBIN") \
+    && cp -a "$NODE_ROOT" /opt/zero-recovery-node \
+    && chown -R root:root /opt/zero-recovery-node \
+    && chmod -R a-w /opt/zero-recovery-node \
+    && ln -sf /opt/zero-recovery-node/bin/node /usr/local/bin/node \
+    && ln -sf /opt/zero-recovery-node/bin/npm /usr/local/bin/npm \
+    && ln -sf /opt/zero-recovery-node/bin/npx /usr/local/bin/npx \
+    && ln -sf /opt/zero-recovery-node/bin/codex  /usr/local/bin/codex \
+    && ln -sf /opt/zero-recovery-node/bin/claude /usr/local/bin/claude \
+    && ln -sf /opt/zero-recovery-node/bin/railway /usr/local/bin/railway \
     && test "$(codex --version)" = "codex-cli ${CODEX_VERSION}" \
     && claude --version \
     && railway --version
 
-# Megaplan from PyPI (override via build-arg MEGAPLAN_INSTALL_SPEC for git/custom sources)
-ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"
-RUN pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC" \
-    && arnold --help > /dev/null
+# The finite recovery runner imports its admitted checkout directly with
+# PYTHONPATH and deliberately has no network during structural smoke. Bake its
+# small source-runtime dependency floor into the image instead of installing
+# the unrelated project currently published as `arnold` on PyPI. A caller may
+# still supply an exact package or git spec for a self-contained image.
+ARG MEGAPLAN_INSTALL_SPEC=""
+RUN if [ -n "$MEGAPLAN_INSTALL_SPEC" ]; then \
+      pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC"; \
+    else \
+      pip install --no-cache-dir \
+        "PyYAML>=6.0" \
+        "pydantic>=2.0" \
+        "python-ulid>=3.0" \
+        "psutil>=5.9" \
+        "httpx>=0.27" \
+        "discord.py>=2.6,<3"; \
+    fi \
+    && python3 -c 'import discord, httpx, psutil, pydantic, ulid, yaml'
+RUN /usr/sbin/groupadd --gid 65532 finite-model \
+    && /usr/sbin/useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin finite-model \
+    && mkdir -p /run/megaplan-zero-recovery \
+    && chown root:root /run/megaplan-zero-recovery \
+    && chmod 0711 /run/megaplan-zero-recovery \
+    && chmod 0755 /tmp /var/tmp /dev/shm
 ${TOOLCHAIN_BLOCK}
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY healthserver.py /usr/local/bin/healthserver.py

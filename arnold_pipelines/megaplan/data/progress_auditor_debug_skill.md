@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: progress-auditor-debug
 description: Interpret a Hetzner 6-hour progress-auditor report, decide what it surfaced correctly, find inefficiencies or weirdness it missed, and turn every miss into a deterministic gather reason plus regression test. Use with $megaplan-cloud when audit findings repeat as PASSIVE/STALE/INEFFICIENT, green checks hide repair churn, or the auditor seems blind to stale repair-data, meta-repair launch failures, wrapper drift, PR merge drift, or deterministic failure loops.
@@ -112,6 +114,16 @@ Important fields:
   `duration_seconds`, `unknowns`, `missing_evidence`) plus matching
   `*_evidence` arrays. Unmapped phases are never guessed; they land in
   `unknown_phase_count` and `unknown_phase_evidence`.
+- `coverage`: deterministic summary of which stages have data (nonzero counters),
+  which are all-zero, and which are `not_checked` (bucket missing). Helps operators
+  quickly spot blind spots in the audit.
+- `data_quality`: visibility into unknown phases, missing evidence, and data-source
+  availability. Surfaces `not_checked` stages and warns when `stage_metrics` itself
+  is absent from the report payload.
+- `dispatch_summary`: always-present confirmation that this audit ran in report-only
+  mode — no repair, model dispatch, meta-repair, git commit, or file edit occurred.
+  Exists so operators and downstream tooling never need to guess whether the auditor
+  took agentic action.
 - `chain_state_summary.current`: the current chain state. This usually beats
   plan-local failure state.
 - `active_step_stage`: conservative stage mapping derived from

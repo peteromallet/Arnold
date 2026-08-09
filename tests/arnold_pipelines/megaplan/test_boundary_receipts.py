@@ -74,6 +74,84 @@ def test_writes_per_boundary_json_atomically(tmp_path: Path) -> None:
     assert data["outcome"] == "complete"
 
 
+def test_boundary_receipt_history_is_append_only_across_overwrite_and_resume(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    first = _make_receipt("gate_to_revise", invocation_id="gate-invocation-1")
+    second = _make_receipt("gate_to_revise", invocation_id="gate-invocation-2")
+
+    write_boundary_receipt(plan_dir, first)
+    write_boundary_receipt(plan_dir, second)
+    write_boundary_receipt(plan_dir, second)  # idempotent resumed producer
+
+    history_dir = plan_dir / "boundary_receipts" / "history" / "gate_to_revise"
+    history = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(history_dir.glob("v*.json"))
+    ]
+    assert [row["invocation_id"] for row in history] == [
+        "gate-invocation-1",
+        "gate-invocation-2",
+        "gate-invocation-2",
+    ]
+    latest = json.loads(
+        (plan_dir / "boundary_receipts" / "gate_to_revise.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert latest["invocation_id"] == "gate-invocation-2"
+
+
+def test_boundary_receipt_rejects_path_escape_without_touching_legacy_snapshot(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    valid = _make_receipt("gate_to_revise")
+    write_boundary_receipt(plan_dir, valid)
+    snapshot = plan_dir / "boundary_receipts" / "gate_to_revise.json"
+    original = snapshot.read_bytes()
+
+    result = write_boundary_receipt(plan_dir, _make_receipt("../gate_to_revise"))
+
+    assert result is None
+    assert snapshot.read_bytes() == original
+    assert not (plan_dir / "gate_to_revise.json").exists()
+
+
+def test_boundary_history_version_collision_does_not_advance_legacy_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan.receipts import writer
+
+    plan_dir = tmp_path / "plan"
+    first = _make_receipt("gate_to_revise", invocation_id="gate-invocation-1")
+    conflicting = _make_receipt(
+        "gate_to_revise",
+        invocation_id="gate-invocation-racing",
+    )
+    write_boundary_receipt(plan_dir, first)
+    snapshot = plan_dir / "boundary_receipts" / "gate_to_revise.json"
+    original_snapshot = snapshot.read_bytes()
+
+    monkeypatch.setattr(writer, "next_version", lambda _history_dir: 1)
+    result = write_boundary_receipt(plan_dir, conflicting)
+
+    assert result is None
+    assert snapshot.read_bytes() == original_snapshot
+    history = json.loads(
+        (
+            plan_dir
+            / "boundary_receipts"
+            / "history"
+            / "gate_to_revise"
+            / "v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert history["invocation_id"] == "gate-invocation-1"
+
+
 def test_writes_different_boundary_ids_to_separate_files(tmp_path: Path) -> None:
     """Each boundary_id gets its own JSON file."""
     plan_dir = tmp_path / "plan"
@@ -81,7 +159,7 @@ def test_writes_different_boundary_ids_to_separate_files(tmp_path: Path) -> None
         write_boundary_receipt(plan_dir, _make_receipt(bid))
 
     receipts_dir = plan_dir / "boundary_receipts"
-    assert sorted(p.name for p in receipts_dir.iterdir()) == [
+    assert sorted(p.name for p in receipts_dir.iterdir() if p.is_file()) == [
         "critique_to_gate.json",
         "plan_to_critique.json",
         "prep_to_plan.json",

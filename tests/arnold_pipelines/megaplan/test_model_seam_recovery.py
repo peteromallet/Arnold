@@ -14,6 +14,32 @@ from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
+def _gate_capture_invocation() -> StepInvocation:
+    return StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": "gate",
+            "compatibility_validation_step": "gate",
+        },
+    )
+
+
+def _schema_valid_north_star_action() -> dict[str, object]:
+    return {
+        "id": "NSA-1",
+        "question_id": "route-authority",
+        "question": "Does the plan preserve route authority?",
+        "concern": "The plan still leaves route authority split across two surfaces.",
+        "category": "route_authority",
+        "action_type": "change_plan",
+        "severity": "blocking",
+        "severity_source": "schema",
+        "evidence": "The plan keeps two route entrypoints active without a single owner.",
+        "plan_refs": ["Phase 2 - Step 1"],
+        "required_change": "Collapse route authority to the canonical path.",
+    }
+
+
 def test_plan_recovery_prefers_later_structured_plan_over_summary_payload(
     tmp_path,
 ) -> None:
@@ -166,3 +192,60 @@ def test_plan_structure_error_valid_next_retries_plan(monkeypatch, tmp_path) -> 
         )
 
     assert exc.value.valid_next == ["plan"]
+
+
+@pytest.mark.parametrize(
+    "north_star_actions",
+    [
+        [],
+        [_schema_valid_north_star_action()],
+    ],
+    ids=["empty-north-star-actions", "schema-valid-north-star-action"],
+)
+def test_gate_capture_preserves_schema_owned_north_star_actions_and_rejects_unknown_fields(
+    north_star_actions: list[object],
+) -> None:
+    invocation = _gate_capture_invocation()
+    payload = {
+        "recommendation": "PROCEED",
+        "rationale": "The plan is ready.",
+        "signals_assessment": "Score is stable and no blocking flags remain.",
+        "warnings": [],
+        "settled_decisions": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "north_star_actions": north_star_actions,
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
+        "tiebreaker_question": "",
+        "model_note": "unknown top-level data must be rejected",
+    }
+
+    with pytest.raises(ModelStructuralAuditError, match="model_note"):
+        capture_step_output(invocation, payload)
+
+    payload.pop("model_note")
+    outcome = capture_step_output(invocation, payload)
+    assert outcome.legacy_payload["north_star_actions"] == north_star_actions
+
+
+def test_gate_capture_with_schema_valid_north_star_action_is_stable_across_retries() -> None:
+    invocation = _gate_capture_invocation()
+    action = _schema_valid_north_star_action()
+    payload = {
+        "recommendation": "PROCEED",
+        "rationale": "The plan is ready.",
+        "signals_assessment": "No blocking flags remain.",
+        "warnings": [],
+        "settled_decisions": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "north_star_actions": [action],
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
+        "tiebreaker_question": "",
+    }
+
+    for _attempt in range(40):
+        outcome = capture_step_output(invocation, payload)
+        assert outcome.legacy_payload["north_star_actions"] == [action]

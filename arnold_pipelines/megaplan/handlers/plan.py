@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan import handlers as _pkg
+from arnold_pipelines.megaplan.outcomes import PrepOutcome
 from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED
 from arnold_pipelines.megaplan._core import (
@@ -22,6 +23,7 @@ from .shared import (
     _merge_imported_decision_criteria,
     _write_json_artifact,
     _write_plan_version,
+    activate_phase_wbc,
     phase_result_guard,
 )
 
@@ -106,15 +108,11 @@ def _derive_plan_test_blast_radius(
     )
 
     repo_root = Path(state["config"]["project_dir"])
-    changed_surfaces = payload.get("changed_surfaces")
-    if not isinstance(changed_surfaces, list):
-        model_proposed = payload.get("test_blast_radius")
-        if isinstance(model_proposed, dict):
-            proposed_changed_surfaces = model_proposed.get("changed_surfaces")
-            if isinstance(proposed_changed_surfaces, list):
-                changed_surfaces = proposed_changed_surfaces
-    if not isinstance(changed_surfaces, list):
-        changed_surfaces = _prep_relevant_code_surfaces(plan_dir)
+    # The prep artifact is harness-owned and records the complete surface
+    # inventory. Model-provided changed_surfaces are only a proposal for the
+    # merge below; using them here would let a partial proposal narrow the
+    # deterministic floor.
+    changed_surfaces = _prep_relevant_code_surfaces(plan_dir)
     changed_surfaces = [
         surface.strip()
         for surface in changed_surfaces
@@ -246,6 +244,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 prep_signal = _build_prep_clarify_signal(state, worker.payload)
                 next_state = _apply_prep_signal(state, prep_signal)
                 state["current_state"] = next_state
+                prep_outcome = PrepOutcome.AWAITING_HUMAN if next_state == STATE_AWAITING_HUMAN else PrepOutcome.CONTINUE
                 if next_state == STATE_AWAITING_HUMAN:
                     blocking_count = len(state["clarification"]["questions"])
                     summary = (
@@ -265,6 +264,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     response_fields={
                         "iteration": state["iteration"],
                         "prep_signal": prep_signal,
+                        "prep_outcome": prep_outcome,
                     },
                 )
             from arnold_pipelines.megaplan.orchestration.prep_research import (
@@ -272,8 +272,9 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
             )
 
             run_id = set_active_step(state, step="prep", agent="prep-orchestration", mode="orchestrated")
-            save_state_merge_meta(plan_dir, state)
             try:
+                activate_phase_wbc(state=state, plan_dir=plan_dir, step="prep", agent="prep-orchestration")
+                save_state_merge_meta(plan_dir, state)
                 orchestration = run_prep_orchestration(state, plan_dir, root=root)
             except Exception:
                 clear_active_step(state, run_id=run_id)
@@ -288,6 +289,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
             prep_signal = _build_prep_clarify_signal(state, worker.payload)
             next_state = _apply_prep_signal(state, prep_signal)
             state["current_state"] = next_state
+            prep_outcome = PrepOutcome.AWAITING_HUMAN if next_state == STATE_AWAITING_HUMAN else PrepOutcome.CONTINUE
             if next_state == STATE_AWAITING_HUMAN:
                 blocking_count = len(state["clarification"]["questions"])
                 summary = (
@@ -311,6 +313,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     "iteration": state["iteration"],
                     "prep_metrics_hash": orchestration.prep_metrics_hash,
                     "prep_signal": prep_signal,
+                    "prep_outcome": prep_outcome,
                 },
                 run_id=run_id,
             )
@@ -319,16 +322,39 @@ def _build_verifiability_flags(
     success_criteria: list[dict[str, Any]],
     worker_caps: dict[str, set[str]],
 ) -> list[dict[str, Any]]:
-    from arnold_pipelines.megaplan.audits.capabilities import ALL_CAPABILITIES
     from arnold_pipelines.megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     flags: list[dict[str, Any]] = []
+
+    def criterion_evidence(index: int) -> str:
+        if index < 0 or index >= len(success_criteria):
+            return f"success_criteria[{index}] is unavailable"
+        criterion = success_criteria[index]
+        requires = criterion.get("requires", [])
+        if not isinstance(requires, list):
+            requires = []
+        return (
+            f"success_criteria[{index}]: criterion={criterion.get('criterion', '?')!r}; "
+            f"priority={criterion.get('priority', '')!r}; "
+            f"requires={sorted(str(item) for item in requires)!r}"
+        )
+
+    def audit_evidence(audit: Any) -> str:
+        return (
+            f"verifiability_audit: verdict={audit.verdict!r}; "
+            f"rationale={audit.rationale!r}; "
+            f"missing_capabilities={sorted(audit.missing_caps)!r}; "
+            f"source={criterion_evidence(audit.criterion_idx)}"
+        )
+
     issues = validate_requires(success_criteria)
     for issue_str in issues:
         is_unknown_cap = "unknown capability" in issue_str
+        concern = issue_str.strip()
         flags.append({
             "id": f"verifiability-{len(flags)}",
-            "concern": issue_str,
+            "concern": concern,
+            "evidence": concern,
             "category": "verifiability",
             "severity_hint": "likely-significant" if is_unknown_cap else "likely-minor",
             "status": "open",
@@ -337,17 +363,21 @@ def _build_verifiability_flags(
     audits = audit_criteria(success_criteria, worker_caps)
     for audit in audits:
         if audit.verdict == "unverifiable_no_worker":
+            concern = audit_evidence(audit)
             flags.append({
                 "id": f"verifiability-{len(flags)}",
-                "concern": f"Criterion {audit.criterion_idx}: {audit.rationale} Missing: {', '.join(audit.missing_caps)}",
+                "concern": concern,
+                "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-significant",
                 "status": "open",
             })
         elif audit.verdict == "human_only":
+            concern = audit_evidence(audit)
             flags.append({
                 "id": f"verifiability-{len(flags)}",
-                "concern": f"Criterion {audit.criterion_idx}: requires human verification ({', '.join(audit.missing_caps)}).",
+                "concern": concern,
+                "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-minor",
                 "status": "open",

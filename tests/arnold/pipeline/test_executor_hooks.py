@@ -496,6 +496,34 @@ class TestResolveRoutingFallback:
         with pytest.raises(RoutingError):
             run_pipeline(pipeline, {}, _make_env())
 
+    def test_unresolvable_label_on_simple_edged_stage_fails_loud(self) -> None:
+        """An absent vocabulary must not turn a routing typo into success."""
+        step_a = _SimpleStep("a", next_label="gone")
+        pipeline = Pipeline(
+            stages={
+                "a": Stage(
+                    name="a",
+                    step=step_a,
+                    edges=(Edge(label="go", target="halt"),),
+                ),
+            },
+            entry="a",
+        )
+
+        with pytest.raises(RoutingError, match=r"next='gone'.*label='gone'"):
+            run_pipeline(pipeline, {}, _make_env())
+
+    def test_non_halt_label_on_leaf_stage_is_structurally_terminal(self) -> None:
+        step = _SimpleStep("leaf", next_label="legacy_done")
+        pipeline = Pipeline(
+            stages={"leaf": Stage(name="leaf", step=step, edges=())},
+            entry="leaf",
+        )
+
+        result = run_pipeline(pipeline, {}, _make_env())
+
+        assert isinstance(result, RuntimeEnvelope)
+
 
 # ---------------------------------------------------------------------------
 # join_parallel_results receives the full child list

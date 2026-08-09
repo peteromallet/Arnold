@@ -105,8 +105,9 @@ def test_status_all_laptop_fetches_snapshot_from_box(
 ) -> None:
     # No MEGAPLAN_TRUSTED_CONTAINER → laptop path.
     monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     remote_snapshot = {
-        "generated_at": "2026-07-04T22:13:15Z",
+        "generated_at": generated_at,
         "source": "cloud-local-observer",
         "summary": {"running": 2, "blocked": 0, "repairing": 0, "complete": 1, "attention": 0},
         "sessions": [],
@@ -120,7 +121,7 @@ def test_status_all_laptop_fetches_snapshot_from_box(
     assert provider.ssh_exec_calls == []
     payload = json.loads(capsys.readouterr().out)
     assert payload["summary"]["running"] == 2
-    assert payload["generated_at"] == "2026-07-04T22:13:15Z"
+    assert payload["generated_at"] == generated_at
 
 
 def test_status_all_laptop_falls_back_when_box_lacks_snapshot(

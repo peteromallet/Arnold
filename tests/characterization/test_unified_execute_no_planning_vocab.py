@@ -22,7 +22,7 @@ import pytest
 
 # The four targeted modules
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_MEGAPLAN_ROOT = _REPO_ROOT / "arnold" / "pipelines" / "megaplan"
+_MEGAPLAN_ROOT = _REPO_ROOT / "arnold_pipelines" / "megaplan"
 _TARGET_MODULES = [
     _MEGAPLAN_ROOT / "_core" / "dispatch.py",
     _MEGAPLAN_ROOT / "_core" / "scheduler" / "types.py",

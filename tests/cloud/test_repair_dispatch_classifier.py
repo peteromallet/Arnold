@@ -24,8 +24,23 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     project_repair_custody,
 )
 from arnold_pipelines.megaplan.cloud.repair_lock import RepairLockResult
-from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    enqueue_repair_request as _enqueue_repair_request,
+)
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
+from tests.cloud.repair_identity_fixtures import identity_for_signature
+
+
+def enqueue_repair_request(**kwargs: object) -> dict[str, object]:
+    signature = dict(kwargs["problem_signature"])  # type: ignore[arg-type]
+    kwargs.setdefault(
+        "repair_identity",
+        identity_for_signature(
+            session=str(kwargs["session"]),
+            signature=signature,
+        ),
+    )
+    return _enqueue_repair_request(**kwargs)
 
 
 def _plan_state(**overrides: object) -> dict[str, object]:
@@ -72,6 +87,7 @@ def _projection(tmp_path: Path) -> dict[str, object]:
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     queued = enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -180,6 +196,7 @@ def test_classifier_dispatches_failed_no_next_step_repair_state(tmp_path: Path) 
         plan_state={"present": True, "fingerprint": "sha256:no-next-proof"},
     )
     queued = enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -211,7 +228,7 @@ def test_classifier_dispatches_failed_no_next_step_repair_state(tmp_path: Path) 
     assert decision.failure_kind == "no_next_step"
 
 
-def test_classifier_dispatches_failed_rerun_phase_execute_authority_divergence(
+def test_classifier_keeps_failed_rerun_phase_execute_authority_divergence_terminal(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -240,7 +257,8 @@ def test_classifier_dispatches_failed_rerun_phase_execute_authority_divergence(
             "missing_task_ids": ["T1"],
         },
     )
-    queued = enqueue_repair_request(
+    enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -266,8 +284,7 @@ def test_classifier_dispatches_failed_rerun_phase_execute_authority_divergence(
         custody_projection=projection,
     )
 
-    assert decision.decision == DISPATCH_DECISION_L1
-    assert decision.request_id == queued["request"]["request_id"]
+    assert decision.decision == DISPATCH_DECISION_TERMINAL
     assert decision.current_state == "failed"
     assert decision.retry_strategy == "rerun_phase"
     assert decision.failure_kind == "phase_failed"
@@ -281,6 +298,7 @@ def test_projection_ignores_stale_cross_session_custody_for_execution_blocked(
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="other-session",
         source="watchdog",
@@ -325,6 +343,7 @@ def test_projection_ignores_stale_cross_session_custody_for_execution_blocked(
         marker={"session": "demo-session"},
     )
     queued = enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -383,18 +402,100 @@ def test_execution_blocked_fingerprint_extracts_blocked_task_from_reason() -> No
     assert blocker_id_for_fingerprint(fingerprint)
 
 
-def test_classifier_gates_true_or_ambiguous_human_blockers(tmp_path: Path) -> None:
+def test_phase_contract_failure_gets_claimable_phase_scoped_identity() -> None:
+    state = _plan_state(
+        name="m6-exact-contract",
+        resume_cursor={"phase": "critique", "retry_strategy": "repair_phase_contract"},
+        latest_failure={
+            "kind": "deterministic_phase_failure",
+            "phase": "critique",
+            "metadata": {"count": 3, "max_attempts": 3},
+        },
+    )
+    target = _current_target(
+        current_refs={
+            "current_plan_name": "m6-exact-contract",
+            "plan_current_state": "blocked",
+        },
+        event_cursors={"resume_retry_strategy": "repair_phase_contract"},
+    )
+
+    fingerprint = blocker_fingerprint_from_evidence(
+        plan_state=state,
+        current_target=target,
+    )
+
+    assert fingerprint is not None
+    assert fingerprint["blocked_task_id"] == "phase:critique"
+    assert fingerprint["retry_strategy"] == "repair_phase_contract"
+    assert blocker_id_for_fingerprint(fingerprint)
+
+
+def test_accepted_phase_contract_request_stays_claimable_after_phase_replay(
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    queued = enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="lifecycle_failure",
+        target={"plan_name": "m6-exact-contract"},
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "critique",
+            "milestone_or_plan": "m6-exact-contract",
+            "blocked_task_id": "",
+        },
+        root_cause_hint="critique contract failed repeatedly",
+    )
+    state = {"name": "m6-exact-contract", "current_state": "critiqued"}
+    target = _current_target(
+        target_session="demo-session",
+        current_refs={
+            "current_plan_name": "m6-exact-contract",
+            "plan_current_state": "critiqued",
+        },
+        event_cursors={},
+        plan_state={"present": True, "fingerprint": "sha256:replayed-critique"},
+    )
+
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        queue_root=queue_root,
+    )
+
+    assert projection["active_request_ids"] == [queued["request"]["request_id"]]
+    assert projection["blocker_id"]
+    assert projection["blocker_fingerprint"]["retry_strategy"] == "repair_phase_contract"
+    assert projection["blocker_fingerprint"]["blocked_task_id"] == "phase:critique"
+
+
+def test_classifier_gates_typed_human_blockers_and_escalates_ambiguity(
+    tmp_path: Path,
+) -> None:
     projection = _projection(tmp_path)
 
-    for verdict in (BlockerVerdict.TRUE_BLOCKER, BlockerVerdict.AMBIGUOUS_BLOCKER):
+    expected = {
+        BlockerVerdict.TRUE_BLOCKER: (
+            DISPATCH_DECISION_HUMAN_REQUIRED,
+            DISPATCH_INTENT_HUMAN_REQUIRED,
+        ),
+        BlockerVerdict.AMBIGUOUS_BLOCKER: (
+            DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            DISPATCH_INTENT_BROKEN_SUPERFIXER,
+        ),
+    }
+    for verdict, (expected_decision, expected_intent) in expected.items():
         decision = classify_repair_dispatch(
             plan_state=_plan_state(),
             current_target=_current_target(),
             custody_projection=projection,
             human_blocker_classification=_human_blocker(verdict),
         )
-        assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
-        assert decision.dispatch_intent == DISPATCH_INTENT_HUMAN_REQUIRED
+        assert decision.decision == expected_decision
+        assert decision.dispatch_intent == expected_intent
 
 
 def test_classifier_marks_mechanical_blocker_as_broken_superfixer(tmp_path: Path) -> None:
@@ -411,7 +512,9 @@ def test_classifier_marks_mechanical_blocker_as_broken_superfixer(tmp_path: Path
     assert decision.dispatch_intent == DISPATCH_INTENT_BROKEN_SUPERFIXER
 
 
-def test_classifier_treats_active_lock_or_process_as_repairing(tmp_path: Path) -> None:
+def test_classifier_requires_blocker_scoped_custody_not_process_liveness(
+    tmp_path: Path,
+) -> None:
     projection = _projection(tmp_path)
 
     decision = classify_repair_dispatch(
@@ -428,7 +531,7 @@ def test_classifier_treats_active_lock_or_process_as_repairing(tmp_path: Path) -
         custody_projection=projection,
         process_evidence={"status": "running"},
     )
-    assert decision.decision == DISPATCH_DECISION_REPAIRING
+    assert decision.decision == DISPATCH_DECISION_L1
 
 
 def test_classifier_defaults_unknown_manual_review_shape_to_human_required(tmp_path: Path) -> None:
@@ -456,6 +559,7 @@ def test_classifier_does_not_dispatch_marker_only_target(tmp_path: Path) -> None
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",

@@ -1,7 +1,7 @@
 """Native golden trace helpers.
 
 Provides utilities for comparing and recording directory-based native
-golden trace fixtures.  Each fixture directory contains five canonical
+golden trace fixtures.  Each fixture directory contains six canonical
 files produced by :class:`arnold.pipeline.native.trace.NativeTraceHooks`:
 
 * ``events.ndjson`` — NDJSON event stream
@@ -9,6 +9,7 @@ files produced by :class:`arnold.pipeline.native.trace.NativeTraceHooks`:
 * ``stages.json`` — ordered stage sequence
 * ``artifacts.json`` — artifact inventory (``{relpath: sha256:<hex>}``)
 * ``checkpoint.json`` — final checkpoint notification
+* ``tree.json`` — native execution tree projection
 
 Minimal proven normalization
 ----------------------------
@@ -32,6 +33,7 @@ TRACE_FILE_NAMES: tuple[str, ...] = (
     "stages.json",
     "artifacts.json",
     "checkpoint.json",
+    "tree.json",
 )
 
 # Fields stripped from NDJSON events before comparison (non-deterministic).
@@ -61,6 +63,25 @@ def _normalize_events_ndjson(text: str) -> str:
     return "\n".join(normalized) + "\n" if normalized else ""
 
 
+def _normalize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, str) and "/artifacts/" in value:
+        return "<artifact_root>/" + value.split("/artifacts/", 1)[1]
+    return value
+
+
+def _normalize_trace_json(filename: str, value: Any) -> Any:
+    normalized = _normalize_json_value(value)
+    if filename == "artifacts.json" and isinstance(normalized, dict):
+        # Artifact bodies include the per-run temp root, so their hashes are
+        # not cross-run identities. The stable contract here is inventory.
+        return {key: "sha256:<content-dependent>" for key in normalized}
+    return normalized
+
+
 # ── comparison ─────────────────────────────────────────────────────────────
 
 
@@ -70,7 +91,7 @@ def compare_native_golden_dir(
 ) -> tuple[bool, str]:
     """Compare *actual_dir* against the committed *golden_dir*.
 
-    Returns ``(True, "")`` when all five canonical trace files match
+    Returns ``(True, "")`` when all six canonical trace files match
     (after normalization).  Returns ``(False, diagnostic)`` on mismatch.
 
     The comparison normalizes ``events.ndjson`` by stripping
@@ -117,7 +138,9 @@ def compare_native_golden_dir(
             except json.JSONDecodeError as exc:
                 mismatches.append(f"{filename}: invalid JSON ({exc})")
                 continue
-            if golden_obj != actual_obj:
+            if _normalize_trace_json(filename, golden_obj) != _normalize_trace_json(
+                filename, actual_obj
+            ):
                 mismatches.append(f"{filename} differs")
 
     if mismatches:
@@ -136,7 +159,7 @@ def record_native_golden_dir(
 ) -> None:
     """Record a native golden trace from *source_dir* into *target_dir*.
 
-    Copies all five canonical trace files.  Raises :class:`FileExistsError`
+    Copies all six canonical trace files.  Raises :class:`FileExistsError`
     when *target_dir* already exists and *overwrite* is ``False``.
     """
     source = Path(source_dir)
@@ -161,4 +184,12 @@ def record_native_golden_dir(
             raise FileNotFoundError(
                 f"Required trace file missing from source: {filename}"
             )
-        shutil.copy2(src_file, target / filename)
+        target_file = target / filename
+        if filename in {"state.json", "artifacts.json"}:
+            payload = json.loads(src_file.read_text(encoding="utf-8"))
+            target_file.write_text(
+                json.dumps(_normalize_trace_json(filename, payload), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            shutil.copy2(src_file, target_file)

@@ -26,7 +26,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal, Mapping
 
 import fcntl
 
@@ -50,16 +50,30 @@ from arnold_pipelines.megaplan.planning.state import (
     TERMINAL_STATES,
     validate_plan_current_state,
 )
-from .phase_runtime import DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS, phase_stale_seconds
+from .phase_runtime import (
+    DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+    WORKER_DEAD,
+    active_step_cas_token,
+    observe_active_step_worker,
+    phase_stale_seconds,
+)
 
 from .io import (
+    ProjectionCursor,
+    ProjectionCursorMismatchError,
+    ProjectionRecord,
+    _projection_cursor_from_path,
+    append_projection_event,
     atomic_write_json,
     atomic_write_text,
     current_iteration_raw_artifact,
     find_plan_dir,
+    latest_projection_cursor,
+    load_projection_history,
     now_utc,
     plan_search_roots,
     read_json,
+    rebuild_projection_atomically,
 )
 
 if TYPE_CHECKING:
@@ -73,6 +87,32 @@ DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
 # sunset projection.  New code should derive status/trace/resume/inspect from
 # manifest journal events and artifact bindings.
 STATE_JSON_AUTHORITY = False
+
+
+def _reconciliation_active_step_snapshot(
+    state: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    """Fence state reconciliation against live or unprovable custody."""
+
+    active = state.get("active_step")
+    if not isinstance(active, Mapping):
+        return True, None
+    snapshot = dict(active)
+    return observe_active_step_worker(snapshot).state == WORKER_DEAD, snapshot
+
+
+def _reconciliation_active_step_matches(
+    current: Mapping[str, Any],
+    expected: Mapping[str, Any] | None,
+) -> bool:
+    active = current.get("active_step")
+    if expected is None:
+        return not isinstance(active, Mapping)
+    return (
+        isinstance(active, Mapping)
+        and dict(active) == dict(expected)
+        and active_step_cas_token(active) == active_step_cas_token(expected)
+    )
 
 
 def is_state_json_authority() -> bool:
@@ -109,6 +149,181 @@ def _heartbeat_persist_interval_seconds() -> float:
 
 
 _last_heartbeat_persist_at: dict[str, float] = {}
+
+# ---------------------------------------------------------------------------
+# Heartbeat projection — M7 ordered event persistence
+# ---------------------------------------------------------------------------
+# Each call to ``touch_active_step`` / ``write_plan_state(…,
+# mode="active-step-heartbeat")`` appends an ordered projection event before
+# touching the legacy state.json cache.  The projection event stream is the
+# authoritative heartbeat record; state.json ``active_step`` is a cached
+# projection rebuilt at the persist interval.
+
+_HEARTBEAT_PROJECTION_ID = "active-step-heartbeat"
+_HEARTBEAT_PROJECTION_SCHEMA_VERSION = 1
+
+
+def _heartbeat_projection_dir(plan_dir: Path) -> Path:
+    """Directory that holds the heartbeat projection store for *plan_dir*."""
+    return plan_dir / ".heartbeat"
+
+
+def _heartbeat_source_path(plan_dir: Path) -> Path:
+    """Accepted-source-record path used for heartbeat cursor validation."""
+    return plan_dir / "state.json"
+
+
+def _record_heartbeat_event(
+    plan_dir: Path,
+    *,
+    run_id: str,
+    kind: str,
+    detail: str | None = None,
+) -> "ProjectionRecord | None":
+    """Append an ordered, cursor-checked heartbeat projection event.
+
+    Returns the appended :class:`ProjectionRecord`, or ``None`` when the
+    append is skipped (cursor mismatch or transient I/O error).
+
+    This function is called under ``plan_state_lock`` so flock serialization
+    is intentionally disabled — the lock already guarantees mutual exclusion.
+    """
+    proj_dir = _heartbeat_projection_dir(plan_dir)
+    source_path = _heartbeat_source_path(plan_dir)
+
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "kind": kind,
+        "occurred_at": now_utc(),
+    }
+    if detail:
+        payload["detail"] = detail[-500:]
+
+    event_id = f"hb-{int(time.time() * 1_000_000)}-{os.getpid()}"
+    record = ProjectionRecord(
+        event_type="heartbeat",
+        event_id=event_id,
+        payload=payload,
+        occurred_at=now_utc(),
+    )
+
+    try:
+        return append_projection_event(
+            proj_dir,
+            _HEARTBEAT_PROJECTION_ID,
+            record,
+            source_path=source_path,
+            flock=False,
+            snapshot_dir=proj_dir / "projections",
+        )
+    except ProjectionCursorMismatchError:
+        return None
+    except Exception:
+        return None
+
+
+def _rebuild_heartbeat_projection_snapshot(
+    plan_dir: Path,
+    current_state: dict[str, Any],
+) -> Path | None:
+    """Rebuild the complete heartbeat projection snapshot from ordered events.
+
+    The snapshot is written atomically so consumers see either the previous
+    complete version or the new complete version — never a partial write.
+    Returns the path to the written snapshot, or ``None`` when there are no
+    heartbeat events to project.
+    """
+    proj_dir = _heartbeat_projection_dir(plan_dir)
+    history = load_projection_history(proj_dir, _HEARTBEAT_PROJECTION_ID)
+
+    if not history:
+        return None
+
+    # Build projection from ordered events (deterministic replay)
+    heartbeat_count = 0
+    last_heartbeat: dict[str, Any] | None = None
+    first_occurred_at: str | None = None
+
+    for rec in history:
+        if rec.event_type == "heartbeat":
+            heartbeat_count += 1
+            last_heartbeat = dict(rec.payload)
+            if first_occurred_at is None:
+                first_occurred_at = rec.occurred_at
+
+    projection_data: dict[str, Any] = {
+        "schema_version": _HEARTBEAT_PROJECTION_SCHEMA_VERSION,
+        "projection_id": _HEARTBEAT_PROJECTION_ID,
+        "heartbeat_count": heartbeat_count,
+        "first_occurred_at": first_occurred_at,
+        "last_heartbeat": last_heartbeat,
+        "active_step": current_state.get("active_step"),
+        "rebuilt_at": now_utc(),
+    }
+
+    # Compute cursor from the accepted-source record (state.json)
+    source_path = _heartbeat_source_path(plan_dir)
+    cursor: ProjectionCursor | None = None
+    if source_path.exists():
+        try:
+            cursor = _projection_cursor_from_path(source_path)
+        except Exception:
+            pass
+
+    # Atomic rebuild
+    return rebuild_projection_atomically(
+        proj_dir / "projections",
+        _HEARTBEAT_PROJECTION_ID,
+        projection_data,
+        cursor=cursor,
+    )
+
+
+def read_heartbeat_projection_history(
+    plan_dir: Path,
+) -> "tuple[ProjectionRecord, ...]":
+    """Return every ordered heartbeat projection event recorded for *plan_dir*.
+
+    Returns an empty tuple when no heartbeat events have been recorded.
+    """
+    proj_dir = _heartbeat_projection_dir(plan_dir)
+    return load_projection_history(proj_dir, _HEARTBEAT_PROJECTION_ID)
+
+
+def read_heartbeat_projection_snapshot(
+    plan_dir: Path,
+) -> dict[str, Any] | None:
+    """Return the most recent heartbeat projection snapshot, or ``None``."""
+    proj_dir = _heartbeat_projection_dir(plan_dir)
+    from .io import projection_snapshot_path
+
+    snapshot_path = projection_snapshot_path(
+        proj_dir / "projections", _HEARTBEAT_PROJECTION_ID
+    )
+    if not snapshot_path.exists():
+        return None
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if (
+        isinstance(data, dict)
+        and "projection" not in data
+        and isinstance(data.get("data"), dict)
+    ):
+        # Preserve the heartbeat reader's original envelope vocabulary while
+        # accepting the shared projection writer's generic ``data`` field.
+        data["projection"] = dict(data["data"])
+    return data if isinstance(data, dict) else None
+
+
+def latest_heartbeat_projection_cursor(
+    plan_dir: Path,
+) -> "ProjectionCursor | None":
+    """Return the cursor from the most recent heartbeat projection record."""
+    proj_dir = _heartbeat_projection_dir(plan_dir)
+    return latest_projection_cursor(proj_dir, _HEARTBEAT_PROJECTION_ID)
+
 
 # ---------------------------------------------------------------------------
 # Plan resolution
@@ -253,8 +468,13 @@ def _reconcile_satisfied_user_action_gate(plan_dir: Path, state: dict[str, Any])
         return state
     if not _all_finalize_user_actions_satisfied(plan_dir, state):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") not in {STATE_AWAITING_HUMAN, "awaiting_human"}:
             return False
         if not _all_finalize_user_actions_satisfied(plan_dir, current):
@@ -307,8 +527,13 @@ def _reconcile_completed_review(plan_dir: Path, state: dict[str, Any]) -> dict[s
         return state
     if not _approved_review_outcome_is_done(plan_dir):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "executed":
             return False
         if not _approved_review_outcome_is_done(plan_dir):
@@ -380,8 +605,13 @@ def _reconcile_failed_no_next_after_finalize(
             return state
     if not _finalize_phase_completed_successfully(plan_dir, state):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "failed":
             return False
         current_resume = current.get("resume_cursor")
@@ -447,8 +677,13 @@ def _reconcile_failed_no_next_after_blocked_execute(
     all_done, _reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not all_done:
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "failed":
             return False
         current_resume = current.get("resume_cursor")
@@ -538,8 +773,13 @@ def _reconcile_failed_review_after_successful_execute(
         or getattr(phase_result, "exit_kind", None) != "success"
     ):
         return state
+    recovery_allowed, expected_active = _reconciliation_active_step_snapshot(state)
+    if not recovery_allowed:
+        return state
 
     def _transition(current: dict[str, Any]) -> bool:
+        if not _reconciliation_active_step_matches(current, expected_active):
+            return False
         if current.get("current_state") != "failed":
             return False
         current_resume = current.get("resume_cursor")
@@ -894,6 +1134,121 @@ def _validate_plan_state_for_persist(state: dict[str, Any], *, plan_dir: Path) -
         ) from exc
 
 
+def _execution_evidence_digest(plan_dir: Path, state: dict[str, Any]) -> str:
+    execution_path = plan_dir / "execution.json"
+    try:
+        return "sha256:" + hashlib.sha256(execution_path.read_bytes()).hexdigest()
+    except OSError:
+        history = state.get("history")
+        if isinstance(history, list):
+            for entry in reversed(history):
+                if not isinstance(entry, dict) or entry.get("step") != "execute":
+                    continue
+                artifact_hash = entry.get("artifact_hash")
+                if isinstance(artifact_hash, str) and artifact_hash:
+                    return artifact_hash
+    return "missing"
+
+
+def _reconcile_durable_phase_handoff(
+    plan_dir: Path,
+    state: dict[str, Any],
+) -> None:
+    """Arm or advance the execute-success → review custody receipt.
+
+    The receipt lives in the same atomically replaced ``state.json`` as the
+    ``executed`` transition.  A crash after that write therefore leaves either
+    review custody or an explicit recovery instruction; it cannot leave a bare
+    ``executed`` label behind a dead execute PID.
+    """
+
+    current_state = str(state.get("current_state") or "")
+    existing = state.get("pending_phase_handoff")
+    handoff = dict(existing) if isinstance(existing, dict) else None
+    history = state.get("history")
+    history_entries = history if isinstance(history, list) else []
+
+    if current_state == STATE_EXECUTED:
+        evidence_digest = _execution_evidence_digest(plan_dir, state)
+        handoff_id = "sha256:" + hashlib.sha256(
+            f"{plan_dir.name}\0execute\0review\0{evidence_digest}".encode("utf-8")
+        ).hexdigest()
+        if handoff is None or handoff.get("handoff_id") != handoff_id:
+            handoff = {
+                "schema_version": 1,
+                "handoff_id": handoff_id,
+                "from_phase": "execute",
+                "from_state": STATE_EXECUTED,
+                "to_phase": "review",
+                "status": "pending",
+                "armed_at": now_utc(),
+                "source_history_length": len(history_entries),
+                "execution_evidence_digest": evidence_digest,
+                "recovery_action": "resume_review",
+                "owner": "canonical_auto_runner",
+                "_non_authoritative": False,
+            }
+        active = state.get("active_step")
+        active_phase = active_phase_name(active) if isinstance(active, dict) else None
+        if active_phase == "review":
+            handoff["status"] = "claimed"
+            handoff.setdefault("claimed_at", now_utc())
+            handoff["claim_run_id"] = active.get("run_id")
+            handoff["claim_worker_pid"] = active.get("worker_pid")
+        elif active_phase == "execute":
+            observation = observe_active_step_worker(active)
+            if observation.state == WORKER_DEAD:
+                state.pop("active_step", None)
+                handoff["status"] = "recovery_required"
+                handoff["recovery_reason"] = (
+                    "execute_complete_with_proven_dead_execute_custody"
+                )
+            else:
+                # Completion evidence does not prove that a LIVE/UNKNOWN
+                # occurrence stopped.  Retain custody so auto cannot dispatch
+                # review until the owner clears or a later observation proves
+                # death.
+                handoff["status"] = "source_custody_unresolved"
+                handoff["recovery_reason"] = observation.reason
+        state["pending_phase_handoff"] = handoff
+        return
+
+    if handoff is None:
+        return
+
+    source_history_length = int(handoff.get("source_history_length") or 0)
+    review_crossed = any(
+        isinstance(entry, dict) and entry.get("step") == "review"
+        for entry in history_entries[source_history_length:]
+    )
+    if review_crossed or current_state in {"reviewed", "done", "complete", "completed"}:
+        resolved = {
+            **handoff,
+            "status": "crossed",
+            "crossed_at": now_utc(),
+            "crossed_to_state": current_state,
+        }
+        meta = state.get("meta")
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        receipts = list(meta.get("phase_handoff_receipts") or [])
+        if not any(
+            isinstance(item, dict)
+            and item.get("handoff_id") == resolved["handoff_id"]
+            for item in receipts
+        ):
+            receipts.append(resolved)
+        meta["phase_handoff_receipts"] = receipts
+        state["meta"] = meta
+        state.pop("pending_phase_handoff", None)
+        return
+
+    # A failure before review crossed the boundary keeps the receipt live and
+    # recoverable.  Liveness, journal growth, or a fresh PID never resolve it.
+    handoff["status"] = "recovery_required"
+    handoff["recovery_reason"] = f"boundary_not_crossed_current_state={current_state or 'unknown'}"
+    state["pending_phase_handoff"] = handoff
+
+
 def _read_state_for_write(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
         return {}
@@ -1161,12 +1516,24 @@ def write_plan_state(
                 ):
                     should_write = False
                 else:
+                    # M7: record heartbeat as an ordered projection event.
+                    # The projection events are the authoritative record;
+                    # state.json is a cached projection rebuilt at the
+                    # persist interval.
+                    _record_heartbeat_event(
+                        plan_dir,
+                        run_id=run_id,
+                        kind=kind or "heartbeat",
+                        detail=detail,
+                    )
+
                     active_step = dict(active_step)
                     active_step["last_activity_at"] = now_utc()
                     active_step["last_activity_kind"] = kind or "heartbeat"
                     if detail:
                         active_step["last_activity_detail"] = detail[-500:]
                     next_state["active_step"] = active_step
+
                     interval = _heartbeat_persist_interval_seconds()
                     key = str(state_path)
                     now_mono = time.monotonic()
@@ -1178,13 +1545,16 @@ def write_plan_state(
                     )
                     if due:
                         _last_heartbeat_persist_at[key] = now_mono
+                        # M7: atomically rebuild the heartbeat projection
+                        # snapshot alongside the legacy state.json write.
+                        try:
+                            _rebuild_heartbeat_projection_snapshot(
+                                plan_dir, next_state
+                            )
+                        except Exception:
+                            pass
                     else:
                         should_write = False
-                        try:
-                            if state_path.exists():
-                                os.utime(state_path, None)
-                        except OSError:
-                            pass
             elif mode == "merge-meta-list":
                 if state is None:
                     raise TypeError("state is required for merge-meta-list mode")
@@ -1249,6 +1619,16 @@ def write_plan_state(
             if mutation_changed is False:
                 should_write = False
         next_state.setdefault("schema_version", 0)
+        from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+        resident_delegation = safe_provenance_projection()
+        if resident_delegation is not None:
+            meta = next_state.get("meta")
+            meta = dict(meta) if isinstance(meta, dict) else {}
+            meta.setdefault("resident_delegation", resident_delegation)
+            next_state["meta"] = meta
+        if mode != "active-step-heartbeat":
+            _reconcile_durable_phase_handoff(plan_dir, next_state)
         if validate_current_state:
             _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
         if should_write:
@@ -1527,6 +1907,9 @@ def set_active_step(
 ) -> str:
     resolved_run_id = run_id or str(uuid.uuid4())
     started_at = now_utc()
+    from arnold_pipelines.megaplan.orchestration.phase_result import generate_invocation_id
+
+    invocation_id = generate_invocation_id()
     attempt = 1 + sum(
         1
         for entry in state.get("history", [])
@@ -1537,12 +1920,29 @@ def set_active_step(
         "agent": agent,
         "mode": mode,
         "run_id": resolved_run_id,
+        # Keep the invocation at the active-occurrence root as well as in the
+        # legacy orphan fence.  Phase-result cleanup and repair provenance
+        # need one unambiguous occurrence binding after a worker exits.
+        "invocation_id": invocation_id,
         "worker_pid": os.getpid(),
         "started_at": started_at,
         "attempt": attempt,
         "last_activity_at": started_at,
         "last_activity_kind": "started",
+        "orphan_fence": {
+            "run_id": resolved_run_id,
+            "invocation_id": invocation_id,
+        },
     }
+    from arnold_pipelines.megaplan._core.phase_runtime import (
+        current_runner_incarnation,
+        current_runner_lease_binding,
+    )
+
+    active_step["runner_incarnation"] = current_runner_incarnation()
+    runner_lease = current_runner_lease_binding()
+    if runner_lease is not None:
+        active_step["runner_lease"] = runner_lease
     if model:
         active_step["model"] = model
     selected_spec = configured_specs or format_agent_spec(AgentSpec(agent=agent, model=model))
@@ -1563,9 +1963,7 @@ def set_active_step(
         if isinstance(session_id, str) and session_id:
             active_step["session_id"] = session_id
     state["active_step"] = active_step
-    from arnold_pipelines.megaplan.orchestration.phase_result import generate_invocation_id
-
-    state.setdefault("meta", {})["current_invocation_id"] = generate_invocation_id()
+    state.setdefault("meta", {})["current_invocation_id"] = invocation_id
     return resolved_run_id
 
 
@@ -1694,6 +2092,8 @@ def make_history_entry(
         entry["session_mode"] = mode
         entry["session_id"] = worker.session_id
         entry["agent"] = agent
+        if getattr(worker, "cost_pricing", None) is not None:
+            entry["cost_pricing"] = worker.cost_pricing
         entry.update(
             fallback_observability_fields(
                 getattr(worker, "configured_specs", None) or agent,
@@ -1798,3 +2198,175 @@ def latest_plan_meta_path(plan_dir: Path, state: PlanState) -> Path:
     record = latest_plan_record(state)
     meta_name = record["file"].replace(".md", ".meta.json")
     return plan_dir / meta_name
+
+
+# ---------------------------------------------------------------------------
+# Work-ledger helpers (M8A — non-authoritative, append-only evidence)
+# ---------------------------------------------------------------------------
+# The work ledger records *what happened* for telemetry reconciliation.
+# Events are evidence only — they never drive control flow, admission, or
+# repair decisions, and they explicitly avoid grant, lease, WBC, completion,
+# publication, delivery, and status semantics.
+#
+# The authoritative record lives in ``work_ledger.ndjson`` (managed by
+# ``arnold_pipelines.megaplan.observability.work_ledger``).  The in-memory
+# ``state["work_ledger"]`` list is a lightweight summary index kept for
+# convenience; it is NEVER used as authority and is rebuilt from the ndjson
+# file when missing.
+
+
+def _ensure_work_ledger_key(state: PlanState) -> None:
+    """Ensure the ``work_ledger`` summary list exists on *state*."""
+    if "work_ledger" not in state:
+        state["work_ledger"] = []
+
+
+def append_to_work_ledger(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    event_class: str,
+    referenced_identity: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Append one non-authoritative event to the work ledger.
+
+    Writes to ``work_ledger.ndjson`` (the durable record) and appends a
+    lightweight summary entry to the in-memory ``state["work_ledger"]``
+    list.  The summary is a convenience index; only the ndjson file is
+    authoritative for audit/replay.
+
+    Args:
+        plan_dir: Plan directory.
+        state: In-memory plan state (mutated with a summary entry).
+        event_class: One of ``validation``, ``repair_verify``, ``productive``,
+                     ``unavailable_reason``.
+        referenced_identity: What this event is about (``task_id``, …).
+        payload: Event-specific structured data.
+
+    Returns:
+        The full event dict returned by the work_ledger module.
+    """
+    from arnold_pipelines.megaplan.observability.work_ledger import (
+        append_work_ledger_event,
+    )
+
+    event = append_work_ledger_event(
+        plan_dir,
+        event_class=event_class,
+        referenced_identity=referenced_identity,
+        payload=payload,
+    )
+
+    # Lightweight in-memory summary — never authority.
+    _ensure_work_ledger_key(state)
+    state["work_ledger"].append(
+        {
+            "event_id": event["event_id"],
+            "event_class": event_class,
+            "referenced_identity": referenced_identity,
+            "content_hash": event["content_hash"],
+            "timestamp": event["timestamp"],
+        }
+    )
+
+    return event
+
+
+def load_work_ledger_summary(plan_dir: Path) -> list[dict[str, Any]]:
+    """Return a lightweight summary of every work-ledger event.
+
+    Reads from ``work_ledger.ndjson`` (the authoritative record).
+    Returns an empty list when the file does not exist.
+    """
+    from arnold_pipelines.megaplan.observability.work_ledger import read_work_ledger
+
+    events = read_work_ledger(plan_dir)
+    return [
+        {
+            "event_id": e["event_id"],
+            "event_class": e["event_class"],
+            "referenced_identity": e["referenced_identity"],
+            "content_hash": e["content_hash"],
+            "timestamp": e["timestamp"],
+        }
+        for e in events
+    ]
+
+
+# ── Work-ledger reconciliation (M8A — rebuildable aggregate summaries) ──────
+# These functions extend the work-ledger integration layer with aggregate
+# reconciliation primitives.  They read from ``work_ledger.ndjson`` (the
+# authoritative durable record) and produce deterministic summaries suitable
+# for telemetry dashboards, cost attribution, and efficiency reporting.
+# Every measure that cannot be computed is ``null``, never zero.
+
+
+def reconcile_work_ledger_aggregate(
+    plan_dir: Path,
+) -> dict[str, Any]:
+    """Produce a rebuildable aggregate summary from the plan's work ledger.
+
+    Delegates to :func:`arnold_pipelines.megaplan.observability.work_ledger.build_work_class_summary`.
+    The summary is deterministic for a given ledger and explicitly
+    non-authoritative.
+
+    Returns a dict with ``by_class``, ``by_category``, ``identity_joins``,
+    ``by_task``, ``totals``, ``unavailable_measures``, and the
+    ``_non_authoritative`` / ``_rebuildable`` markers.
+    """
+    from arnold_pipelines.megaplan.observability.work_ledger import (
+        build_work_class_summary,
+    )
+
+    return build_work_class_summary(plan_dir)
+
+
+def work_ledger_aggregation_valid(summary: dict[str, Any]) -> bool:
+    """Return ``True`` when *summary* passes structural validation.
+
+    Checks that the summary contains the expected top-level keys and
+    that every per-class aggregate carries the required fields.  This is
+    a shape check, not an authority claim — the summary remains evidence.
+    """
+    if not isinstance(summary, dict):
+        return False
+    required_keys = {
+        "by_class",
+        "by_category",
+        "identity_joins",
+        "by_task",
+        "totals",
+        "unavailable_measures",
+    }
+    if not required_keys.issubset(summary.keys()):
+        return False
+    if summary.get("_non_authoritative") is not True:
+        return False
+    if summary.get("_rebuildable") is not True:
+        return False
+
+    # Per-class aggregates must carry the expected keys
+    by_class = summary.get("by_class")
+    if not isinstance(by_class, dict):
+        return False
+    for cls_name, agg in by_class.items():
+        if not isinstance(agg, dict):
+            return False
+        agg_required = {"count", "total_duration_ms", "task_ids", "category"}
+        if not agg_required.issubset(agg.keys()):
+            return False
+
+    # totals must have the expected keys
+    totals = summary.get("totals")
+    if not isinstance(totals, dict):
+        return False
+    totals_required = {
+        "value_work_duration_ms",
+        "non_value_work_duration_ms",
+        "gap_count",
+    }
+    if not totals_required.issubset(totals.keys()):
+        return False
+
+    return True

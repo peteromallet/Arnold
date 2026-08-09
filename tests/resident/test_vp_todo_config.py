@@ -5,13 +5,14 @@ from arnold_pipelines.megaplan.resident.config import ResidentConfig
 
 def test_special_requests_defaults() -> None:
     config = ResidentConfig()
+    assert config.model_timeout_s is None
     assert config.special_requests_enabled is True
     assert config.special_requests_interval_s == 21600
     assert str(config.special_requests_todo_path) == ".megaplan/resident/vp_todo_list.json"
     assert config.special_requests_conversation_key is None
     assert config.special_requests_subject_user_id is None
     assert config.special_requests_subagent_toolsets == "file,web,terminal"
-    assert config.special_requests_subagent_timeout_s == 600.0
+    assert config.special_requests_subagent_timeout_s is None
     assert config.special_requests_subagent_max_tokens == 65536
 
 
@@ -24,6 +25,7 @@ def test_special_requests_from_env() -> None:
         "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBJECT_USER_ID": "admin-1",
         "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TOOLSETS": "file,web",
         "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TIMEOUT_S": "30",
+        "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_S": "45",
         "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_MAX_TOKENS": "4096",
     }
     config = ResidentConfig.from_env(env)
@@ -34,6 +36,7 @@ def test_special_requests_from_env() -> None:
     assert config.special_requests_subject_user_id == "admin-1"
     assert config.special_requests_subagent_toolsets == "file,web"
     assert config.special_requests_subagent_timeout_s == 30.0
+    assert config.model_timeout_s == 45.0
     assert config.special_requests_subagent_max_tokens == 4096
 
 

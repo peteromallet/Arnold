@@ -1,5 +1,12 @@
 # Arnold Cloud Rollout Notes
 
+> **Authority status (M11):** This document is retained as zero-authority history.
+> All repair, audit, and deployment authority has been migrated to canonical
+> delegation (see `arnold_pipelines/megaplan/cloud/wrappers/repair_delegation.py`).
+> Content below must not be used to materialize commands, grant authority, or
+> drive automated repair actions.  For current operator guidance consult the
+> M11 acceptance suite and delegation contracts.
+
 This document records settled deployment decisions for the Arnold cloud repair-system
 components (watchdog, progress auditor, repair loop, meta-repair loop, and GitHub sync).
 It is a reference for operators, not an automated deployment manifest.

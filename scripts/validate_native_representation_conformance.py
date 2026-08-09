@@ -38,6 +38,14 @@ APPROVED_IMPLEMENTED_EVIDENCE_KINDS = {"source_checker"}
 BOUNDARY_RECEIPT_REQUIRED_EFFECTS = {"receipt", "authority"}
 BOUNDARY_PHASE_RESULT_REQUIRED_EFFECTS = {"state_history", "phase_result"}
 BOUNDARY_SEMANTIC_HEALTH_STATUS = "healthy"
+DEPLOYED_CANARY_PROOF_CATEGORY = "deployed_live_canary_receipt"
+DEPLOYED_CANARY_PROOF_STATUSES = {"pending", "verified"}
+DEPLOYED_CANARY_SCENARIOS = {
+    "fresh_plan",
+    "resume_from_suspension",
+    "three_gate_iterations",
+    "tiebreaker",
+}
 
 
 @dataclass(frozen=True)
@@ -167,6 +175,60 @@ def _validate_paths_exist(paths: list[str], *, repo_root: Path, field: str, row_
         target = repo_root / path
         if not target.is_file():
             raise ValueError(f"row {row_id!r} field {field!r} path does not exist: {path}")
+
+
+def _is_valid_deployed_canary_verdict(path: Path) -> bool:
+    """Rederive the canonical evidence instead of trusting verdict shape."""
+
+    try:
+        from arnold_pipelines.megaplan.cloud.m11_workflow_canary_verifier import (
+            validate_stored_deployed_workflow_canary_verdict,
+        )
+
+        return validate_stored_deployed_workflow_canary_verdict(path)
+    except Exception:
+        return False
+
+
+def validate_deployed_canary_proof_claim(
+    row: dict[str, Any], *, repo_root: Path
+) -> list[str]:
+    """Reject deployed-proof claims not backed by a canonical verdict."""
+
+    categories = row.get("proof_categories")
+    if (
+        not isinstance(categories, list)
+        or DEPLOYED_CANARY_PROOF_CATEGORY not in categories
+    ):
+        return []
+    row_id = str(row.get("id") or "<unknown>")
+    status = row.get("deployed_proof_status")
+    if status not in DEPLOYED_CANARY_PROOF_STATUSES:
+        return [
+            f"row {row_id!r} deployed_proof_status must be one of "
+            f"{sorted(DEPLOYED_CANARY_PROOF_STATUSES)}"
+        ]
+    proof_paths = row.get("proof_artifacts")
+    verdict_present = bool(
+        isinstance(proof_paths, list)
+        and any(
+            isinstance(item, str)
+            and Path(item).suffix == ".json"
+            and _is_valid_deployed_canary_verdict(repo_root / item)
+            for item in proof_paths
+        )
+    )
+    if status == "verified" and not verdict_present:
+        return [
+            f"row {row_id!r} claims deployed proof verified without a valid "
+            "deployed workflow-canary verdict"
+        ]
+    if status == "pending" and verdict_present:
+        return [
+            f"row {row_id!r} has a valid deployed workflow-canary verdict but "
+            "still reports deployed proof pending"
+        ]
+    return []
 
 
 def _validate_carrier_evidence_shape(
@@ -935,6 +997,10 @@ def validate_conformance_ledger(
             )
         except ValueError as exc:
             errors.append(str(exc))
+
+        errors.extend(
+            validate_deployed_canary_proof_claim(row, repo_root=repo_root)
+        )
 
         if status == "deferred":
             missing_deferred = sorted(deferred_required_row_fields - set(row))

@@ -125,6 +125,7 @@ def load_escalation_target(repair_data_dir: str | Path, escalation_id: str) -> E
     resume_handler = ""
     superseded = False
     unavailable = False
+    canonical_receipt = _read_canonical_delivery_receipt(repair_data_dir, escalation_id)
 
     for record in records:
         event = _string(record.get("event"))
@@ -135,12 +136,16 @@ def load_escalation_target(repair_data_dir: str | Path, escalation_id: str) -> E
             responder_user_id = _string(record.get("dm_user_id")) or responder_user_id
             resume_handler = _string(record.get("resume_handler")) or resume_handler
         elif event == "delivered":
-            channel_id = _string(record.get("channel_id")) or channel_id
-            responder_user_id = _string(record.get("dm_user_id")) or responder_user_id
-            resume_handler = _string(record.get("resume_handler")) or resume_handler
-            raw_ids = record.get("message_ids")
-            if isinstance(raw_ids, list):
-                message_ids = tuple(str(item).strip() for item in raw_ids if str(item).strip())
+            # Legacy sidecar delivery is evidence, never authorization. Only
+            # the resident receipt, bound to one effect reservation and
+            # provider outcome, may supply delivery identity to this reader.
+            if canonical_receipt is not None:
+                channel_id = _string(canonical_receipt.get("channel_id")) or channel_id
+                responder_user_id = _string(canonical_receipt.get("dm_user_id")) or responder_user_id
+                resume_handler = _string(record.get("resume_handler")) or resume_handler
+                raw_ids = canonical_receipt.get("message_ids")
+                if isinstance(raw_ids, list):
+                    message_ids = tuple(str(item).strip() for item in raw_ids if str(item).strip())
         elif event == "superseded":
             superseded = True
         elif event == "unavailable":
@@ -158,6 +163,42 @@ def load_escalation_target(repair_data_dir: str | Path, escalation_id: str) -> E
         superseded=superseded,
         unavailable=unavailable,
     )
+
+
+def _read_canonical_delivery_receipt(
+    repair_data_dir: str | Path, escalation_id: str
+) -> dict[str, Any] | None:
+    """Read only the resident receipt that can authorize a reply.
+
+    The legacy JSONL sidecar is deliberately not consulted for this proof.
+    A valid receipt must bind the escalation to the resident completion
+    effect, a persisted reservation/outbox, and a provider acceptance.
+    """
+    path = Path(repair_data_dir) / "canonical-delivery" / f"{escalation_id}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema") != "arnold.resident.delivery-receipt.v1":
+        return None
+    if _string(payload.get("escalation_id")) != escalation_id:
+        return None
+    if _string(payload.get("status")) != "delivered":
+        return None
+    effect_identity = _string(payload.get("effect_identity"))
+    if not effect_identity.startswith("resident-subagent-completion:"):
+        return None
+    reservation = payload.get("reservation")
+    provider = payload.get("provider")
+    if not isinstance(reservation, dict) or not all(
+        _string(reservation.get(key)) for key in ("attempt_id", "glek", "outbox_id")
+    ):
+        return None
+    if not isinstance(provider, dict) or _string(provider.get("outcome")) != "COMPLETED":
+        return None
+    return payload
 
 
 def confirm_escalation_resolution(

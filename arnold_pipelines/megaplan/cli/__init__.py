@@ -37,7 +37,6 @@ from arnold_pipelines.megaplan._core import (
     active_plan_dirs,
     add_or_increment_debt,
     atomic_write_text,
-    build_next_step_runtime,
     build_phase_observability,
     compute_global_batches,
     config_dir,
@@ -81,6 +80,7 @@ from arnold_pipelines.megaplan.handlers import (
     handle_tiebreaker_run,
     handle_verify_human,
 )
+from arnold_pipelines.megaplan.handlers.strategy import handle_strategy
 from arnold_pipelines.megaplan.loop.handlers import (
     handle_loop_init,
     handle_loop_pause,
@@ -124,6 +124,7 @@ from .setup import (
     handle_setup,
     handle_setup_global,
     handle_setup_hooks,
+    pre_commit_hook_status,
 )
 from .skills import (
     _GLOBAL_TARGETS,
@@ -172,13 +173,18 @@ def build_parser() -> argparse.ArgumentParser:
     from arnold_pipelines.megaplan.auto import build_auto_parser
     from arnold_pipelines.megaplan.chain import build_chain_parser
     from arnold_pipelines.megaplan.chain.epic_chain import build_epic_chain_parser
+    from arnold_pipelines.megaplan.prompts.tiebreaker_orchestrator import (
+        build_tiebreaker_parser,
+    )
 
     setup_parser = subparsers.add_parser("setup")
     setup_parser.add_argument("--local", action="store_true")
     setup_parser.add_argument("--target-dir")
     setup_parser.add_argument("--force", action="store_true")
     setup_parser.add_argument("--regen-composed", action="store_true")
+    setup_parser.add_argument("--stage-regenerated", action="store_true")
     setup_parser.add_argument("--install-hooks", action="store_true")
+    setup_parser.add_argument("--check-hooks", action="store_true")
     setup_parser.add_argument("--editors", action="store_true")
     setup_parser.add_argument("--user-editors", action="store_true")
 
@@ -191,6 +197,11 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--adaptive-critique", action="store_true", default=None)
+    init_parser.add_argument(
+        "--no-adaptive-critique",
+        dest="adaptive_critique",
+        action="store_false",
+    )
     init_parser.add_argument("--strict-adaptive-critique", action="store_true", default=None)
     init_parser.add_argument("--profile", default=None)
     init_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED, default=None)
@@ -201,10 +212,30 @@ def build_parser() -> argparse.ArgumentParser:
     _add_vendor_critic_args(init_parser)
     init_parser.add_argument("--phase-model", action="append", default=None)
     init_parser.add_argument("--idea-file", default=None)
+    init_parser.add_argument(
+        "--mode",
+        choices=("code", "doc", "metaplan", "creative", "joke"),
+        default=None,
+    )
+    init_parser.add_argument("--output", default=None)
     init_parser.add_argument("idea", nargs="?")
+
+    init_parser.add_argument("--north-star", default=None, metavar="PATH")
+    anchors_parser = subparsers.add_parser("anchors")
+    anchors_subparsers = anchors_parser.add_subparsers(dest="anchors_action", required=True)
+    anchors_show = anchors_subparsers.add_parser("show")
+    anchors_show.add_argument("--plan", required=True)
+    anchors_show.add_argument("--json", dest="as_json", action="store_true", default=False)
+    anchors_show.add_argument(
+        "--type",
+        dest="anchor_type",
+        choices=["north_star"],
+        default="north_star",
+    )
 
     for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
         sub = subparsers.add_parser(command)
+
         sub.add_argument("--plan", required=False)
         sub.add_argument("--fresh", action="store_true", default=False)
         sub.add_argument("--persist", action="store_true", default=False)
@@ -214,6 +245,33 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--plan", required=False)
     status_parser.add_argument("--project-dir", dest="project_dir")
     status_parser.add_argument("--pending-human", action="store_true", default=False)
+    status_parser.add_argument(
+        "--cloud-session",
+        dest="cloud_session",
+        help=argparse.SUPPRESS,
+    )
+    status_parser.add_argument(
+        "--cloud-marker-dir",
+        dest="cloud_marker_dir",
+        help=argparse.SUPPRESS,
+    )
+
+    authority_inventory_parser = subparsers.add_parser(
+        "authority-inventory",
+        help="Report the read-only authority evidence inventory for a plan.",
+    )
+    authority_inventory_parser.add_argument("--plan", required=False)
+    authority_inventory_parser.add_argument("--project-dir", dest="project_dir")
+    authority_inventory_parser.add_argument(
+        "--session",
+        default=None,
+        help="Optional cloud session whose marker evidence should be observed.",
+    )
+    authority_inventory_parser.add_argument(
+        "--marker-dir",
+        default=None,
+        help="Directory containing optional cloud session marker files.",
+    )
 
     override_parser = subparsers.add_parser("override")
     override_parser.add_argument(
@@ -224,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
             "adopt-execution",
             "force-proceed",
             "recover-blocked",
+            "reconcile-plan-ledger",
             "replan",
             "resume-clarify",
             "set-model",
@@ -232,13 +291,33 @@ def build_parser() -> argparse.ArgumentParser:
             "set-vendor",
         ],
     )
+    override_parser.add_argument("--plan-version", dest="plan_version", type=int)
+    override_parser.add_argument("--replacement-sha256", dest="replacement_sha256")
+    override_parser.add_argument("--repair-ref", dest="repair_ref")
     override_parser.add_argument("--plan", required=False)
     override_parser.add_argument("--note")
     override_parser.add_argument("--source", default="user")
     override_parser.add_argument("--reason")
+    override_parser.add_argument("--repair-commit", dest="repair_commit")
+    override_parser.add_argument("--failure-fingerprint", dest="failure_fingerprint")
+    override_parser.add_argument(
+        "--repair-scope",
+        dest="repair_scope",
+        choices=("target_workspace", "engine_runtime"),
+        help="Code surface whose validated HEAD contains the repair.",
+    )
     override_parser.add_argument("--user-approved", action="store_true", default=False)
     override_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED)
     override_parser.add_argument("--profile")
+    override_parser.add_argument(
+        "--expected-profile-source",
+        choices=("built-in", "user", "project"),
+        help="Fail closed unless set-profile resolves from this registry layer.",
+    )
+    override_parser.add_argument(
+        "--expected-profile-sha256",
+        help="Fail closed unless the resolved profile content has this SHA-256 digest.",
+    )
     override_parser.add_argument("--phase")
     override_parser.add_argument("--model")
     override_parser.add_argument("--effort")
@@ -281,6 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_auto_parser(subparsers)
     build_chain_parser(subparsers)
     build_epic_chain_parser(subparsers)
+    build_tiebreaker_parser(subparsers)
 
     brief_parser = subparsers.add_parser("brief")
     brief_sub = brief_parser.add_subparsers(dest="brief_action", required=True)
@@ -318,6 +398,14 @@ def build_parser() -> argparse.ArgumentParser:
     description_group.add_argument("--description-file")
     initiative_new.add_argument("--north-star")
     initiative_new.add_argument("--north-star-file")
+    initiative_new.add_argument(
+        "--strategy",
+        action="store_true",
+        help=(
+            "Create the canonical initiative-root STRATEGY.md without "
+            "overwriting existing content."
+        ),
+    )
     initiative_new.add_argument("--chain", action="store_true")
     initiative_new.add_argument(
         "--doc",
@@ -353,10 +441,138 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_new.add_argument("--force", action="store_true")
     initiative_list = initiative_sub.add_parser("list")
     initiative_list.add_argument("--limit", type=int)
+    initiative_list.add_argument("--include-retired", action="store_true")
     initiative_search = initiative_sub.add_parser("search")
     initiative_search.add_argument("keywords", nargs="*")
     initiative_search.add_argument("--keywords-all", action="store_true")
     initiative_search.add_argument("--limit", type=int)
+    initiative_search.add_argument("--include-retired", action="store_true")
+    initiative_retire = initiative_sub.add_parser(
+        "retire", help="Write an identity-fenced metadata-only initiative tombstone"
+    )
+    initiative_retire.add_argument("slug")
+    initiative_retire.add_argument("--superseded-by", required=True)
+    initiative_retire.add_argument("--reason", required=True)
+    initiative_retire.add_argument("--expect-chain-sha256", required=True)
+    initiative_retire.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="Repo-contained durable evidence path to hash into the tombstone. Repeatable.",
+    )
+    initiative_retire.add_argument(
+        "--external-evidence",
+        action="append",
+        default=[],
+        help="Absolute durable control-plane evidence path to hash. Repeatable.",
+    )
+
+    ticket_parser = subparsers.add_parser("ticket")
+    ticket_sub = ticket_parser.add_subparsers(dest="ticket_action", required=True)
+    ticket_new = ticket_sub.add_parser("new")
+    ticket_new.add_argument("title")
+    ticket_new.add_argument("-b", "--body")
+    ticket_new.add_argument("--stdin-body", action="store_true")
+    ticket_new.add_argument("--edit", action="store_true")
+    ticket_new.add_argument("--tags")
+    ticket_new.add_argument("--project")
+    ticket_new.add_argument("--roadmap-horizon", choices=["Now", "Next", "Later"], default=None)
+    ticket_new.add_argument("--roadmap-title", default=None)
+    ticket_list = ticket_sub.add_parser("list")
+    ticket_list.add_argument("--status")
+    ticket_list.add_argument("--tags")
+    ticket_list.add_argument("--json", action="store_true")
+    ticket_show = ticket_sub.add_parser("show")
+    ticket_show.add_argument("ticket_id")
+    ticket_show.add_argument("--json", action="store_true")
+    ticket_edit = ticket_sub.add_parser("edit")
+    ticket_edit.add_argument("ticket_id")
+    ticket_edit.add_argument("--title")
+    ticket_edit.add_argument("--body")
+    ticket_edit.add_argument("--status")
+    ticket_edit.add_argument("--add-tag")
+    ticket_edit.add_argument("--remove-tag")
+    ticket_link = ticket_sub.add_parser("link")
+    ticket_link.add_argument("ticket_id")
+    ticket_link.add_argument("epic_id")
+    ticket_link.add_argument("--resolves", action="store_true")
+    ticket_unlink = ticket_sub.add_parser("unlink")
+    ticket_unlink.add_argument("ticket_id")
+    ticket_unlink.add_argument("epic_id")
+    ticket_addressed = ticket_sub.add_parser("addressed")
+    ticket_addressed.add_argument("ticket_id")
+    ticket_addressed.add_argument("--note")
+    ticket_dismiss = ticket_sub.add_parser("dismiss")
+    ticket_dismiss.add_argument("ticket_id")
+    ticket_dismiss.add_argument("--reason")
+    ticket_reopen = ticket_sub.add_parser("reopen")
+    ticket_reopen.add_argument("ticket_id")
+    ticket_search = ticket_sub.add_parser("search")
+    ticket_search.add_argument("keywords", nargs="*")
+    ticket_search.add_argument("--keywords-all", action="store_true")
+    ticket_search.add_argument("--status")
+    ticket_search.add_argument("--tags")
+    ticket_search.add_argument("--projects", nargs="*")
+    ticket_search.add_argument("--all-projects", action="store_true")
+    ticket_search.add_argument("--sort", default="created")
+    ticket_search.add_argument("--asc", action="store_true")
+    ticket_search.add_argument("--limit", type=int)
+    ticket_search.add_argument("--snippet", action="store_true", default=True)
+    ticket_search.add_argument("--json", action="store_true")
+    ticket_promote = ticket_sub.add_parser("promote")
+    ticket_promote.add_argument("ticket_id")
+    ticket_promote.add_argument("--initiative-slug")
+    ticket_promote.add_argument("--title")
+    ticket_promote.add_argument("--goal")
+    ticket_promote.add_argument("--body")
+    ticket_promote.add_argument("--no-resolve", action="store_true")
+    ticket_promote.add_argument("--skip-strategy", action="store_true")
+    ticket_promote.add_argument("--json", action="store_true")
+
+    strategy_parser = subparsers.add_parser("strategy")
+    strategy_sub = strategy_parser.add_subparsers(dest="strategy_action", required=True)
+    strategy_init = strategy_sub.add_parser("init")
+    strategy_init.add_argument(
+        "--initiative",
+        metavar="SLUG",
+        help=(
+            "Use or create this canonical initiative. By default, reuse a matching "
+            "repository-strategy initiative or create 'repository-strategy'."
+        ),
+    )
+    strategy_init.add_argument("--force", action="store_true")
+    strategy_validate = strategy_sub.add_parser("validate")
+    strategy_validate.add_argument("--json", action="store_true")
+    strategy_show = strategy_sub.add_parser("show")
+    strategy_show.add_argument("--json", action="store_true")
+    strategy_list = strategy_sub.add_parser("list")
+    strategy_list.add_argument("--horizon", choices=["Now", "Next", "Later"])
+    strategy_list.add_argument("--type", choices=["ticket", "epic"], dest="entry_type")
+    strategy_list.add_argument("--json", action="store_true")
+    strategy_project = strategy_sub.add_parser("project")
+    strategy_project.add_argument("--write", action="store_true")
+    strategy_project.add_argument("--output")
+    strategy_project.add_argument("--json", action="store_true")
+    strategy_add = strategy_sub.add_parser("add")
+    strategy_add.add_argument("type", choices=["ticket", "epic"])
+    strategy_add.add_argument("ref")
+    strategy_add.add_argument("--title", required=True)
+    strategy_add.add_argument("--horizon", required=True, choices=["Now", "Next", "Later"])
+    strategy_remove = strategy_sub.add_parser("remove")
+    strategy_remove.add_argument("type", choices=["ticket", "epic"])
+    strategy_remove.add_argument("ref")
+    strategy_move = strategy_sub.add_parser("move")
+    strategy_move.add_argument("type", choices=["ticket", "epic"])
+    strategy_move.add_argument("ref")
+    strategy_move.add_argument("--to", required=True, choices=["Now", "Next", "Later"], dest="horizon")
+    strategy_doctor = strategy_sub.add_parser("doctor")
+    strategy_doctor.add_argument("--json", action="store_true")
+    strategy_migrate = strategy_sub.add_parser("migrate")
+    strategy_migrate.add_argument(
+        "--apply",
+        action="store_true",
+        help="Perform supported reversible rewrites (default: dry-run).",
+    )
 
     # `status` is defined above with its dedicated flags; only add the
     # lightweight observability siblings here.
@@ -514,12 +730,14 @@ def _emit_response_progress(command: str, response: StepResponse, emitter: Any) 
         return
     state = response.get("state")
     step = str(response.get("step") or command)
+    # Handler next_step payloads are compatibility hints only and must not
+    # become a live CLI-driven route authority.
     emitter.phase_end(
         step,
         success=bool(response.get("success", True)),
         state=state,
         result=response.get("result"),
-        next_step=response.get("next_step"),
+        next_step=None,
     )
     if state == "done":
         emitter.plan_done(
@@ -541,6 +759,14 @@ def _emit_error_progress(command: str, error: CliError, emitter: Any) -> None:
     emitter.phase_end(
         command, success=False, error_code=error.code, message=error.message
     )
+
+
+def _legacy_list_route_hints(state: dict[str, Any]) -> dict[str, Any]:
+    next_steps = infer_next_steps(state)
+    return {
+        "next_step": next_steps[0] if next_steps else None,
+        "valid_next": list(next_steps),
+    }
 
 
 
@@ -587,13 +813,15 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
             if allowed_states and current_state not in allowed_states:
                 continue
 
-            next_steps = infer_next_steps(state)
+            legacy_route_hints = _legacy_list_route_hints(state)
             entry = {
                 "name": state["name"],
                 "idea": state["idea"],
                 "state": current_state,
                 "iteration": state["iteration"],
-                "next_step": next_steps[0] if next_steps else None,
+                "observed_phase": active_phase_name(state) or current_state,
+                "next_step": legacy_route_hints["next_step"],
+                "legacy_route_hints": legacy_route_hints,
             }
             if not is_local:
                 try:
@@ -1436,9 +1664,13 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
     )
     from arnold_pipelines.megaplan.layout import (
         ALLOWED_INITIATIVE_SUBDIRS,
+        INITIATIVE_RETIREMENT_MARKER,
         initiative_metadata,
         initiative_root,
         initiatives_dir,
+        is_initiative_retired,
+        read_initiative_retirement,
+        render_initiative_readme,
         search_initiatives,
         slugify_initiative,
     )
@@ -1488,7 +1720,10 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
         readme = initiative / "README.md"
         if args.force or not readme.exists():
             title = (args.title or slug.replace("-", " ").title()).strip()
-            readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+            readme.write_text(
+                render_initiative_readme(title, description),
+                encoding="utf-8",
+            )
         north_star = args.north_star
         if args.north_star_file:
             source = Path(args.north_star_file).expanduser()
@@ -1500,6 +1735,17 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             north_star_path = initiative / "NORTHSTAR.md"
             if args.force or not north_star_path.exists():
                 north_star_path.write_text(north_star.rstrip() + "\n", encoding="utf-8")
+        strategy_path: Path | None = None
+        if bool(getattr(args, "strategy", False)):
+            strategy_result = handle_strategy(
+                root,
+                argparse.Namespace(
+                    strategy_action="init",
+                    initiative=slug,
+                    force=bool(args.force),
+                ),
+            )
+            strategy_path = Path(str(strategy_result["path"]))
         chain_path: Path | None = None
         milestone_paths: list[Path] = []
         milestones = list(getattr(args, "milestone", []) or [])
@@ -1554,6 +1800,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             "initiative": initiative_metadata(root, slug),
             "chain": str(chain_path) if chain_path else None,
             "cloud_yaml": str(cloud_path) if cloud_path else None,
+            "strategy": str(strategy_path) if strategy_path else None,
             "milestones": [str(path) for path in milestone_paths],
             "docs": [str(path) for path in copied_docs],
             "next": {
@@ -1578,6 +1825,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             initiative_metadata(root, path.name)
             for path in sorted(base.iterdir())
             if path.is_dir()
+            and (bool(getattr(args, "include_retired", False)) or not is_initiative_retired(root, path.name))
         ]
         if args.limit is not None:
             rows = rows[: args.limit]
@@ -1596,6 +1844,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             keywords,
             keywords_all=args.keywords_all,
             limit=args.limit or 25,
+            include_retired=bool(getattr(args, "include_retired", False)),
         )
         return {
             "success": True,
@@ -1603,6 +1852,136 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             "action": "search",
             "keywords": keywords,
             "initiatives": rows,
+        }
+    if action == "retire":
+        slug = slugify_initiative(args.slug)
+        replacement = slugify_initiative(args.superseded_by)
+        reason = str(args.reason or "").strip()
+        expected_chain_sha = str(args.expect_chain_sha256 or "").strip().lower()
+        if slug == replacement:
+            raise CliError("invalid_args", "retired and superseding initiatives must differ")
+        if not reason:
+            raise CliError("invalid_args", "--reason must be non-empty")
+        if len(expected_chain_sha) != 64 or any(char not in "0123456789abcdef" for char in expected_chain_sha):
+            raise CliError("invalid_args", "--expect-chain-sha256 must be 64 lowercase hex characters")
+        target = initiative_root(root, slug)
+        replacement_root = initiative_root(root, replacement)
+        chain_path = target / "chain.yaml"
+        replacement_chain = replacement_root / "chain.yaml"
+        if not chain_path.is_file() or chain_path.is_symlink():
+            raise CliError("initiative_not_found", f"Canonical chain is unavailable: {chain_path}")
+        if not replacement_chain.is_file() or replacement_chain.is_symlink():
+            raise CliError(
+                "initiative_not_found", f"Superseding canonical chain is unavailable: {replacement_chain}"
+            )
+        actual_chain_sha = hashlib.sha256(chain_path.read_bytes()).hexdigest()
+        if actual_chain_sha != expected_chain_sha:
+            raise CliError(
+                "initiative_changed",
+                f"Chain SHA-256 changed for {slug}: expected {expected_chain_sha}, got {actual_chain_sha}",
+            )
+        evidence_rows: list[dict[str, Any]] = []
+        resolved_root = root.resolve()
+        evidence_inputs = [
+            (raw_path, False) for raw_path in list(getattr(args, "evidence", []) or [])
+        ] + [
+            (raw_path, True)
+            for raw_path in list(getattr(args, "external_evidence", []) or [])
+        ]
+        for raw_path, external in evidence_inputs:
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                if external:
+                    raise CliError("invalid_args", "External retirement evidence must be absolute")
+                path = (resolved_root / path).resolve()
+            else:
+                path = path.resolve()
+            if external:
+                parts = path.parts
+                initiative_evidence = (
+                    path.is_relative_to(Path("/workspace"))
+                    and ".megaplan" in parts
+                    and "initiatives" in parts
+                )
+                if not path.is_relative_to(Path("/workspace/.megaplan")) and not initiative_evidence:
+                    raise CliError(
+                        "invalid_args",
+                        "External retirement evidence must be control-plane or initiative evidence under /workspace",
+                    )
+                evidence_path = str(path)
+            else:
+                try:
+                    evidence_path = path.relative_to(resolved_root).as_posix()
+                except ValueError as exc:
+                    raise CliError(
+                        "invalid_args", f"Retirement evidence must stay inside the repo: {path}"
+                    ) from exc
+            if not path.is_file() or path.is_symlink():
+                raise CliError("invalid_args", f"Retirement evidence is unavailable: {path}")
+            evidence_rows.append(
+                {
+                    "path": evidence_path,
+                    "scope": "external-control-plane" if external else "initiative-repo",
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "size": path.stat().st_size,
+                }
+            )
+        marker_path = target / INITIATIVE_RETIREMENT_MARKER
+        existing = read_initiative_retirement(root, slug)
+        if existing is not None:
+            identity = existing.get("identity") if isinstance(existing, dict) else None
+            if (
+                isinstance(identity, dict)
+                and identity.get("chain_sha256") == actual_chain_sha
+                and existing.get("superseded_by") == replacement
+            ):
+                return {
+                    "success": True,
+                    "step": "initiative",
+                    "action": "retire",
+                    "already_retired": True,
+                    "retirement": existing,
+                }
+            raise CliError("initiative_retired", f"Conflicting retirement marker already exists: {marker_path}")
+        retired_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        retirement_id = "iret-" + hashlib.sha256(
+            f"{slug}\0{actual_chain_sha}\0{replacement}\0{retired_at}".encode("utf-8")
+        ).hexdigest()[:24]
+        payload = {
+            "schema_version": "arnold.megaplan.initiative-retirement.v1",
+            "retirement_id": retirement_id,
+            "status": "retired",
+            "scope": "metadata_only",
+            "initiative": slug,
+            "superseded_by": replacement,
+            "retired_at": retired_at,
+            "reason": reason,
+            "identity": {
+                "chain_path": chain_path.relative_to(resolved_root).as_posix(),
+                "chain_sha256": actual_chain_sha,
+            },
+            "evidence": evidence_rows,
+            "truthfulness": {
+                "completion_asserted": False,
+                "unfinished_milestones_completed": False,
+                "historical_evidence_deleted": False,
+            },
+        }
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = marker_path.with_suffix(".retired.tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, marker_path)
+        return {
+            "success": True,
+            "step": "initiative",
+            "action": "retire",
+            "already_retired": False,
+            "retirement": payload,
+            "marker_path": str(marker_path),
+            "marker_sha256": hashlib.sha256(marker_path.read_bytes()).hexdigest(),
         }
     raise CliError("invalid_args", f"Unknown initiative action: {action}")
 
@@ -1754,6 +2133,21 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
     from arnold_pipelines.megaplan.runtime.resume import extract_typed_resume_metadata
 
     plan_dir = find_plan_dir(root, args.plan)
+    if plan_dir is not None and (plan_dir / "state.json").exists():
+        try:
+            persisted_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            persisted_state = {}
+        operator_pause = (
+            persisted_state.get("meta", {}).get("operator_pause")
+            if isinstance(persisted_state.get("meta"), dict)
+            else None
+        )
+        if persisted_state.get("current_state") == "paused" and isinstance(operator_pause, dict):
+            raise CliError(
+                "operator_pause_active",
+                "This plan is under a durable operator pause; use `megaplan chain resume --spec <chain.yaml>`.",
+            )
     typed_meta = (
         extract_typed_resume_metadata(plan_dir) if plan_dir is not None else None
     )
@@ -2445,8 +2839,30 @@ def handle_anchors(root: Path, args: argparse.Namespace) -> StepResponse:
     return _handle(root, args)
 
 
+def handle_authority_inventory(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Return the canonical, read-only authority evidence inventory."""
+
+    from arnold_pipelines.megaplan.authority.inventory import collect_authority_inventory
+
+    plan_dir = resolve_plan_dir(root, args.plan)
+    inventory = collect_authority_inventory(
+        plan_dir,
+        session=getattr(args, "session", None),
+        marker_dir=getattr(args, "marker_dir", None),
+    )
+    return {
+        "success": True,
+        "step": "authority-inventory",
+        "plan": plan_dir.name,
+        "plan_dir": str(plan_dir),
+        "inventory": inventory.to_dict(),
+        "fingerprint": inventory.fingerprint,
+    }
+
+
 COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "anchors": handle_anchors,
+    "authority-inventory": handle_authority_inventory,
     "init": handle_init,
     "plan": handle_plan,
     "prep": handle_prep,
@@ -2472,6 +2888,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "brief": handle_brief,
     "initiative": handle_initiative,
     "contract": handle_contract,
+    "strategy": handle_strategy,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,
@@ -3070,7 +3487,7 @@ def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
     return kept_prefix + ["execute", *moved_flags, *argv[execute_index + 1 :]]
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     argv = _normalize_execute_compat_argv(list(argv))
@@ -3132,6 +3549,16 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
+    if args.command != "setup":
+        status, hook_path = pre_commit_hook_status(Path.cwd())
+        if status == "stale":
+            print(
+                "megaplan: installed pre-commit hook is stale at "
+                f"{hook_path}; refresh it with: "
+                "python -m arnold_pipelines.megaplan setup "
+                "--install-hooks --force",
+                file=sys.stderr,
+            )
     if args.command != "setup":
         _auto_sync_installed_skills()
     try:
@@ -3349,6 +3776,66 @@ def main(argv: list[str] | None = None) -> int:
                 getattr(args, "command", ""), error, args.progress_emitter
             )
         return error_response(error, root=root)
+
+
+
+def _load_cloud_hot_env() -> None:
+    """In a trusted container, source ``/workspace/.cloud-hot-env`` into the env.
+
+    Mirrors the wrapper convention (``set -a; . /workspace/.cloud-hot-env; set +a``)
+    so phase/worker processes inherit the configured provider credentials (for
+    example GLM/Zhipu) without each caller having to re-source the file. Never
+    overwrites an already-present environment value. No-op when not in a trusted
+    container or when the file is absent.
+    """
+
+    if not os.environ.get("MEGAPLAN_TRUSTED_CONTAINER", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }:
+        return
+    hot_env = os.environ.get("ARNOLD_CLOUD_HOT_ENV") or "/workspace/.cloud-hot-env"
+    try:
+        with open(hot_env, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run one CLI process under the canonical managed-run lease lifecycle.
+
+    Ordinary local invocations have no managed session environment and this
+    context is a no-op. Cloud launchers provide that environment exactly once;
+    child phase processes inherit the owner fence and cannot create competing
+    publishers.
+    """
+
+    from arnold_pipelines.megaplan.cloud.liveness_lease import (
+        managed_runner_lifecycle,
+    )
+
+    _load_cloud_hot_env()
+
+    with managed_runner_lifecycle():
+        return _main(argv)
 
 
 if __name__ == "__main__":

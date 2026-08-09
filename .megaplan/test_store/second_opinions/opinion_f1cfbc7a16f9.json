@@ -1,0 +1,17 @@
+{
+  "id": "opinion_f1cfbc7a16f9",
+  "epic_id": "epic_7569bba081cb",
+  "requested_at": "2026-07-14T01:19:38.314453Z",
+  "requested_by": "user",
+  "focus_areas": [
+    "tone"
+  ],
+  "raw_response": "raw",
+  "score": 8,
+  "summary": "solid",
+  "verdict": "keep going",
+  "resulting_checklist_item_ids": [
+    "check_ff5c2f1ff59b"
+  ],
+  "model_used": "mock"
+}

@@ -61,6 +61,25 @@ No Megaplan re-exports appear here; this is the neutral surface.
 """
 
 from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
+from arnold.agent.costing.media_cost import (
+    MediaPricingEntry,
+    UsageExtraction,
+    compute_media_cost,
+    normalize_usage_extraction,
+)
+from arnold.agent.costing.token_cost import (
+    PricingEntry, estimate_usage_cost, normalize_usage,
+)
+from arnold.pipeline.native.decorators import (
+    decision,
+    native_panel,
+    parallel,
+    parallel_map,
+    phase,
+    pipeline,
+    step,
+    workflow,
+)
 from arnold.pipeline.content_validation import (
     ContentValidator,
     ContentValidatorRegistry,
@@ -218,6 +237,15 @@ from arnold.pipeline.types import (
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
 from arnold.execution.driver import AdvanceOutcome, CheckpointOutcome
+from arnold.execution.step_invocation import (
+    MediaUsage,
+    ModelAdapterNotImplementedError,
+    StepInvocation,
+    StepInvocationAdapter,
+    StepInvocationAdapterRegistry,
+    StepInvocationResult,
+    unwrap_step_invocation_result,
+)
 from arnold.pipeline.driver import StepwiseDriver
 
 __all__ = [
@@ -250,6 +278,8 @@ __all__ = [
     "LoopState",
     "Manifest",
     "ManifestError",
+    "MediaUsage",
+    "ModelAdapterNotImplementedError",
     "NativeExecutionResult",
     "NativeProgram",
     "NativeCursorCorruptError",
@@ -260,7 +290,9 @@ __all__ = [
     "NATIVE_CURSOR_VERSION",
     "NullNativeRuntimeHooks",
     "Pipeline",
+    "MediaPricingEntry",
     "PipelineIdRegistry",
+    "PricingEntry",
     "PipelineIdRegistryError",
     "PipelineVerdict",
     "Port",
@@ -289,6 +321,11 @@ __all__ = [
     "StepIOOperation",
     "StepIOPolicy",
     "StepContext",
+    "StepInvocation",
+    "StepInvocationAdapter",
+    "StepInvocationAdapterRegistry",
+    "StepInvocationResult",
+    "unwrap_step_invocation_result",
     "StepResult",
     "StepwiseDriver",
     "Suspension",
@@ -297,6 +334,7 @@ __all__ = [
     "SeamResolution",
     "TrustClass",
     "TrustGrade",
+    "UsageExtraction",
     "ValidationDiagnostic",
     "ValidationResult",
     "apply_delta",
@@ -310,6 +348,7 @@ __all__ = [
     "coerce",
     "decide_step_io_read",
     "decide_step_io_write",
+    "compute_media_cost",
     "derive_binding_map",
     "derive_tenant_id",
     "decision_blocks_read",
@@ -323,6 +362,7 @@ __all__ = [
     "legal_coercions",
     "load_step_io_policy",
     "load_pipeline_id_registry",
+    "estimate_usage_cost",
     "load_pipeline_id_registries",
     "majority_vote",
     "max_iters",
@@ -330,6 +370,9 @@ __all__ = [
     "no_op_content_validator",
     "normalize_schema_version",
     "native_runtime_enabled",
+    "native_panel",
+    "parallel",
+    "parallel_map",
     "register_media_content_validators",
     "parse_llm_json",
     "persist_native_cursor",
@@ -344,6 +387,7 @@ __all__ = [
     "reduce_contract_results",
     "register_schema",
     "resolve_registry_runtime_identity",
+    "normalize_usage",
     "RESUME_CURSOR_FILENAME",
     "RESUME_REVERIFY_DECLARATION_KEY",
     "RESUME_REVERIFY_EXTENSION_KEY",
@@ -368,8 +412,14 @@ __all__ = [
     "upgrade_graph_cursor_to_native",
     "validate_contract_result",
     "validate_payload_against_schema",
+    "normalize_usage_extraction",
     "WriteRef",
     "weighted_vote",
+    "decision",
+    "phase",
+    "pipeline",
+    "step",
+    "workflow",
     "policy_for_envelope",
     "write_step_io_policy",
     "STEP_IO_POLICY_FILENAME",

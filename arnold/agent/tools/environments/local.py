@@ -4,14 +4,13 @@ import glob
 import os
 import platform
 import shutil
-import signal
 import subprocess
 import threading
 import time
 
 _IS_WINDOWS = platform.system() == "Windows"
 
-from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
+from arnold.runtime.process import kill_group, spawn
 from arnold.agent.tools.environments.base import BaseEnvironment
 from arnold.agent.tools.environments.persistent_shell import PersistentShellMixin
 from arnold.agent.tools.interrupt import is_interrupted
@@ -385,12 +384,16 @@ class LocalEnvironment(PersistentShellMixin, BaseEnvironment):
             effective_stdin = stdin_data
 
         user_shell = _find_bash()
+        # Keep the status/fence commands on fresh lines.  A command containing
+        # a shell here-document must end its delimiter at column zero; appending
+        # ``; __hermes_rc`` directly to the command string turns ``EOF`` into
+        # ``EOF; __hermes_rc`` and makes otherwise valid agent commands fail.
         fenced_cmd = (
-            f"printf '{_OUTPUT_FENCE}';"
-            f" {exec_command};"
-            f" __hermes_rc=$?;"
-            f" printf '{_OUTPUT_FENCE}';"
-            f" exit $__hermes_rc"
+            f"printf '{_OUTPUT_FENCE}';\n"
+            f"{exec_command}\n"
+            f"__hermes_rc=$?\n"
+            f"printf '{_OUTPUT_FENCE}';\n"
+            f"exit $__hermes_rc\n"
         )
         run_env = _make_run_env(self.env)
 

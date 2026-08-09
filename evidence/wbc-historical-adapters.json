@@ -1,0 +1,364 @@
+{
+  "adapters": [
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-chain-state-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/chain/spec.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "load_chain_state",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-supervisor-state-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/supervisor/state.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "load_supervisor_state",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-bakeoff-state-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/bakeoff/state.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "load_bakeoff_state",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "filename",
+      "adapter_id": "legacy-status-snapshot-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "load_cloud_status_snapshot",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "marker",
+      "adapter_id": "legacy-heartbeat-state-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/_core/state.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "load_state",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "token",
+      "adapter_id": "legacy-repair-lock-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/cloud/repair_lock.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "read_repair_lock",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "process",
+      "adapter_id": "historical-process-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/runtime/process.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "ProcessCustodyRegistry.find",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "prose",
+      "adapter_id": "historical-prose-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/receipts/__init__.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "render_receipt",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "token",
+      "adapter_id": "historical-token-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/runtime/capacity_lease.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "_read_state_token",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "marker",
+      "adapter_id": "historical-marker-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/cloud/operator_control.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "_load_marker",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "mutable_receipt",
+      "adapter_id": "historical-mutable-receipt-reader",
+      "approver": "custody-control-plane",
+      "deletion_gate": "zero callers plus projection-parity proof",
+      "diagnostics": "Read-only compatibility evidence; never accepted as completion or mutation authority.",
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "expiring"
+      },
+      "owner": "wbc",
+      "path": "arnold_pipelines/megaplan/runtime/migrate_history.py",
+      "permitted_reads": [
+        "diagnostic",
+        "historical_replay"
+      ],
+      "symbol": "find_legacy_receipts",
+      "versions": [
+        "legacy",
+        "current"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "read_only": true,
+        "read_only_verified": true
+      }
+    }
+  ],
+  "meta": {
+    "adapter_classes_present": [
+      "filename",
+      "marker",
+      "mutable_receipt",
+      "process",
+      "prose",
+      "raw_json",
+      "token"
+    ],
+    "adapter_count": 11,
+    "description": "Deterministic inventory of proven read-only historical compatibility adapters.",
+    "generated_by": "generate_wbc_boundary_inventory.py",
+    "read_only_verified_count": 11,
+    "schema": "m6.wbc-historical-adapters.v1",
+    "status": "proven_read_only",
+    "status_detail": "Every listed adapter has an explicit read-only, diagnostic-only zero-authority proof.",
+    "timestamp_utc": "2026-07-31T08:53:09.480142+00:00"
+  }
+}

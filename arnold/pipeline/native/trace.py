@@ -108,7 +108,13 @@ def write_artifact_inventory(root: str | Path) -> dict[str, str]:
     for entry in sorted(root_path.rglob("*")):
         if not entry.is_file():
             continue
-        rel = str(entry.relative_to(root_path))
+        relative = entry.relative_to(root_path)
+        if ".native_wbc" in relative.parts:
+            # WBC ledgers are execution evidence, not pipeline output
+            # artifacts; including them makes deterministic output traces vary
+            # with evidence event sequencing.
+            continue
+        rel = str(relative)
         try:
             sha = hashlib.sha256()
             with open(entry, "rb") as fh:

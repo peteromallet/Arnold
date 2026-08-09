@@ -175,6 +175,22 @@ class EventKind:
     # object.  Always governs_live_policy=False, write-only.
     CALIBRATION_EXPERIMENT: str = "calibration_experiment"
 
+    # ── M9 Work-ledger event types (5) ─────────────────────────────────
+    SESSION_START: str = "session_start"
+    """Session started (worker / agent session)."""
+
+    INFERENCE: str = "inference"
+    """Model inference call (generalization of LLM_CALL_START/END)."""
+
+    TOOL: str = "tool"
+    """Tool invocation (non-model side-effect call)."""
+
+    GIT: str = "git"
+    """Git operation (commit, branch, status)."""
+
+    TRANSITION: str = "transition"
+    """Workflow / state-machine transition event."""
+
 
 # Convenience set for fast membership checks.
 _ALL_EVENT_KINDS: Set[str] = frozenset(
@@ -214,6 +230,11 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.STATE_CACHE_DRIFT,
         EventKind.CAPABILITY_CLAIM,
         EventKind.CALIBRATION_EXPERIMENT,
+        EventKind.SESSION_START,
+        EventKind.INFERENCE,
+        EventKind.TOOL,
+        EventKind.GIT,
+        EventKind.TRANSITION,
     }
 )
 
@@ -237,6 +258,9 @@ _TELEMETRY_EVENT_KINDS: Set[str] = frozenset(
         EventKind.LLM_CALL_END,
         EventKind.LLM_CALL_ERROR,
         EventKind.COST_RECORDED,
+        EventKind.INFERENCE,
+        EventKind.TOOL,
+        EventKind.GIT,
     }
 )
 
@@ -339,9 +363,13 @@ class EventWriter:
                 # (1) Read → increment → write seq counter.
                 try:
                     raw = os.read(seq_fd, 128)
-                    current = int(raw.strip()) if raw.strip() else -1
+                    current = (
+                        int(raw.strip())
+                        if raw.strip()
+                        else self._recover_durable_sequence()
+                    )
                 except (ValueError, FileNotFoundError):
-                    current = -1
+                    current = self._recover_durable_sequence()
                 new_seq = current + 1
                 os.lseek(seq_fd, 0, os.SEEK_SET)
                 os.write(seq_fd, str(new_seq).encode("ascii"))
@@ -368,13 +396,13 @@ class EventWriter:
                 else:
                     event["store_method"] = "record_epic_event"
                 _store_event(self._store, self._plan_dir.name, event)
-                from arnold_pipelines.megaplan.observability.events_projection import write_projection
+                from arnold_pipelines.megaplan.observability.events_projection import append_projection_event
 
-                write_projection(
+                append_projection_event(
                     self._plan_dir,
                     self._store,
+                    event,
                     plan_id=self._plan_dir.name,
-                    force=True,
                 )
 
                 # (3) Release flock AFTER Store write + projection complete.
@@ -394,6 +422,34 @@ class EventWriter:
                 self._write_init_ts(ts_utc)
 
         return event
+
+    def _recover_durable_sequence(self) -> int:
+        """Recover an absent/corrupt advisory counter from Store evidence."""
+        highest = -1
+        try:
+            for stored in self._store.events_for_plan(self._plan_dir.name):
+                seq = getattr(stored, "seq", None)
+                if isinstance(seq, int) and not isinstance(seq, bool):
+                    highest = max(highest, seq)
+        except (OSError, ValueError, TypeError):
+            # The compatibility projection is not authority, but remains a
+            # safe monotonic floor when the Store adapter is temporarily
+            # unreadable.  We still scan the projection below in the normal
+            # case: a restored workspace can have a readable-but-empty Store
+            # while retaining its append-only journal.
+            pass
+        try:
+            with (self._plan_dir / _NDJSON_FILE).open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        seq = json.loads(line).get("seq")
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+                    if isinstance(seq, int) and not isinstance(seq, bool):
+                        highest = max(highest, seq)
+        except FileNotFoundError:
+            pass
+        return highest
 
     def _load_init_ts(self) -> Optional[datetime]:
         """Return the init timestamp cached in .events.init_ts, or None."""

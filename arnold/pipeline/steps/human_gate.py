@@ -28,6 +28,7 @@ from arnold.pipeline.types import (
     StepResult,
 )
 from arnold.runtime.state_persistence import atomic_write_json
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 _LOG = logging.getLogger(__name__)
 
@@ -257,6 +258,14 @@ class HumanGateStep:
         choice as the ``next`` edge label and cleans up.
         """
         checkpoint_path = Path(ctx.artifact_root) / self._checkpoint_filename
+        attempt = begin_native_wbc_attempt(
+            ctx.artifact_root,
+            producer_family="arnold_pipeline",
+            surface="human_gate_step",
+            run_id="",
+            subject={"step": self.name, "artifact_stage": self._artifact_stage},
+            metadata={"pipeline_name": self._pipeline_name, "choices": list(self._choices)},
+        )
 
         # ── resolve the resume choice ──
         choice: str | None = self._resume_choice
@@ -274,10 +283,17 @@ class HumanGateStep:
             object.__setattr__(self, "_resume_choice", None)
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
-            return StepResult(
+            attempt.effect("resume_choice", {"choice": choice, "checkpoint": str(checkpoint_path)})
+            result = StepResult(
                 outputs={},
                 next=choice,
             )
+            attempt.terminal(
+                status="completed",
+                outcome="resumed",
+                payload={"choice": choice},
+            )
+            return result
 
         # ── pause path ──
         write_human_gate_checkpoint(
@@ -302,7 +318,8 @@ class HumanGateStep:
             step_name=self.name,
             prompt=self._prompt,
         )
-        return StepResult(
+        attempt.effect("checkpoint_written", {"checkpoint": str(checkpoint_path)})
+        result = StepResult(
             outputs={"awaiting_user": str(checkpoint_path)},
             next="halt",
             state_patch={
@@ -310,6 +327,12 @@ class HumanGateStep:
                 "_pipeline_paused_stage": self.name,
             },
         )
+        attempt.terminal(
+            status="suspended",
+            outcome="awaiting_user",
+            payload={"checkpoint": str(checkpoint_path)},
+        )
+        return result
 
 
 def _enqueue_human_gate_repair_request(
@@ -323,18 +346,30 @@ def _enqueue_human_gate_repair_request(
     hook_extensions = ctx.hook_extensions if isinstance(ctx.hook_extensions, Mapping) else {}
     plan_dir = str(hook_extensions.get("plan_dir") or "").strip()
     workspace_path = str(hook_extensions.get("workspace_path") or "").strip()
+    queue_root = str(hook_extensions.get("repair_queue_root") or "").strip()
     session = str(
         hook_extensions.get("chain_session")
         or hook_extensions.get("session")
         or ""
     ).strip()
-    if not plan_dir or not workspace_path or not session:
+    if not plan_dir or not workspace_path or not queue_root or not session:
         return
     hook = hook_extensions.get("human_gate_repair_request_hook")
     if not callable(hook):
         return
+
+    # ── Step 40 (T26): extract occurrence identity from hook_extensions ──
+    occurrence_identity = hook_extensions.get("occurrence_identity")
+    evidence_cursor_digest = str(
+        hook_extensions.get("evidence_cursor_digest") or ""
+    ).strip()
+    terminal_receipt_expectations = hook_extensions.get(
+        "terminal_receipt_expectations"
+    )
+
     try:
         hook(
+            queue_root=queue_root,
             marker_dir=plan_dir,
             session=session,
             workspace=workspace_path,
@@ -344,6 +379,13 @@ def _enqueue_human_gate_repair_request(
             artifact_stage=artifact_stage,
             step_name=step_name,
             prompt=prompt,
+            occurrence_identity=occurrence_identity,
+            evidence_cursor_digest=evidence_cursor_digest,
+            terminal_receipt_expectations=(
+                list(terminal_receipt_expectations)
+                if isinstance(terminal_receipt_expectations, list)
+                else None
+            ),
         )
     except Exception:
         _LOG.warning(

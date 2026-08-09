@@ -1,0 +1,28 @@
+{
+  "id": "turn_42256d4635a3",
+  "epic_id": "epic_7569bba081cb",
+  "triggered_by_message_ids": [
+    "msg_5588ed82231f"
+  ],
+  "prompt_snapshot": {
+    "input": "hello from user"
+  },
+  "prompt_version": null,
+  "reasoning": "done",
+  "final_output_message_id": null,
+  "status_message_id": null,
+  "status": "completed",
+  "state_at_turn": {
+    "state": "shaping"
+  },
+  "plan_edited": false,
+  "code_consulted": false,
+  "image_generated": false,
+  "second_opinion_requested": false,
+  "message_sent": false,
+  "warnings_issued": null,
+  "current_activity": null,
+  "started_at": "2026-07-14T01:19:38.266124Z",
+  "completed_at": "2026-07-14T01:19:38.269359Z",
+  "model_version": "fake"
+}

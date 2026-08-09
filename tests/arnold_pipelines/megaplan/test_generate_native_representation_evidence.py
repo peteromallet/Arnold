@@ -23,6 +23,10 @@ from arnold_pipelines.megaplan.workflows.package_fingerprints import (
 ROOT = Path(__file__).resolve().parents[3]
 CONFORMANCE_PATH = ROOT / "docs/arnold/megaplan-native-representation-conformance.yaml"
 TRACEABILITY_PATH = ROOT / "docs/arnold/megaplan-native-representation-traceability.yaml"
+RETIRED_COMPATIBILITY_PROOFS = (
+    "tests/arnold_pipelines/megaplan/test_compositional_workflow.py",
+    "tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py",
+)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -35,6 +39,25 @@ def _sha256(path: Path) -> str:
     import hashlib
 
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def test_native_evidence_uses_active_proofs_not_retired_skipped_suites() -> None:
+    """Generated authority must never point at the retired skip-only suites."""
+    authoritative_inputs = (
+        CONFORMANCE_PATH,
+        ROOT / "docs/arnold/megaplan-native-representation-scenarios.yaml",
+        ROOT / "docs/arnold/megaplan-native-representation-evidence.yaml",
+    )
+
+    for retired_path in RETIRED_COMPATIBILITY_PROOFS:
+        assert not (ROOT / retired_path).exists()
+        for artifact in authoritative_inputs:
+            assert retired_path not in artifact.read_text(encoding="utf-8")
+
+    assert (
+        "tests/arnold_pipelines/megaplan/test_native_contract.py"
+        in CONFORMANCE_PATH.read_text(encoding="utf-8")
+    )
 
 
 def test_generate_evidence_bundle_emits_checker_records_and_scoped_boundary_proof() -> None:
@@ -220,9 +243,9 @@ def test_generate_evidence_bundle_emits_checker_records_and_scoped_boundary_proo
         {
             "check_id": "topology_regeneration",
             "row_ids": ["shadow-topology"],
-            "proof_artifact_path": "tests/arnold_pipelines/megaplan/test_compositional_workflow.py",
+            "proof_artifact_path": "tests/arnold_pipelines/megaplan/test_native_contract.py",
             "proof_artifact_sha256": _sha256(
-                ROOT / "tests/arnold_pipelines/megaplan/test_compositional_workflow.py"
+                ROOT / "tests/arnold_pipelines/megaplan/test_native_contract.py"
             ),
             "fixture_path": "tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml",
             "fixture_sha256": _sha256(
@@ -283,8 +306,8 @@ def test_generate_evidence_bundle_emits_checker_records_and_scoped_boundary_proo
     assert compatibility_record["quarantine_record_count"] == len(FORBIDDEN_AUTHORITY_SCANS)
     assert compatibility_record["authority_conflicts"] == {}
     assert compatibility_record["coupling_gate"]["check_id"] == "generic-arnold-megaplan-coupling"
-    assert compatibility_record["coupling_gate"]["details"]["allowlisted_count"] == 11
-    assert compatibility_record["coupling_gate"]["details"]["coupled_count"] >= 11
+    assert compatibility_record["coupling_gate"]["details"]["allowlisted_count"] == 5
+    assert compatibility_record["coupling_gate"]["details"]["coupled_count"] == 5
     assert compatibility_record["passed"] is (
         compatibility_record["coupling_gate"]["passed"]
         and not compatibility_record["authority_conflicts"]

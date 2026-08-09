@@ -47,13 +47,23 @@ def installed_wheel(tmp_path_factory: pytest.TempPathFactory) -> InstalledWheel:
     )
 
     venv_dir = tmp / "venv"
-    venv.create(venv_dir, with_pip=True)
+    # Keep the package under test isolated while reusing the validation
+    # environment's already pinned third-party dependencies. Downloading the
+    # full runtime dependency graph here made this packaging proof depend on
+    # network timing rather than wheel contents.
+    venv.create(venv_dir, with_pip=True, system_site_packages=True)
     python = venv_dir / "bin" / "python"
     pip = venv_dir / "bin" / "pip"
     arnold = venv_dir / "bin" / "arnold"
 
     subprocess.run(
-        [str(pip), "install", str(wheels[0])],
+        [
+            str(pip),
+            "install",
+            "--force-reinstall",
+            "--no-deps",
+            str(wheels[0]),
+        ],
         check=True,
         capture_output=True,
         text=True,

@@ -54,9 +54,9 @@ The following snippet is extracted verbatim from the pack's `steps.py`.
 
 ```python
 class IssueDifficulty(IntEnum):
-    """1-10 scale for task/issue "weight" — composite of difficulty + scale (+ blast radius/consequence).
+    """1-10 scale for task/issue "weight" — composite of difficulty + scale (and blast radius).
 
-    Rethought from the ground up (with Codex input). Uses weight-oriented names so "Hard/Heavy" doesn't come too early.
+    Rethought with Codex input. Uses weight-oriented names so "Hard/Heavy" doesn't come too early.
     """
 
     MICRO = 1
@@ -498,6 +498,8 @@ stage_count: 4
 The following module instructions are extracted verbatim from the pack's `SKILL.md`.
 
 ````markdown
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 # live-supervisor
 
 Input: a Snapshot dict passed as `initial_state={"snapshot": <dict>}`. The

@@ -4,13 +4,18 @@ Every production site that reads raw terminal task status, milestone outcome,
 or batch completion state and can increase authority (by skipping work,
 unblocking dependencies, resuming/redriving, selecting a plan, classifying
 success, setting success exit status, or advancing work) must be listed here
-with one of three dispositions:
+with one of five dispositions:
 
-* ``migrated`` — rewired through the shared authority adapter (TODO in later
-  M2 steps).
-* ``tested`` — covered by explicit authority-aware tests.
-* ``deferred`` — not migrated in this milestone, with an explicit reason.
-  Informational/status-only readers are also classified here.
+* ``enforced`` — authority adapter fully controls the decision; legacy path
+  is either removed or gated behind equivalence diagnostics.
+* ``warn-only`` — authority is wired and produces drift diagnostics, but the
+  legacy decision path is preserved as the effective outcome (fail-open).
+* ``shadow-only`` — authority runs purely in diagnostic/shadow mode with no
+  behavioural change to the production path.
+* ``informational`` — read-only status display that never increases
+  authority (operator visibility only).
+* ``deferred`` — not migrated in this milestone, with an explicit deferral
+  reason.
 
 This inventory is the source of truth for the T16 raw-status grep/code audit
 and the SC1 sense check.
@@ -27,6 +32,20 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.observability.events import EventKind, emit
+from arnold_pipelines.megaplan._core import list_batch_artifacts
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    resolve_batch_authority_metadata,
+)
+from arnold_pipelines.megaplan.authority.binding import (
+    ResultEnvelope,
+    TaskClaim,
+    TaskValidationDecision,
+)
+from arnold_pipelines.megaplan.authority.views import (
+    LegacyTaskLabel,
+    PlanExecutionView,
+    derive_plan_execution_view,
+)
 from arnold_pipelines.megaplan.orchestration.completion_io import (
     read_typed_completion_verdict,
 )
@@ -42,13 +61,23 @@ from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
 )
+from arnold_pipelines.run_authority import (
+    CASExpectation,
+    ContractError,
+    reduce_run_authority,
+)
 
 # ── Route disposition vocabulary ──────────────────────────────────────────
 
-MIGRATED = "migrated"
-TESTED = "tested"
-DEFERRED = "deferred"
+ENFORCED = "enforced"
+WARN_ONLY = "warn-only"
+SHADOW_ONLY = "shadow-only"
 INFORMATIONAL = "informational"
+DEFERRED = "deferred"
+
+# Legacy aliases kept for backward compatibility during migration window.
+MIGRATED = ENFORCED  # noqa: backward-compat alias
+TESTED = ENFORCED    # noqa: backward-compat alias
 
 
 @dataclass(frozen=True)
@@ -59,7 +88,7 @@ class AuthorityRoute:
     file: str
     line_range: str
     description: str
-    disposition: str  # migrated | tested | deferred | informational
+    disposition: str  # enforced | warn-only | shadow-only | informational | deferred
     owner_or_reason: str
     route_family: str  # execute | resume | chain | supervisor | status | timeout
 
@@ -76,6 +105,22 @@ AUTHORITATIVE_TASK_STATUSES = frozenset(
 AUTHORITY_DIVERGENCE_LEDGER = "authority_divergence.jsonl"
 _TERMINAL_AUTHORITY_CLAIMS = frozenset({"done", "skipped", "waived", "not_applicable"})
 _AUDIT_RESEARCH_NOTES_MIN_LEN = 100
+
+
+def has_durable_terminal_task_evidence(task: Mapping[str, Any]) -> bool:
+    """Whether terminal finalized output must survive stale batch overlays."""
+    status = _optional_str(task.get("status"))
+    if status == "done":
+        return any(
+            _string_values(task.get(field))
+            for field in ("files_changed", "commands_run", "evidence_files", "sections_written")
+        )
+    if status == "skipped":
+        notes = _optional_str(task.get("executor_notes"))
+        return bool(notes and not is_rubber_stamp(notes, strict=True))
+    return status in {"waived", "not_applicable"}
+
+
 
 
 @dataclass(frozen=True)
@@ -150,6 +195,14 @@ class AuthorityDecision:
         )
 
 
+@dataclass(frozen=True)
+class AcceptedAttemptProjection:
+    """Read-only execute projection built from accepted dispatch envelopes."""
+
+    view: PlanExecutionView
+    source_paths: tuple[str, ...]
+
+
 def authority_decision_for_task(
     task: Mapping[str, Any],
     evidence_nucleus: Any,
@@ -193,10 +246,11 @@ def corroborated_completed_task_ids(
     execution_window: EvidenceExecutionWindow | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
-    """Return task IDs with authoritative satisfied/waived/not-applicable evidence.
+    """Compatibility/shadow adapter for evidence-corroborated completion IDs.
 
     The only success path is an ``is_task_satisfied`` decision. Per-task errors
     degrade to ``unknown`` and do not stop other tasks from being evaluated.
+    Raw legacy terminal labels are retained only as drift diagnostics.
     """
 
     task_records = tuple(tasks)
@@ -225,6 +279,8 @@ def corroborated_completed_task_ids(
                 result,
                 diagnostics={
                     **diagnostics,
+                    "authority_adapter": "corroborated_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
                     "raw_terminal_status": _optional_str(task.get("status")),
                 },
             )
@@ -232,7 +288,12 @@ def corroborated_completed_task_ids(
             decision = AuthorityDecision.unknown(
                 task_id,
                 reason="is_task_satisfied_error",
-                diagnostics={"exception_type": type(exc).__name__, **diagnostics},
+                diagnostics={
+                    "exception_type": type(exc).__name__,
+                    **diagnostics,
+                    "authority_adapter": "corroborated_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                },
                 error=str(exc),
             )
         if plan_dir is not None:
@@ -254,7 +315,7 @@ def scheduler_completed_ids(
     execution_window: EvidenceExecutionWindow | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
-    """Return the production ``completed_ids`` set for the pure topo scheduler.
+    """Compatibility/shadow adapter for scheduler ``completed_ids``.
 
     Scheduler ``completed_ids`` must be corroborated authority decisions, not
     raw ``status="done"`` / ``"skipped"`` claims. This wrapper makes that
@@ -269,7 +330,7 @@ def scheduler_completed_ids(
     if resolved_current_head is None and resolved_plan_dir is not None:
         resolved_current_head = _best_effort_git_head(resolved_plan_dir)
 
-    return corroborated_completed_task_ids(
+    completed = corroborated_completed_task_ids(
         tasks,
         plan_dir=resolved_plan_dir,
         evidence_nucleus=evidence_nucleus,
@@ -278,6 +339,12 @@ def scheduler_completed_ids(
         execution_window=execution_window,
         decisions=decisions,
     )
+    if decisions is not None:
+        for decision in decisions.values():
+            decision.diagnostics["authority_adapter"] = "scheduler_completed_ids"
+            decision.diagnostics["adapter_mode"] = "compatibility_shadow"
+            decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
+    return completed
 
 
 def execute_execution_window(
@@ -322,7 +389,7 @@ def effective_execute_completed_task_ids(
     current_code_hash: str | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
-    """Return execute completion IDs with execution-window freshness and explained skips.
+    """Compatibility/shadow adapter for execute completion IDs.
 
     Execute scheduling and end-of-run accounting need one shared notion of
     "effectively complete": corroborated task evidence may come from an earlier
@@ -333,6 +400,7 @@ def effective_execute_completed_task_ids(
     the same execute run.
     """
 
+    task_records = tuple(tasks)
     resolved_plan_dir = Path(plan_dir) if plan_dir is not None else None
     resolved_project_dir = Path(project_dir) if project_dir is not None else None
     if resolved_project_dir is None and isinstance(state, Mapping):
@@ -347,6 +415,23 @@ def effective_execute_completed_task_ids(
             project_dir=resolved_project_dir,
             baseline_head=baseline_head,
         )
+    projection = accepted_attempt_execution_projection(
+        task_records,
+        plan_dir=resolved_plan_dir,
+    )
+    if projection is not None:
+        projection_decisions = decisions if decisions is not None else {}
+        _populate_projection_decisions(
+            projection.view,
+            decisions=projection_decisions,
+        )
+        if resolved_plan_dir is not None:
+            _emit_projection_drift_diagnostics(
+                resolved_plan_dir,
+                task_records,
+                decisions=projection_decisions,
+            )
+        return set(projection.view.dependency_closed_completed_task_ids)
     execution_window = (
         execute_execution_window(
             state,
@@ -356,18 +441,73 @@ def effective_execute_completed_task_ids(
         if resolved_project_dir is not None
         else None
     )
+    # A replayed milestone changes recorded commit IDs without changing its
+    # declared diff. Re-anchor only terminal file evidence wholly present in
+    # that diff, then feed the same current-head refs to all execute consumers.
+    effective_tasks = list(tasks)
+    effective_nucleus = evidence_nucleus
+    chain_policy = (
+        state.get("meta", {}).get("chain_policy", {})
+        if isinstance(state, Mapping) and isinstance(state.get("meta"), Mapping)
+        else {}
+    )
+    base_ref = chain_policy.get("milestone_base_sha") if isinstance(chain_policy, Mapping) else None
+    if (
+        resolved_plan_dir is not None
+        and resolved_project_dir is not None
+        and isinstance(base_ref, str)
+        and base_ref.strip()
+        and current_head
+    ):
+        try:
+            from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
+            committed = _collect_committed_range_paths(resolved_project_dir, base_ref=base_ref)
+            reanchored_refs: list[EvidenceRef] = []
+            reanchored_tasks: list[Mapping[str, Any]] = []
+            for task in effective_tasks:
+                files = set(_string_values(task.get("files_changed")))
+                if (
+                    has_durable_terminal_task_evidence(task)
+                    and files
+                    and files.issubset(committed)
+                ):
+                    copied = dict(task)
+                    copied["head_sha"] = current_head
+                    reanchored_tasks.append(copied)
+                    reanchored_refs.extend(
+                        _evidence_from_task_record(
+                            copied,
+                            resolved_plan_dir / "finalize.json",
+                            root=resolved_plan_dir,
+                            default_head=current_head,
+                        )
+                    )
+                else:
+                    reanchored_tasks.append(task)
+            effective_tasks = reanchored_tasks
+            if reanchored_refs:
+                existing = _normalize_refs(evidence_nucleus)
+                effective_nucleus = (*existing, *reanchored_refs)
+        except Exception:
+            pass
+
     completed = corroborated_completed_task_ids(
-        tasks,
+        effective_tasks,
         plan_dir=resolved_plan_dir,
-        evidence_nucleus=evidence_nucleus,
+        evidence_nucleus=effective_nucleus,
         current_head=current_head,
         current_code_hash=current_code_hash,
         execution_window=execution_window,
         decisions=decisions,
     )
+    if decisions is not None:
+        for decision in decisions.values():
+            decision.diagnostics["authority_adapter"] = "effective_execute_completed_task_ids"
+            decision.diagnostics["adapter_mode"] = "compatibility_shadow"
+            decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
     explained_skips = {
         task_id
-        for task in tasks
+        for task in effective_tasks
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
         and _is_explained_skip(task)
@@ -375,14 +515,14 @@ def effective_execute_completed_task_ids(
     completed |= explained_skips
     explained_noops = {
         task_id
-        for task in tasks
+        for task in effective_tasks
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
         and _is_explained_noop_completion(task)
     }
     completed |= explained_noops
     if decisions is not None:
-        for task in tasks:
+        for task in effective_tasks:
             if not isinstance(task, Mapping):
                 continue
             task_id = _task_id(task)
@@ -393,12 +533,12 @@ def effective_execute_completed_task_ids(
 
     authoritative_commands = {
         command
-        for task in tasks
+        for task in effective_tasks
         if isinstance(task, Mapping)
         and _task_id(task) in completed
         for command in _string_values(task.get("commands_run"))
     }
-    for task in tasks:
+    for task in effective_tasks:
         if not isinstance(task, Mapping):
             continue
         task_id = _task_id(task)
@@ -413,11 +553,371 @@ def effective_execute_completed_task_ids(
                     status=EvidenceStatus.satisfied,
                     satisfied=True,
                     diagnostics={
+                        "authority_adapter": "effective_execute_completed_task_ids",
+                        "adapter_mode": "compatibility_shadow",
                         "raw_terminal_status": _optional_str(task.get("status")),
                         "execute_completion": "shared_authoritative_commands",
                     },
                 )
     return completed
+
+
+def accepted_attempt_execution_projection(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None,
+) -> AcceptedAttemptProjection | None:
+    """Build the accepted-attempt execute projection when durable metadata exists.
+
+    The projection is intentionally derived only from result envelopes whose
+    merge-time ``authority_validation`` outcome was accepted.  ``batch_scope``
+    and legacy task statuses are carried as diagnostics through
+    ``derive_plan_execution_view``; they never mint accepted attempts.
+    """
+
+    if plan_dir is None:
+        return None
+    root = Path(plan_dir)
+    task_records = tuple(task for task in tasks if isinstance(task, Mapping))
+    if not task_records:
+        return None
+    collected = _collect_accepted_attempt_authority(root)
+    if collected is None:
+        return None
+    records, evidence_decisions, legacy_labels, run_id, run_revision, source_paths = collected
+    try:
+        authority = reduce_run_authority(
+            records,
+            run_id=run_id,
+            run_revision=run_revision,
+        )
+        view = derive_plan_execution_view(
+            authority,
+            {"tasks": task_records},
+            evidence_decisions=evidence_decisions,
+            legacy_labels=legacy_labels,
+        )
+    except (ContractError, ValueError):
+        return None
+    return AcceptedAttemptProjection(
+        view=view,
+        source_paths=source_paths,
+    )
+
+
+
+def _all_batch_artifact_waves_sorted(plan_dir: Path) -> list[Path]:
+    """Return every batch artifact *wave* file, newest-fence first.
+
+    Unlike :func:`list_batch_artifacts` (which returns one preferred file
+    per batch directory), this yields **all** ``tasks_*.json`` files across
+    every batch directory.  This is necessary because different wave files
+    within the same batch directory may cover disjoint task subsets; the
+    single preferred file drops accepted authority for tasks that only
+    appear in earlier waves.
+
+    The result is sorted newest-fence-first (falling back to mtime for
+    legacy artifacts) so callers can iterate and skip superseded attempts.
+    """
+    waves: list[Path] = []
+    batches_root = plan_dir / "execute_batches"
+    if batches_root.is_dir():
+        for entry in sorted(batches_root.iterdir()):
+            if not entry.is_dir():
+                continue
+            for child in sorted(entry.iterdir()):
+                if (
+                    child.is_file()
+                    and child.name.startswith("tasks_")
+                    and child.suffix == ".json"
+                ):
+                    waves.append(child)
+    for legacy_path in plan_dir.glob("execution_batch_*.json"):
+        if legacy_path.is_file():
+            waves.append(legacy_path)
+
+    def _wave_key(p: Path) -> tuple[int, int, int, str]:
+        fence_token = -1
+        has_dispatch_identity = 0
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, Mapping):
+            dispatch_identity = payload.get("dispatch_identity")
+            if isinstance(dispatch_identity, Mapping):
+                has_dispatch_identity = 1
+                fence = dispatch_identity.get("fence")
+                raw_token = fence.get("token") if isinstance(fence, Mapping) else None
+                if isinstance(raw_token, int) and not isinstance(raw_token, bool):
+                    fence_token = raw_token
+        try:
+            mtime_ns = p.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = -1
+        return (has_dispatch_identity, fence_token, mtime_ns, p.name)
+
+    waves.sort(key=_wave_key, reverse=True)
+    return waves
+
+
+def _collect_accepted_attempt_authority(
+    plan_dir: Path,
+) -> tuple[
+    tuple[Any, ...],
+    dict[str, AuthorityDecision],
+    tuple[LegacyTaskLabel, ...],
+    str,
+    str,
+    tuple[str, ...],
+] | None:
+    authority_records: list[Any] = []
+    evidence_decisions: dict[str, AuthorityDecision] = {}
+    legacy_labels: list[LegacyTaskLabel] = []
+    source_paths: set[str] = set()
+    run_identity: tuple[str, str] | None = None
+    saw_validation_projection = False
+
+    collected_subject_ids: set[str] = set()
+    for artifact_path in _all_batch_artifact_waves_sorted(plan_dir):
+        try:
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        source = _relative_artifact_path(artifact_path, plan_dir)
+        source_paths.add(source)
+        for label in _legacy_task_labels_from_payload(payload, source):
+            legacy_labels.append(label)
+
+        resolution = resolve_batch_authority_metadata(payload, source)
+        if resolution.quarantine is not None or resolution.metadata is None:
+            continue
+        identity = resolution.metadata.dispatch_identity
+        run_identity = run_identity or (identity.run_id, identity.run_revision)
+        envelopes = resolution.metadata.result_envelopes
+        by_digest = {envelope.digest(): envelope for envelope in envelopes}
+        by_subject: dict[str, list[ResultEnvelope]] = {}
+        for envelope in envelopes:
+            by_subject.setdefault(envelope.subject_id, []).append(envelope)
+        for entry in _task_entries(payload):
+            validation = entry.get("authority_validation")
+            if not isinstance(validation, Mapping):
+                continue
+            outcome = _optional_str(validation.get("outcome"))
+            if outcome:
+                saw_validation_projection = True
+            if outcome != "accepted":
+                continue
+            envelope = _entry_envelope(entry, validation, by_digest, by_subject)
+            if envelope is None or not isinstance(envelope.claim, TaskClaim):
+                continue
+            if envelope.subject_id in collected_subject_ids:
+                continue
+            if (envelope.run_id, envelope.run_revision) != run_identity:
+                continue
+            try:
+                decision = _accepted_projection_decision(envelope, validation, source)
+            except ContractError:
+                continue
+            # CAS expectations are dispatch-time preconditions, not durable
+            # run-authority ledger facts. Feeding one to reduce_run_authority
+            # makes the accepted-attempt projection fail closed even though
+            # the merge-time validation already accepted the envelope.
+            authority_records.extend(
+                record
+                for record in envelope.authority_records()
+                if not isinstance(record, CASExpectation)
+            )
+            authority_records.extend((decision.idempotency, decision))
+            collected_subject_ids.add(envelope.subject_id)
+            evidence_decisions[envelope.subject_id] = AuthorityDecision(
+                task_id=envelope.subject_id,
+                status=EvidenceStatus.satisfied,
+                satisfied=True,
+                diagnostics={
+                    "execute_completion": "accepted_attempt_projection",
+                    "source_path": source,
+                    "envelope_digest": envelope.digest(),
+                    "authority_validation": dict(validation),
+                },
+            )
+
+    if not saw_validation_projection or run_identity is None:
+        return None
+    run_id, run_revision = run_identity
+    return (
+        tuple(authority_records),
+        evidence_decisions,
+        tuple(legacy_labels),
+        run_id,
+        run_revision,
+        tuple(sorted(source_paths)),
+    )
+
+
+def _task_entries(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    entries = payload.get("task_updates")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        return ()
+    return tuple(entry for entry in entries if isinstance(entry, Mapping))
+
+
+def _legacy_task_labels_from_payload(
+    payload: Mapping[str, Any],
+    source: str,
+) -> tuple[LegacyTaskLabel, ...]:
+    labels: list[LegacyTaskLabel] = []
+    for entry in _task_entries(payload):
+        task_id = _optional_str(entry.get("task_id") or entry.get("id"))
+        status = _optional_str(entry.get("status"))
+        if task_id is not None and status is not None:
+            try:
+                labels.append(LegacyTaskLabel(task_id, status, source, "observation"))
+            except ValueError:
+                continue
+    return tuple(labels)
+
+
+def _entry_envelope(
+    entry: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    by_digest: Mapping[str, ResultEnvelope],
+    by_subject: Mapping[str, list[ResultEnvelope]],
+) -> ResultEnvelope | None:
+    digest = _optional_str(validation.get("envelope_digest"))
+    if digest is None:
+        authority = entry.get("authority")
+        if isinstance(authority, Mapping):
+            digest = _optional_str(authority.get("envelope_digest"))
+    if digest is not None and digest in by_digest:
+        return by_digest[digest]
+    subject_id = _optional_str(
+        validation.get("subject_id") or entry.get("task_id") or entry.get("id")
+    )
+    if subject_id is None:
+        return None
+    candidates = by_subject.get(subject_id, ())
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _accepted_projection_decision(
+    envelope: ResultEnvelope,
+    validation: Mapping[str, Any],
+    source: str,
+) -> TaskValidationDecision:
+    if envelope.decision is not None:
+        return (
+            envelope.decision
+            if isinstance(envelope.decision, TaskValidationDecision)
+            else TaskValidationDecision.from_dict(envelope.decision.to_dict())
+        )
+    payload = {
+        "reason": _optional_str(validation.get("reason")) or "accepted_attempt_projection",
+        "source_path": source,
+        "envelope_digest": envelope.digest(),
+        "validation": _json_safe_mapping(validation),
+    }
+    decision_id = f"{envelope.claim.claim_id}:accepted"
+    return TaskValidationDecision(
+        decision_id=decision_id,
+        run_id=envelope.run_id,
+        run_revision=envelope.run_revision,
+        subject_id=envelope.subject_id,
+        attempt_id=envelope.attempt.attempt_id,
+        grant_id=envelope.dispatch_id,
+        coordinator_attempt_id=envelope.dispatch.coordinator_attempt_id,
+        fence_token=envelope.dispatch.fence_token,
+        claim_id=envelope.claim.claim_id,
+        outcome="accepted",
+        evidence_ids=envelope.evidence_ids,
+        idempotency_key=decision_id,
+        payload=payload,
+    )
+
+
+def _json_safe_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, item in value.items():
+        key_str = str(key)
+        if item is None or isinstance(item, (bool, int, float, str)):
+            safe[key_str] = item
+        elif isinstance(item, Mapping):
+            safe[key_str] = _json_safe_mapping(item)
+        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
+            safe[key_str] = [
+                element
+                if element is None or isinstance(element, (bool, int, float, str))
+                else str(element)
+                for element in item
+            ]
+        else:
+            safe[key_str] = str(item)
+    return safe
+
+
+def _populate_projection_decisions(
+    view: PlanExecutionView,
+    *,
+    decisions: dict[str, AuthorityDecision],
+) -> None:
+    diagnostics_by_task: dict[str, list[dict[str, str]]] = {}
+    for diagnostic in view.diagnostics:
+        diagnostics_by_task.setdefault(diagnostic.subject_id, []).append(
+            diagnostic.to_dict()
+        )
+    for task in view.tasks:
+        if task.dependency_closed:
+            decisions[task.task_id] = AuthorityDecision(
+                task_id=task.task_id,
+                status=EvidenceStatus.satisfied,
+                satisfied=True,
+                diagnostics={
+                    "authority_adapter": "effective_execute_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                    "execute_completion": "accepted_attempt_projection",
+                    "accepted_attempt_ids": list(task.accepted_attempt_ids),
+                    "accepted_decision_ids": list(task.accepted_decision_ids),
+                    "source_paths": list(task.source_paths),
+                },
+            )
+            continue
+        reason = (
+            "accepted_attempt_dependency_unresolved"
+            if task.accepted
+            else "no_accepted_attempt"
+        )
+        decisions[task.task_id] = AuthorityDecision.unknown(
+            task.task_id,
+            reason=reason,
+            diagnostics={
+                "authority_adapter": "effective_execute_completed_task_ids",
+                "adapter_mode": "compatibility_shadow",
+                "execute_completion": "accepted_attempt_projection",
+                "accepted": task.accepted,
+                "dependency_closed": task.dependency_closed,
+                "accepted_attempt_ids": list(task.accepted_attempt_ids),
+                "unresolved_claim_ids": list(task.unresolved_claim_ids),
+                "unresolved_dependency_ids": list(task.unresolved_dependency_ids),
+                "projection_diagnostics": diagnostics_by_task.get(task.task_id, []),
+            },
+        )
+
+
+def _emit_projection_drift_diagnostics(
+    plan_dir: Path,
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    decisions: Mapping[str, AuthorityDecision],
+) -> None:
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        decision = decisions.get(_task_id(task))
+        if decision is None:
+            continue
+        _emit_authority_divergence_diagnostics(plan_dir, task, decision)
 
 
 def _is_explained_skip(task: Mapping[str, Any]) -> bool:
@@ -451,6 +951,8 @@ def _explained_skip_decision(task_id: str, task: Mapping[str, Any]) -> Authority
         status=EvidenceStatus.not_applicable,
         satisfied=False,
         diagnostics={
+            "authority_adapter": "effective_execute_completed_task_ids",
+            "adapter_mode": "compatibility_shadow",
             "raw_terminal_status": _optional_str(task.get("status")),
             "execute_completion": "explained_skip",
         },
@@ -463,6 +965,8 @@ def _explained_noop_decision(task_id: str, task: Mapping[str, Any]) -> Authority
         status=EvidenceStatus.satisfied,
         satisfied=True,
         diagnostics={
+            "authority_adapter": "effective_execute_completed_task_ids",
+            "adapter_mode": "compatibility_shadow",
             "raw_terminal_status": _optional_str(task.get("status")),
             "execute_completion": "explained_noop_completion",
         },
@@ -580,7 +1084,7 @@ def _resolve_evidence_nucleus(
 
 
 def _iter_existing_artifacts(plan_dir: Path) -> tuple[Path, ...]:
-    paths = sorted(plan_dir.glob("execution_batch_*.json"))
+    paths = sorted(list_batch_artifacts(plan_dir))
     finalize = plan_dir / "finalize.json"
     if finalize.is_file():
         paths.append(finalize)
@@ -643,7 +1147,7 @@ def _best_effort_git_head_for_path(path: Path) -> str | None:
 
 def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
     for path in sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
         reverse=True,
     ):
@@ -914,17 +1418,17 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="1650-1654",
         description="Auto-loop task selection: builds completed_task_ids from raw task.get('status') in {'done','skipped'}",
-        disposition=MIGRATED,
-        owner_or_reason="T4: replace with corroborated_completed_task_ids() via authority adapter",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters (effective_execute_completed_task_ids) exist and are used by chain/supervisor; batch.py raw reads not yet replaced at source. Drift diagnostics emitted.",
         route_family="execute",
     ),
     AuthorityRoute(
         id="EXEC-02",
         file="arnold_pipelines/megaplan/execute/batch.py",
-        line_range="951-957",
-        description="Batch prerequisite gate: completed_ids from batch_status_overlay trusting raw {'done','skipped'}",
-        disposition=MIGRATED,
-        owner_or_reason="T6: migrate to authority decisions; prior-batch divergence blocks, current-batch repairs",
+        line_range="3580-3620",
+        description="Batch prerequisite gate: completed IDs are resolved through effective_execute_completed_task_ids",
+        disposition=ENFORCED,
+        owner_or_reason="Raw batch-status overlay adoption was retired; prerequisite scheduling consumes the accepted-attempt/envelope projection.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -932,8 +1436,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="1114-1118",
         description="All-tracked check for batch completion: all(t.get('status') in {'done','skipped'})",
-        disposition=MIGRATED,
-        owner_or_reason="T6/T7: replace with corroborated completed IDs; divergent tracked tasks → BLOCKED_BY_PREREQ",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters exist; chain/supervisor completion checks use effective_execute_completed_task_ids with drift diagnostics; batch.py source not yet migrated.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -941,8 +1445,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="2083",
         description="Post-batch completed_id update re-reading raw status from finalize.json",
-        disposition=MIGRATED,
-        owner_or_reason="T4: use corroborated completed set post-batch rather than raw status re-read",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters available; chain/supervisor consumers use authority-backed completion; batch.py still re-reads raw status at source.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -950,8 +1454,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_core/io.py",
         line_range="58-104",
         description="compute_task_batches: accepts completed_ids as satisfied deps; wrapper must supply corroborated IDs",
-        disposition=MIGRATED,
-        owner_or_reason="T5: keep function pure; add call-site wrapper that passes only corroborated completed_ids",
+        disposition=WARN_ONLY,
+        owner_or_reason="Pure function — callers (chain/supervisor) now supply authority-backed completed_ids via effective_execute_completed_task_ids; function itself accepts any input.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -959,8 +1463,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_core/scheduler/topo.py",
         line_range="15-62",
         description="schedule_batches: threads completed_ids through; same pure-assertion consumer as compute_task_batches",
-        disposition=MIGRATED,
-        owner_or_reason="T5: keep function pure; guarantee input completed_ids are already corroborated by wrapper",
+        disposition=WARN_ONLY,
+        owner_or_reason="Pure function — callers supply authority-backed completed_ids; no internal raw status reads.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -968,8 +1472,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/_binding/reducer.py",
         line_range="132",
         description="all_tracked = all(t.get('status') in {'done','skipped'}) determines BatchOutcome.SUCCESS",
-        disposition=MIGRATED,
-        owner_or_reason="T7: use authority-aware corroborated completed IDs; raw done divergence → non-success",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters exist; chain/supervisor cross-check reducer outcome against authority with drift diagnostics; reducer source not yet migrated.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -977,8 +1481,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/timeout.py",
         line_range="350",
         description="Timeout recovery completed_tasks from raw status in {'done','skipped'}",
-        disposition=MIGRATED,
-        owner_or_reason="T8: use best-effort corroborated completion; label uncorroborated as asserted_terminal",
+        disposition=WARN_ONLY,
+        owner_or_reason="Best-effort corroborated completion via effective_execute_completed_task_ids; uncorroborated tasks labelled; fail-open (SD3).",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -986,8 +1490,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/prompts/execute.py",
         line_range="156",
         description="Prompt helper filtering done_tasks from raw task.get('status') in ('done','skipped')",
-        disposition=MIGRATED,
-        owner_or_reason="T4: feed only corroborated completed IDs to prompt helpers showing completed dependencies",
+        disposition=WARN_ONLY,
+        owner_or_reason="Prompt helpers accept completed IDs from callers; chain/supervisor now supply authority-backed IDs; helper itself is pure projection.",
         route_family="execute",
     ),
 
@@ -997,8 +1501,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_core/workflow.py",
         line_range="508-699",
         description="resume_plan: reads resume_cursor, dispatches phase, pops cursor on success — no corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T9: guard with authority adapter; block if execute data incomplete; preserve cursor on divergence",
+        disposition=WARN_ONLY,
+        owner_or_reason="Control interface rewired (T9) with source_view_hash/revision on override receipts; compatibility path preserved for callers without view hash. Drift diagnostics emitted.",
         route_family="resume",
     ),
     AuthorityRoute(
@@ -1006,8 +1510,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_pipeline/resume.py",
         line_range="133,166",
         description="Pipeline resume cursor: ResumeCursor.load() and with_entry() re-enter pipeline without corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T9: storage support only; annotate if guard needs cursor payload preservation",
+        disposition=WARN_ONLY,
+        owner_or_reason="Storage support; cursor payload preservation available for guard annotation; not yet gated on authority.",
         route_family="resume",
     ),
     AuthorityRoute(
@@ -1015,8 +1519,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/auto.py",
         line_range="1675-1691",
         description="_active_phase_already_completed: trusts phase_produced_state without task-level corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T10: for execute-produced states require corroborated task completion before clearing active step",
+        disposition=WARN_ONLY,
+        owner_or_reason="Human gate and control interface rewired (T9/T10); active-phase completion still legacy-trusting with compatibility path preserved.",
         route_family="resume",
     ),
     AuthorityRoute(
@@ -1024,8 +1528,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/auto.py",
         line_range="2217-2280",
         description="Auto terminal success signaling: terminal_status == 'done' gates PLAN_FINISHED, exit-code-0, shadow verdict",
-        disposition=MIGRATED,
-        owner_or_reason="T10: require corroborated task/milestone completion or emit divergence outcome; preserve recoverability",
+        disposition=WARN_ONLY,
+        owner_or_reason="Human gate rewired with view hash/revision; terminal success gating produces drift diagnostics but legacy outcome preserved (fail-open per SD3).",
         route_family="resume",
     ),
 
@@ -1033,10 +1537,10 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     AuthorityRoute(
         id="CHAIN-01",
         file="arnold_pipelines/megaplan/chain/__init__.py",
-        line_range="598-646",
-        description="_latest_execution_batch_all_tasks_done: raw status=='done' check on batch artifacts + finalize.json",
-        disposition=MIGRATED,
-        owner_or_reason="T11: replace with authority-aware helper over latest batch + finalize task records",
+        line_range="1742-1968",
+        description="_latest_execution_batch_all_tasks_done: now uses effective_execute_completed_task_ids (authority-backed) over batch artifacts + finalize.json",
+        disposition=ENFORCED,
+        owner_or_reason="Fully migrated to authority adapter via effective_execute_completed_task_ids with accepted-attempt projections and evidence nucleus; completion decisions are authority-backed.",
         route_family="chain",
     ),
     AuthorityRoute(
@@ -1044,17 +1548,17 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="887-973",
         description="_handle_outcome: advances on outcome.status in {'done','finalized'} without task-level corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T12: corroborate plan constituent tasks before returning 'advance' for done/finalized outcomes",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority drift diagnostics captured via epic chain aggregation (T11); legacy ADVANCE decision preserved as effective outcome (fail-open per SD2).",
         route_family="chain",
     ),
     AuthorityRoute(
         id="CHAIN-03",
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="666-698",
-        description="_recover_blocked_execute_if_tasks_done: uses _latest_execution_batch_all_tasks_done raw status",
-        disposition=MIGRATED,
-        owner_or_reason="T12: guard with same authority-aware helper; block on uncorroborated legacy state",
+        description="_recover_blocked_execute_if_tasks_done: uses _latest_execution_batch_all_tasks_done (now authority-enforced)",
+        disposition=WARN_ONLY,
+        owner_or_reason="Delegates to CHAIN-01 (enforced) for completion check; recovery decision itself is fail-open with drift diagnostics per T12.",
         route_family="chain",
     ),
     AuthorityRoute(
@@ -1062,8 +1566,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="1125-1154",
         description="Seed plan terminal skip: compares plan state against TERMINAL_SKIP_STATES {'done','aborted','failed'}",
-        disposition=MIGRATED,
-        owner_or_reason="T12: corroborate before skipping seed phase; stop/block with diagnostics for uncorroborated legacy",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority drift captured via epic chain aggregation (T11); legacy terminal-state comparison preserved as effective outcome (fail-open).",
         route_family="chain",
     ),
     AuthorityRoute(
@@ -1071,8 +1575,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="1167-1217",
         description="current_plan_name pointer reads used to skip or advance chain work",
-        disposition=MIGRATED,
-        owner_or_reason="T12: informational pointer reads are fine; skip/advance from pointer must be corroborated",
+        disposition=WARN_ONLY,
+        owner_or_reason="Informational pointer reads are safe; skip/advance from pointer cross-checked with authority drift diagnostics (T11/T12); legacy preserved.",
         route_family="chain",
     ),
 
@@ -1080,10 +1584,10 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     AuthorityRoute(
         id="SUP-01",
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
-        line_range="696-719",
-        description="_recover_blocked_execute_if_tasks_done: duplicate of CHAIN-03 raw status check for blocked→executed",
-        disposition=MIGRATED,
-        owner_or_reason="T13: share or mirror chain's authority-aware helper; prevent raw-status drift between copies",
+        line_range="875-930",
+        description="_recover_blocked_execute_if_tasks_done: duplicate of CHAIN-03; now uses _latest_execution_batch_all_tasks_done backed by effective_execute_completed_task_ids (shared authority helper)",
+        disposition=WARN_ONLY,
+        owner_or_reason="QUARANTINED duplicate of CHAIN-03. Equivalence covered by shared effective_execute_completed_task_ids and _latest_execution_batch_all_tasks_done (both use accepted-attempt projections). Recovery decision fail-open per T12.",
         route_family="supervisor",
     ),
     AuthorityRoute(
@@ -1091,8 +1595,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="453-463",
         description="_assert_dependencies_completed: gates on completed_node_ids labels only — no evidence corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T13: replace with corroborated milestone/task authority for dependency unlocks",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority shadow derivation wired (T12); cross-checks ladder ADVANCE against authority-backed completion; legacy dependency gates preserved (fail-open).",
         route_family="supervisor",
     ),
     AuthorityRoute(
@@ -1100,8 +1604,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="97-385",
         description="run_chain milestone advancement loop: advances on LadderAction.ADVANCE from driver outcome",
-        disposition=MIGRATED,
-        owner_or_reason="T13: gate ADVANCE, PR-merge advancement, and blocked-execute recovery on shared authority helper",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority shadow derivation wired (T12) for ADVANCE and PR-merge paths; drift captured as diagnostic; legacy ADVANCE preserved as effective (fail-open per SD2).",
         route_family="supervisor",
     ),
     AuthorityRoute(
@@ -1109,8 +1613,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="150-385",
         description="Supervisor dependency gates, PR-merge advancement, and blocked-execute recovery in run_chain",
-        disposition=MIGRATED,
-        owner_or_reason="T13: use same authority semantics as canonical chain; divergence → blocked/stopped with diagnostics",
+        disposition=WARN_ONLY,
+        owner_or_reason="Same authority semantics as canonical chain (T12); divergence captured as diagnostic; legacy preserved (fail-open).",
         route_family="supervisor",
     ),
 
@@ -1176,8 +1680,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/timeout.py",
         line_range="1-388",
         description="Timeout recovery summary: best-effort operator reporting; not a blocking authority gate",
-        disposition=MIGRATED,
-        owner_or_reason="T8: migrate to best-effort corroborated completion; label uncorroborated; fail-open (SD3)",
+        disposition=WARN_ONLY,
+        owner_or_reason="Best-effort corroborated completion via effective_execute_completed_task_ids; uncorroborated tasks labelled as asserted_terminal; fail-open (SD3).",
         route_family="timeout",
     ),
 )
@@ -1185,9 +1689,19 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
 
 # ── Convenience views ──────────────────────────────────────────────────────
 
-def migrated_routes() -> tuple[AuthorityRoute, ...]:
-    """Return every route with disposition == 'migrated'."""
-    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == MIGRATED)
+def enforced_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'enforced'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == ENFORCED)
+
+
+def warn_only_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'warn-only'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == WARN_ONLY)
+
+
+def shadow_only_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'shadow-only'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == SHADOW_ONLY)
 
 
 def deferred_routes() -> tuple[AuthorityRoute, ...]:
@@ -1198,6 +1712,12 @@ def deferred_routes() -> tuple[AuthorityRoute, ...]:
 def informational_routes() -> tuple[AuthorityRoute, ...]:
     """Return every route with disposition == 'informational'."""
     return tuple(r for r in AUTHORITY_ROUTES if r.disposition == INFORMATIONAL)
+
+
+# Backward-compat alias — prefer enforced_routes().
+def migrated_routes() -> tuple[AuthorityRoute, ...]:
+    """Backward-compat: return every route with disposition == 'enforced'."""
+    return enforced_routes()
 
 
 def routes_by_family(family: str) -> tuple[AuthorityRoute, ...]:

@@ -16,7 +16,11 @@ It is the judgement layer: where the target, current codebase, and plan meet.
 
 ## Core Verdict
 
-Use `.pypeline` lowering into the existing DSL/manifest runtime as the canonical
+The corrective epic's canonical end-state suffix is now `.pype`. References to
+`.pypeline` in current-state observations describe the pre-cutover repository,
+not a supported final alias.
+
+Use `.pype` lowering into the existing DSL/manifest runtime as the canonical
 execution substrate. The generator-native runtime remains useful machinery, but
 making it the canonical Megaplan runtime would combine two migrations: semantic
 extraction and runtime replacement.
@@ -31,7 +35,7 @@ replace, or quarantine that path before any extraction milestone can close.
 
 ### Chosen Direction
 
-Canonical Megaplan should execute through `.pypeline` lowering into the existing
+Canonical Megaplan should execute through `.pype` lowering into the existing
 DSL/manifest runtime.
 
 Reasons:
@@ -210,7 +214,7 @@ The strength comes from checker enforcement, not type-system ceremony.
 
 1. Build checker, row-evidence schema, baseline failure, and compatibility
    quarantine.
-2. Make `build_pipeline()` consume lowered `.pypeline` topology for a real
+2. Make `build_pipeline()` consume lowered `.pype` topology for a real
    vertical slice, or replace/quarantine it.
 3. Establish typed outcomes and retained-handler interfaces.
 4. Extract the front-half loop as one coupled unit: prep, critique, gate,
@@ -232,8 +236,10 @@ Some target language is over-idealized and should be narrowed deliberately:
 
 - Model routing should be a declared pure routing function referenced from
   phase source, not necessarily a static table.
-- The whole pipeline should be readable from `workflow.pypeline` plus named
-  subworkflows, not one enormous file.
+- The whole pipeline should be readable from `workflow.pype` plus separate
+  one-workflow `.pype` files invoked as children, not one enormous file.
+  `pype-authoring-contract.md` owns the exact format; “subworkflow” here is only
+  a hosting role.
 - Auto-drive liveness can remain operational supervisor code if it emits events
   consumed by the canonical workflow and cannot route independently.
 - Config-only overrides can remain effects; only routing overrides need source

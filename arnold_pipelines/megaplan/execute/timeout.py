@@ -13,7 +13,6 @@ from arnold_pipelines.megaplan._core import (
     atomic_write_text,
     legacy_batch_artifact_path,
     make_history_entry,
-    read_json,
     render_final_md,
     resolve_batch_artifact,
     save_state_merge_meta,
@@ -21,7 +20,6 @@ from arnold_pipelines.megaplan._core import (
     is_prose_mode,
     store_raw_worker_output,
 )
-from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
     _validate_and_merge_batch,
@@ -244,7 +242,13 @@ def _recover_execute_timeout(
     persist_state: bool = True,
 ) -> StepResponse:
     deviations = [f"Execute timed out: {error.message}"]
-    finalize_data = read_json(plan_dir / "finalize.json")
+    from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+        FinalizeMutationContext,
+        load_finalize_for_update,
+        publish_finalize_update,
+    )
+
+    finalize_data = load_finalize_for_update(plan_dir)
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
     base_ref = state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
@@ -298,7 +302,23 @@ def _recover_execute_timeout(
     )
     execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state, plan_dir=plan_dir, artifact_prefix="execution_audit_timeout_post_recovery")
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
+    active_step = state.get("active_step")
+    run_id = (
+        active_step.get("run_id")
+        if isinstance(active_step, dict) and isinstance(active_step.get("run_id"), str)
+        else None
+    )
+    publish_finalize_update(
+        plan_dir,
+        finalize_data,
+        context=FinalizeMutationContext(
+            owner="execute",
+            operation="timeout-recovery",
+            attempt_id=f"timeout:{batch_number or 0}:{run_id or 'unbound'}",
+            run_id=run_id,
+        ),
+        lock_held=True,
+    )
     atomic_write_text(
         plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
     )

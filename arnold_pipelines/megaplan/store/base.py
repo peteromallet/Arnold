@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan.schemas import (
     Plan,
     ProgressEvent,
     ResidentConversation,
+    ResidentUserPreference,
     ScheduledJob,
     SecondOpinion,
     Sprint,
@@ -174,6 +175,10 @@ class StoredEvent:
     seq: int | None = None
     run_id: str | None = None
     source: str | None = None
+    # The envelope transaction identity survives backend migration and lets
+    # compatibility projections collapse an exact cross-store copy without
+    # confusing it with a genuinely new event.
+    transaction_id: str | None = None
 
 
 def validate_plan_artifact_name(name: str) -> str:
@@ -286,6 +291,7 @@ class Store(Protocol):
         state: str = "shaping",
         home_backend: Backend = "file",
         idempotency_key: str | None = None,
+        epic_id: str | None = None,
     ) -> Epic:
         ...
 
@@ -514,6 +520,7 @@ class Store(Protocol):
         direction: str,
         content: str,
         discord_message_id: str | None = None,
+        discord_reply_provenance: JSONDict | None = None,
         bot_turn_id: str | None = None,
         has_code_attachment: bool = False,
         has_image_attachment: bool = False,
@@ -531,6 +538,14 @@ class Store(Protocol):
         ...
 
     def load_messages(self, message_ids: Sequence[str]) -> list[Message]:
+        ...
+
+    def find_conversation_message_by_discord_id(
+        self,
+        conversation_id: str,
+        discord_message_id: str,
+    ) -> Message | None:
+        """Resolve one exact Discord identity inside one resident conversation."""
         ...
 
     def list_conversation_messages(
@@ -932,6 +947,8 @@ class Store(Protocol):
         ticket_id: str,
         epic_id: str,
         resolves_on_complete: bool = False,
+        kind: str = "associated",
+        provenance: str | None = None,
         idempotency_key: str | None = None,
     ) -> TicketEpicLink:
         ...
@@ -1257,6 +1274,22 @@ class Store(Protocol):
         idempotency_key: str | None = None,
         **changes: Any,
     ) -> ResidentConversation:
+        ...
+
+    def load_resident_user_preference(
+        self, *, transport: str, user_id: str
+    ) -> ResidentUserPreference | None:
+        ...
+
+    def upsert_resident_user_preference(
+        self,
+        *,
+        transport: str,
+        user_id: str,
+        timezone_name: str | None,
+        metadata: JSONDict | None = None,
+        idempotency_key: str | None = None,
+    ) -> ResidentUserPreference:
         ...
 
     def create_scheduled_job(

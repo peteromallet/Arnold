@@ -1,7 +1,7 @@
 """Import-boundary tests for the neutral ``arnold.agent`` package.
 
 ``arnold.agent`` must remain product-neutral: it must not statically import
-``arnold_pipelines.megaplan`` or ``arnold_pipelines.megaplan``.  Dynamic
+``arnold.pipelines.megaplan``.  Dynamic
 runtime forwards to vendored legacy agent tools are allowed only when they go
 through ``arnold_pipelines.megaplan.agent`` (the M4 parity shim), not the new
 product package.
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 
-FORBIDDEN = ("arnold_pipelines.megaplan",)
+FORBIDDEN = ("arnold.pipelines.megaplan",)
 
 
 def _is_forbidden(name: str) -> bool:

@@ -128,6 +128,15 @@ def _canonical_subagent_launcher_skill() -> str:
     )
 
 
+def _canonical_data_skill(filename: str) -> str:
+    """Read a single-source skill whose checked-in data file is canonical."""
+    return (
+        resources.files("arnold_pipelines.megaplan")
+        .joinpath("data", filename)
+        .read_text(encoding="utf-8")
+    )
+
+
 def _canonical_pre_commit_hook() -> str:
     return (
         resources.files("arnold_pipelines.megaplan")
@@ -167,6 +176,8 @@ def bundled_global_file(name: str) -> str:
         return _canonical_bakeoff_skill()
     if name == "babysit_skill.md":
         return _canonical_babysit_skill()
+    if name in {"superfixer_debug_skill.md", "progress_auditor_debug_skill.md"}:
+        return _canonical_data_skill(name)
     if name == "subagent_launcher_skill.md":
         return _canonical_subagent_launcher_skill()
     if name == "claude_skill.md":
@@ -192,7 +203,7 @@ _GLOBAL_TARGETS = [
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-prep/SKILL.md", "data": "prep_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-prep", "data": "_codex_skills/megaplan-prep", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/superfixer-debug/SKILL.md", "data": "superfixer_debug_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/superfixer-debug", "data": "_codex_skills/superfixer-debug", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/superfixer-debug", "data": "skills/superfixer-debug", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/progress-auditor-debug/SKILL.md", "data": "progress_auditor_debug_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/progress-auditor-debug", "data": "_codex_skills/progress-auditor-debug", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
@@ -211,7 +222,27 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
+    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
+    {"agent": "agents", "detect": ".agents", "path": ".agents/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
 ]
+
+
+# Keep the generated Codex bundles in one registry.  The install targets above
+# deliberately point at these directories, so adding a target without adding a
+# generator entry must be caught by packaging tests rather than producing a
+# dangling skill at runtime.
+_CODEX_SINGLE_FILE_SKILLS = {
+    "megaplan-bakeoff": "bakeoff_skill.md",
+    "megaplan-tickets": "tickets_skill.md",
+    "megaplan-prep": "prep_skill.md",
+    "progress-auditor-debug": "progress_auditor_debug_skill.md",
+    "megaplan-epic": "epic_skill.md",
+    "megaplan-observe": "observe_skill.md",
+    "megaplan-cloud": "cloud_skill.md",
+    "babysit": "babysit_skill.md",
+}
 
 
 def _resolve_bundle_path(data_name: str) -> Path:
@@ -233,19 +264,17 @@ def handle_regen_composed() -> dict[str, Any]:
         + _codex_subagent_appendix(),
         "cursor_rule.mdc": _CURSOR_HEADER + instructions,
     }
-    codex_skill_dirs = {
-        "_codex_skills/megaplan/SKILL.md": targets["codex_skill.md"],
-        "_codex_skills/megaplan-bakeoff/SKILL.md": bundled_global_file("bakeoff_skill.md"),
-        "_codex_skills/megaplan-tickets/SKILL.md": bundled_global_file("tickets_skill.md"),
-        "_codex_skills/megaplan-prep/SKILL.md": bundled_global_file("prep_skill.md"),
-        "_codex_skills/megaplan-epic/SKILL.md": bundled_global_file("epic_skill.md"),
-        "_codex_skills/megaplan-observe/SKILL.md": bundled_global_file("observe_skill.md"),
-        "_codex_skills/megaplan-cloud/SKILL.md": bundled_global_file("cloud_skill.md"),
-        "_codex_skills/babysit/SKILL.md": bundled_global_file("babysit_skill.md"),
-    }
+    codex_skill_dirs = {"_codex_skills/megaplan/SKILL.md": targets["codex_skill.md"]}
+    codex_skill_dirs.update(
+        {
+            f"_codex_skills/{skill_name}/SKILL.md": bundled_global_file(source)
+            for skill_name, source in _CODEX_SINGLE_FILE_SKILLS.items()
+        }
+    )
     composed_dir = resources.files("arnold_pipelines.megaplan").joinpath("data", "_composed")
     Path(str(composed_dir)).mkdir(parents=True, exist_ok=True)
     changed: list[str] = []
+    changed_paths: list[str] = []
     for name, computed in targets.items():
         target_path = Path(str(composed_dir)) / name
         current = (
@@ -254,6 +283,7 @@ def handle_regen_composed() -> dict[str, Any]:
         if current != computed:
             atomic_write_text(target_path, computed)
             changed.append(name)
+            changed_paths.append(str(target_path))
     data_dir = Path(str(resources.files("arnold_pipelines.megaplan").joinpath("data")))
     for name, computed in codex_skill_dirs.items():
         target_path = data_dir / name
@@ -262,10 +292,17 @@ def handle_regen_composed() -> dict[str, Any]:
         if target_path.is_symlink() or current != computed:
             atomic_write_text(target_path, computed)
             changed.append(name)
+            changed_paths.append(str(target_path))
     if changed:
         return {
             "success": False,
             "changed": changed,
+            "changed_paths": changed_paths,
             "summary": f"Regenerated {len(changed)} composed bundle(s): {', '.join(changed)}.",
         }
-    return {"success": True, "changed": [], "summary": "No composed bundles changed."}
+    return {
+        "success": True,
+        "changed": [],
+        "changed_paths": [],
+        "summary": "No composed bundles changed.",
+    }

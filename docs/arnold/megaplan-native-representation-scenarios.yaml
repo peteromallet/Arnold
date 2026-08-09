@@ -23,8 +23,6 @@ split_outcome_records:
     executable_modules:
       - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
         case_ids: [D1-prep-plan]
-      - path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-        case_ids: [test_human_gate_continue_resumes_into_proceed_path]
     expected_outcomes:
       - blocking_questions_suspend
       - resume_clarify
@@ -44,10 +42,6 @@ split_outcome_records:
     executable_modules:
       - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
         case_ids: [D3-gate-preflight, D4-gate-revise]
-      - path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-        case_ids:
-          - test_iterate_route_reaches_revise_before_looping
-          - test_abort_path_stops_at_halt
     expected_outcomes:
       - malformed_payload_recovery
       - unresolved_flag_reprompt

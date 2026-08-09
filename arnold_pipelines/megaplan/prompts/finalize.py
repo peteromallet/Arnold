@@ -14,6 +14,8 @@ from arnold_pipelines.megaplan._core import (
     latest_plan_path,
     read_json,
 )
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
 from arnold_pipelines.megaplan.types import PlanState
 
 from ._shared import _gate_summary_or_skipped
@@ -24,6 +26,12 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = _gate_summary_or_skipped(plan_dir)
+    clearance_path = plan_dir / "critique_clearance.json"
+    critique_clearance = (
+        read_json(clearance_path)
+        if clearance_path.exists()
+        else {"admitted": False, "reason": "handler custody precondition not materialized"}
+    )
     plan_mode = state.get("config", {}).get("mode", "code")
     robustness = configured_robustness(state)
     if is_prose_mode(state):
@@ -41,7 +49,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     else:
         task_field_guidance = textwrap.dedent(
             """
-            - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+            - The harness owns integration and full-suite verification — do NOT author a model task whose objective is to run either one. Implementation and test-authoring tasks may run narrow selectors for immediate feedback, but keep those selectors to the changed behavior, run them once, and allow at most one diagnostic rerun after a failure. The harness will run the authoritative post-execute suite.
             - For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.
             """
         ).strip()
@@ -51,9 +59,10 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
             - Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
             - Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
-            - When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+            - When you do emit a user_action, use exactly the canonical fields `id`, `description`, `phase`, and `requires_human_only_reason`. Set `phase` to `before_execute` or `after_execute`; do not use the legacy aliases `action` or `timing`.
+            - Set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
             - If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
-            - Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+            - Positive examples (rare, last-resort): `{"id":"U1","description":"Set ANTHROPIC_API_KEY in .env","phase":"before_execute","requires_human_only_reason":"secret the executor cannot mint"}`; `{"id":"U2","description":"Confirm legal sign-off to commit the third-party JSON corpus","phase":"before_execute","requires_human_only_reason":"license judgment with legal liability"}`.
             """
         ).strip()
     else:
@@ -68,7 +77,9 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         )
     else:
         final_task_guidance = (
-            "- The FINAL task MUST run tests; harness validation will reject finalize output without it."
+            "- Do NOT add a final integration/full-suite test task. The final implementation or "
+            "test-authoring task should run only its narrow selectors; the harness owns the "
+            "authoritative post-execute validation."
         )
     output_path = _write_finalize_template(plan_dir, state)
 
@@ -92,6 +103,9 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Gate summary:
         {json_dump(gate).strip()}
 
+        Critique custody clearance (handler-owned, immutable input):
+        {json_dump(critique_clearance).strip()}
+
         Your output template is at: {output_path}
         Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
         Fill the JSON structure with your results and write the file back.
@@ -99,6 +113,9 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
 
         Requirements:
         - Produce structured JSON only.
+        - Preserve every cleared critique obligation in the task DAG and watch items. The handler will bind this clearance to the exact final graph and revalidate it before execution; do not omit, reinterpret, or replace finding IDs.
+        - Return `critique_resolution_coverage` with exactly one row for every `finding_id` in critique custody clearance. Each row must name one or more real finalized `task_ids` that preserve the resolved plan mutation and a concrete `resolution_evidence` explanation. Return `[]` when clearance has no findings. Partial, duplicate, unknown, or empty mappings fail finalization.
+        - Set `task_contract_version` to `2` and `validation_jobs` to `[]`. The harness alone compiles deterministic no-file validation jobs; model tasks must not emit or duplicate them. Integration and full-suite validation are harness-owned.
         - For each `## Step N:` in the plan, emit 1-N tasks.
         - For each task, emit one sense_check.
         - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
@@ -106,16 +123,25 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=8 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=8 model. Two consequences you control via DAG shape:
           - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=8 sibling and it runs on the pricier model.
           - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - `depends_on` is correctness authority, not a routing hint. Add an edge only when the downstream task cannot be implemented correctly from the original baseline plus its other declared prerequisites. Never add an edge merely to isolate a model tier, reduce a ready frontier, preserve authoring order, or keep a heavyweight in its own batch.
         - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
-          1. Isolate heavyweights. A c=7 or c=8+ task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          1. Isolate heavyweights without inventing dependencies. Keep semantically independent c=7/c=8+ tasks as siblings; the runtime batch cap can place ready siblings in separate batches.
           2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
-          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+          3. A ready frontier wider than 5 is valid when the work is genuinely independent. Preserve that independence; the runtime batcher caps each dispatched batch at 5.
+        - Complexity >= 7 tasks are auto-split by the harness into implementation + proof subtasks before execution. Design such tasks with a single, bounded objective, a complete write_set, and narrow_tests (non-empty selectors with positive max_seconds/max_runs) — these are required for the splitter to form a valid proof subtask. Ambiguous objectives (multi-directive, semicolon-separated), incomplete write_sets, and test-kind tasks that declare write paths cannot be split and will be diagnosed as rejects.
         - Do not include `validation` or `coverage_complete` fields - the harness computes those.
         {final_task_guidance}
         - `tasks` must be an ordered array of task objects. Every task object must include:
           - `id`: short stable task ID like `T1`
+          - `objective`: exactly one independently reviewable objective, one line, at most 240 characters, with no semicolon-separated secondary objectives
           - `description`: concrete work item
+          - `estimated_minutes`: integer 1-15 for implementation plus narrow verification. Split anything that cannot credibly finish within 15 minutes.
           - `depends_on`: array of earlier task IDs or `[]`
+          - `dependency_reasons`: object keyed exactly by `depends_on`. Each value has `kind` (`consumes_output`, `write_conflict`, or `human_prerequisite`), a concrete `reason`, and the exact `required_output`. Routing, model isolation, authoring order, and batch sizing are forbidden reasons.
+          - `routing_group`: `""` unless independent tasks intentionally share context or overlapping writes; routing groups influence batching but grant no dependency authority
+          - `write_set`: `{{ "paths": [...], "complete": true }}`, declaring every planned output path. Mutating tasks must name 1-5 unique paths; split larger write sets.
+          - `narrow_tests`: `{{ "selectors": [...], "max_seconds": 120, "max_runs": 2 }}`. Use at most 3 changed-behavior selectors; use zero budgets for tasks that require no tests. Integration/full-suite checks belong to the harness.
+          - `checkpoint`: for complexity 7-10, require `{{ "required": true, "max_interval_seconds": 300, "records": ["completed_subobjectives", "remaining_subobjectives", "output_hashes", "test_state"] }}`; for lower complexity use `{{ "required": false, "max_interval_seconds": 300, "records": [] }}`
           - `status`: always `"pending"` at finalize time
           - `executor_notes`: always `""` at finalize time
           - `reviewer_verdict`: always `""` at finalize time
@@ -170,8 +196,8 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
         - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
         - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
-        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
-        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should normally be one task that applies the fix and runs its narrow selectors; post-execute integration/full-suite validation is not another model task. Do NOT create separate "inspect", "read", or validation-only tasks for simple changes. Only create more tasks when the work has genuinely independent implementation stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, run bounded narrow verification, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. Narrow verification should consume at most 2 minutes of the turn under normal conditions; a slower integration or full-suite command belongs to the harness. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) and "migrate consumer B + parity tests" (T3, depends_on T1) when the consumers are independent. A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
         - {task_field_guidance}
         """
     ).strip()
@@ -190,13 +216,10 @@ def _write_finalize_template(
     """
     import json
 
-    template: dict[str, object] = {
-        "tasks": [],
-        "user_actions": [],
-        "sense_checks": [],
-        "watch_items": [],
-        "meta_commentary": "",
-    }
+    template = schema_template_payload(
+        FINALIZE_MODEL_OUTPUT_SCHEMA,
+        contract="finalize scratch template",
+    )
 
     output_path = plan_dir / "finalize_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

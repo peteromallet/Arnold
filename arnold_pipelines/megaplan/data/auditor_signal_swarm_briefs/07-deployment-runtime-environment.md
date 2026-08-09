@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All auditor authority has been migrated to canonical delegation. These briefs are retained as non-runnable telemetry — they must not be used to launch repair actions, grant authority, or materialize commands.
+
 You are a DeepSeek subagent in a research swarm. Work read-only.
 
 Goal: enumerate deployment/runtime signals that should appear in the 6-hour check: host vs container wrapper drift, source checkout sync_dirty, dirty editable install, running process start time vs wrapper mtime, auth/provider problems, tmux/session health, docker/container health, disk/resource constraints, Python path/import drift, CLI availability, and feature flags.

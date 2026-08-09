@@ -1,0 +1,44 @@
+{
+  "boundary_id": "critique_to_gate",
+  "workflow_id": "megaplan-review",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s2.critique.1",
+  "invocation_id": "37530c055c9a4034",
+  "artifact_refs": [
+    "critique_v5.json",
+    "critique_custody_v5.json",
+    "faults.json",
+    "phase_result.json"
+  ],
+  "state_observation": {
+    "current_phase": "critique",
+    "current_state": "critiqued",
+    "iteration": 5,
+    "next_step": "gate"
+  },
+  "history_ref": "critique_completed",
+  "phase_result_ref": "phase_result.json",
+  "outcome": "complete",
+  "details": {
+    "artifact_hash": "sha256:9e6d8cada0941ad7260c214f2019107500d02f54e1690d74a5b18d04dbc4022c",
+    "artifacts_written": [
+      "critique_v5.json",
+      "critique_custody_v5.json",
+      "faults.json"
+    ],
+    "history": {
+      "step": "critique",
+      "result": "success",
+      "timestamp": "2026-08-06T00:48:31Z",
+      "output_file": "critique_v5.json"
+    },
+    "session": {
+      "id": null,
+      "session_key": null,
+      "mode": "persistent",
+      "worker_channel": null,
+      "auth_channel": null
+    },
+    "run_id": "db602256-1b4b-4d90-9a3d-5f5f5157ec5e"
+  }
+}

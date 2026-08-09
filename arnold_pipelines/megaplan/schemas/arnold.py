@@ -134,6 +134,17 @@ class ResidentConversation(StorageModel):
     last_active_at: datetime | None = None
 
 
+class ResidentUserPreference(StorageModel):
+    """Durable presentation preferences for one transport user identity."""
+
+    transport: ResidentConversationTransport = "discord"
+    user_id: str
+    timezone_name: str | None = None
+    metadata: NormalizedDict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class Message(StorageModel):
     id: str
     epic_id: str | None = None
@@ -143,6 +154,10 @@ class Message(StorageModel):
     content: str
     sent_at: datetime = Field(default_factory=utc_now)
     discord_message_id: str | None = None
+    # Immutable transport provenance captured when a Discord inbound message is
+    # first accepted.  Reply ancestry belongs to the source message record; it
+    # must never be reconstructed from a recent-history excerpt.
+    discord_reply_provenance: NormalizedDict | None = None
     has_code_attachment: bool = False
     has_image_attachment: bool = False
     in_burst_with: NormalizedStringList | None = None
@@ -412,11 +427,18 @@ class Ticket(StorageModel):
 
 
 class TicketEpicLink(StorageModel):
-    """Many-to-many join between tickets and epics."""
+    """Many-to-many join between tickets and epics.
+
+    *kind* classifies the relationship (``associated``, ``resolves_on_complete``,
+    ``promoted_to_epic``).  *resolves_on_complete* gates auto-address behavior
+    independently.
+    """
 
     ticket_id: str
     epic_id: str
     resolves_on_complete: bool = False
+    kind: str = "associated"
+    provenance: str | None = None
     linked_at: datetime = Field(default_factory=utc_now)
 
 

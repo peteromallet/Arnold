@@ -20,6 +20,7 @@ from arnold_pipelines.megaplan._core import (
     sha256_text,
     workflow_next,
 )
+from arnold_pipelines.megaplan._core.plan_integrity import verify_prior_plan_versions
 from arnold_pipelines.megaplan.orchestration.evaluation import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     PlanSection,
@@ -106,6 +107,10 @@ def _commit_step_edit(
     action_summary: str,
 ) -> tuple[str, str, list[str]]:
     plan_text = reassemble_plan(sections)
+    # Step edits append a plan version just like model-driven planning.  Keep
+    # both write paths behind the same immutable predecessor-custody gate so
+    # an out-of-band mutation cannot be hidden by a direct editor successor.
+    verify_prior_plan_versions(plan_dir=plan_dir, state=state)
     structure_warnings = validate_plan_structure(plan_text)
     if PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in structure_warnings:
         raise CliError(

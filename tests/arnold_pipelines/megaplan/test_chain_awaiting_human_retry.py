@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -51,7 +52,9 @@ def _write_plan_state(
     plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
     plan_dir.mkdir(parents=True, exist_ok=True)
     serialized_active_step = json.dumps(
-        {"phase": "execute"} if active_step is _DEFAULT_ACTIVE_STEP else active_step
+        {"phase": "execute", "worker_pid": os.getpid()}
+        if active_step is _DEFAULT_ACTIVE_STEP
+        else active_step
     )
     (plan_dir / "state.json").write_text(
         (
@@ -466,7 +469,14 @@ def test_sync_chain_last_state_prefers_active_step_phase_over_terminal_projectio
     plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
     plan_dir.mkdir(parents=True)
     (plan_dir / "state.json").write_text(
-        '{"name":"m7-plan","current_state":"finalized","active_step":{"phase":"execute"},"meta":{}}',
+        json.dumps(
+            {
+                "name": "m7-plan",
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "worker_pid": os.getpid()},
+                "meta": {},
+            }
+        ),
         encoding="utf-8",
     )
     messages: list[str] = []
@@ -533,8 +543,14 @@ def test_record_chain_last_state_after_plan_run_keeps_execute_phase_visible(
     plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
     plan_dir.mkdir(parents=True)
     (plan_dir / "state.json").write_text(
-        '{"name":"m7-plan","current_state":"finalized","latest_failure":null,'
-        '"active_step":{"phase":"execute"}}',
+        json.dumps(
+            {
+                "name": "m7-plan",
+                "current_state": "finalized",
+                "latest_failure": None,
+                "active_step": {"phase": "execute", "worker_pid": os.getpid()},
+            }
+        ),
         encoding="utf-8",
     )
     messages: list[str] = []
@@ -563,7 +579,10 @@ def test_record_chain_last_state_after_plan_run_keeps_execute_phase_visible(
     assert any("blocked -> execute" in message for message in messages)
 
 
-def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> None:
+def test_run_chain_syncs_last_state_after_each_child_phase(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
     spec_path = _write_chain_spec(tmp_path)
     _write_plan_state(tmp_path, current_state="initialized", active_step=None)
     messages: list[str] = []
@@ -795,7 +814,7 @@ def test_reconcile_clears_stale_active_state_when_completed_milestone_is_termina
     assert saved.last_state == "done"
 
 
-def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
+def test_reconcile_rejects_terminal_merged_pr_plan_without_completion_evidence(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -822,26 +841,19 @@ def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
         )
 
     saved = load_chain_state(spec_path)
-    assert reconciled.current_milestone_index == 1
-    assert reconciled.current_plan_name is None
-    assert reconciled.last_state == "done"
-    assert reconciled.completed == [
-        {
-            "label": "m7",
-            "plan": "m7-plan",
-            "status": "done",
-            "pr_number": 122,
-            "pr_state": "merged",
-        }
-    ]
-    assert saved.current_milestone_index == 1
-    assert saved.current_plan_name is None
-    assert saved.last_state == "done"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.last_state == "authority_divergence"
+    assert reconciled.completed == []
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == "m7-plan"
+    assert saved.last_state == "authority_divergence"
     assert saved.completed == reconciled.completed
-    assert any("reconciled terminal plan m7-plan into completed milestone m7" in msg for msg in messages)
+    assert any("reconciliation completion guard blocked m7" in msg for msg in messages)
+    assert not saved.has_milestone_evidence("m7")
 
 
-def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
+def test_reconcile_rejects_terminal_local_plan_without_completion_evidence(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -854,32 +866,102 @@ def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
         completed=[],
     )
 
+    messages: list[str] = []
     reconciled = _reconcile_chain_from_ground_truth(
         tmp_path,
         spec_path,
         spec,
         state,
-        writer=lambda _message: None,
+        writer=messages.append,
         push_enabled=False,
     )
 
     saved = load_chain_state(spec_path)
-    assert reconciled.current_milestone_index == 1
-    assert reconciled.current_plan_name is None
-    assert reconciled.last_state == "done"
-    assert reconciled.completed == [
-        {
-            "label": "m7",
-            "plan": "m7-plan",
-            "status": "done",
-            "pr_number": None,
-            "pr_state": None,
-        }
-    ]
-    assert saved.current_milestone_index == 1
-    assert saved.current_plan_name is None
-    assert saved.last_state == "done"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.last_state == "authority_divergence"
+    assert reconciled.completed == []
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == "m7-plan"
+    assert saved.last_state == "authority_divergence"
     assert saved.completed == reconciled.completed
+    assert any("reconciliation completion guard blocked m7" in msg for msg in messages)
+    assert not saved.has_milestone_evidence("m7")
+
+
+def test_reconcile_rewinds_branch_completion_missing_pr_context(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="done")
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        completed=[
+            {
+                "label": "m7",
+                "plan": "m7-plan",
+                "status": "done",
+                "pr_number": None,
+                "pr_state": None,
+            }
+        ],
+    )
+
+    messages: list[str] = []
+    reconciled = _reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        spec,
+        state,
+        writer=messages.append,
+        push_enabled=True,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.pr_number is None
+    assert reconciled.pr_state is None
+    assert reconciled.last_state == "authority_divergence"
+    assert reconciled.completed == []
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == "m7-plan"
+    assert saved.last_state == "authority_divergence"
+    assert saved.completed == []
+    assert any("missing PR context" in message for message in messages)
+
+
+def test_reconcile_clears_terminal_last_state_when_active_plan_state_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="done",
+        completed=[],
+    )
+
+    messages: list[str] = []
+    reconciled = _reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        spec,
+        state,
+        writer=messages.append,
+        push_enabled=False,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.last_state == "unknown"
+    assert saved.last_state == "unknown"
+    assert saved.metadata["ground_truth_reconciliation"]["current_state"] is None
+    assert any("cleared stale terminal last_state" in message for message in messages)
 
 
 def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
@@ -977,6 +1059,124 @@ def test_run_chain_does_not_replay_durably_blocked_plan_on_restart(
     assert any("already durably blocked" in message for message in messages)
 
 
+def test_no_push_reconciliation_never_fabricates_open_pr_as_merged(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="done", active_step=None)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state=STATE_AWAITING_PR_MERGE,
+        pr_number=255,
+        pr_state="open",
+    )
+    save_chain_state(spec_path, state)
+
+    captured: list[dict[str, object]] = []
+
+    def append_completed(_root, chain_state, record, **_kwargs):
+        captured.append(record)
+        chain_state.completed.append(record)
+        return True, "verified local publication"
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._reconcile_chain_from_ground_truth",
+            return_value=state,
+        ),
+        patch("arnold_pipelines.megaplan.chain._current_git_head", return_value="a" * 40),
+        patch(
+            "arnold_pipelines.megaplan.chain._run_milestone_validations_blocking",
+            return_value=None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._append_completed_with_guard",
+            side_effect=append_completed,
+        ),
+        patch("arnold_pipelines.megaplan.chain._mark_plan_completed_by_chain"),
+        patch("arnold_pipelines.megaplan.chain._emit_milestone_completion_evidence"),
+        patch("arnold_pipelines.megaplan.chain._emit_chain_complete_evidence"),
+        patch(
+            "arnold_pipelines.megaplan.chain._finalize_validation_artifacts_after_done_append",
+            return_value=None,
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            no_push=True,
+            no_git_refresh=True,
+            one=True,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    assert result["status"] == "done"
+    assert captured == [
+        {
+            "label": "m7",
+            "plan": "m7-plan",
+            "status": "done",
+            "pr_number": None,
+            "pr_state": None,
+            "local_commit_sha": "a" * 40,
+            "publication_evidence": "local_no_push_reconciliation",
+        }
+    ]
+    saved = load_chain_state(spec_path)
+    assert saved.metadata["local_pr_reconciliation"] == {
+        "milestone": "m7",
+        "pr_number": 255,
+        "observed_pr_state": "open",
+        "local_commit_sha": "a" * 40,
+    }
+
+
+def test_one_stops_after_ground_truth_reconciles_local_milestone(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    state = ChainState(current_milestone_index=0, completed=[])
+    state_after = ChainState(
+        current_milestone_index=1,
+        completed=[
+            {
+                "label": "m7",
+                "plan": "m7-plan",
+                "status": "done",
+                "pr_number": None,
+                "pr_state": None,
+                "local_commit_sha": "b" * 40,
+            }
+        ],
+    )
+    save_chain_state(spec_path, state)
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._reconcile_chain_from_ground_truth",
+            return_value=state_after,
+        ),
+        patch("arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery") as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            no_push=True,
+            no_git_refresh=True,
+            one=True,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_not_called()
+    assert result["status"] == "done"
+    assert result["reason"] == "one-milestone limit reached during ground-truth reconciliation"
+
+
 def test_run_chain_rearms_fresh_session_execute_block_on_restart(
     tmp_path: Path,
 ) -> None:
@@ -1049,3 +1249,103 @@ def test_run_chain_rearms_fresh_session_execute_block_on_restart(
     assert "resume_cursor" not in updated
     assert result["status"] != "stopped"
     assert any("fresh-session retry" in message for message in messages)
+
+
+def test_run_chain_rearms_stale_incomplete_execute_cursor_mismatch_on_restart(
+    tmp_path: Path,
+) -> None:
+    """Chain admission must not stop before the corrected auto driver runs."""
+
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="blocked", active_step=None)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state_payload["history"] = [
+        {"step": "execute", "result": "blocked", "message": "T8 and T11 pending"}
+    ]
+    state_payload["latest_failure"] = {
+        "kind": "workflow_cursor_mismatch",
+        "message": "workflow cursor from last_step expects one of [review] but control projection offered [execute]",
+        "phase": "execute",
+        "state": "blocked",
+        "metadata": {"observed_phase_source": "last_step"},
+    }
+    state_payload["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "repair_workflow_projection",
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state_payload) + "\n", encoding="utf-8")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m7-plan",
+            last_state="blocked",
+            pr_number=122,
+            pr_state="open",
+        ),
+    )
+
+    messages: list[str] = []
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="blocked"),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            return_value="origin/main",
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=DriverOutcome(
+                status="done",
+                plan="m7-plan",
+                final_state="done",
+                iterations=1,
+                reason="pending execute work resumed",
+            ),
+        ) as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_called_once()
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "finalized"
+    assert "latest_failure" not in updated
+    assert "resume_cursor" not in updated
+    assert updated["meta"]["workflow_cursor_recoveries"][-1]["history_result"] == "blocked"
+    assert result["status"] != "stopped"
+    assert any("stale incomplete-execute workflow cursor mismatch" in message for message in messages)
+
+
+def test_chain_preserves_genuine_workflow_cursor_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Only the invalidated incomplete-history shape is reopened."""
+
+    from arnold_pipelines.megaplan.chain import _rearm_stale_incomplete_execute_cursor_mismatch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    payload = {
+        "current_state": "blocked",
+        "history": [{"step": "execute", "result": "blocked"}],
+        "latest_failure": {
+            "kind": "workflow_cursor_mismatch",
+            "message": "workflow cursor from active_step expects one of [review] but control projection offered [execute]",
+            "phase": "execute",
+            "metadata": {"observed_phase_source": "active_step"},
+        },
+        "resume_cursor": {"phase": "execute", "retry_strategy": "repair_workflow_projection"},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    assert _rearm_stale_incomplete_execute_cursor_mismatch(plan_dir, writer=lambda _message: None) is False
+    assert json.loads((plan_dir / "state.json").read_text(encoding="utf-8")) == payload

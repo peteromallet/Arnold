@@ -43,6 +43,7 @@ def test_repair_loop_bin_falls_back_when_override_missing() -> None:
             "SESSION=demo-session",
             f"MEGAPLAN_META_ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             "MEGAPLAN_META_SELF_PATH=/usr/local/bin/arnold-meta-repair-loop",
+            f"ARNOLD_META_REPAIR_LOOP_ORIGIN={shlex.quote(str(WRAPPER_PATH))}",
             "MEGAPLAN_META_REPAIR_LOOP_BIN=/tmp/missing-repair-loop",
             prolog,
             'printf "REPAIR_LOOP_BIN=%s\\n" "$REPAIR_LOOP_BIN"',
@@ -62,10 +63,156 @@ def test_repair_loop_bin_falls_back_when_override_missing() -> None:
     )
 
 
+def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if ! has_recordable_verdict "$RESP_PATH"; then' in text
+    assert (
+        'run_direct_hermes_fallback || authority_gap_continue "T29-BYPASS-040"'
+        in text
+    )
+    assert '--query-file "$FALLBACK_BRIEF_PATH"' in text
+    assert '--project-dir /workspace' in text
+    assert 'cd /workspace || exit 1' in text
+    assert 'sys.modules["megaplan.agent"] = agent_probe' in text
+    assert 'runpy.run_path(launcher, run_name="__main__")' in text
+
+
+def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD' in text
+    assert "verify_meta_repair_commit_custody" in text
+
+
+def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if [[ "$WATCHDOG_TRIGGER" == "l3_progress_auditor" ]]' in text
+    assert "validate_l3_repair_dispatch_context" in text
+    assert '"${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"' in text
+    assert '"${ARNOLD_REPAIR_QUEUE_ROOT:-}"' in text
+    assert '"${ARNOLD_L3_REPAIR_OUTCOME_PATH:-}"' in text
+    assert "arnold-l3-meta-repair-pointer-v1" in (
+        REPO_ROOT
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "progress_auditor_escalation.py"
+    ).read_text(encoding="utf-8")
+    assert "deep repair pointer exceeds its 8 KiB prompt budget" in text
+    assert "json.dumps(pointer, indent=2, sort_keys=True)" in text
+    assert "json.dumps(payload, indent=2, sort_keys=True)" not in text
+
+
+def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
+    text = _meta_repair_wrapper()
+    assert (
+        'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \\\n'
+        '    "$marker_path" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"'
+        in text
+    )
+    assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
+    assert "will NOT install sync or retrigger ordinary repair" in text
+    assert 'post_retrigger_verification["commit_custody"]' in text
+
+
+def test_recordable_verdict_check_rejects_arbitrary_output(tmp_path: Path) -> None:
+    text = _meta_repair_wrapper()
+    start = text.index("has_recordable_verdict() {")
+    end = text.index("\n\nrun_direct_hermes_fallback()", start)
+    function = text[start:end]
+    response_path = tmp_path / "response.txt"
+
+    response_path.write_text("diagnosis without verdict\n", encoding="utf-8")
+    rejected = subprocess.run(
+        ["bash", "-lc", f"{function}\nhas_recordable_verdict {shlex.quote(str(response_path))}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode == 1
+
+    response_path.write_text("ESCALATE\noperator action required\n", encoding="utf-8")
+    accepted = subprocess.run(
+        ["bash", "-lc", f"{function}\nhas_recordable_verdict {shlex.quote(str(response_path))}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0
+
+
+def test_direct_hermes_requires_a_recordable_verdict() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if ! has_recordable_verdict "$FALLBACK_RESP_PATH"; then' in text
+    assert 'log "direct Hermes fallback produced no recordable verdict"' in text
+    assert 'cp "$FALLBACK_RESP_PATH" "$RESP_PATH"' in text
+
+
+def test_failed_launch_persists_retryable_negative_evidence() -> None:
+    text = _meta_repair_wrapper()
+
+    assert "persist_unrecordable_launch_failure()" in text
+    assert 'outcome="model_tool_launch_failure"' in text
+    assert "Codex meta-repair orchestrator returned no output and direct Hermes" in text
+    assert "recursion guard remains unpoisoned" in text
+
+
+def test_failed_launch_record_does_not_poison_recursion(tmp_path: Path) -> None:
+    marker = (
+        '"$SESSION" "$TRIGGER_TYPE" "$REPAIR_DATA_DIR" "$RESP_PATH" '
+        '"$ERR_PATH" <<'
+    )
+    program = _extract_meta_repair_embedded_python(marker)
+    prog_path = tmp_path / "_persist_launch_failure.py"
+    prog_path.write_text(program, encoding="utf-8")
+    repair_data_dir = tmp_path / "repair-data"
+    response_path = tmp_path / "response.txt"
+    response_path.write_text("unrecordable response\n", encoding="utf-8")
+    error_path = tmp_path / "response.err"
+    error_path.write_text("provider unavailable\n", encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(prog_path),
+            "demo-session",
+            "model_tool_launch_failure",
+            str(repair_data_dir),
+            str(response_path),
+            str(error_path),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    records = list((repair_data_dir / "meta").glob("*.json"))
+    assert len(records) == 1
+    payload = json.loads(records[0].read_text(encoding="utf-8"))
+    assert payload["outcome"] == "model_tool_launch_failure"
+
+    from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
+        check_meta_repair_recursion,
+    )
+
+    recursion = check_meta_repair_recursion(
+        "demo-session", repair_data_dir=repair_data_dir
+    )
+    assert recursion.recursing is False
+    assert recursion.existing_meta_repair_ids == ()
+
+
 def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> None:
     marker = (
         'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '
-        '"$BRIEF_PATH" "$REPAIR_DATA_DIR" <<'
+        '"$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" '
+        '"$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'
     )
     program = _extract_meta_repair_embedded_python(marker)
     prog_path = tmp_path / "_persist.py"
@@ -101,6 +248,9 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
             str(resp_path),
             str(brief_path),
             str(repair_data_dir / "demo-session.repair-data.json"),
+            "",
+            "",
+            "blocker:demo",
         ],
         capture_output=True,
         text=True,
@@ -174,11 +324,26 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     )
     (repair_data_dir / "demo-session.repair-data.json").write_text(
         json.dumps(
-            {
-                "session": "demo-session",
-                "outcome": "complete",
-                "verification": {"outcome": "complete"},
-            }
+                {
+                    "session": "demo-session",
+                    "outcome": "complete",
+                    "verification": {
+                        "outcome": "complete",
+                        "original_blocker": {"blocker_id": "blocker:demo"},
+                        "observation": {
+                            "blocker_id": "blocker:demo",
+                            "blocker_cleared": True,
+                            "directly_observed": True,
+                            "independent": True,
+                            "canonical_runner_live": True,
+                            "fresh_progress_beyond_checkpoint": True,
+                            "continued_progress": True,
+                            "first_progress_observed_at": "2026-07-04T01:01:00Z",
+                            "observed_at": "2026-07-04T01:02:00Z",
+                        },
+                        "repair_completed_at": "2026-07-04T01:00:00Z",
+                    },
+                }
         ),
         encoding="utf-8",
     )
@@ -227,3 +392,62 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     assert payload["retrigger_command"] == (
         f"{repair_loop_bin} demo-session {workspace} {spec_path}"
     )
+
+
+def test_meta_investigator_gets_one_bounded_schema_correction_retry() -> None:
+    wrapper = _meta_repair_wrapper()
+
+    assert "invalid_candidate_receipt" in wrapper
+    assert "validator_error" in wrapper
+    assert ".invalid-1.json" in wrapper
+    assert ".correction-1.md" in wrapper
+    assert "correction envelope failed 64 KiB preflight" in wrapper
+    assert ":correction:1" in wrapper
+    assert "launching one bounded correction" in wrapper
+    assert "invent new evidence, broaden mutation scope" in wrapper
+    assert (
+        "preserve_live is valid only when a correct live worker is actually present"
+        in wrapper
+    )
+
+
+def test_meta_repair_retrigger_rejected_or_delegated() -> None:
+    """Step 76-80: meta-repair retrigger routes through typed delegation or emits rejection.
+
+    The retrigger must never treat subprocess return-code success as accepted
+    repair.  It routes through run_managed_command (typed delegation) and
+    verifies through load_authoritative_post_retrigger_verification.  Return-code 0
+    without verified delegation outcome is treated as rejection (returncode 73).
+    """
+    wrapper = _meta_repair_wrapper()
+
+    # The retrigger section must route through typed delegation — not direct
+    # subprocess execution of the repair-loop binary.
+    assert "does NOT accept subprocess return-code success as accepted" in wrapper
+    assert "routes through typed delegation via run_managed_command" in wrapper
+    assert "load_authoritative_post_retrigger_verification" in wrapper
+    assert "Return-code 0 without verified" in wrapper
+    assert "delegation outcome is treated as rejection" in wrapper
+    assert "returncode 73" in wrapper
+
+    # Must use run_managed_command (the typed delegation path), not raw subprocess.
+    assert "run_managed_command" in wrapper
+
+    # Must carry the VERIFIER_REJECTION_RETURNCODE sentinel.
+    assert "VERIFIER_REJECTION_RETURNCODE = 73" in wrapper
+
+    # Must reference the canonical repair-data artifact for verification.
+    assert "canonical repair-data artifact" in wrapper
+
+    # Must never launch the repair-loop binary directly as a fire-and-forget
+    # subprocess whose returncode determines success.
+    retrigger_section_start = wrapper.index(
+        "retrigger ordinary repair after successful install sync (Step 76-80)"
+    )
+    retrigger_section = wrapper[retrigger_section_start:]
+    # The retrigger section must not contain a bare subprocess.run or os.system
+    # that executes the repair-loop binary directly.
+    assert "subprocess.run" not in retrigger_section or (
+        "subprocess.run" in retrigger_section
+        and "run_managed_command" in retrigger_section
+    ), "retrigger must route through run_managed_command, not bare subprocess"

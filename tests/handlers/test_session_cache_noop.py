@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 
-import arnold_pipelines.megaplan as megaplan
+import arnold_pipelines.megaplan.workers as workers
 from arnold_pipelines.megaplan._core import atomic_write_json
+from arnold_pipelines.megaplan.handlers.critique import handle_critique, handle_revise
+from arnold_pipelines.megaplan.handlers.gate import handle_gate
+from arnold_pipelines.megaplan.handlers.plan import handle_plan
 from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, load_state
 
@@ -57,9 +61,9 @@ def test_revise_noop_detector_raises_cache_hit_suspected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     make_args = plan_fixture.make_args
-    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
     state = load_state(plan_fixture.plan_dir)
     duplicate_plan = (
@@ -79,14 +83,14 @@ def test_revise_noop_detector_raises_cache_hit_suspected(
         session_id = next(sessions)
         return _worker_with_plan(state, plan_dir, duplicate_plan, session_id), "codex", "persistent", True
 
-    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr(workers, "run_step_with_worker", fake_run_step_with_worker)
 
     _mark_for_revise(plan_fixture)
-    megaplan.handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
     _mark_for_revise(plan_fixture)
-    with pytest.raises(megaplan.CliError) as exc_info:
-        megaplan.handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    with pytest.raises(CliError) as exc_info:
+        handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
     error = exc_info.value
     assert error.code == "cache_hit_suspected"
@@ -105,9 +109,9 @@ def test_revise_cost_sanity_guard_aborts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     make_args = plan_fixture.make_args
-    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    handle_gate(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
     def fake_run_step_with_worker(
         step: str,
@@ -124,11 +128,11 @@ def test_revise_cost_sanity_guard_aborts(
             True,
         )
 
-    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr(workers, "run_step_with_worker", fake_run_step_with_worker)
 
     _mark_for_revise(plan_fixture)
-    with pytest.raises(megaplan.CliError) as exc_info:
-        megaplan.handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    with pytest.raises(CliError) as exc_info:
+        handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
     assert exc_info.value.code == "revise_cost_sanity_guard"
     assert exc_info.value.extra["ticket"] == "01KRXNZZGRV17PHZRJ2Q56SPS3"

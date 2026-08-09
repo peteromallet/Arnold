@@ -15,6 +15,10 @@ modules in the same loop.
 
 from __future__ import annotations
 
+import pytest
+
+pytest.skip("archived deleted pipeline runtime E2E", allow_module_level=True)
+
 import json
 from argparse import Namespace
 from pathlib import Path

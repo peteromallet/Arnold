@@ -251,7 +251,7 @@
       "source_span": {
         "end_column": 10,
         "end_line": 401,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 28,
         "start_line": 395
       }
@@ -362,7 +362,7 @@
       "source_span": {
         "end_column": 14,
         "end_line": 412,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 31,
         "start_line": 406
       }
@@ -410,7 +410,7 @@
       "source_span": {
         "end_column": 97,
         "end_line": 405,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 32,
         "start_line": 405
       }
@@ -494,7 +494,7 @@
       "source_span": {
         "end_column": 89,
         "end_line": 402,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 29,
         "start_line": 402
       }
@@ -536,7 +536,7 @@
       "source_span": {
         "end_column": 78,
         "end_line": 421,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 17,
         "start_line": 421
       }
@@ -753,7 +753,7 @@
       "source_span": {
         "end_column": 91,
         "end_line": 457,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 17,
         "start_line": 457
       }
@@ -796,7 +796,7 @@
       "source_span": {
         "end_column": 71,
         "end_line": 391,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 20,
         "start_line": 391
       }
@@ -839,7 +839,7 @@
       "source_span": {
         "end_column": 57,
         "end_line": 390,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 19,
         "start_line": 390
       }
@@ -981,7 +981,7 @@
       "source_span": {
         "end_column": 14,
         "end_line": 419,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 35,
         "start_line": 413
       }
@@ -1035,7 +1035,7 @@
       "source_span": {
         "end_column": 98,
         "end_line": 442,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 21,
         "start_line": 442
       }
@@ -1078,7 +1078,7 @@
       "source_span": {
         "end_column": 14,
         "end_line": 479,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 34,
         "start_line": 476
       }
@@ -1160,7 +1160,7 @@
       "source_span": {
         "end_column": 14,
         "end_line": 488,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 24,
         "start_line": 485
       }
@@ -1203,7 +1203,7 @@
       "source_span": {
         "end_column": 14,
         "end_line": 475,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 33,
         "start_line": 472
       }
@@ -1250,7 +1250,7 @@
       "source_span": {
         "end_column": 14,
         "end_line": 484,
-        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "path": "arnold_pipelines/megaplan/workflows/workflow.pypeline",
         "start_column": 34,
         "start_line": 480
       }

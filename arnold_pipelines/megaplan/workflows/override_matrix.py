@@ -14,6 +14,11 @@ _OVERRIDE_ACTION_KEYS: frozenset[str] = frozenset(
         "abort",
         "add-note",
         "adopt-execution",
+        # CL5 (Plan Step 8a): cutover is a terminal, control-routed override
+        # action bound to the cutover handler via workflow.route_binding. It
+        # declares a combined run_authority (human-gate) + maintenance
+        # (repair_queue) ownership boundary (see source_to_owner_matrix.json).
+        "cutover",
         "force-proceed",
         "recover-blocked",
         "replan",
@@ -78,6 +83,25 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "policy_route_ref": "megaplan.override.adopt_execution",
         "dispatch_surface": "workflow.native_policy",
         "control_routed": False,
+    },
+    "cutover": {
+        "family": "terminal_route",
+        # CL5 (Plan Step 8a): cutover is a terminal, control-routed action
+        # route-bound to the cutover handler. It requires COMBINED authority:
+        # human-gate operator approval (run_authority) AND lifecycle mutation
+        # authority via repair_queue (maintenance). This cross-domain ownership
+        # boundary is recorded in source_to_owner_matrix.json and enforced by
+        # the override handler (_override_cutover, registered in Step 8b).
+        "description": (
+            "Execute the legacy-to-canonical cutover. Requires combined "
+            "authority: human-gate operator approval (run_authority) AND "
+            "lifecycle mutation authority via repair_queue (maintenance)."
+        ),
+        "route_signal": "cutover",
+        "target_ref": "cutover",
+        "declared_target_ref": "cutover",
+        "dispatch_surface": "workflow.route_binding",
+        "control_routed": True,
     },
     "force-proceed": {
         "family": "terminal_route",

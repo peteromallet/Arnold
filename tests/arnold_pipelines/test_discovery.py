@@ -28,8 +28,6 @@ def test_discover_migrated_pipelines_have_builders() -> None:
     assert results
     ids = {info.id for info in results}
     expected = {
-        "folder-audit",
-        "deliberation",
         "megaplan",
         "doc",
         "creative",
@@ -69,8 +67,6 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
     by_id = {info.id: info for info in results}
 
     expected = {
-        "folder-audit": "arnold/pipelines/folder_audit",
-        "deliberation": "arnold/pipelines/deliberation",
         "creative": "arnold_pipelines/megaplan/pipelines/creative",
         "doc": "arnold_pipelines/megaplan/pipelines/doc",
         "jokes": "arnold_pipelines/megaplan/pipelines/jokes",
@@ -107,7 +103,6 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
 
     workflow_rows = {
         "megaplan",
-        "evidence_pack_verifier",
     }
     for pipeline_id in workflow_rows:
         info = by_id[pipeline_id]
@@ -134,14 +129,13 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         if info.builder_contract in {"native", "deferred-native"}
     }
     expected = {
-        "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
-        "deliberation": "arnold.pipelines.deliberation:build_pipeline",
         "creative": "arnold_pipelines.megaplan.pipelines.creative:build_pipeline",
         "doc": "arnold_pipelines.megaplan.pipelines.doc:build_pipeline",
         "jokes": "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
         "live-supervisor": "arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline",
         "writing-panel-strict": "arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
         "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
+        "evidence_pack_verifier": "arnold_pipelines.evidence_pack:build_pipeline",
         "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }
 

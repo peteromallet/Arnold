@@ -2,19 +2,41 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.cloud import current_target as current_target_module
 from arnold_pipelines.megaplan.cloud.current_target import (
     _collect_sibling_sessions,
     compare_needs_human_diagnostic,
     resolve_current_target,
 )
+from arnold_pipelines.megaplan.observability.event_checkpoint import EventCheckpointError
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
     is_canonical_sidecar_path,
     canonical_sidecar_suffix,
 )
+
+
+def _strip_nondeterministic(record: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *record* with wall-clock timestamps and evidence_id
+    stripped from stale_evidence for deterministic comparison.
+
+    M9 added evidence_id to every stale_evidence entry and observed_at
+    timestamps to source_cursor entries.  Those fields vary across runs
+    even when the underlying evidence is unchanged, so test assertions
+    that check exact record equality should use this helper.
+    """
+    r = deepcopy(record)
+    # Strip evidence_id from stale_evidence entries (added by M9 T13)
+    for entry in r.get("stale_evidence", []):
+        entry.pop("evidence_id", None)
+    # Strip source_cursor entirely — observed_at timestamps are wall-clock
+    r.pop("source_cursor", None)
+    return r
 
 
 def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> None:
@@ -61,19 +83,16 @@ def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> No
         session_is_live=lambda name: name == "child-session",
     )
 
-    assert record["authoritative_source"] == "live_sibling_session"
-    assert record["target_session"] == "child-session"
+    # A tmux/session boolean from this namespace cannot prove that a sibling
+    # runner in another container is live. Without a bound lease it remains
+    # diagnostic-only and cannot replace the current target.
+    assert record["authoritative_source"] == "marker"
+    assert record["target_session"] == "parent-session"
     assert record["repair_progress"]["present"] is True
-    assert record["sibling_sessions"] == [
-        {
-            "session": "child-session",
-            "marker_path": str(marker_dir / "child-session.json"),
-            "run_kind": "chain",
-            "plan_name": "m2-child-plan",
-            "live_status": "alive",
-        }
-    ]
-    assert record["stale_evidence"] == [
+    assert record["sibling_sessions"][0]["session"] == "child-session"
+    assert record["sibling_sessions"][0]["live_status"] == "unknown"
+    assert record["sibling_sessions"][0]["current_target_liveness"]["state"] == "unknown"
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "missing_chain_state",
             "path": str(chain_spec._state_path_for(parent_spec)),
@@ -83,13 +102,8 @@ def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> No
             "path": str(workspace / ".megaplan" / "plans" / "m1-parent-plan" / "state.json"),
             "plan_name": "m1-parent-plan",
         },
-        {
-            "kind": "superseded_by_live_sibling",
-            "path": str(marker_dir / "child-session.json"),
-            "session": "child-session",
-        },
     ]
-    assert "live sibling session supersedes current marker: child-session" in record["rationale"]
+    assert "live sibling session supersedes current marker: child-session" not in record["rationale"]
 
 
 def test_resolve_current_target_marks_stale_parent_from_chain_state(tmp_path: Path) -> None:
@@ -126,7 +140,7 @@ def test_resolve_current_target_marks_stale_parent_from_chain_state(tmp_path: Pa
     assert record["authoritative_source"] == "chain_state"
     assert record["current_refs"]["marker_plan_name"] == "m1-old-plan"
     assert record["current_refs"]["current_plan_name"] == "m3-current-plan"
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "current_plan": "m3-current-plan",
             "kind": "stale_marker_plan_ref",
@@ -203,7 +217,7 @@ def test_resolve_current_target_marks_stale_needs_human(tmp_path: Path) -> None:
         "mtime": (workspace / ".megaplan" / "plans" / "m3-current-plan" / "events.ndjson").stat().st_mtime,
     }
     assert record["needs_human"]["plan_refs"] == ["m1-old-plan"]
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "current_plan": "m3-current-plan",
             "kind": "stale_needs_human_plan_ref",
@@ -249,10 +263,16 @@ def test_resolve_current_target_reports_missing_state_deterministically(tmp_path
         pid_is_live=lambda pid: False if pid == 4242 else None,
     )
 
-    assert first == second
+    # M9: source_cursor.observed_at uses wall-clock time; strip nondeterministic fields
+    assert _strip_nondeterministic(first) == _strip_nondeterministic(second)
     assert first["authoritative_source"] == "marker"
+    assert first["evidence_state"]["status"] == "unknown"
+    assert first["evidence_state"]["unknown_type"] == "partial"
+    assert first["evidence_state"]["green"] is False
+    assert first["evidence_state"]["mutation_eligible"] is False
+    assert first["evidence_state"]["authorizes_mutation"] is False
     assert first["tmux_process"]["live_status"] == "stopped"
-    assert first["stale_evidence"] == [
+    assert _strip_nondeterministic(first)["stale_evidence"] == [
         {
             "kind": "missing_chain_state",
             "path": str(_chain_state_path(workspace, spec_path)),
@@ -330,13 +350,86 @@ def test_resolve_current_target_uses_existing_fallback_chain_state_candidate(tmp
     assert record["chain_state"]["present"] is True
     assert record["chain_state"]["path"] == str(fallback_state_path)
     assert record["current_refs"]["chain_current_plan_name"] == "m1-demo"
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "missing_plan_state",
             "path": str(workspace / ".megaplan" / "plans" / "m1-demo" / "state.json"),
             "plan_name": "m1-demo",
         }
     ]
+
+
+def test_resolve_current_target_uses_spec_total_and_marks_live_successor_contradiction(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n",
+        encoding="utf-8",
+    )
+    plan_name = "m2-live-successor"
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": plan_name,
+            "last_state": "done",
+            "completed": [{"label": "m1"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"name": plan_name, "current_state": "planned"},
+    )
+
+    record = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert record["chain_state"]["milestone_total"] == 2
+    assert record["chain_state"]["completed_count"] == 1
+    stale_evidence = record["stale_evidence"]
+    assert len(stale_evidence) == 1
+    evidence_id = stale_evidence[0].pop("evidence_id")
+    assert evidence_id.startswith("sha256:")
+    repeated = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+    assert repeated["stale_evidence"][0]["evidence_id"] == evidence_id
+    assert stale_evidence == [
+        {
+            "kind": "stale_terminal_chain_state_with_active_plan",
+            "path": str(_chain_state_path(workspace, spec_path)),
+            "plan_name": plan_name,
+            "plan_state": "planned",
+            "chain_last_state": "done",
+        }
+    ]
+    assert record["evidence_state"]["unknown_type"] == "stale"
 
 
 def test_resolve_current_target_prefers_terminal_plan_over_stale_chain_state(tmp_path: Path) -> None:
@@ -373,7 +466,7 @@ def test_resolve_current_target_prefers_terminal_plan_over_stale_chain_state(tmp
     assert record["authoritative_source"] == "plan_state"
     assert record["current_refs"]["current_plan_name"] == plan_name
     assert record["current_refs"]["plan_current_state"] == "done"
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "stale_chain_state_after_terminal_plan",
             "path": str(_chain_state_path(workspace, spec_path)),
@@ -397,6 +490,7 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
     record = resolve_current_target("partial-session", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
 
     assert record["authoritative_source"] == "marker"
+    assert record["evidence_state"]["unknown_type"] == "partial"
     assert record["current_refs"] == {
         "workspace": "",
         "run_kind": "unknown",
@@ -406,10 +500,11 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
         "chain_current_plan_name": "",
         "chain_last_state": "",
         "plan_current_state": "",
+        "plan_current_phase": "",
     }
     assert record["ignored_artifacts"] == []
     assert record["repair_progress"] == {"present": False, "items": []}
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "invalid_marker_json",
             "path": str(marker_dir / "partial-session.json"),
@@ -432,6 +527,121 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
         "marker did not provide a usable remote spec",
         "marker did not provide a usable workspace",
     ]
+
+
+def test_resolve_current_target_types_wholly_missing_evidence(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+
+    record = resolve_current_target("absent", marker_dir=marker_dir)
+
+    assert record["evidence_state"] == {
+        "status": "unknown",
+        "unknown_type": "missing",
+        "issue_kinds": ["missing_marker_json", "spec_missing", "workspace_missing"],
+        "mutation_eligible": False,
+        "authorizes_mutation": False,
+        "green": False,
+    }
+
+
+def test_resolve_current_target_accepts_explicit_wrapper_workspace_hint(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hinted-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"name": plan_name, "current_state": "blocked"},
+    )
+    _write_marker(
+        marker_dir / "hinted.json",
+        {"session": "hinted", "run_kind": "plan", "plan_name": plan_name},
+    )
+
+    record = resolve_current_target(
+        "hinted",
+        marker_dir=marker_dir,
+        workspace_hint=workspace,
+    )
+
+    assert record["current_refs"]["workspace"] == str(workspace)
+    assert record["plan_state"]["present"] is True
+    assert record["evidence_state"]["status"] == "resolved"
+    assert record["evidence_state"]["mutation_eligible"] is True
+    assert "wrapper workspace argument supplied the missing marker workspace" in record["rationale"]
+
+
+def test_resolve_current_target_types_stale_evidence(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "stale-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "executing",
+            "active_step": {"phase": "execute", "worker_pid": 999999},
+        },
+    )
+    _write_marker(
+        marker_dir / "stale.json",
+        {
+            "session": "stale",
+            "workspace": str(workspace),
+            "run_kind": "plan",
+            "plan_name": plan_name,
+        },
+    )
+
+    record = resolve_current_target(
+        "stale",
+        marker_dir=marker_dir,
+        pid_is_live=lambda _pid: False,
+    )
+
+    assert record["evidence_state"]["status"] == "unknown"
+    assert record["evidence_state"]["unknown_type"] == "stale"
+    assert record["evidence_state"]["mutation_eligible"] is False
+    assert record["evidence_state"]["green"] is False
+
+
+def test_resolve_current_target_types_contradictory_plan_identity(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_marker(
+        marker_dir / "contradictory.json",
+        {
+            "session": "contradictory",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {"current_plan_name": "chain-plan", "last_state": "executing"},
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "chain-plan",
+        {"name": "different-plan", "current_state": "executing"},
+    )
+
+    record = resolve_current_target("contradictory", marker_dir=marker_dir)
+
+    assert record["evidence_state"]["status"] == "unknown"
+    assert record["evidence_state"]["unknown_type"] == "contradictory"
+    assert record["evidence_state"]["issue_kinds"] == ["contradictory_plan_identity"]
+    assert record["evidence_state"]["mutation_eligible"] is False
+    assert record["evidence_state"]["green"] is False
 
 
 def _write_marker(path: Path, payload: dict[str, object]) -> None:
@@ -583,9 +793,42 @@ def test_is_canonical_session_marker_path_true_for_markers() -> None:
     assert is_canonical_session_marker_path("parent-session.json") is True
 
 
+def test_reserved_service_session_is_not_a_canonical_run_marker() -> None:
+    assert is_canonical_session_marker_path("megaplan-resident-discord.json") is False
+
+
 def test_is_canonical_session_marker_path_false_for_sidecars() -> None:
-    for suffix in (".repair-progress.json", ".reap-progress.json", ".chain-health.progress.json", ".progress.json"):
+    for suffix in (
+        ".liveness-fence.json",
+        ".liveness-lease.json",
+        ".repair-progress.json",
+        ".reap-progress.json",
+        ".chain-health.progress.json",
+        ".progress.json",
+    ):
         assert is_canonical_session_marker_path(f"session{suffix}") is False
+
+
+def test_is_canonical_session_marker_path_false_for_liveness_sidecars() -> None:
+    """Liveness fence/lease sidecars must never be scanned as session markers.
+
+    The watchdog marker scan iterates every ``*.json`` in the marker dir and
+    treats canonical-looking files as sessions; a ``liveness-fence.json`` that
+    lacks a ``workspace`` field then emits a spurious ``workspace_missing``
+    flag for a session whose marker is actually intact (and whose fence file
+    exists). Regression: r5/r6/r7 watchdog reports flagged
+    ``missing workspace: ...liveness-fence.json`` while the file was present.
+    """
+    for name in (
+        "critique-ledger-accountability-v3-r7-launch-20260805.liveness-fence.json",
+        "critique-ledger-accountability-v3-r7-launch-20260805.liveness-lease.json",
+        "session.liveness-fence.json",
+        "session.liveness-lease.json",
+    ):
+        assert is_canonical_sidecar_path(name) is True
+        assert is_canonical_session_marker_path(name) is False
+    # The real session marker is still a marker.
+    assert is_canonical_session_marker_path("critique-ledger-accountability-v3-r7-launch-20260805.json") is True
 
 
 def test_collect_sibling_sessions_excludes_canonical_sidecar_jsons(tmp_path: Path) -> None:
@@ -866,6 +1109,100 @@ def test_resolve_current_target_active_step_heartbeat_absent(tmp_path: Path) -> 
     assert hb["attempt"] == 0
 
 
+def test_resolve_current_target_active_step_heartbeat_default_probe(
+    tmp_path: Path,
+) -> None:
+    """A live active-step worker in the observer's namespace is probed by a
+    default namespace-aware probe when the caller supplies none.
+
+    Regression: the watchdog canonical-control path never passed a probe, so a
+    provably live worker was labelled ``stale_active_step_dead_pid`` and every
+    repair/retrigger dispatch was fenced on liveness ``unknown``.
+    """
+    import os as _os
+
+    live_pid = _os.getpid()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hb-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "running",
+                "active_step": {
+                    "phase": "execute",
+                    "attempt": 2,
+                    "worker_pid": str(live_pid),
+                    "started_at": "2025-07-01T12:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {"session": "demo", "workspace": str(workspace), "plan_name": plan_name}
+        ),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    hb = record["active_step_heartbeat"]
+    assert hb["active"] is True
+    assert hb["pid_live"] is True
+    assert hb["worker_pid"] == str(live_pid)
+    kinds = [item.get("kind") for item in record["stale_evidence"]]
+    assert "stale_active_step_dead_pid" not in kinds
+
+
+def test_resolve_current_target_unprobeable_worker_is_not_stale(
+    tmp_path: Path,
+) -> None:
+    """A worker PID that cannot be probed (foreign namespace) is ``unknown``,
+    not a false ``stale_active_step_dead_pid`` claim."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hb-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "running",
+                "active_step": {
+                    "phase": "execute",
+                    "attempt": 1,
+                    "worker_pid": "999999",
+                    "started_at": "2025-07-01T12:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {"session": "demo", "workspace": str(workspace), "plan_name": plan_name}
+        ),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    hb = record["active_step_heartbeat"]
+    assert hb["active"] is False
+    kinds = [item.get("kind") for item in record["stale_evidence"]]
+    assert "stale_active_step_dead_pid" not in kinds
+
+
 def test_snapshots_distinguish_unchanged_live_from_fresh_activity(tmp_path: Path) -> None:
     """Two snapshots taken at different times expose evidence deltas.
 
@@ -943,7 +1280,7 @@ def test_snapshots_distinguish_unchanged_live_from_fresh_activity(tmp_path: Path
         session_is_live=lambda s: True if s == "demo" else None,
         pid_is_live=lambda p: True if p == 9999 else None,
     )
-    assert snap2 == snap2b
+    assert _strip_nondeterministic(snap2) == _strip_nondeterministic(snap2b)
 
 
 def test_repair_progress_sidecar_includes_mtime(tmp_path: Path) -> None:
@@ -1008,8 +1345,45 @@ def test_active_step_dead_pid_is_stale_not_live(tmp_path: Path) -> None:
 
     assert record["active_step_heartbeat"]["active"] is False
     assert record["active_step_heartbeat"]["pid_live"] is False
+    assert record["plan_state"]["current_phase"] == "execute"
+    assert record["current_refs"]["plan_current_phase"] == "execute"
     assert {item["kind"] for item in record["stale_evidence"]} >= {"stale_active_step_dead_pid"}
     assert "active_step worker PID is not live" in record["rationale"]
+
+
+def test_resolve_current_target_phase_precedence_is_deterministic(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "phase-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "failed",
+            "current_phase": "gate",
+            "active_step": {"phase": "execute", "worker_pid": 4242},
+            "resume_cursor": {"phase": "review"},
+        },
+    )
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "plan_name": plan_name,
+            "run_kind": "plan",
+        },
+    )
+
+    record = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        pid_is_live=lambda pid: False,
+    )
+
+    assert record["plan_state"]["current_phase"] == "gate"
+    assert record["current_refs"]["plan_current_phase"] == "gate"
 
 
 def test_resolve_current_target_reports_failed_resume_execute_authority_divergence(
@@ -1062,6 +1436,60 @@ def test_resolve_current_target_reports_failed_resume_execute_authority_divergen
     assert failure["phase"] == "review"
     assert failure["plan_name"] == plan_name
     assert failure["missing_task_ids"] == ["T1"]
+
+
+def test_resolve_current_target_contains_event_checkpoint_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "checkpoint-damaged-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "current_state": "blocked",
+            "resume_cursor": {
+                "phase": "critique",
+                "retry_strategy": "repair_phase_contract",
+            },
+        },
+        events_body='{"seq": 12, "kind": "phase_end"}\n{"seq": 0, "kind": "phase_start"}\n',
+    )
+    _write_marker(
+        marker_dir / "demo.json",
+        {
+            "session": "demo",
+            "workspace": str(workspace),
+            "run_kind": "plan",
+            "plan_name": plan_name,
+        },
+    )
+
+    def fail_projection(*_args, **_kwargs):
+        raise EventCheckpointError("non-monotonic event seq beyond checkpoint: 0 <= 12")
+
+    monkeypatch.setattr(
+        current_target_module,
+        "read_bounded_event_projection",
+        fail_projection,
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    assert record["current_refs"]["current_plan_name"] == plan_name
+    assert record["plan_state"]["current_state"] == "blocked"
+    assert record["event_cursors"]["line_count"] == 0
+    assert record["event_cursors"]["projection_error"] == {
+        "kind": "EventCheckpointError",
+        "message": "non-monotonic event seq beyond checkpoint: 0 <= 12",
+    }
+    assert record["evidence_state"]["status"] == "unknown"
+    assert record["evidence_state"]["unknown_type"] == "partial"
+    assert "event_checkpoint_invalid" in record["evidence_state"]["issue_kinds"]
 
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
     return chain_spec._state_path_for(spec_path)

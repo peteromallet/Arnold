@@ -1,0 +1,48 @@
+## Forensic Verdict — L2 Meta-Repair Custody for `agent-edit-verifiable-transaction-spine`
+
+### TRACKED: PASS
+
+L2 infrastructure is fully deployed:
+- **Wrapper**: `arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop` — loads env, checks recursion guard (`meta_repair_policy.py:89–156`), classifies failure, dispatches Codex orchestrator, persists redacted record.
+- **Classification**: `arnold_pipelines/megaplan/cloud/meta_repair.py:73–94` defines seven trigger types including `L1_CUSTODY_FAILURE` (line 82) — triggered "when L1 could not establish canonical request/blocker/claim custody."
+- **Dispatch routing**: `arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger:443` routes `l1_custody_failure` → `arnold-meta-repair-loop`.
+- **Evidence**: Repair request `70650274cd6c...` was created for this session. Watchdog reports exist at `20260714T002152Z` and `20260714T002555Z`.
+
+### FIXED: FAIL — L2 did NOT receive custody.
+
+**Root cause**: The watchdog's machine-repairable dispatch path returns **before evaluating the L2 trigger**. The only code path that calls `compute_meta_repair_trigger` (line 4510) is `emit_current_needs_human_sidecar` (line 1207–1264), which is **gated behind a `needs-human` marker check** at line 1218 (`[[ -f "$marker_path" ]] || return 1`). The machine-repairable branch (`manual_review_dispatch_status_env`, line 1286–1519) enqueues the repair request (line 1453), projects custody (line 1480), calls `classify_repair_dispatch` (line 1506), and returns — **never invoking `compute_meta_repair_trigger`**.
+
+This is the exact defect documented in `.megaplan/initiatives/workflow-boundary-contracts/handoff/superfixer-custody-recovery-20260713.md:20–22`:
+> *"the watchdog's manual-review machine-repairable branch dispatched L1 before loading request and blocker identity. It also returned before evaluating the L2 trigger."*
+
+When L1 fails to establish managed-agent provenance (the `managed_agent.py` argparse/import-path mismatch — `managed_agent.py:990–1017` vs the `repair-trigger:537–614` command construction), the watchdog never reaches the L2 evaluation that would detect the `l1_custody_failure` condition.
+
+### INTENT: PASS (infrastructure correct, reachability broken)
+
+The `classify_repair_system_failure` function (`meta_repair.py:719–923`) has a correct priority tree. The `l1_custody_failure` trigger is properly defined. The recursion guard (`meta_repair_policy.py:89–168`) correctly prevents double-dispatch. The **intent is sound** — the failure is purely a control-flow reachability defect.
+
+### CONTEXT: Specific backstop that must change
+
+**File**: `arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog`
+**Lines**: 1441–1514 (`manual_review_dispatch_status_env`)
+
+After `project_repair_custody` at line 1480, the function must evaluate `compute_meta_repair_trigger` before returning from the machine-repairable path. Currently the dispatch decision is returned at line 1506–1518 without any L2 trigger check. The fix requires inserting a `compute_meta_repair_trigger` call after custody projection, and when trigger = `l1_custody_failure`, calling `dispatch_meta_repair` instead of returning the L1-only decision.
+
+### Sibling-hunt scope
+
+1. **`manual_review_dispatch_status_env`** (line 1286) — primary machine-repairable dispatch; **must** add L2 trigger check after line 1480.
+2. **`plan_attention_status_env`** dispatch paths (lines ~7130–7560) — secondary dispatch sites that enqueue repair and return without L2 evaluation; same pattern.
+3. Any caller of `dispatch_repair` that doesn't subsequently call `compute_meta_repair_trigger`.
+
+### Managed-agent provenance mismatch: would L2 suffer the same fate?
+
+**Yes, in its current form.** The `repair-trigger:537–614` constructs identical `managed_agent` argv for L2 dispatch (`--run-kind automatic_meta_repair`, `--backend meta-repair-loop`) using the same `managed_agent.py` parser. If the `managed_agent` argparse rejects L1's arguments, it would reject L2's identically structured arguments — the provenance mismatch is in the command-construction layer, not L1-specific. However, the meta-repair loop wrapper itself (`arnold-meta-repair-loop:1–1121`) has an independent Codex dispatch path that bypasses `managed_agent` altogether, providing a partial escape hatch.
+
+### Verdict summary
+
+| Axis | Verdict |
+|------|---------|
+| TRACKED | PASS — infrastructure deployed and operational |
+| FIXED | **FAIL** — watchdog returns before L2 trigger evaluation |
+| INTENT | PASS — trigger definitions, recursion guard, routing all correct |
+| CONTEXT | **`arnold-watchdog:1441–1514` must evaluate `compute_meta_repair_trigger` after custody projection** |

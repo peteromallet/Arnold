@@ -1,5 +1,9 @@
 # M3: Boundary Contract Foundation
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 Introduce workflow-agnostic boundary vocabulary that can describe Megaplan

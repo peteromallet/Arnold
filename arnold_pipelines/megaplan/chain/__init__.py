@@ -66,6 +66,7 @@ from arnold_pipelines.megaplan.auto import (
     drive as auto_drive,
 )
 from arnold_pipelines.megaplan.feature_flags import supervisor_tier_routing_on
+from arnold_pipelines.megaplan._core.phase_runtime import active_step_has_live_worker
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
@@ -77,9 +78,11 @@ from arnold_pipelines.megaplan._core import (
     save_state_merge_meta,
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
+from arnold_pipelines.megaplan.layout import retired_chain_marker
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     _is_explained_noop_completion,
     AuthorityDecision,
+    accepted_attempt_execution_projection,
     effective_execute_completed_task_ids,
     load_evidence_nucleus,
 )
@@ -106,18 +109,117 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_FINALIZED,
     STATE_PREPPED,
 )
+from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+    CHAIN_COMPLETE_ROW_ID,
+    CHAIN_MILESTONE_COMPLETION_ROW_ID,
+    CHAIN_MILESTONE_START_ROW_ID,
+)
 from . import spec as chain_spec
+from .advancement import policy_for_spec
 
 APEX_EXTREME_RETRY_CAP = chain_spec.APEX_EXTREME_RETRY_CAP
 BLOCKED_EXECUTE_OUTCOME_STATUSES = chain_spec.BLOCKED_EXECUTE_OUTCOME_STATUSES
 ChainSpec = chain_spec.ChainSpec
 ChainState = chain_spec.ChainState
+FreshChildAdmissionSpec = chain_spec.FreshChildAdmissionSpec
 DEFAULT_MILESTONE_RETRY_CAP = chain_spec.DEFAULT_MILESTONE_RETRY_CAP
 DEPTH_BUMP_ORDER = chain_spec.DEPTH_BUMP_ORDER
 FailurePolicy = chain_spec.FailurePolicy
 MilestoneSpec = chain_spec.MilestoneSpec
 PROFILE_BUMP_ORDER = chain_spec.PROFILE_BUMP_ORDER
 ROBUSTNESS_BUMP_ORDER = chain_spec.ROBUSTNESS_BUMP_ORDER
+
+
+def _admit_fresh_child_for_plan(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    milestone_index: int,
+    plan_name: str,
+) -> dict[str, Any] | None:
+    """Admit an opted-in independent child before any phase/model dispatch.
+
+    The import is intentionally lazy: legacy chain specs do not instantiate
+    Run Authority/WBC/Custody owners and therefore retain their historical
+    launch path.  Enabled admission fails closed when the canonical owner
+    implementation or any configured binding is unavailable.
+    """
+
+    config = spec.fresh_child_admission
+    if config is None or not config.enabled:
+        return None
+    from .fresh_child_launch import FreshChildLaunchError, admit_fresh_child
+
+    try:
+        return admit_fresh_child(
+            root=root,
+            spec_path=spec_path,
+            spec=config,
+            state=state,
+            milestone=milestone,
+            milestone_index=milestone_index,
+            plan_name=plan_name,
+        )
+    except FreshChildLaunchError as exc:
+        raise CliError("fresh_child_admission_failed", str(exc)) from exc
+
+
+def _ensure_fresh_child_for_plan(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    milestone_index: int,
+    plan_name: str,
+) -> dict[str, Any] | None:
+    """Complete a pending fresh-child admission, including crash replay.
+
+    Chain state is persisted before the first owner call.  If the process dies
+    after owner writes but before the state metadata write, the next launch
+    enters this function with the same ``current_plan_name`` and the canonical
+    owner transaction replays idempotently.  A recorded summary is the only
+    successful skip condition; no PID/status sidecar is treated as admission.
+    """
+
+    config = spec.fresh_child_admission
+    if config is None or not config.enabled:
+        return None
+    metadata = state.metadata if isinstance(state.metadata, dict) else {}
+    records = metadata.get("fresh_child_admissions")
+    if isinstance(records, dict) and isinstance(records.get(milestone.label), dict):
+        return None
+    admission = _admit_fresh_child_for_plan(
+        root=root,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=milestone,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+    )
+    if admission is None:
+        return None
+    state.metadata = dict(metadata)
+    admissions = dict(state.metadata.get("fresh_child_admissions") or {})
+    admissions[milestone.label] = admission
+    state.metadata["fresh_child_admissions"] = admissions
+    return admission
+
+
+def _automatic_pr_progression_permitted(
+    spec: ChainSpec, spec_path: Path
+) -> bool:
+    """Return the shared effective PR review/merge policy decision."""
+
+    return policy_for_spec(
+        spec,
+        runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+    ).automatic_pr_progression
 VALID_FAILURE_ACTIONS = chain_spec.VALID_FAILURE_ACTIONS
 VALID_CLEAN_MILESTONE_PR_POLICIES = chain_spec.VALID_CLEAN_MILESTONE_PR_POLICIES
 VALID_PREREQUISITE_POLICIES = chain_spec.VALID_PREREQUISITE_POLICIES
@@ -330,6 +432,8 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
 
 from .git_ops import (
     _branch_head,
+    _capture_pr_merged_evidence,
+    _capture_pr_ready_evidence,
     _capture_sync_state,
     _checkout_milestone_branch,
     _claimed_nested_repo_paths,
@@ -497,6 +601,33 @@ def _warn_vendor_ignored_for_locked_profile(
     )
 
 
+def _seed_plan_phase_timeout(root: Path, plan: str, timeout_seconds: float) -> None:
+    """Seed the plan's execute-phase budget from the chain driver's phase timeout.
+
+    The chain spec's ``driver.phase_timeout`` is the chain-authoritative per-phase
+    budget.  Feasibility derives the execute-phase budget from the plan config
+    (``phase_timeout_seconds`` / ``phase_timeout``) and falls back to the engine
+    default when the plan config does not carry it, which can reject a graph the
+    chain owner explicitly sized for a longer phase.  Idempotent: never overwrites
+    an explicit plan-level setting.
+    """
+    try:
+        state_path = root / ".megaplan" / "plans" / plan / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    config = state.get("config")
+    if not isinstance(config, dict):
+        return
+    if (
+        config.get("phase_timeout_seconds") is not None
+        or config.get("phase_timeout") is not None
+    ):
+        return
+    config["phase_timeout_seconds"] = float(timeout_seconds)
+    atomic_write_json(state_path, state)
+
+
 def _drive_plan(
     root: Path,
     plan: str,
@@ -517,6 +648,9 @@ def _drive_plan(
         if self_hosted:
             os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = "self_hosted_editable"
     try:
+        # Align the plan's execute-phase budget with the chain-authoritative
+        # driver.phase_timeout before any phase runs (idempotent seeding).
+        _seed_plan_phase_timeout(root, plan, spec.phase_timeout)
         return auto_drive(
             plan,
             cwd=root,
@@ -1738,7 +1872,101 @@ def _run_full_suite_backstop_gate(
         }
 
 
-def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
+def _full_suite_backstop_block_reason(
+    milestone_label: str,
+    plan_name: str,
+    result: dict[str, Any] | None,
+) -> str:
+    newly_failing = result.get("newly_failing") if isinstance(result, dict) else None
+    deleted_tests = result.get("deleted_tests") if isinstance(result, dict) else None
+    failing_suffix = (
+        f"; newly_failing={newly_failing[:10]}"
+        if isinstance(newly_failing, list) and newly_failing
+        else (
+            f"; deleted_tests={deleted_tests[:10]}"
+            if isinstance(deleted_tests, list) and deleted_tests
+            else ""
+        )
+    )
+    return (
+        "full_suite_backstop_mode=enforce: milestone "
+        f"{milestone_label!r} blocked before reconciliation advance; see "
+        f"{plan_name}/full_suite_backstop.json{failing_suffix}"
+    )
+
+
+def _run_pending_reconciliation_backstops(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    writer,
+) -> str | None:
+    """Verify provisional completed records before reconciliation trusts them.
+
+    A terminal plan projection may leave a ``finalized`` completed record in
+    chain state before the cursor has advanced.  Reconciliation must not turn
+    that projection into completion authority without replaying the same
+    full-suite gate used by the ordinary advancement path.
+    """
+
+    fail_closed, _ = _reconciliation_fail_closed(state)
+    if fail_closed:
+        return None
+
+    changed = False
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") in {STATE_DONE, "complete"}:
+            continue
+        if isinstance(record.get("full_suite_backstop"), dict):
+            continue
+        milestone_label = record.get("label")
+        plan_name = record.get("plan")
+        if not isinstance(milestone_label, str) or not milestone_label:
+            continue
+        if not isinstance(plan_name, str) or not plan_name:
+            continue
+        gate = _run_full_suite_backstop_gate(
+            root,
+            spec_path,
+            plan_name,
+            milestone_label,
+            state.full_suite_backstop_mode,
+            log_fn=lambda message: writer(f"[chain] {message}\n"),
+        )
+        if gate.get("blocks"):
+            chain_spec.save_chain_state(spec_path, state)
+            result = gate.get("result")
+            return _full_suite_backstop_block_reason(
+                milestone_label,
+                plan_name,
+                result if isinstance(result, dict) else None,
+            )
+        summary = gate.get("summary")
+        if isinstance(summary, dict):
+            record["full_suite_backstop"] = dict(summary)
+            changed = True
+        result = gate.get("result")
+        if isinstance(result, dict):
+            _persist_full_suite_backstop_baseline(
+                spec_path,
+                result,
+                captured_at_sha=_current_head_sha(root),
+                milestone_label=milestone_label,
+            )
+    if changed:
+        chain_spec.save_chain_state(spec_path, state)
+    return None
+
+
+def _latest_execution_batch_all_tasks_done(
+    plan_dir: Path,
+    *,
+    chain_state: ChainState | None = None,
+    completion_record: Mapping[str, Any] | None = None,
+) -> tuple[bool, str]:
     try:
         state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -1765,8 +1993,9 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     execution_window_available = actual_git_head is not None
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
 
-    def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
+    def _authoritative_batch_task_overrides() -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
         overrides: dict[str, dict[str, Any]] = {}
+        sources: dict[str, str] = {}
         for batch_path in sorted(
             list_batch_artifacts(plan_dir),
             key=_execution_batch_sort_key,
@@ -1800,9 +2029,12 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                     if not _task_record_can_override_finalize(record):
                         continue
                     overrides[task_id] = dict(record)
-        return overrides
+                    sources[task_id] = _plan_relative_source(plan_dir, batch_path)
+        return overrides, sources
 
-    authoritative_batch_overrides = _authoritative_batch_task_overrides()
+    authoritative_batch_overrides, authoritative_batch_override_sources = (
+        _authoritative_batch_task_overrides()
+    )
     batches = sorted(
         list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
@@ -1860,6 +2092,15 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         if override is None:
                             overlaid_finalize_records.append(task)
                             continue
+                        from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                            has_durable_terminal_task_evidence,
+                        )
+                        if has_durable_terminal_task_evidence(task):
+                            # A replayed/partial batch may omit outputs already
+                            # reconciled into finalize.json. Never let that erase
+                            # terminal corroboration at chain completion.
+                            overlaid_finalize_records.append(task)
+                            continue
                         merged = dict(task)
                         for field in (
                             "files_changed",
@@ -1876,6 +2117,50 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                             merged[key] = value
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
+
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
+        has_durable_terminal_task_evidence,
+    )
+
+    # A branch replay changes commit IDs while retaining the milestone diff.
+    # Re-anchor terminal finalize evidence only when every claimed file is
+    # present in the declared milestone range; arbitrary stale claims stay
+    # non-authoritative.
+    if authoritative_finalize_records and project_dir is not None and current_head:
+        chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+        base_ref = chain_policy.get("milestone_base_sha") if isinstance(chain_policy, dict) else None
+        if isinstance(base_ref, str) and base_ref.strip():
+            try:
+                from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
+                from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                    _evidence_from_task_record,
+                )
+                committed_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+                reanchored_refs = []
+                reanchored_records: list[dict[str, Any]] = []
+                for task in authoritative_finalize_records:
+                    files = {
+                        str(path).lstrip("./")
+                        for path in task.get("files_changed", [])
+                        if isinstance(path, str) and path.strip()
+                    }
+                    if (
+                        has_durable_terminal_task_evidence(task)
+                        and files
+                        and files.issubset(committed_paths)
+                    ):
+                        task = dict(task)
+                        task["head_sha"] = current_head
+                        reanchored_refs.extend(
+                            _evidence_from_task_record(
+                                task, finalize_path, root=plan_dir, default_head=current_head
+                            )
+                        )
+                    reanchored_records.append(task)
+                authoritative_finalize_records = reanchored_records
+                evidence_nucleus = (*evidence_nucleus, *reanchored_refs)
+            except Exception:
+                pass
 
     # finalize.json defines the required task universe. A later execution batch
     # may override stale finalize rows for individual tasks, but it may not
@@ -1911,6 +2196,20 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             authoritative_finalize_records,
             finalize_completed,
             finalize_decisions,
+            source_by_task=authoritative_batch_override_sources,
+        )
+        pending.extend(
+            _chain_completion_shadow_disagreements(
+                authoritative_finalize_records,
+                finalize_completed,
+                finalize_decisions,
+                source_by_task=authoritative_batch_override_sources,
+                plan_dir=plan_dir,
+                chain_state=chain_state,
+                completion_record=completion_record,
+                default_source="finalize.json",
+                default_source_kind="finalize data",
+            )
         )
         pending.extend(
             _finalize_records_missing_authority_fields(
@@ -1953,6 +2252,19 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             return False, f"{latest.name} has no corroborated completed task IDs"
         incomplete = _non_authoritative_task_reasons(
             authoritative_task_records, completed, batch_decisions
+        )
+        incomplete.extend(
+            _chain_completion_shadow_disagreements(
+                authoritative_task_records,
+                completed,
+                batch_decisions,
+                source_by_task={},
+                plan_dir=plan_dir,
+                chain_state=chain_state,
+                completion_record=completion_record,
+                default_source=_plan_relative_source(plan_dir, latest),
+                default_source_kind="execution batch",
+            )
         )
         if incomplete:
             return (
@@ -2055,6 +2367,45 @@ def _plan_terminal_completion_is_authoritative(
             f"plan {plan_name} directory unavailable; no chain artifacts to inspect",
         )
     return _latest_execution_batch_all_tasks_done(plan_dir)
+
+
+def _record_chain_authority_divergence_cursor(
+    root: Path, plan_name: str, reason: str, *, writer,
+) -> None:
+    """Persist a plan-level rerun cursor for a terminal plan whose task
+    completion lacks authority, so the standard recovery loop (override
+    recover-blocked -> execute) can re-dispatch the blocked tasks.  This is
+    an append-only lifecycle record; it does not fabricate completion or
+    weaken the fail-closed authority gate."""
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        writer(f"[chain] cannot resolve plan dir for {plan_name}; skipping rerun cursor\n")
+        return
+    try:
+        payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        writer(f"[chain] cannot read plan state for {plan_name}; skipping rerun cursor\n")
+        return
+    if not isinstance(payload, dict):
+        return
+    from datetime import datetime, timezone
+    payload["latest_failure"] = {
+        "kind": "authority_divergence",
+        "message": "execute terminal success lacks corroborated task completion: " + reason,
+        "phase": "execute",
+        "state": "blocked",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "suggested_action": "Rerun execute so task completion can be corroborated.",
+    }
+    payload["resume_cursor"] = {"phase": "execute", "retry_strategy": "rerun_phase"}
+    try:
+        (plan_dir / "state.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        writer(f"[chain] recorded rerun cursor for {plan_name} (authority divergence)\n")
+    except OSError as exc:
+        writer(f"[chain] failed to write rerun cursor for {plan_name}: {exc}\n")
 
 
 def _finalized_plan_has_successful_review(plan_state: dict[str, Any]) -> bool:
@@ -2571,7 +2922,9 @@ def _chain_completion_guard(
             and local_raw_diff_ok is False
         ):
             authoritative, authority_reason = _latest_execution_batch_all_tasks_done(
-                plan_dir
+                plan_dir,
+                chain_state=chain_state,
+                completion_record=record,
             )
             empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(
                 plan_dir
@@ -2598,7 +2951,11 @@ def _chain_completion_guard(
             return True, f"typed no-op waiver accepted: {waiver_reason}"
         return True, f"completion guard passed: {published_diff_reason}"
 
-    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    authoritative, reason = _latest_execution_batch_all_tasks_done(
+        plan_dir,
+        chain_state=chain_state,
+        completion_record=record,
+    )
     if not authoritative and not waiver_ok:
         return (
             False,
@@ -2811,6 +3168,117 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
+def _validate_pr_progression_wbc(
+    *,
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    pr_number: int,
+    transition_name: str,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        execution_binding_report,
+    )
+    from arnold_pipelines.megaplan.chain.wbc import (
+        GIT_PR_READY_SURFACE,
+        GIT_PR_READY_WRITER_ID,
+        ChainWbcRule,
+        finalize_artifact_candidates,
+        finalize_receipt_candidates,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    binding = execution_binding_report(spec_path, state)
+    if not binding.get("required"):
+        # Legacy unbound chain specs predate the controlled-writer contract.
+        # Their existing completion guard remains authoritative; WBC becomes
+        # mandatory once execution_binding is declared required.
+        return {
+            "schema": "arnold.megaplan.chain_wbc_transition_evidence.v1",
+            "transition": transition_name,
+            "subject": f"{milestone.label}:pr#{pr_number}",
+            "migration_status": "legacy_unbound_spec",
+            "execution_binding": binding,
+        }
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        # Preserve a failed, inspectable WBC result for synthetic/recovery
+        # callers whose plan record is absent. The artifact/receipt rules below
+        # remain false; no completion guard is relaxed.
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+    plan_state = _plan_state_payload_from_name(root, plan_name)
+    current_state = plan_state.get("current_state")
+    finalize_receipts = finalize_receipt_candidates(plan_dir)
+    finalize_artifacts = finalize_artifact_candidates(plan_dir)
+    binding_ok = (
+        binding.get("status") in {"match", "reconcile_required"}
+        if binding.get("required")
+        else True
+    )
+    evidence = validate_chain_wbc_transition(
+        writer_id=GIT_PR_READY_WRITER_ID,
+        surface_name=GIT_PR_READY_SURFACE,
+        transition_name=transition_name,
+        subject=f"{milestone.label}:pr#{pr_number}",
+        source_path=spec_path,
+        project_dir=root,
+        rules=(
+            ChainWbcRule(
+                "plan_state_terminal",
+                f"{STATE_FINALIZED}|{STATE_DONE}|{STATE_AWAITING_PR_MERGE}",
+                current_state,
+                current_state in {STATE_FINALIZED, STATE_DONE, STATE_AWAITING_PR_MERGE},
+            ),
+            ChainWbcRule(
+                "finalize_receipt_present",
+                True,
+                bool(finalize_receipts),
+                bool(finalize_receipts),
+                "finalize promotion must persist a durable receipt before PR actions",
+            ),
+            ChainWbcRule(
+                "finalize_artifacts_present",
+                True,
+                bool(finalize_artifacts),
+                bool(finalize_artifacts),
+                "finalize promotion must leave canonical artifacts behind",
+            ),
+            ChainWbcRule(
+                "execution_binding_current",
+                True,
+                binding.get("status"),
+                binding_ok,
+                "chain execution binding must still match before PR progression",
+            ),
+            ChainWbcRule(
+                "pr_number_bound",
+                pr_number,
+                state.pr_number,
+                state.pr_number == pr_number,
+            ),
+        ),
+        extra={
+            "milestone_label": milestone.label,
+            "plan_name": plan_name,
+            "plan_dir": str(plan_dir),
+            "finalize_receipts": finalize_receipts,
+            "finalize_artifacts": finalize_artifacts,
+            "execution_binding_status": binding.get("status"),
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"{transition_name}:{milestone.label}:{pr_number}",
+        evidence=evidence,
+    )
+    return evidence
+
+
 def _recover_stale_merged_pr_for_unfinished_plan(
     root: Path,
     spec_path: Path,
@@ -2919,6 +3387,7 @@ def _recover_stale_merged_pr_for_unfinished_plan(
                 f"{terminal_finalize_reason}"
             ),
             writer=writer,
+            state=state,
         )
         state.last_state = STATE_DONE
         state.metadata["stale_merged_pr_recovery"] = {
@@ -2989,6 +3458,35 @@ def _block_pr_progression_guard_failure(
     )
 
 
+def _apply_committed_acceptance_state(
+    state: ChainState, new_state: dict[str, Any]
+) -> None:
+    """Mirror a durably-committed acceptance state into the in-memory state.
+
+    :func:`prepare_acceptance_commit` / :func:`commit_acceptance_commit`
+    atomically wrote *new_state* (completed record, cursor advance, and
+    milestone-boundary evidence) under the CAS guard.  Reflect only the fields
+    the acceptance commit owns into the live state object so subsequent
+    in-memory work (further mutations plus a final ``save_chain_state``) stays
+    consistent with the committed durable state.  All other state attributes
+    are left exactly as the caller set them.
+    """
+    completed_raw = new_state.get("completed")
+    if isinstance(completed_raw, list):
+        state.completed = [
+            dict(r) if isinstance(r, dict) else r for r in completed_raw
+        ]
+    idx_raw = new_state.get("current_milestone_index")
+    if isinstance(idx_raw, int):
+        state.current_milestone_index = idx_raw
+    evidence_raw = new_state.get("milestone_boundary_evidence")
+    if isinstance(evidence_raw, dict):
+        state.milestone_boundary_evidence = {
+            key: dict(val) if isinstance(val, dict) else val
+            for key, val in evidence_raw.items()
+        }
+
+
 def _append_completed_with_guard(
     root: Path,
     state: ChainState,
@@ -2996,6 +3494,16 @@ def _append_completed_with_guard(
     *,
     implementation_milestone: bool,
     writer,
+    # T16 — atomic/enforce-mode acceptance-commit wiring.  Every parameter
+    # below is optional; when they are absent (all legacy callers today) the
+    # function falls back to the original shadow-mode behavior exactly.
+    acceptance_result: Any = None,
+    spec_path: "Path | None" = None,
+    plan_dir: "Path | None" = None,
+    milestone_index: "int | None" = None,
+    predicate_failures: "list[dict[str, Any]] | None" = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
 ) -> tuple[bool, str]:
     ok, reason = _chain_completion_guard(
         root,
@@ -3003,13 +3511,351 @@ def _append_completed_with_guard(
         implementation_milestone=implementation_milestone,
         chain_state=state,
     )
+    label = record.get("label") or "unknown"
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_DIVERGENT,
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    fail_closed = is_fail_closed_mode(
+        normalize_contract_mode(state.completion_contract_mode)
+    )
+
+    if not fail_closed:
+        # ── Shadow / warn / off: preserve legacy behavior exactly ─────────
+        if not ok:
+            state.last_state = "authority_divergence"
+            writer(f"[chain] completion guard blocked {label}: {reason}\n")
+            # Same repair seam as the terminal-authority path: record a
+            # plan-level rerun cursor so recover-blocked / execute can
+            # re-dispatch the genuinely-blocked tasks whose work landed but
+            # whose execution evidence was not corroborated.
+            if record.get("plan"):
+                try:
+                    _record_chain_authority_divergence_cursor(
+                        root, str(record["plan"]), reason, writer=writer
+                    )
+                except Exception:
+                    pass
+            return False, reason
+        if spec_path is not None and plan_dir is not None:
+            from arnold_pipelines.megaplan.chain.wbc import (
+                CHAIN_ADVANCE_SURFACE,
+                CHAIN_ADVANCE_WRITER_ID,
+                ChainWbcRule,
+                record_chain_wbc_evidence,
+                validate_chain_wbc_transition,
+            )
+
+            validation_evidence = validate_chain_wbc_transition(
+                writer_id=CHAIN_ADVANCE_WRITER_ID,
+                surface_name=CHAIN_ADVANCE_SURFACE,
+                transition_name="chain_milestone_advance",
+                subject=label,
+                source_path=Path(spec_path),
+                project_dir=root,
+                rules=(
+                    ChainWbcRule("completion_guard", True, ok, ok),
+                    ChainWbcRule(
+                        "plan_name_bound",
+                        True,
+                        bool(record.get("plan")),
+                        bool(record.get("plan")),
+                    ),
+                    ChainWbcRule(
+                        "milestone_index_known",
+                        True,
+                        milestone_index is not None,
+                        milestone_index is not None,
+                    ),
+                ),
+                extra={
+                    "plan_name": str(record.get("plan") or ""),
+                    "milestone_index": milestone_index,
+                    "guard_reason": reason,
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"chain_advance:{label}:{milestone_index}",
+                evidence=validation_evidence,
+            )
+        state.completed.append(record)
+        return True, reason
+
+    # ── Atomic / enforce (fail-closed) mode ──────────────────────────────
+    def _record_repair_target(
+        kind: str,
+        summary: str,
+        *,
+        details: "dict[str, Any] | None" = None,
+        evidence_kind: str = "completion_guard",
+    ) -> None:
+        """Record a typed acceptance repair target without mutating completion
+        or cursor state (prior state stays unchanged on failure)."""
+        targets = list(state.metadata.get("completion_guard_repair_targets") or [])
+        target: dict[str, Any] = {
+            "kind": str(kind),
+            "evidence_kind": str(evidence_kind),
+            "summary": str(summary),
+            "details": dict(details or {}),
+        }
+        if acceptance_transaction_id:
+            target["acceptance_transaction_id"] = acceptance_transaction_id
+        if acceptance_snapshot_hash:
+            target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+        targets.append(target)
+        state.metadata["completion_guard_repair_targets"] = targets
+
+    # (1) Predicate failure -> fail closed; prior state unchanged.
     if not ok:
-        state.last_state = "authority_divergence"
-        label = record.get("label") or "unknown"
-        writer(f"[chain] completion guard blocked {label}: {reason}\n")
+        writer(f"[chain] completion guard blocked {label} (atomic): {reason}\n")
+        if predicate_failures:
+            for pf in predicate_failures:
+                if not isinstance(pf, dict):
+                    continue
+                _record_repair_target(
+                    str(pf.get("kind") or PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE),
+                    str(pf.get("summary") or reason),
+                    details=dict(pf.get("details") or {}),
+                    evidence_kind=str(pf.get("evidence_kind") or "completion_guard"),
+                )
+        else:
+            _record_repair_target(
+                PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+                reason,
+                details={
+                    "legacy": True,
+                    "plan_name": str(record.get("plan") or ""),
+                    "milestone_label": label,
+                    "predicate_reason": reason,
+                },
+            )
         return False, reason
-    state.completed.append(record)
+
+    # (2) Predicate passed.  Atomic completion requires a durably committed
+    #     accepted boundary to advance the completion cursor.  Without one the
+    #     cursor must never advance (fail-closed: never complete without
+    #     accepted acceptance evidence).
+    if acceptance_result is None or spec_path is None or plan_dir is None:
+        block_reason = (
+            f"atomic completion for {label} requires an accepted acceptance "
+            "boundary; none provided (fail-closed)"
+        )
+        writer(f"[chain] {block_reason}\n")
+        _record_repair_target(
+            PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            block_reason,
+            details={
+                "legacy": True,
+                "plan_name": str(record.get("plan") or ""),
+                "milestone_label": label,
+                "missing_acceptance_evidence": True,
+            },
+        )
+        return False, block_reason
+
+    # (3) Stage the acceptance commit as one CAS-backed journal transaction.
+    from arnold_pipelines.megaplan.orchestration.completion_io import (
+        commit_acceptance_commit,
+        discard_acceptance_commit,
+        prepare_acceptance_commit,
+    )
+
+    try:
+        commit_plan = prepare_acceptance_commit(
+            plan_dir=Path(plan_dir),
+            spec_path=Path(spec_path),
+            result=acceptance_result,
+            state=state,
+            milestone_index=milestone_index,
+        )
+    except ValueError as exc:
+        # Boundary precondition rejected (not accepted, unbound identity, ...).
+        prep_reason = f"acceptance commit prepare rejected for {label}: {exc}"
+        writer(f"[chain] {prep_reason}\n")
+        _record_repair_target(
+            PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            prep_reason,
+            details={
+                "plan_name": str(record.get("plan") or ""),
+                "milestone_label": label,
+                "prepare_error": str(exc),
+            },
+        )
+        return False, prep_reason
+
+    # (4) Apply durably under the CAS guard.
+    cas_result = commit_acceptance_commit(commit_plan)
+    if not getattr(cas_result, "committed", False):
+        # CAS violation -> prior durable state unchanged (the journal already
+        # discarded the staged transaction).  Discard any remaining staged
+        # prepare and emit a typed divergent repair target.
+        discard_acceptance_commit(commit_plan)
+        violations = getattr(cas_result, "violations", ()) or ()
+        viol_summary = (
+            "; ".join(
+                f"{v.guard}@{Path(v.target_path).name}" for v in violations
+            )
+            or "cas guard mismatch"
+        )
+        cas_reason = (
+            f"acceptance commit CAS violation for {label} (prior state "
+            f"unchanged): {viol_summary}"
+        )
+        writer(f"[chain] {cas_reason}\n")
+        _record_repair_target(
+            PREDICATE_KIND_DIVERGENT,
+            cas_reason,
+            details={
+                "plan_name": str(record.get("plan") or ""),
+                "milestone_label": label,
+                "cas_violations": [v.to_dict() for v in violations],
+            },
+            evidence_kind="acceptance_commit",
+        )
+        return False, cas_reason
+
+    # (5) Commit succeeded.  Mirror the durably-committed completion fields
+    #     into the in-memory state so downstream callers observe the same
+    #     state that was just written under the CAS guard.
+    from arnold_pipelines.megaplan.chain.wbc import (
+        CHAIN_ADVANCE_SURFACE,
+        CHAIN_ADVANCE_WRITER_ID,
+        ChainWbcRule,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=CHAIN_ADVANCE_WRITER_ID,
+        surface_name=CHAIN_ADVANCE_SURFACE,
+        transition_name="chain_milestone_advance",
+        subject=label,
+        source_path=Path(spec_path),
+        project_dir=root,
+        rules=(
+            ChainWbcRule("completion_guard", True, ok, ok),
+            ChainWbcRule(
+                "acceptance_commit_committed",
+                True,
+                bool(getattr(cas_result, "committed", False)),
+                bool(getattr(cas_result, "committed", False)),
+            ),
+            ChainWbcRule(
+                "accepted_boundary_present",
+                True,
+                acceptance_result is not None,
+                acceptance_result is not None,
+            ),
+            ChainWbcRule(
+                "milestone_index_known",
+                True,
+                milestone_index is not None,
+                milestone_index is not None,
+            ),
+        ),
+        extra={
+            "plan_name": str(record.get("plan") or ""),
+            "milestone_index": milestone_index,
+            "acceptance_transaction_id": acceptance_transaction_id,
+            "acceptance_snapshot_hash": acceptance_snapshot_hash,
+            "guard_reason": reason,
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"chain_advance:{label}:{milestone_index}",
+        evidence=validation_evidence,
+    )
+    _apply_committed_acceptance_state(state, commit_plan.new_state)
     return True, reason
+
+
+def _emit_milestone_start_evidence(
+    state: ChainState,
+    *,
+    milestone_label: str,
+    milestone_index: int,
+    plan_name: str,
+) -> None:
+    """Record durable milestone-start boundary evidence in chain state."""
+    evidence = chain_spec.build_milestone_boundary_evidence(
+        milestone_label=milestone_label,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+        contract_id=CHAIN_MILESTONE_START_ROW_ID,
+        contract_boundary_id="chain_milestone_start",
+        state=state,
+    )
+    state.set_milestone_evidence(evidence)
+
+
+def _emit_milestone_completion_evidence(
+    state: ChainState,
+    *,
+    milestone_label: str,
+    milestone_index: int,
+    plan_name: str,
+) -> None:
+    """Record durable milestone-completion boundary evidence in chain state."""
+    evidence = chain_spec.build_milestone_boundary_evidence(
+        milestone_label=milestone_label,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+        contract_id=CHAIN_MILESTONE_COMPLETION_ROW_ID,
+        contract_boundary_id="chain_milestone_completion",
+        state=state,
+    )
+    state.set_milestone_evidence(evidence)
+
+
+def _emit_chain_complete_evidence(
+    state: ChainState,
+    *,
+    spec: ChainSpec,
+) -> None:
+    """Record durable chain-complete boundary evidence in chain state."""
+    plan_name = "chain_complete"
+    evidence = chain_spec.build_milestone_boundary_evidence(
+        milestone_label="chain_complete",
+        milestone_index=len(spec.milestones),
+        plan_name=plan_name,
+        contract_id=CHAIN_COMPLETE_ROW_ID,
+        contract_boundary_id="chain_complete",
+        state=state,
+    )
+    state.set_milestone_evidence(evidence)
+
+
+def _reconciliation_fail_closed(state: ChainState) -> tuple[bool, str]:
+    """Return ``(True, reason)`` when reconciliation operates in fail-closed mode.
+
+    In atomic/enforce mode, reconciliation must never grant completion
+    authority from a ground-truth projection (terminal plan state, merged PR
+    state, reviewed finalized state, or any other derived observation).  Only
+    an accepted acceptance transaction recorded through the CAS-backed commit
+    helper can advance the completion cursor.  This helper lets the
+    reconciliation append primitives short-circuit before mutating
+    ``state.completed`` so projections cannot masquerade as acceptance
+    authority.
+    """
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    mode = normalize_contract_mode(state.completion_contract_mode)
+    if is_fail_closed_mode(mode):
+        return True, (
+            "reconciliation cannot grant atomic-mode completion authority "
+            "from a ground-truth projection without an accepted acceptance "
+            "transaction (fail-closed)"
+        )
+    return False, ""
 
 
 def _append_reconciled_completed_record(
@@ -3022,7 +3868,16 @@ def _append_reconciled_completed_record(
     pr_state: str | None,
     completion_reason: str,
     writer,
-) -> None:
+) -> bool:
+    # T17 — reconciliation cannot grant atomic-mode completion authority from
+    # ground-truth projections without an accepted acceptance transaction.
+    fail_closed, reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation blocked completed record for "
+            f"{milestone.label} in atomic mode: {reason}\n"
+        )
+        return False
     state.completed.append(
         {
             "label": milestone.label,
@@ -3038,11 +3893,414 @@ def _append_reconciled_completed_record(
         milestone_label=milestone.label,
         completion_reason=completion_reason,
         writer=writer,
+        state=state,
+    )
+    # Emit milestone completion boundary evidence for the reconciled record.
+    _emit_milestone_completion_evidence(
+        state,
+        milestone_label=milestone.label,
+        milestone_index=-1,  # caller is responsible for setting the right index
+        plan_name=plan_name,
+    )
+    return True
+
+
+def _revalidate_local_no_push_completed_record(
+    root: Path,
+    state: ChainState,
+    record: dict[str, Any],
+) -> tuple[bool, str]:
+    """Revalidate an explicitly accepted local-only completion record."""
+
+    if record.get("status") != STATE_DONE:
+        return False, "local/no-push completion record is not terminal done"
+    if record.get("pr_number") is not None:
+        return False, "local/no-push completion record unexpectedly has PR metadata"
+    if record.get("publication_evidence") != "local_no_push_reconciliation":
+        return False, "completed record has no explicit local/no-push publication evidence"
+    local_commit_sha = record.get("local_commit_sha")
+    if not isinstance(local_commit_sha, str) or not local_commit_sha.strip():
+        return False, "local/no-push completion record has no local commit SHA"
+    return _chain_completion_guard(
+        root,
+        record,
+        implementation_milestone=True,
+        chain_state=state,
+    )
+
+
+def _reconcile_chain_from_ground_truth(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    writer,
+    push_enabled: bool = True,
+) -> ChainState:
+    """Derive the chain cursor from plan state.json and live GitHub PR state."""
+
+    # T17 — In atomic/enforce mode reconciliation must NEVER derive completion
+    # authority from a ground-truth projection. Only an accepted acceptance
+    # transaction committed through the CAS-backed helper can advance the
+    # completion cursor. Short-circuit before any projection-derived logic.
+    fail_closed, fc_reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation skipped in atomic mode for "
+            f"{state.current_plan_name or 'current milestone'}: {fc_reason}\n"
+        )
+        chain_spec.save_chain_state(spec_path, state)
+        return state
+
+    labels_to_index = {
+        milestone.label: index for index, milestone in enumerate(spec.milestones)
+    }
+    completed_by_label = _completed_records_by_label(state)
+    reconciled_completed: list[dict[str, Any]] = []
+    removed_completed: dict[str, dict[str, Any]] = {}
+
+    for milestone in spec.milestones:
+        record = completed_by_label.get(milestone.label)
+        if not isinstance(record, dict):
+            continue
+        record = dict(record)
+        pr_number = _record_pr_number(record)
+        if push_enabled and milestone.branch and pr_number is None:
+            accepted, accepted_reason = _revalidate_local_no_push_completed_record(
+                root, state, record
+            )
+            if not accepted:
+                writer(
+                    f"[chain] completed record for {milestone.label} is not "
+                    "authoritative yet: branch milestone is missing PR context "
+                    f"and local/no-push revalidation failed: {accepted_reason}\n"
+                )
+                removed_completed[milestone.label] = dict(record)
+                continue
+            writer(
+                f"[chain] preserved accepted local/no-push completion for "
+                f"{milestone.label}: {accepted_reason}\n"
+            )
+        elif push_enabled and milestone.branch and pr_number is not None:
+            live_pr_state = _pr_state(root, pr_number, writer=writer)
+            if record.get("pr_state") != live_pr_state:
+                writer(
+                    f"[chain] reconciled completed PR state for {milestone.label} "
+                    f"#{pr_number}: {record.get('pr_state') or 'unknown'} -> "
+                    f"{live_pr_state}\n"
+                )
+            record["pr_state"] = live_pr_state
+            if live_pr_state != "merged":
+                writer(
+                    f"[chain] completed record for {milestone.label} is not "
+                    f"authoritative yet: PR #{pr_number} state={live_pr_state}\n"
+                )
+                removed = dict(record)
+                removed["pr_state"] = live_pr_state
+                removed_completed[milestone.label] = removed
+                continue
+        reconciled_completed.append(record)
+
+    if reconciled_completed != state.completed:
+        state.completed = reconciled_completed
+
+    completed_labels = {
+        record.get("label")
+        for record in state.completed
+        if isinstance(record, dict) and isinstance(record.get("label"), str)
+    }
+    first_incomplete = _completed_prefix_index(spec, completed_labels)
+    if state.current_milestone_index < first_incomplete:
+        writer(
+            f"[chain] reconciled cursor index: {state.current_milestone_index} "
+            f"-> {first_incomplete} from completed milestones\n"
+        )
+        state.current_milestone_index = first_incomplete
+        if first_incomplete >= len(spec.milestones):
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
+            state.last_state = "done"
+    elif state.current_milestone_index > first_incomplete:
+        writer(
+            f"[chain] reconciled cursor index: {state.current_milestone_index} "
+            f"-> {first_incomplete} from completed milestones\n"
+        )
+        state.current_milestone_index = first_incomplete
+        if first_incomplete < len(spec.milestones):
+            milestone = spec.milestones[first_incomplete]
+            removed = removed_completed.get(milestone.label)
+            plan = removed.get("plan") if isinstance(removed, dict) else None
+            state.current_plan_name = plan if isinstance(plan, str) and plan else None
+            state.pr_number = _record_pr_number(removed)
+            pr_state = removed.get("pr_state") if isinstance(removed, dict) else None
+            state.pr_state = pr_state if isinstance(pr_state, str) else None
+            state.last_state = "authority_divergence"
+        else:
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
+
+    plan_name = state.current_plan_name
+    plan_state = _plan_state_payload_from_name(root, plan_name)
+    if plan_state:
+        label = _chain_policy_milestone_label(plan_state)
+        plan_index = labels_to_index.get(label) if label is not None else None
+        if plan_index is not None and state.current_milestone_index != plan_index:
+            writer(
+                f"[chain] reconciled cursor index from plan {plan_name}: "
+                f"{state.current_milestone_index} -> {plan_index}\n"
+            )
+            state.current_milestone_index = plan_index
+        current_state = plan_state.get("current_state")
+        preserve_pr_cursor = (
+            state.last_state in {STATE_AWAITING_PR_MERGE, "pr_closed"}
+            and state.pr_number is not None
+        )
+        if (
+            isinstance(current_state, str)
+            and state.last_state != current_state
+            and not preserve_pr_cursor
+        ):
+            writer(
+                f"[chain] synced last_state for {plan_name}: "
+                f"{state.last_state or 'unknown'} -> {current_state}\n"
+            )
+            state.last_state = current_state
+
+    active_index = state.current_milestone_index
+    active_milestone = (
+        spec.milestones[active_index]
+        if 0 <= active_index < len(spec.milestones)
+        else None
+    )
+    active_uses_pr = bool(
+        push_enabled and active_milestone is not None and active_milestone.branch
+    )
+    live_active_pr_state: str | None = None
+    if (
+        active_uses_pr
+        and state.pr_number is not None
+        and state.last_state != "pr_closed"
+    ):
+        live_active_pr_state = _pr_state(root, state.pr_number, writer=writer)
+        if state.pr_state == "merged" and live_active_pr_state != "merged":
+            writer(
+                f"[chain] preserved recorded merged PR state for "
+                f"{active_milestone.label if active_milestone else 'milestone'} "
+                f"#{state.pr_number} despite live state {live_active_pr_state}\n"
+            )
+            live_active_pr_state = "merged"
+        elif state.pr_state != live_active_pr_state:
+            writer(
+                f"[chain] reconciled live PR state for "
+                f"{active_milestone.label if active_milestone else 'milestone'} "
+                f"#{state.pr_number}: {state.pr_state or 'unknown'} -> "
+                f"{live_active_pr_state}\n"
+            )
+        state.pr_state = live_active_pr_state
+
+    current_plan_state = plan_state.get("current_state") if plan_state else None
+    if (
+        bool(plan_name)
+        and active_milestone is not None
+        and current_plan_state == STATE_DONE
+        and active_milestone.label not in completed_labels
+        and (
+            not active_uses_pr
+            or (state.pr_number is not None and live_active_pr_state == "merged")
+        )
+    ):
+        if _append_reconciled_completed_record(
+            root,
+            state,
+            plan_name=plan_name,
+            milestone=active_milestone,
+            pr_number=state.pr_number if active_uses_pr else None,
+            pr_state="merged" if active_uses_pr else None,
+            completion_reason="terminal plan state reconciled from ground truth",
+            writer=writer,
+        ):
+            completed_labels.add(active_milestone.label)
+
+    reviewed_finalized_plan = (
+        bool(plan_name)
+        and bool(plan_state)
+        and _finalized_plan_has_successful_review(plan_state)
+    )
+    if reviewed_finalized_plan and active_milestone is not None:
+        if active_uses_pr and state.pr_number is not None:
+            if live_active_pr_state == "open" and state.last_state != STATE_AWAITING_PR_MERGE:
+                writer(
+                    f"[chain] plan {plan_name} is finalized with successful review but PR "
+                    f"#{state.pr_number} is open; waiting for merge\n"
+                )
+                state.last_state = STATE_AWAITING_PR_MERGE
+            elif (
+                live_active_pr_state == "merged"
+                and active_milestone.label not in completed_labels
+            ):
+                if _append_reconciled_completed_record(
+                    root,
+                    state,
+                    plan_name=plan_name,
+                    milestone=active_milestone,
+                    pr_number=state.pr_number,
+                    pr_state="merged",
+                    completion_reason="reviewed finalized plan with merged PR",
+                    writer=writer,
+                ):
+                    completed_labels.add(active_milestone.label)
+        elif not active_uses_pr and active_milestone.label not in completed_labels:
+            if _append_reconciled_completed_record(
+                root,
+                state,
+                plan_name=plan_name,
+                milestone=active_milestone,
+                pr_number=None,
+                pr_state=None,
+                completion_reason="reviewed finalized local plan",
+                writer=writer,
+            ):
+                completed_labels.add(active_milestone.label)
+    if (
+        active_uses_pr
+        and state.pr_number is not None
+        and current_plan_state == STATE_DONE
+        and live_active_pr_state == "open"
+        and state.last_state != STATE_AWAITING_PR_MERGE
+    ):
+        writer(
+            f"[chain] plan {plan_name} is {current_plan_state} but PR "
+            f"#{state.pr_number} is open; waiting for merge\n"
+        )
+        state.last_state = STATE_AWAITING_PR_MERGE
+
+    if active_milestone is not None and active_milestone.label in completed_labels:
+        next_index = _completed_prefix_index(spec, completed_labels)
+        if next_index != state.current_milestone_index:
+            writer(
+                f"[chain] reconciled cursor past completed milestone "
+                f"{active_milestone.label}: {state.current_milestone_index} "
+                f"-> {next_index}\n"
+            )
+            state.current_milestone_index = next_index
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
+            if next_index >= len(spec.milestones):
+                state.last_state = "done"
+            else:
+                state.last_state = "between_milestones"
+
+    _append_reconciliation_audit(
+        state,
+        plan_name=plan_name,
+        plan_state=plan_state,
+        pr_number=state.pr_number,
+        pr_state=state.pr_state,
+    )
+    chain_spec.save_chain_state(spec_path, state)
+    return state
+
+
+def _append_reconciled_completed_record_with_guard(
+    root: Path,
+    state: ChainState,
+    *,
+    spec_path: Path | None = None,
+    plan_name: str,
+    milestone: MilestoneSpec,
+    pr_number: int | None,
+    pr_state: str | None,
+    completion_reason: str,
+    writer,
+) -> tuple[bool, str]:
+    # T17 — reconciliation cannot grant atomic-mode completion authority from
+    # ground-truth projections without an accepted acceptance transaction.
+    # Short-circuit before delegating to _append_completed_with_guard so the
+    # projection is never turned into completion authority and no spurious
+    # repair target is recorded for an expected reconciliation block.
+    fail_closed, fail_reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation blocked completed record for "
+            f"{milestone.label} in atomic mode: {fail_reason}\n"
+        )
+        return False, fail_reason
+    backstop_gate: dict[str, Any] = {
+        "blocks": False,
+        "summary": None,
+        "result": None,
+    }
+    if spec_path is not None:
+        backstop_gate = _run_full_suite_backstop_gate(
+            root,
+            spec_path,
+            plan_name,
+            milestone.label,
+            state.full_suite_backstop_mode,
+            log_fn=lambda message: writer(f"[chain] {message}\n"),
+        )
+    if backstop_gate.get("blocks"):
+        result = backstop_gate.get("result")
+        state.metadata["reconciliation_full_suite_backstop_block"] = {
+            "milestone": milestone.label,
+            "plan": plan_name,
+            "result": dict(result) if isinstance(result, dict) else {},
+        }
+        return False, _full_suite_backstop_block_reason(
+            milestone.label,
+            plan_name,
+            result if isinstance(result, dict) else None,
+        )
+    state.metadata.pop("reconciliation_full_suite_backstop_block", None)
+    record = {
+        "label": milestone.label,
+        "plan": plan_name,
+        "status": STATE_DONE,
+        "pr_number": pr_number,
+        "pr_state": pr_state,
+    }
+    summary = backstop_gate.get("summary")
+    if isinstance(summary, dict):
+        record["full_suite_backstop"] = dict(summary)
+    result = backstop_gate.get("result")
+    if spec_path is not None and isinstance(result, dict):
+        _persist_full_suite_backstop_baseline(
+            spec_path,
+            result,
+            captured_at_sha=_current_head_sha(root),
+            milestone_label=milestone.label,
+        )
+    if pr_number is None:
+        local_commit_sha = _current_git_head(root)
+        if local_commit_sha is not None:
+            record["local_commit_sha"] = local_commit_sha
+            record["publication_evidence"] = "local_no_push_reconciliation"
+    appended, reason = _append_completed_with_guard(
+        root,
+        state,
+        record,
+        implementation_milestone=True,
+        writer=writer,
+    )
+    if not appended:
+        return False, reason
+    _mark_plan_completed_by_chain(
+        root,
+        plan_name,
+        milestone_label=milestone.label,
+        completion_reason=completion_reason if completion_reason else reason,
+        writer=writer,
+        state=state,
     )
     writer(
         f"[chain] reconciled terminal plan {plan_name} into completed "
         f"milestone {milestone.label}\n"
     )
+    return True, reason
 
 
 def _handle_completion_guard_failure(
@@ -3057,11 +4315,92 @@ def _handle_completion_guard_failure(
     reason: str,
     events: list[dict[str, Any]],
     writer,
+    predicate_failures: list[dict[str, Any]] | None = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
 ) -> dict[str, Any]:
     writer(
         f"[chain] milestone {milestone.label} completion guard rejected terminal "
         f"claim for {plan_name}: {reason}\n"
     )
+
+    # ── Build typed acceptance repair targets ──────────────────────────
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    )
+
+    repair_targets: list[dict[str, Any]] = []
+    if predicate_failures:
+        # Caller provided typed V2 context — use it directly.
+        for pf in predicate_failures:
+            if not isinstance(pf, dict):
+                continue
+            target: dict[str, Any] = {
+                "kind": str(pf.get("kind") or PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE),
+                "evidence_kind": str(pf.get("evidence_kind") or "completion_guard"),
+                "summary": str(pf.get("summary") or reason),
+                "details": dict(pf.get("details") or {}),
+            }
+            if acceptance_transaction_id:
+                target["acceptance_transaction_id"] = acceptance_transaction_id
+            if acceptance_snapshot_hash:
+                target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+            repair_targets.append(target)
+    else:
+        # Legacy caller — no V2 context available.  Emit a fail-closed
+        # unknown acceptance failure so downstream repair tooling knows
+        # the guard blocked but cannot yet attribute it to a specific
+        # predicate.
+        legacy_target: dict[str, Any] = {
+            "kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            "evidence_kind": "completion_guard",
+            "summary": reason,
+            "details": {
+                "legacy": True,
+                "plan_name": plan_name,
+                "milestone_label": milestone.label,
+                "outcome_status": outcome_status,
+            },
+        }
+        if acceptance_transaction_id:
+            legacy_target["acceptance_transaction_id"] = acceptance_transaction_id
+        if acceptance_snapshot_hash:
+            legacy_target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+        repair_targets.append(legacy_target)
+
+    state.metadata["completion_guard_repair_targets"] = repair_targets
+
+    # ── T14 — invalidate prior acceptance candidates ───────────────────
+    # After a completion guard blocks, any prior uncommitted acceptance
+    # candidate is stale.  The caller must produce a new snapshot and run
+    # the full acceptance boundary before committing.
+    try:
+        plan_path = resolve_plan_dir(root, plan_name) if plan_name else None
+    except Exception:
+        plan_path = None
+    if plan_path is not None and plan_path.is_dir():
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state.invalidate_candidate(
+            milestone.label,
+            transaction_id=acceptance_transaction_id or "",
+            reason=reason or "completion guard blocked",
+            superseded_by="",
+            invalidated_at=now_iso,
+        )
+        # Also call the cloud-level candidate invalidation to discard
+        # any uncommitted candidate files on disk.
+        try:
+            from arnold_pipelines.megaplan.cloud.repair_revalidation import (
+                invalidate_acceptance_candidates_after_repair,
+            )
+            invalidate_acceptance_candidates_after_repair(
+                plan_path,
+                milestone_label=milestone.label,
+                repair_reason=f"completion guard blocked: {reason}",
+            )
+        except Exception:
+            pass
+
     synthetic = DriverOutcome(
         plan=plan_name,
         status="blocked",
@@ -3199,22 +4538,153 @@ def _task_record_can_override_finalize(task: dict[str, Any]) -> bool:
     return _task_record_has_authority_payload(task)
 
 
+_CHAIN_SHADOW_TERMINAL_STATUSES = frozenset(
+    {"done", "completed", "skipped", "waived", "not_applicable"}
+)
+
+
+def _plan_relative_source(plan_dir: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(plan_dir))
+    except ValueError:
+        return str(path)
+
+
+def _decision_shadow_reason(decision: AuthorityDecision | None) -> str:
+    if decision is None:
+        return "no compatibility-adapter decision"
+    reason = next(iter(decision.would_block_reasons), "")
+    if reason:
+        return reason
+    raw = decision.diagnostics.get("reason")
+    if isinstance(raw, str) and raw:
+        return raw
+    return decision.status.value
+
+
+def _decision_shadow_sources(
+    decision: AuthorityDecision | None,
+    *,
+    projection_sources: tuple[str, ...],
+) -> str:
+    sources: set[str] = set(projection_sources)
+    if decision is not None:
+        diagnostics = decision.diagnostics
+        for key in ("source_path", "source"):
+            value = diagnostics.get(key)
+            if isinstance(value, str) and value:
+                sources.add(value)
+        raw_source_paths = diagnostics.get("source_paths")
+        if isinstance(raw_source_paths, list):
+            sources.update(str(item) for item in raw_source_paths if str(item))
+        validation = diagnostics.get("authority_validation")
+        if isinstance(validation, Mapping):
+            value = validation.get("source_path")
+            if isinstance(value, str) and value:
+                sources.add(value)
+        raw_projection_diagnostics = diagnostics.get("projection_diagnostics")
+        if isinstance(raw_projection_diagnostics, list):
+            for item in raw_projection_diagnostics:
+                if not isinstance(item, Mapping):
+                    continue
+                value = item.get("source")
+                if isinstance(value, str) and value:
+                    sources.add(value)
+    return ", ".join(sorted(sources)) or "accepted-attempt projection unavailable"
+
+
+def _chain_completion_shadow_disagreements(
+    task_records: list[dict[str, Any]],
+    completed: set[str],
+    decisions: Mapping[str, AuthorityDecision],
+    *,
+    source_by_task: Mapping[str, str],
+    plan_dir: Path,
+    chain_state: ChainState | None,
+    completion_record: Mapping[str, Any] | None,
+    default_source: str,
+    default_source_kind: str,
+) -> list[str]:
+    """Name legacy/projection disagreement sources without granting authority."""
+
+    projection = accepted_attempt_execution_projection(task_records, plan_dir=plan_dir)
+    projection_sources = projection.source_paths if projection is not None else ()
+    diagnostics: list[str] = []
+    incomplete_task_sources: list[str] = []
+    for task in task_records:
+        task_id = str(task.get("task_id") or task.get("id") or "")
+        if not task_id:
+            continue
+        status = _optional_finalize_status(task)
+        if not status:
+            continue
+        label_source = source_by_task.get(task_id, default_source)
+        label_kind = "batch overlay" if task_id in source_by_task else default_source_kind
+        accepted = task_id in completed
+        if not accepted:
+            incomplete_task_sources.append(f"{task_id} from {label_source}")
+        decision = decisions.get(task_id)
+        authority_sources = _decision_shadow_sources(
+            decision,
+            projection_sources=projection_sources,
+        )
+        reason = _decision_shadow_reason(decision)
+        if status in _CHAIN_SHADOW_TERMINAL_STATUSES and not accepted:
+            diagnostics.append(
+                f"chain_authority_shadow[{task_id}]: {label_kind} source "
+                f"{label_source} status={status!r} disagrees with "
+                "dispatch-grant/accepted-attempt authority "
+                f"({authority_sources}): {reason}"
+            )
+        elif status not in _CHAIN_SHADOW_TERMINAL_STATUSES and accepted:
+            diagnostics.append(
+                f"chain_authority_shadow[{task_id}]: {label_kind} source "
+                f"{label_source} status={status!r} disagrees with "
+                "dispatch-grant/accepted-attempt authority "
+                f"({authority_sources}): accepted dependency-closed attempt"
+            )
+
+    if completion_record is not None and incomplete_task_sources:
+        label = str(completion_record.get("label") or "unknown")
+        record_status = str(completion_record.get("status") or "").strip().lower()
+        if record_status in _CHAIN_SHADOW_TERMINAL_STATUSES:
+            source = f"chain_state.completed[{label}]"
+            if chain_state is not None:
+                source = f"{source}@current_milestone_index={chain_state.current_milestone_index}"
+            diagnostics.append(
+                f"chain_authority_shadow[{label}]: chain state source {source} "
+                f"status={record_status!r} disagrees with task authority; "
+                f"incomplete sources: {', '.join(sorted(incomplete_task_sources))}"
+            )
+
+    return sorted(set(diagnostics))
+
+
 def _non_authoritative_task_reasons(
     task_records: list[dict[str, Any]],
     completed: set[str],
     decisions: dict[str, AuthorityDecision],
+    *,
+    source_by_task: Mapping[str, str] | None = None,
 ) -> list[str]:
     incomplete: list[str] = []
     for task in task_records:
         task_id = str(task.get("task_id") or task.get("id") or "?")
         if task_id in completed:
             continue
+        source = (
+            source_by_task.get(task_id, "finalize.json")
+            if source_by_task is not None
+            else None
+        )
         decision = decisions.get(task_id)
         if decision is None:
-            incomplete.append(f"{task_id}={task.get('status')!r}")
+            suffix = f":source={source}" if source else ""
+            incomplete.append(f"{task_id}={task.get('status')!r}{suffix}")
             continue
         reason = next(iter(decision.would_block_reasons), decision.status.value)
-        incomplete.append(f"{task_id}={decision.status.value!r}:{reason}")
+        suffix = f":source={source}" if source else ""
+        incomplete.append(f"{task_id}={decision.status.value!r}:{reason}{suffix}")
     return incomplete
 
 
@@ -3274,11 +4744,35 @@ def _mark_plan_completed_by_chain(
     milestone_label: str,
     completion_reason: str,
     writer,
+    state: "ChainState | None" = None,
 ) -> None:
-    """Mirror an authoritative chain-level milestone completion into plan state."""
+    """Mirror an authoritative chain-level milestone completion into plan state.
+
+    T18 — In atomic/enforce (fail-closed) mode the plan-done projection
+    requires an accepted acceptance transaction for this milestone.  Without
+    one the projection is never written (fail-closed: plan state must not
+    signal completion authority that was not accepted).
+    """
 
     from arnold_pipelines.megaplan._core.state import write_plan_state
     from arnold_pipelines.megaplan.observability.events import EventKind, emit as emit_event
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    # ── T18: atomic/enforce gate ─────────────────────────────────────────
+    if state is not None:
+        mode = normalize_contract_mode(state.completion_contract_mode)
+        if is_fail_closed_mode(mode):
+            if not state.has_acceptance_receipt(milestone_label):
+                writer(
+                    f"[chain] plan-done marker blocked for {plan_name} "
+                    f"milestone={milestone_label} in atomic mode: "
+                    f"no accepted acceptance transaction for this milestone "
+                    f"(fail-closed — plan-done projection requires accepted evidence)\n"
+                )
+                return
 
     try:
         plan_dir = resolve_plan_dir(root, plan_name)
@@ -3301,7 +4795,7 @@ def _mark_plan_completed_by_chain(
         return True
 
     try:
-        state = write_plan_state(
+        written_state = write_plan_state(
             plan_dir,
             mode="patch-many",
             patch={},
@@ -3317,7 +4811,7 @@ def _mark_plan_completed_by_chain(
             EventKind.PLAN_FINISHED,
             plan_dir=plan_dir,
             payload={
-                "state": state,
+                "state": written_state,
                 "source": "chain_completion",
                 "milestone_label": milestone_label,
                 "reason": completion_reason,
@@ -3532,9 +5026,14 @@ def _reset_stale_prerequisite_blocked_tasks(
     plan_dir: Path,
     outcome: DriverOutcome,
 ) -> list[str]:
-    finalize_path = plan_dir / "finalize.json"
     try:
-        finalize_data = json.loads(finalize_path.read_text(encoding="utf-8"))
+        from arnold_pipelines.megaplan.orchestration.finalize_authority import (
+            FinalizeMutationContext,
+            load_finalize_for_update,
+            publish_finalize_update,
+        )
+
+        finalize_data = load_finalize_for_update(plan_dir)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return []
     if not isinstance(finalize_data, dict):
@@ -3561,7 +5060,15 @@ def _reset_stale_prerequisite_blocked_tasks(
         _clear_execute_task_attempt_fields(task)
         reset_ids.append(task_id)
     if reset_ids:
-        atomic_write_json(finalize_path, finalize_data)
+        publish_finalize_update(
+            plan_dir,
+            finalize_data,
+            context=FinalizeMutationContext(
+                owner="execute",
+                operation="reset-stale-prerequisite-blocks",
+                attempt_id="chain-recovery:" + ",".join(sorted(reset_ids)),
+            ),
+        )
     return sorted(reset_ids)
 
 
@@ -3655,6 +5162,70 @@ def _recover_stale_prerequisite_block(
     return True
 
 
+def _rearm_stale_execute_authority_divergence(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Rearm a stale execute-authority block only after current corroboration.
+
+    This is admission recovery for a repaired evidence reader, not a bypass:
+    a live completion guard must now corroborate the whole finalized task
+    universe before the old authority-divergence marker is cleared.
+    """
+    state_path = plan_dir / "state.json"
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("current_state") != STATE_BLOCKED or payload.get("active_step"):
+        return False
+    failure = payload.get("latest_failure")
+    if not isinstance(failure, dict):
+        return False
+    if failure.get("kind") != "authority_divergence" or failure.get("phase") not in {None, "execute"}:
+        return False
+    message = failure.get("message")
+    if not isinstance(message, str) or "execute terminal success lacks corroborated task completion" not in message:
+        return False
+    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not authoritative:
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    audit = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain admission revalidated stale execute terminal authority divergence",
+        "authority_reason": reason,
+    }
+
+    def _patch_rearmed_authority_block(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("authority_divergence_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(audit)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_EXECUTED},
+        mutation=_patch_rearmed_authority_block,
+    )
+    writer(
+        "[chain] current execute authority now corroborates terminal finalize "
+        "evidence; cleared stale authority-divergence block\n"
+    )
+    return True
+
+
 def _rearm_fresh_session_execute_block(
     plan_dir: Path,
     *,
@@ -3726,6 +5297,151 @@ def _rearm_fresh_session_execute_block(
     writer(
         "[chain] execute block recorded a fresh-session retry; reset blocked plan "
         "back to finalized so execute can re-run\n"
+    )
+    return True
+
+
+def _rearm_stale_terminal_execute_cursor_mismatch(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Clear only a stale execute->review cursor wrapper after live authority."""
+    state_path = plan_dir / "state.json"
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("current_state") != STATE_BLOCKED or payload.get("active_step"):
+        return False
+    failure = payload.get("latest_failure")
+    if not isinstance(failure, dict):
+        return False
+    if failure.get("kind") != "workflow_cursor_mismatch" or failure.get("phase") != "execute":
+        return False
+    message = failure.get("message")
+    if not isinstance(message, str) or (
+        "workflow cursor from last_step expects one of [review]" not in message
+        or "control projection offered [execute]" not in message
+    ):
+        return False
+    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not authoritative:
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    audit = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain admission cleared stale execute-to-review cursor mismatch",
+        "authority_reason": reason,
+    }
+
+    def _patch_rearmed_cursor(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("terminal_cursor_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(audit)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_EXECUTED},
+        mutation=_patch_rearmed_cursor,
+    )
+    writer(
+        "[chain] terminal execute authority now passes; cleared stale "
+        "execute-to-review cursor mismatch\n"
+    )
+    return True
+
+
+def _rearm_stale_incomplete_execute_cursor_mismatch(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Reopen the specific cursor failure invalidated by current projection rules.
+
+    A partial or blocked execute intentionally leaves the plan in ``finalized``
+    so pending batches can be dispatched again.  Older workflow-backed drivers
+    incorrectly promoted that incomplete history record into an execute->review
+    cursor and then persisted ``workflow_cursor_mismatch``.  Once that record
+    is present, ordinary chain admission stops before the corrected driver can
+    observe it.  Reopen only the mechanically identifiable stale shape; a
+    genuine cursor mismatch (a different cursor source, route, or outcome)
+    remains blocked for repair.
+    """
+
+    state_path = plan_dir / "state.json"
+    try:
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(state_payload, dict):
+        return False
+    if state_payload.get("current_state") != STATE_BLOCKED or state_payload.get("active_step"):
+        return False
+    latest_failure = state_payload.get("latest_failure")
+    resume_cursor = state_payload.get("resume_cursor")
+    if not isinstance(latest_failure, dict) or not isinstance(resume_cursor, dict):
+        return False
+    if latest_failure.get("kind") != "workflow_cursor_mismatch":
+        return False
+    if latest_failure.get("phase") != "execute":
+        return False
+    if resume_cursor.get("phase") != "execute":
+        return False
+    if resume_cursor.get("retry_strategy") != "repair_workflow_projection":
+        return False
+    metadata = latest_failure.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("observed_phase_source") != "last_step":
+        return False
+    message = latest_failure.get("message")
+    if not isinstance(message, str) or "expects one of [review]" not in message or "offered [execute]" not in message:
+        return False
+    history = state_payload.get("history")
+    last_entry = history[-1] if isinstance(history, list) and history else None
+    if not isinstance(last_entry, dict):
+        return False
+    if last_entry.get("step") != "execute" or last_entry.get("result") not in {"blocked", "partial"}:
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    recovery_event = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain relaunch cleared stale incomplete-execute workflow cursor mismatch",
+        "history_result": last_entry.get("result"),
+    }
+
+    def _patch_stale_cursor(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("workflow_cursor_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(recovery_event)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_FINALIZED},
+        mutation=_patch_stale_cursor,
+    )
+    writer(
+        "[chain] cleared stale incomplete-execute workflow cursor mismatch; "
+        "reset plan to finalized so pending execute work can resume\n"
     )
     return True
 
@@ -3915,14 +5631,7 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
 
 def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
     active_step = plan_state.get("active_step")
-    if not isinstance(active_step, Mapping):
-        return False
-    return bool(
-        active_step.get("phase")
-        or active_step.get("worker_pid")
-        or active_step.get("pid")
-        or active_step.get("session_id")
-    )
+    return active_step_has_live_worker(active_step)
 
 
 def _blocked_plan_replay_would_be_redundant(
@@ -3993,6 +5702,25 @@ def _append_reconciliation_audit(
     }
 
 
+def _clear_impossible_terminal_last_state(
+    state: ChainState,
+    *,
+    writer,
+    reason: str,
+) -> None:
+    """Clear a terminal-looking chain state when an active plan still exists."""
+
+    if state.last_state not in {"done", "complete"}:
+        return
+    if not state.current_plan_name:
+        return
+    writer(
+        f"[chain] cleared stale terminal last_state for {state.current_plan_name}: "
+        f"{state.last_state} -> unknown ({reason})\n"
+    )
+    state.last_state = "unknown"
+
+
 def _mark_chain_after_milestone_advance(
     spec: ChainSpec,
     state: ChainState,
@@ -4017,12 +5745,47 @@ def _reconcile_chain_from_ground_truth(
 ) -> ChainState:
     """Derive the chain cursor from plan state.json and live GitHub PR state."""
 
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        assert_execution_binding,
+    )
+
+    assert_execution_binding(
+        spec_path,
+        state,
+        operation="chain reconciliation",
+        allow_unbound_new=True,
+    )
+
+    # T17 — In atomic/enforce mode reconciliation must NEVER derive completion
+    # authority (cursor advancement, ``last_state = "done"``, completed-record
+    # rebuild from live PR state, cursor/last_state sync from plan state.json)
+    # from a ground-truth projection. Only an accepted acceptance transaction
+    # committed through the CAS-backed helper can advance the completion cursor.
+    # We short-circuit here so the projection cannot masquerade as authority,
+    # while still persisting an audit trail of the reconciliation attempt.
+    fail_closed, fc_reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation skipped in atomic mode for "
+            f"{state.current_plan_name or 'current milestone'}: {fc_reason}\n"
+        )
+        _append_reconciliation_audit(
+            state,
+            plan_name=state.current_plan_name,
+            plan_state={},
+            pr_number=state.pr_number,
+            pr_state=state.pr_state,
+        )
+        chain_spec.save_chain_state(spec_path, state)
+        return state
+
     labels_to_index = {
         milestone.label: index for index, milestone in enumerate(spec.milestones)
     }
     completed_by_label = _completed_records_by_label(state)
     reconciled_completed: list[dict[str, Any]] = []
     removed_completed: dict[str, dict[str, Any]] = {}
+    current_plan_from_removed_completion = False
 
     for milestone in spec.milestones:
         record = completed_by_label.get(milestone.label)
@@ -4030,7 +5793,25 @@ def _reconcile_chain_from_ground_truth(
             continue
         record = dict(record)
         pr_number = _record_pr_number(record)
-        if push_enabled and milestone.branch and pr_number is not None:
+        if push_enabled and milestone.branch:
+            if pr_number is None:
+                accepted, accepted_reason = _revalidate_local_no_push_completed_record(
+                    root, state, record
+                )
+                if not accepted:
+                    writer(
+                        f"[chain] completed record for {milestone.label} is not "
+                        "authoritative yet: branch milestone is missing PR context "
+                        f"and local/no-push revalidation failed: {accepted_reason}\n"
+                    )
+                    removed_completed[milestone.label] = dict(record)
+                    continue
+                writer(
+                    f"[chain] preserved accepted local/no-push completion for "
+                    f"{milestone.label}: {accepted_reason}\n"
+                )
+                reconciled_completed.append(record)
+                continue
             live_pr_state = _pr_state(root, pr_number, writer=writer)
             if record.get("pr_state") != live_pr_state:
                 writer(
@@ -4085,6 +5866,7 @@ def _reconcile_chain_from_ground_truth(
             pr_state = removed.get("pr_state") if isinstance(removed, dict) else None
             state.pr_state = pr_state if isinstance(pr_state, str) else None
             state.last_state = "authority_divergence"
+            current_plan_from_removed_completion = state.current_plan_name is not None
         else:
             state.current_plan_name = None
             state.pr_number = None
@@ -4109,6 +5891,7 @@ def _reconcile_chain_from_ground_truth(
         if (
             isinstance(current_state, str)
             and state.last_state != current_state
+            and not current_plan_from_removed_completion
             and not preserve_pr_cursor
         ):
             writer(
@@ -4116,6 +5899,12 @@ def _reconcile_chain_from_ground_truth(
                 f"{state.last_state or 'unknown'} -> {current_state}\n"
             )
             state.last_state = current_state
+    elif plan_name:
+        _clear_impossible_terminal_last_state(
+            state,
+            writer=writer,
+            reason="active plan state unavailable during ground-truth reconciliation",
+        )
 
     active_index = state.current_milestone_index
     active_milestone = (
@@ -4160,9 +5949,10 @@ def _reconcile_chain_from_ground_truth(
             or (state.pr_number is not None and live_active_pr_state == "merged")
         )
     ):
-        _append_reconciled_completed_record(
+        appended, reason = _append_reconciled_completed_record_with_guard(
             root,
             state,
+            spec_path=spec_path,
             plan_name=plan_name,
             milestone=active_milestone,
             pr_number=state.pr_number if active_uses_pr else None,
@@ -4170,7 +5960,13 @@ def _reconcile_chain_from_ground_truth(
             completion_reason="terminal plan state reconciled from ground truth",
             writer=writer,
         )
-        completed_labels.add(active_milestone.label)
+        if appended:
+            completed_labels.add(active_milestone.label)
+        else:
+            writer(
+                f"[chain] reconciliation completion guard blocked "
+                f"{active_milestone.label}: {reason}\n"
+            )
 
     reviewed_finalized_plan = (
         bool(plan_name)
@@ -4189,9 +5985,10 @@ def _reconcile_chain_from_ground_truth(
                 live_active_pr_state == "merged"
                 and active_milestone.label not in completed_labels
             ):
-                _append_reconciled_completed_record(
+                appended, reason = _append_reconciled_completed_record_with_guard(
                     root,
                     state,
+                    spec_path=spec_path,
                     plan_name=plan_name,
                     milestone=active_milestone,
                     pr_number=state.pr_number,
@@ -4199,11 +5996,18 @@ def _reconcile_chain_from_ground_truth(
                     completion_reason="reviewed finalized plan with merged PR",
                     writer=writer,
                 )
-                completed_labels.add(active_milestone.label)
+                if appended:
+                    completed_labels.add(active_milestone.label)
+                else:
+                    writer(
+                        f"[chain] reconciliation completion guard blocked "
+                        f"{active_milestone.label}: {reason}\n"
+                    )
         elif not active_uses_pr and active_milestone.label not in completed_labels:
-            _append_reconciled_completed_record(
+            appended, reason = _append_reconciled_completed_record_with_guard(
                 root,
                 state,
+                spec_path=spec_path,
                 plan_name=plan_name,
                 milestone=active_milestone,
                 pr_number=None,
@@ -4211,7 +6015,13 @@ def _reconcile_chain_from_ground_truth(
                 completion_reason="reviewed finalized local plan",
                 writer=writer,
             )
-            completed_labels.add(active_milestone.label)
+            if appended:
+                completed_labels.add(active_milestone.label)
+            else:
+                writer(
+                    f"[chain] reconciliation completion guard blocked "
+                    f"{active_milestone.label}: {reason}\n"
+                )
     if (
         active_uses_pr
         and state.pr_number is not None
@@ -4239,6 +6049,8 @@ def _reconcile_chain_from_ground_truth(
             state.pr_state = None
             if next_index >= len(spec.milestones):
                 state.last_state = "done"
+            else:
+                state.last_state = "between_milestones"
 
     _append_reconciliation_audit(
         state,
@@ -4264,8 +6076,29 @@ def _sync_chain_last_state_from_plan(
     if not plan_name:
         return state
     plan_state = _plan_current_state_from_payload(root, plan_name)
-    if not plan_state or plan_state == state.last_state:
+    if not plan_state:
+        previous = state.last_state
+        _clear_impossible_terminal_last_state(
+            state,
+            writer=writer,
+            reason="active plan state unavailable while syncing chain last_state",
+        )
+        if state.last_state != previous:
+            chain_spec.save_chain_state(spec_path, state)
         return state
+    if plan_state == state.last_state:
+        return state
+    # Preserve a recorded authority divergence: when the plan reports a
+    # terminal state but its tasks lack corroborated completion, syncing
+    # last_state to the plan's naive terminal value would erase the repair
+    # seam (the divergence + rerun cursor) that recover-blocked/execute
+    # re-dispatch depends on.  Re-verify task authority before overwriting.
+    if state.last_state == "authority_divergence" and plan_state == "done":
+        from arnold_pipelines.megaplan.chain import _plan_terminal_completion_is_authoritative
+
+        authoritative, _ = _plan_terminal_completion_is_authoritative(root, plan_name)
+        if not authoritative:
+            return state
     previous = state.last_state
     state.last_state = plan_state
     writer(
@@ -4770,6 +6603,7 @@ def run_chain(
     """Drive the full chain. Returns a structured JSON-serializable result."""
     root = root.resolve(strict=False)
     spec_path = spec_path.resolve(strict=False)
+    _require_active_initiative_chain(root, spec_path)
     _require_git_worktree_root(root, operation="chain start")
     spec = chain_spec.load_spec(spec_path)
     anchor_requirement = chain_spec.validate_anchor_requirement(
@@ -4783,6 +6617,23 @@ def run_chain(
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        bind_execution_identity,
+    )
+
+    # Bind before the first state save or milestone initialization. Existing
+    # progressed state without a launch binding is refused by the loader.
+    bind_execution_identity(spec_path, state)
+    from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+
+    if is_paused(state):
+        return _result(
+            "paused",
+            state,
+            [],
+            spec=spec,
+            reason="durable operator pause is active; explicit chain resume required",
+        )
     env = resolve_execution_environment(
         root=root,
         state={"config": {"project_dir": str(root), "base_branch": spec.base_branch}},
@@ -4808,6 +6659,21 @@ def run_chain(
         "yes",
         "YES",
     }
+    reconciliation_backstop_block = _run_pending_reconciliation_backstops(
+        root,
+        spec_path,
+        state,
+        writer=writer,
+    )
+    if reconciliation_backstop_block is not None:
+        return _result(
+            "blocked",
+            state,
+            [],
+            spec=spec,
+            reason=reconciliation_backstop_block,
+        )
+    completed_before_reconciliation = len(state.completed)
     state = _reconcile_chain_from_ground_truth(
         root,
         spec_path,
@@ -4816,12 +6682,115 @@ def run_chain(
         writer=writer,
         push_enabled=push_enabled,
     )
+    reconciliation_block = state.metadata.get(
+        "reconciliation_full_suite_backstop_block"
+    )
+    if isinstance(reconciliation_block, dict):
+        result = reconciliation_block.get("result")
+        return _result(
+            "blocked",
+            state,
+            [],
+            spec=spec,
+            reason=_full_suite_backstop_block_reason(
+                str(reconciliation_block.get("milestone") or "unknown"),
+                str(reconciliation_block.get("plan") or "unknown"),
+                result if isinstance(result, dict) else None,
+            ),
+        )
 
     events: list[dict[str, Any]] = []
+
+    if one and len(state.completed) > completed_before_reconciliation:
+        return _result(
+            "done",
+            state,
+            events,
+            spec=spec,
+            reason="one-milestone limit reached during ground-truth reconciliation",
+        )
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
+
+    def _emit_chain_work_boundary(
+        kind: str,
+        *,
+        plan_name: str | None = None,
+        phase: str | None = "chain",
+        elapsed_ms: int | None = None,
+        operation: str | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        target_plan = plan_name or state.current_plan_name
+        if not target_plan:
+            return
+        try:
+            plan_dir = resolve_plan_dir(root, target_plan)
+        except CliError:
+            return
+        payload = {
+            "boundary": kind,
+            "chain_spec": str(spec_path),
+            "current_plan_name": target_plan,
+            **dict(metadata or {}),
+        }
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_git_activity,
+                emit_replay,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "chain_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase,
+                    session_id=f"chain:{os.getpid()}:{spec_path.name}",
+                    agent="chain",
+                    metadata=payload,
+                )
+            elif kind == "git":
+                emit_git_activity(
+                    plan_dir,
+                    phase=phase or "chain",
+                    operation=operation or "chain_git_boundary",
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "replay":
+                emit_replay(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_replay_boundary_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase,
+                    transition=str(payload.get("transition") or "chain_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            logging.getLogger("megaplan").debug(
+                "Work ledger chain event emission skipped", exc_info=True
+            )
 
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:
@@ -4830,6 +6799,18 @@ def run_chain(
         if seed_state not in TERMINAL_SKIP_STATES:
             state.current_plan_name = spec.seed_plan
             chain_spec.save_chain_state(spec_path, state)
+            _emit_chain_work_boundary(
+                "chain_session_start",
+                plan_name=spec.seed_plan,
+                metadata={"boundary": "seed_plan_start", "seed_state": seed_state},
+            )
+            _emit_chain_work_boundary(
+                "transition",
+                plan_name=spec.seed_plan,
+                from_state=seed_state,
+                to_state="chain_driving_seed",
+                metadata={"transition": "chain_seed_start"},
+            )
             outcome = _drive_plan_with_blocked_execute_recovery(
                 root,
                 spec_path,
@@ -4865,6 +6846,15 @@ def run_chain(
                 )
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=spec.seed_plan,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": "seed",
+                        "retry_strategy": "seed_recursive_retry",
+                    },
+                )
                 outcome = _drive_plan_with_blocked_execute_recovery(
                     root,
                     spec_path,
@@ -4961,6 +6951,15 @@ def run_chain(
         except CliError as exc:
             log(f"terminal PR reconciliation skipped: {exc.message}")
     while idx < len(spec.milestones):
+        state = chain_spec.load_chain_state(spec_path)
+        if is_paused(state):
+            return _result(
+                "paused",
+                state,
+                events,
+                spec=spec,
+                reason="durable operator pause is active; explicit chain resume required",
+            )
         state = _reconcile_chain_from_ground_truth(
             root,
             spec_path,
@@ -4990,6 +6989,21 @@ def run_chain(
 
         if state.current_milestone_index == idx and state.pr_number is not None and use_pr:
             pr_state = _pr_state(root, state.pr_number, writer=writer)
+            if pr_state == "closed" and state.last_state == "blocked":
+                log(
+                    f"clearing stale closed PR context for {milestone.label} while "
+                    "resuming blocked plan"
+                )
+                state.last_state = "pr_closed"
+                state.pr_state = "closed"
+                chain_spec.save_chain_state(spec_path, state)
+                state = _clear_stale_closed_pr_state(
+                    spec_path=spec_path,
+                    state=state,
+                    milestone_label=milestone.label,
+                    log_fn=log,
+                )
+                continue
             if pr_state == "merged":
                 state.pr_state = "merged"
                 chain_spec.save_chain_state(spec_path, state)
@@ -5102,9 +7116,18 @@ def run_chain(
                         milestone_label=milestone.label,
                         completion_reason=reason,
                         writer=writer,
+                        state=state,
                     )
+                _emit_milestone_completion_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx,
+                    plan_name=state.current_plan_name or "",
+                )
                 idx += 1
                 _mark_chain_after_milestone_advance(spec, state, next_index=idx)
+                if idx >= len(spec.milestones):
+                    _emit_chain_complete_evidence(state, spec=spec)
                 chain_spec.save_chain_state(spec_path, state)
                 manifest_reason = _finalize_validation_artifacts_after_done_append(
                     root=root,
@@ -5128,11 +7151,33 @@ def run_chain(
             state.last_state == STATE_AWAITING_PR_MERGE
             and state.current_milestone_index == idx
         ):
+            local_publication_sha: str | None = None
             if not use_pr or state.pr_number is None:
                 log(
                     f"review merge wait for {milestone.label} has no PR context; advancing"
                 )
+                if not use_pr and state.pr_number is not None:
+                    local_publication_sha = _current_git_head(root)
+                    if local_publication_sha is None:
+                        return _result(
+                            "blocked",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"milestone {milestone.label} cannot reconcile its open PR "
+                                "to a local-only run without a readable local HEAD"
+                            ),
+                        )
+                    state.metadata["local_pr_reconciliation"] = {
+                        "milestone": milestone.label,
+                        "pr_number": state.pr_number,
+                        "observed_pr_state": state.pr_state,
+                        "local_commit_sha": local_publication_sha,
+                    }
+                    state.pr_number = None
                 state.pr_state = None
+                chain_spec.save_chain_state(spec_path, state)
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
                 if pr_state == "closed":
@@ -5168,10 +7213,32 @@ def run_chain(
                         )
                     if publish_reason.startswith("published "):
                         state = chain_spec.load_chain_state(spec_path)
-                    if spec.merge_policy != "review":
+                    if _automatic_pr_progression_permitted(spec, spec_path):
+                        validation_evidence = _validate_pr_progression_wbc(
+                            root=root,
+                            spec_path=spec_path,
+                            state=state,
+                            milestone=milestone,
+                            plan_name=state.current_plan_name or "",
+                            pr_number=state.pr_number,
+                            transition_name="chain_pr_ready",
+                        )
+                        _pr_ready_evidence = _capture_pr_ready_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            ci_readiness_state="ready",
+                            validation_evidence=validation_evidence,
+                        )
                         _mark_pr_ready(root, state.pr_number, writer=writer)
                         state.pr_state = _enable_auto_merge(
                             root, state.pr_number, writer=writer
+                        )
+                        _pr_merged_evidence = _capture_pr_merged_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            validation_evidence=validation_evidence,
                         )
                         chain_spec.save_chain_state(spec_path, state)
                         pr_state = _pr_state(root, state.pr_number, writer=writer)
@@ -5211,7 +7278,15 @@ def run_chain(
                                 ),
                             )
                     else:
-                        log(f"PR #{state.pr_number} state={pr_state}; awaiting merge")
+                        policy = policy_for_spec(
+                            spec,
+                            runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+                        )
+                        log(
+                            f"PR #{state.pr_number} state={pr_state}; awaiting human "
+                            f"review/merge (merge_policy={policy.merge_policy}, "
+                            f"clean_milestone_pr={policy.clean_milestone_pr})"
+                        )
                         return _result(
                             STATE_AWAITING_PR_MERGE,
                             state,
@@ -5292,16 +7367,20 @@ def run_chain(
                     spec=spec,
                     reason=validation_reason,
                 )
+            completion_record = {
+                "label": milestone.label,
+                "plan": state.current_plan_name,
+                "status": "done",
+                "pr_number": state.pr_number,
+                "pr_state": "merged" if state.pr_number is not None else None,
+            }
+            if local_publication_sha is not None:
+                completion_record["local_commit_sha"] = local_publication_sha
+                completion_record["publication_evidence"] = "local_no_push_reconciliation"
             appended, reason = _append_completed_with_guard(
                 root,
                 state,
-                {
-                    "label": milestone.label,
-                    "plan": state.current_plan_name,
-                    "status": "done",
-                    "pr_number": state.pr_number,
-                    "pr_state": "merged" if state.pr_number is not None else None,
-                },
+                completion_record,
                 implementation_milestone=True,
                 writer=writer,
             )
@@ -5337,9 +7416,18 @@ def run_chain(
                     milestone_label=milestone.label,
                     completion_reason=reason,
                     writer=writer,
+                    state=state,
                 )
+            _emit_milestone_completion_evidence(
+                state,
+                milestone_label=milestone.label,
+                milestone_index=idx,
+                plan_name=state.current_plan_name or "",
+            )
             idx += 1
             _mark_chain_after_milestone_advance(spec, state, next_index=idx)
+            if idx >= len(spec.milestones):
+                _emit_chain_complete_evidence(state, spec=spec)
             chain_spec.save_chain_state(spec_path, state)
             manifest_reason = _finalize_validation_artifacts_after_done_append(
                 root=root,
@@ -5373,9 +7461,22 @@ def run_chain(
                 except CliError:
                     plan_dir = None
                 if plan_dir is not None:
+                    _rearm_stale_terminal_execute_cursor_mismatch(plan_dir, writer=writer)
+                    _rearm_stale_incomplete_execute_cursor_mismatch(plan_dir, writer=writer)
+                    _rearm_stale_execute_authority_divergence(plan_dir, writer=writer)
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                    _emit_chain_work_boundary(
+                        "replay",
+                        plan_name=plan_name,
+                        elapsed_ms=0,
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "replay_boundary": "blocked_plan_replay_suppressed",
+                            "plan_state": plan_state.get("current_state"),
+                        },
+                    )
                     _append_reconciliation_audit(
                         state,
                         plan_name=plan_name,
@@ -5402,18 +7503,59 @@ def run_chain(
                     writer=writer,
                 )
                 log(f"resuming existing plan {plan_name} for {milestone.label}")
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=str(plan_state.get("current_state") or ""),
+                    to_state="chain_resuming_milestone",
+                    metadata={
+                        "transition": "chain_milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_milestone_start_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx,
+                    plan_name=plan_name,
+                )
                 if use_pr and milestone.branch:
-                    base_ref = _checkout_milestone_branch(
-                        root,
-                        milestone.branch or "",
-                        base_branch=spec.base_branch,
-                        writer=writer,
-                        from_origin=push_enabled and not no_git_refresh,
-                        expected_base_ref=state.target_base_ref,
+                    project_source_binding = state.metadata.get(
+                        "project_source_binding"
                     )
-                    if isinstance(base_ref, str) and base_ref:
-                        state.target_base_ref = base_ref
-                        chain_spec.save_chain_state(spec_path, state)
+                    if isinstance(project_source_binding, Mapping):
+                        from arnold_pipelines.megaplan.chain.target_rebind import (
+                            publish_bound_project_source_branch,
+                        )
+
+                        publish_bound_project_source_branch(
+                            root,
+                            state,
+                            plan_name=plan_name,
+                            milestone_branch=milestone.branch,
+                        )
+                    else:
+                        base_ref = _checkout_milestone_branch(
+                            root,
+                            milestone.branch or "",
+                            base_branch=spec.base_branch,
+                            writer=writer,
+                            from_origin=push_enabled and not no_git_refresh,
+                            expected_base_ref=state.target_base_ref,
+                        )
+                        if isinstance(base_ref, str) and base_ref:
+                            state.target_base_ref = base_ref
+                            chain_spec.save_chain_state(spec_path, state)
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
@@ -5502,8 +7644,53 @@ def run_chain(
                 _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
                 state.current_milestone_index = idx
                 state.current_plan_name = plan_name
+                # The chain cursor and lifecycle projection must move together.
+                # Leaving the predecessor's terminal ``last_state`` in place
+                # makes a live successor look canonically complete to repair
+                # and resident consumers until the entire plan driver returns.
+                state.last_state = (
+                    _plan_current_state_from_payload(root, plan_name) or "initialized"
+                )
+                _emit_milestone_start_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx,
+                    plan_name=plan_name,
+                )
                 chain_spec.save_chain_state(spec_path, state)
+                fresh_admission = _ensure_fresh_child_for_plan(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    milestone_index=idx,
+                    plan_name=plan_name,
+                )
+                if fresh_admission is not None:
+                    chain_spec.save_chain_state(spec_path, state)
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=None,
+                    to_state=STATE_PREPPED,
+                    metadata={
+                        "transition": "chain_milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 if use_pr:
+                    _git_start = time.monotonic()
                     _commit_and_push_phase(
                         root,
                         milestone.branch or "",
@@ -5511,6 +7698,17 @@ def run_chain(
                         "init",
                         writer=writer,
                         preexisting_dirty_paths=preexisting_dirty_paths,
+                    )
+                    _emit_chain_work_boundary(
+                        "git",
+                        plan_name=plan_name,
+                        operation="chain_commit_and_push_init",
+                        elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "milestone_index": idx,
+                            "branch": milestone.branch,
+                        },
                     )
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -5537,8 +7735,32 @@ def run_chain(
                 )
             raise
 
+        from arnold_pipelines.megaplan.chain.target_rebind import (
+            assert_chain_project_source_binding,
+        )
+
+        assert_chain_project_source_binding(
+            root,
+            state,
+            plan_name=plan_name,
+            operation=f"resume milestone {milestone.label}",
+        )
+
+        fresh_admission = _ensure_fresh_child_for_plan(
+            root=root,
+            spec_path=spec_path,
+            spec=spec,
+            state=state,
+            milestone=milestone,
+            milestone_index=idx,
+            plan_name=plan_name,
+        )
+        if fresh_admission is not None:
+            chain_spec.save_chain_state(spec_path, state)
+
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
+                _git_start = time.monotonic()
                 _commit_and_push_phase(
                     root,
                     milestone.branch,
@@ -5546,6 +7768,19 @@ def run_chain(
                     phase,
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
+                )
+                _emit_chain_work_boundary(
+                    "git",
+                    plan_name=plan_name,
+                    operation=f"chain_commit_and_push_{phase}",
+                    phase=phase,
+                    elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                        "branch": milestone.branch,
+                        "phase_returncode": _code,
+                    },
                 )
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -5607,6 +7842,14 @@ def run_chain(
                     f"[chain] milestone {milestone.label} outcome={outcome.status} "
                     f"lacks task authority; stopping: {reason}\n"
                 )
+                # Record a plan-level rerun cursor so the standard
+                # recover-blocked / resume loop can re-dispatch the genuinely
+                # blocked tasks instead of stranding the plan terminal-done
+                # with no recovery seam (shadow contract publishes done before
+                # the chain's fail-closed task-authority check runs).
+                _record_chain_authority_divergence_cursor(
+                    root, plan_name, reason, writer=writer
+                )
                 state.last_state = "authority_divergence"
                 chain_spec.save_chain_state(spec_path, state)
                 return _result(
@@ -5639,8 +7882,27 @@ def run_chain(
                     f"retrying milestone {milestone.label} by resuming plan "
                     f"{state.current_plan_name} from {resumable_state}"
                 )
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "resume_milestone",
+                        "resumable_state": resumable_state,
+                    },
+                )
             else:
                 log(f"retrying milestone {milestone.label}")
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "reinit_milestone",
+                    },
+                )
                 _preserve_carried_wip_before_retry(
                     root,
                     spec_path,
@@ -5695,12 +7957,21 @@ def run_chain(
                     ),
                 )
         local_commit_sha: str | None = None
+        if decision == "advance" and outcome.status == "done":
+            current_source_state = chain_spec.load_chain_state(spec_path)
+            assert_chain_project_source_binding(
+                root,
+                current_source_state,
+                plan_name=plan_name,
+                operation=f"complete milestone {milestone.label}",
+            )
         if (
             decision == "advance"
             and outcome.status == "done"
             and not use_pr
             and mode != "plan"
         ):
+            _git_start = time.monotonic()
             local_commit_sha = _commit_phase(
                 root,
                 plan_name,
@@ -5708,7 +7979,19 @@ def run_chain(
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
             )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "commit_sha": local_commit_sha,
+                },
+            )
         if decision == "advance" and use_pr and state.pr_number is not None:
+            _git_start = time.monotonic()
             _commit_and_push_phase(
                 root,
                 milestone.branch or "",
@@ -5717,10 +8000,95 @@ def run_chain(
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
             )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_and_push_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "branch": milestone.branch,
+                    "pr_number": state.pr_number,
+                },
+            )
             _capture_sync_state(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
             )
             state = chain_spec.load_chain_state(spec_path)
+            # The atomic acceptance transaction may have committed the
+            # completed record and advanced the durable cursor before the
+            # publication/sync refresh above reloaded ChainState. In that
+            # case PR context is intentionally cleared by the same
+            # transaction. Re-check the accepted durable boundary instead of
+            # passing ``None`` to gh and manufacturing a closed PR.
+            accepted_during_sync = next(
+                (
+                    record
+                    for record in state.completed
+                    if isinstance(record, dict)
+                    and record.get("label") == milestone.label
+                    and record.get("status") == STATE_DONE
+                    and record.get("pr_number") is None
+                    and record.get("publication_evidence")
+                    == "local_no_push_reconciliation"
+                    and record.get("local_commit_sha")
+                ),
+                None,
+            )
+            if (
+                accepted_during_sync is not None
+                and state.current_milestone_index > idx
+                and state.pr_number is None
+            ):
+                accepted, accepted_reason = _chain_completion_guard(
+                    root,
+                    accepted_during_sync,
+                    implementation_milestone=True,
+                    chain_state=state,
+                )
+                if not accepted:
+                    state.last_state = STATE_BLOCKED
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} durable local completion "
+                            f"failed revalidation after sync: {accepted_reason}"
+                        ),
+                    )
+                log(
+                    f"milestone {milestone.label} advanced by accepted local "
+                    "completion during sync; continuing without PR metadata"
+                )
+                _mark_plan_completed_by_chain(
+                    root,
+                    plan_name,
+                    milestone_label=milestone.label,
+                    completion_reason=accepted_reason,
+                    writer=writer,
+                    state=state,
+                )
+                idx = state.current_milestone_index
+                _emit_milestone_completion_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx - 1,
+                    plan_name=plan_name,
+                )
+                chain_spec.save_chain_state(spec_path, state)
+                if one:
+                    return _result(
+                        "paused",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"completed one milestone: {milestone.label}",
+                    )
+                continue
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
@@ -5750,46 +8118,121 @@ def run_chain(
                     chain_state=state,
                 )
                 if not premerge_ok:
-                    writer(
-                        f"[chain] completion guard blocked {milestone.label} before "
-                        f"PR merge: {premerge_reason}\n"
+                    # Auto-merge can complete between the first PR observation
+                    # and this (potentially expensive) authority check.  A
+                    # merged PR has stronger publication evidence than an open
+                    # one, so re-read external truth before persisting a stale
+                    # blocked cursor.  The normal completed-record guard below
+                    # still validates the merged publication; no authority
+                    # requirement is weakened here.
+                    latest_pr_state = _pr_state(
+                        root, state.pr_number, writer=writer
                     )
-                    state.last_state = STATE_BLOCKED
-                    state.pr_state = current_pr_state
-                    chain_spec.save_chain_state(spec_path, state)
-                    return _result(
-                        "stopped",
-                        state,
-                        events,
-                        spec=spec,
-                        reason=(
-                            f"milestone {milestone.label} completion guard blocked "
-                            f"before PR merge: {premerge_reason}"
-                        ),
-                    )
-                _mark_pr_ready(root, state.pr_number, writer=writer)
-                if spec.merge_policy == "review":
-                    state.last_state = STATE_AWAITING_PR_MERGE
-                    state.pr_state = current_pr_state
-                    chain_spec.save_chain_state(spec_path, state)
-                    log(f"PR #{state.pr_number} ready; awaiting manual merge")
-                    _capture_sync_state(
-                        root,
-                        spec_path,
-                        branch=milestone.branch,
+                    if latest_pr_state == "merged":
+                        state.pr_state = "merged"
+                        chain_spec.save_chain_state(spec_path, state)
+                        log(
+                            f"PR #{state.pr_number} merged while completion guard "
+                            f"was evaluating; reconciling {milestone.label} from "
+                            "published evidence"
+                        )
+                    else:
+                        writer(
+                            f"[chain] completion guard blocked {milestone.label} before "
+                            f"PR merge: {premerge_reason}\n"
+                        )
+                        state.last_state = STATE_BLOCKED
+                        state.pr_state = latest_pr_state
+                        chain_spec.save_chain_state(spec_path, state)
+                        return _result(
+                            "stopped",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"milestone {milestone.label} completion guard blocked "
+                                f"before PR merge: {premerge_reason}"
+                            ),
+                        )
+                else:
+                    validation_evidence = _validate_pr_progression_wbc(
+                        root=root,
+                        spec_path=spec_path,
+                        state=state,
+                        milestone=milestone,
+                        plan_name=plan_name,
                         pr_number=state.pr_number,
+                        transition_name="chain_pr_ready",
                     )
-                    return _result(
-                        STATE_AWAITING_PR_MERGE,
-                        state,
-                        events,
-                        spec=spec,
-                        reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
+                    _pr_ready_evidence = _capture_pr_ready_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        ci_readiness_state="ready",
+                        validation_evidence=validation_evidence,
                     )
-                state.pr_state = _enable_auto_merge(
-                    root, state.pr_number, writer=writer
-                )
-                chain_spec.save_chain_state(spec_path, state)
+                    _mark_pr_ready(root, state.pr_number, writer=writer)
+                    if not _automatic_pr_progression_permitted(spec, spec_path):
+                        state.last_state = STATE_AWAITING_PR_MERGE
+                        state.pr_state = current_pr_state
+                        chain_spec.save_chain_state(spec_path, state)
+                        policy = policy_for_spec(
+                            spec,
+                            runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+                        )
+                        log(
+                            f"PR #{state.pr_number} ready; awaiting human review/merge "
+                            f"(merge_policy={policy.merge_policy}, "
+                            f"clean_milestone_pr={policy.clean_milestone_pr})"
+                        )
+                        _capture_sync_state(
+                            root,
+                            spec_path,
+                            branch=milestone.branch,
+                            pr_number=state.pr_number,
+                        )
+                        return _result(
+                            STATE_AWAITING_PR_MERGE,
+                            state,
+                            events,
+                            spec=spec,
+                            reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
+                        )
+                    state.pr_state = _enable_auto_merge(
+                        root, state.pr_number, writer=writer
+                    )
+                    _pr_merged_evidence = _capture_pr_merged_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        validation_evidence=validation_evidence,
+                    )
+                    chain_spec.save_chain_state(spec_path, state)
+                    if state.pr_state != "merged":
+                        # Enabling auto-merge is not publication evidence. GitHub
+                        # may leave the PR open while checks or the merge queue
+                        # run, so never append completion until external truth
+                        # reports the PR as merged.
+                        latest_pr_state = _pr_state(
+                            root, state.pr_number, writer=writer
+                        )
+                        if latest_pr_state == "merged":
+                            state.pr_state = "merged"
+                            chain_spec.save_chain_state(spec_path, state)
+                        else:
+                            state.last_state = STATE_AWAITING_PR_MERGE
+                            state.pr_state = latest_pr_state
+                            chain_spec.save_chain_state(spec_path, state)
+                            return _result(
+                                STATE_AWAITING_PR_MERGE,
+                                state,
+                                events,
+                                spec=spec,
+                                reason=(
+                                    f"milestone {milestone.label} PR "
+                                    f"#{state.pr_number} auto-merge pending"
+                                ),
+                            )
         # Completion-verification contract (SHADOW-MODE, fail-open): compute +
         # persist + log a milestone-level verdict. NEVER alters the append,
         # NEVER blocks the chain, NEVER runs the suite. See
@@ -5923,6 +8366,7 @@ def run_chain(
             milestone_label=milestone.label,
             completion_reason=reason,
             writer=writer,
+            state=state,
         )
         idx += 1
         _mark_chain_after_milestone_advance(spec, state, next_index=idx)
@@ -5943,6 +8387,15 @@ def run_chain(
                 spec=spec,
                 reason=manifest_reason,
             )
+        _emit_milestone_completion_evidence(
+            state,
+            milestone_label=milestone.label,
+            milestone_index=idx - 1,
+            plan_name=plan_name,
+        )
+        if idx >= len(spec.milestones):
+            _emit_chain_complete_evidence(state, spec=spec)
+        chain_spec.save_chain_state(spec_path, state)
         if one:
             log(f"paused after milestone {milestone.label}")
             return _result(
@@ -5954,7 +8407,81 @@ def run_chain(
             )
 
     log("all milestones complete")
+    # ── Successor gate check ──────────────────────────────────────────
+    # In fail-closed (atomic/enforce) mode a completed chain must carry a
+    # validated acceptance receipt for its final milestone before any
+    # declared successor may be initialised.  The gate is generic – it
+    # reads SuccessorSpec declarations from the chain YAML rather than
+    # hardcoding initiative names (M5→M5A→M6 is the first consumer).
+    successor_block = _check_successor_gate_at_chain_completion(
+        state, spec, spec_path, events, writer=writer
+    )
+    if successor_block is not None:
+        return successor_block
     return _result("done", state, events, spec=spec)
+
+
+def _check_successor_gate_at_chain_completion(
+    state: ChainState,
+    spec: ChainSpec,
+    spec_path: Path,
+    events: list[dict[str, Any]],
+    *,
+    writer,
+) -> dict[str, Any] | None:
+    """Check the successor gate when a chain completes all milestones.
+
+    Returns a blocked result dict when the gate is closed (successor
+    requires an accepted transaction but none is present), or ``None``
+    when the gate is open / not applicable / not in fail-closed mode.
+
+    The gate is generic: it reads ``SuccessorSpec`` declarations from
+    the chain YAML rather than hardcoding initiative names.
+    """
+    successors = getattr(spec, "successors", None) or []
+    if not successors:
+        return None
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    mode = normalize_contract_mode(state.completion_contract_mode)
+    if not is_fail_closed_mode(mode):
+        return None  # shadow / warn / off — gate is always open
+
+    any_require = any(
+        getattr(s, "require_accepted_transaction", True) for s in successors
+    )
+    if not any_require:
+        return None
+
+    if not spec.milestones:
+        return None
+
+    final_milestone = spec.milestones[-1]
+    has_receipt = state.has_acceptance_receipt(final_milestone.label)
+
+    if has_receipt:
+        # Gate is open — chain may advertise completion to successor init.
+        return None
+
+    writer(
+        f"[chain] successor gate closed: chain is complete but no validated "
+        f"acceptance receipt for final milestone {final_milestone.label!r}; "
+        f"declared successors require acceptance evidence before initialisation\n"
+    )
+    return _result(
+        "blocked",
+        state,
+        events,
+        spec=spec,
+        reason=(
+            f"successor gate closed: chain complete but no acceptance receipt "
+            f"for final milestone {final_milestone.label!r}"
+        ),
+    )
 
 
 def _result(
@@ -6027,7 +8554,12 @@ def _clear_stale_closed_pr_state(
     return state
 
 
-def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
+def format_chain_status(
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    spec_path: Path | None = None,
+) -> dict[str, Any]:
     completed_labels = {
         entry.get("label")
         for entry in state.completed
@@ -6067,6 +8599,24 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         "dirty_flag": state.dirty_flag,
         "sync_state": state.sync_state,
     }
+    milestone_boundary_evidence: dict[str, Any] = {}
+    if state.milestone_boundary_evidence:
+        milestone_boundary_evidence = {
+            label: {
+                "milestone_label": entry.get("milestone_label"),
+                "milestone_index": entry.get("milestone_index"),
+                "plan_name": entry.get("plan_name"),
+                "contract_id": entry.get("contract_id"),
+                "contract_boundary_id": entry.get("contract_boundary_id"),
+                "commit_ref": entry.get("commit_ref"),
+                "tip_ref": entry.get("tip_ref"),
+                "pr_head": entry.get("pr_head"),
+                "pr_number": entry.get("pr_number"),
+                "pr_state": entry.get("pr_state"),
+            }
+            for label, entry in state.milestone_boundary_evidence.items()
+            if isinstance(entry, dict)
+        }
     summary = {
         "current_milestone": current_milestone,
         "completed": completed,
@@ -6077,6 +8627,7 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         "current_plan_name": state.current_plan_name,
         "last_state": state.last_state,
         "sync": sync,
+        "milestone_boundary_evidence": milestone_boundary_evidence,
         "policy": {
             "prerequisite_policy": spec.prerequisite_policy,
             "validation_policy": spec.validation_policy,
@@ -6086,6 +8637,12 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
     if state.pr_number is not None:
         summary["pr_number"] = state.pr_number
         summary["pr_state"] = state.pr_state
+    if spec_path is not None:
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            execution_binding_report,
+        )
+
+        summary["execution_binding"] = execution_binding_report(spec_path, state)
     return summary
 
 
@@ -6116,6 +8673,26 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         writer(
             f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n"
         )
+    binding = summary.get("execution_binding")
+    if isinstance(binding, dict) and binding.get("required"):
+        expected = binding.get("expected") or {}
+        active = binding.get("active") or {}
+        writer(
+            "Execution binding: "
+            f"{binding.get('status')} "
+            f"expected={str(expected.get('bundle_sha256') or 'missing')[:12]} "
+            f"active={str(active.get('bundle_sha256') or 'missing')[:12]}\n"
+        )
+        runtime_binding = binding.get("runtime_binding")
+        if isinstance(runtime_binding, dict) and runtime_binding.get("required"):
+            runtime_expected = runtime_binding.get("expected") or {}
+            runtime_active = runtime_binding.get("active") or {}
+            writer(
+                "Runtime binding: "
+                f"{runtime_binding.get('status')} "
+                f"expected={str(runtime_expected.get('content_sha256') or 'missing')[:12]} "
+                f"active={str(runtime_active.get('content_sha256') or 'missing')[:12]}\n"
+            )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
     if any(v is not None for v in sync.values()) or sync.get("dirty_flag"):
@@ -6236,6 +8813,172 @@ def build_chain_parser(subparsers: Any) -> None:
         required=False,
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
+
+    reconcile_source_parser = chain_sub.add_parser(
+        "reconcile-source",
+        help="Register a content-addressed canonical source update for a future milestone",
+    )
+    reconcile_source_parser.add_argument("--spec", required=True)
+    reconcile_source_parser.add_argument("--project-dir", required=False)
+    reconcile_source_parser.add_argument("--milestone", required=True)
+    reconcile_source_parser.add_argument("--authoritative-source", required=True)
+    reconcile_source_parser.add_argument("--reason", required=True)
+
+    rebind_parser = chain_sub.add_parser(
+        "rebind",
+        help="Guardedly adopt a content-addressed successor chain without moving its cursor",
+    )
+    rebind_parser.add_argument("--spec", required=True)
+    rebind_parser.add_argument("--project-dir", required=False)
+    rebind_parser.add_argument("--from-bundle-sha256", required=True)
+    rebind_parser.add_argument("--to-bundle-sha256", required=True)
+    rebind_parser.add_argument("--expected-current-milestone", required=True)
+    rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    rebind_parser.add_argument("--expected-next-milestone", required=True)
+    rebind_parser.add_argument("--reason", required=True)
+    rebind_parser.add_argument("--actor", default="operator")
+
+    runtime_rebind_parser = chain_sub.add_parser(
+        "runtime-rebind",
+        help="Guardedly cut over or roll back the bound runtime without changing the chain spec binding",
+    )
+    runtime_rebind_parser.add_argument("--spec", required=True)
+    runtime_rebind_parser.add_argument("--project-dir", required=False)
+    runtime_rebind_parser.add_argument("--from-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    runtime_rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help=(
+            "Exact current plan name, or @none when no plan is active. A fully "
+            "completed chain uses --expected-current-milestone @terminal with "
+            "--expected-current-plan @none; terminal state and the exact "
+            "completed milestone set are then verified."
+        ),
+    )
+    runtime_rebind_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
+    runtime_rebind_parser.add_argument("--reason", required=True)
+    runtime_rebind_parser.add_argument("--actor", default="operator")
+    runtime_rebind_parser.add_argument(
+        "--runtime-identity",
+        help=(
+            "Content-addressed offline runtime identity JSON. Requires "
+            "--runtime-provenance-receipt and is freshly reverified by the "
+            "receipt's independent interpreter."
+        ),
+    )
+    runtime_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help=(
+            "Digest-bound runtime_provenance receipt emitted by the offline "
+            "runtime's interpreter. Requires --runtime-identity."
+        ),
+    )
+
+    target_rebind_parser = chain_sub.add_parser(
+        "target-rebind",
+        help=(
+            "Guardedly cut over or roll back the paused pre-execute project "
+            "checkout and milestone baseline"
+        ),
+    )
+    target_rebind_parser.add_argument("--spec", required=True)
+    target_rebind_parser.add_argument("--project-dir", required=True)
+    target_rebind_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    target_rebind_parser.add_argument("--expected-session-id", required=True)
+    target_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    target_rebind_parser.add_argument("--expected-current-plan", required=True)
+    target_rebind_parser.add_argument("--from-branch", required=True)
+    target_rebind_parser.add_argument("--from-head", required=True)
+    target_rebind_parser.add_argument("--from-milestone-base", required=True)
+    target_rebind_parser.add_argument("--from-ref", required=True)
+    target_rebind_parser.add_argument("--to-branch", required=True)
+    target_rebind_parser.add_argument("--to-head", required=True)
+    target_rebind_parser.add_argument("--to-ref", required=True)
+    target_rebind_parser.add_argument("--expected-spec-sha256", required=True)
+    target_rebind_parser.add_argument(
+        "--expected-target-spec-sha256",
+        required=False,
+        help=(
+            "Exact chain-spec hash after target checkout; defaults to "
+            "--expected-spec-sha256 when the spec is unchanged"
+        ),
+    )
+    target_rebind_parser.add_argument("--expected-chain-state-sha256", required=True)
+    target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
+    target_rebind_parser.add_argument("--reason", required=True)
+    target_rebind_parser.add_argument("--actor", default="operator")
+    target_rebind_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    target_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
+
+    seed_rematerialize_parser = chain_sub.add_parser(
+        "seed-rematerialize",
+        help=(
+            "Archive a paused pre-execute plan and rematerialize the same "
+            "milestone from an exact seed manifest"
+        ),
+    )
+    seed_rematerialize_parser.add_argument("--spec", required=True)
+    seed_rematerialize_parser.add_argument("--project-dir", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    seed_rematerialize_parser.add_argument("--expected-session-id", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-milestone", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-plan", required=True)
+    seed_rematerialize_parser.add_argument("--expected-branch", required=True)
+    seed_rematerialize_parser.add_argument("--expected-head", required=True)
+    seed_rematerialize_parser.add_argument("--expected-spec-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-chain-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-plan-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--seed-manifest", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--expected-seed-manifest-sha256",
+        required=True,
+    )
+    seed_rematerialize_parser.add_argument("--expected-cutover-event-sha256")
+    seed_rematerialize_parser.add_argument("--expected-archive-manifest-sha256")
+    seed_rematerialize_parser.add_argument("--reason", required=True)
+    seed_rematerialize_parser.add_argument("--actor", default="operator")
+    seed_rematerialize_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    seed_rematerialize_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
+    pause_parser = chain_sub.add_parser(
+        "pause", help="Durably pause a chain and disable automatic recovery"
+    )
+    pause_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    pause_parser.add_argument("--project-dir", required=False)
+    pause_parser.add_argument("--reason", required=True)
+    pause_parser.add_argument("--actor", default="operator")
+
+    resume_chain_parser = chain_sub.add_parser(
+        "resume", help="Explicitly clear a durable operator pause"
+    )
+    resume_chain_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    resume_chain_parser.add_argument("--project-dir", required=False)
+    resume_chain_parser.add_argument("--actor", default="operator")
 
     verify_parser = chain_sub.add_parser(
         "verify", help="Replay landed-diff completion evidence for completed milestones"
@@ -6391,6 +9134,307 @@ def run_chain_cli(
         return 64
     spec_path = Path(spec_arg).expanduser().resolve()
 
+    if action in {"pause", "resume"}:
+        from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
+
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            if action == "pause":
+                payload = pause_chain(
+                    spec_path,
+                    project_root,
+                    reason=args.reason,
+                    actor=args.actor,
+                )
+            else:
+                payload = resume_chain(spec_path, project_root, actor=args.actor)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
+        )
+        return 0
+
+    if action == "reconcile-source":
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            from arnold_pipelines.megaplan.chain.source_admission import (
+                require_milestone_source_update,
+            )
+
+            requirement = require_milestone_source_update(
+                spec_path=spec_path,
+                state=chain_state,
+                spec=spec,
+                milestone_label=args.milestone,
+                authoritative_source=Path(args.authoritative_source).expanduser().resolve(),
+                reason=args.reason,
+            )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "reconcile-source",
+                    "requirement": requirement,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_execution_identity,
+            )
+
+            result = rebind_execution_identity(
+                spec_path,
+                chain_state,
+                expected_previous_bundle_sha256=args.from_bundle_sha256,
+                expected_active_bundle_sha256=args.to_bundle_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_next_milestone=args.expected_next_milestone,
+                reason=args.reason,
+                actor=args.actor,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_execution_binding_drift",
+                        f"chain rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "runtime-rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_runtime_identity,
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "chain runtime rebind refused: --runtime-identity and "
+                    "--runtime-provenance-receipt must be supplied together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+            result = rebind_runtime_identity(
+                spec_path,
+                chain_state,
+                expected_previous_runtime_sha256=args.from_runtime_sha256,
+                expected_active_runtime_sha256=args.to_runtime_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                direction=args.direction,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        f"chain runtime rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "runtime-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "target-rebind":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.target_rebind import target_rebind
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "project_source_rebind_refused",
+                    "target rebind requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+
+            result = target_rebind(
+                spec_path,
+                project_root,
+                direction=args.direction,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                from_branch=args.from_branch,
+                from_head=args.from_head,
+                from_milestone_base=args.from_milestone_base,
+                from_ref=args.from_ref,
+                to_branch=args.to_branch,
+                to_head=args.to_head,
+                to_ref=args.to_ref,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_target_spec_sha256=args.expected_target_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "target-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "seed-rematerialize":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.seed_rematerialize import (
+                seed_rematerialize,
+            )
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "seed_rematerialize_refused",
+                    "seed rematerialize requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+
+            result = seed_rematerialize(
+                spec_path,
+                project_root,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_branch=args.expected_branch,
+                expected_head=args.expected_head,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                seed_manifest_path=Path(args.seed_manifest).expanduser().resolve(),
+                expected_seed_manifest_sha256=args.expected_seed_manifest_sha256,
+                direction=args.direction,
+                expected_cutover_event_sha256=args.expected_cutover_event_sha256,
+                expected_archive_manifest_sha256=args.expected_archive_manifest_sha256,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "seed-rematerialize",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
     if action == "override":
         set_prereq = getattr(args, "set_prerequisite_policy", None)
         set_valid = getattr(args, "set_validation_policy", None)
@@ -6438,14 +9482,19 @@ def run_chain_cli(
                 missing_anchor_ack_override=getattr(args, "missing_anchor_ack", None),
             )
             chain_spec.validate_paths(spec, root, spec_path=spec_path)
-            chain_state = chain_spec.load_chain_state(spec_path)
+            # Status must remain observable during drift. It reports expected
+            # versus active identity without normalizing or adopting either.
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
         except CliError as exc:
             return _emit_error(exc)
         if anchor_requirement.warning:
             writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
         runtime_overrides = chain_spec.load_runtime_policy(spec_path)
         effective_policy = chain_spec.effective_chain_policy(spec, runtime_overrides)
-        summary = format_chain_status(spec, chain_state)
+        summary = format_chain_status(spec, chain_state, spec_path=spec_path)
         _write_chain_status_pretty(summary, writer=writer)
         payload = {
             "success": True,
@@ -6529,6 +9578,7 @@ def run_chain_cli(
     require_anchor_override = getattr(args, "require_anchor", None)
     missing_anchor_ack_override = getattr(args, "missing_anchor_ack", None)
     try:
+        _require_active_initiative_chain(root, spec_path)
         spec_for_anchor_check = chain_spec.load_spec(spec_path)
         chain_spec.validate_anchor_requirement(
             spec_for_anchor_check,
@@ -6563,7 +9613,7 @@ def run_chain_cli(
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
-    if result["status"] in {"done", "paused"}:
+    if result["status"] in {"done", "paused", "awaiting_pr_merge"}:
         return 0
     return 1
 
@@ -6572,3 +9622,15 @@ def _emit_error(error: CliError) -> int:
     payload = {"success": False, "error": error.code, "message": error.message}
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return error.exit_code or 1
+
+
+def _require_active_initiative_chain(root: Path, spec_path: Path) -> None:
+    """Reject a retired canonical initiative before any chain preflight."""
+
+    marker = retired_chain_marker(spec_path, root)
+    if marker is not None:
+        raise CliError(
+            "initiative_retired",
+            f"Retired initiative chain cannot be started: {spec_path}; "
+            f"retirement marker: {marker}",
+        )

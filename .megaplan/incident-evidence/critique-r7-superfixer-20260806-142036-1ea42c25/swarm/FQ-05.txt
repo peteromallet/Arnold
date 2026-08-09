@@ -1,0 +1,63 @@
+All evidence gathered and cross-verified. Here is the FQ-05 report.
+
+---
+
+## FQ-05 — Flash evidence brief
+
+**question_id:** FQ-05 — Did the 14:13 and 14:16 finalize model responses/candidates differ in any contract-relevant way?
+
+**verdict:** **No contract-relevant difference in candidate content; yes an identity-only difference.** The 14:13 and 14:16 candidates are **byte-identical** (sha256 `cfc7d701…`, 77 557 B) — the 14:16 run explicitly **copied** the 14:13 candidate to a new filename (`cp finalize-59daae… → finalize-15274aaf…`) and handed it off under the new identity. The two model responses (transport streams) differ in conversation/thread/length, but the contract-bearing terminal output (the local-strict handoff receipt) differs **only in the `path` filename stem**; both receipts declare the same sha256/bytes. Both occurrences were rejected with the **identical diagnostic set** (12× `dependency_unknown` + 1× `dependency_graph_invalid`), same failure fingerprint, same candidate_id at the planner-repair layer. The failure is **deterministic over one candidate content identity** (`cfc7d701…` / `candidate:36bcefaf…`), which is stable across both occurrences and **must be preserved across correction**; the ephemeral filenames (59daae/15274aaf) carry no contract meaning.
+
+**vantage_point:** Independent read-only DeepSeek V4 Flash investigator; evidence pack `/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-142036-1ea42c25/` plus read-only cross-check against the canonical plan directory. No mutations, no writes, no delegation.
+
+**utc_interval:** Events examined: 2026-08-06T14:13:57Z (finalize attempt 1, session `019fd765…`) → 2026-08-06T14:16:28/29Z (finalize attempt 2, session `019fd76c…`); pack written 14:31Z. Inspection performed during this session (after pack write).
+
+**artifacts (path + sha256):**
+| Artifact | sha256 |
+|---|---|
+| raw/local-strict-artifacts/finalize-59daae926dcd4447b40cbb790e68e36b.candidate.json | `cfc7d701c18c070ba15679d5279cc943119ec9d4fa412b8ef4d02115a75c76c8` |
+| raw/local-strict-artifacts/finalize-15274aaf2cb2445487647129704dcccd.candidate.json | `cfc7d701c18c070ba15679d5279cc943119ec9d4fa412b8ef4d02115a75c76c8` (identical) |
+| raw/response-finalize-b599a4ae7229981f0be7a96847fa64d58bdcc4831c3de5899d37babd5db8bc16-r0.json (14:16 receipt) | `149c5cef24a9f9590d1319bb0addb20a06d86e539f06ff9260a6f441c7eac5f7` |
+| raw/response-finalize-def274f0cdb90b76a8aee899cbdd10be7e0d48eeabf115d507e3a08f40eb0b1b-r0.json (14:13 receipt) | `b10f0596a52cc0542925070526e39eb691d69d537d4a052f1f8cd5ac3c99c9af` |
+| raw/repair-0.json (14:16 occurrence b599a4ae) | `5cf279c1d73549e487e55a2a43d7b44412b42b2b5ecc30147959a2c0073e0fb4` |
+| plan-dir 14:13 occurrence record `.megaplan/model-response-evidence/occurrences/def274f0…/repair-0.json` | (read in place; canonical diff vs 14:16 record below) |
+| raw/model-response/6a2b1f73…jsonl (14:13 transport, 32 lines, 39 039 B) | `6a2b1f73a38f6b810c2cf54ad69e1f02aa9d71747342110e90f9a1131ea55938` |
+| raw/model-response/e477a8ad…jsonl (14:16 transport, 30 lines, 104 504 B) | `e477a8ad8c289f238f1a669feb3e1de9f48c49d3ecf759257a62f465260a46ed` |
+| raw/plan-state.json | `2f7827e75ff6cef15c253b0397735d73793b22178b19fb65ade0f9571694a754` |
+| raw/planner_repair.json | identical to plan-dir copy (cmp exit 0); failure_fingerprint `382e25a2…`, candidate_id `candidate:36bcefaf…` |
+| raw/finalize_revise_feedback.json | `12638269d6fa7fcd60f83d036348c423154501ae6aa4024d40d8b00ff89c8fa8` (= 14:16 history artifact_hash) |
+| raw/repro-output.txt | (read-only; deterministic 13-diagnostic repro) |
+
+**commands (all read-only; cwd = evidence pack `…/critique-r7-superfixer-20260806-142036-1ea42c25/` unless noted):**
+- `sha256sum raw/local-strict-artifacts/*.candidate.json` → both `cfc7d701…`; exit 0
+- `cmp` candidates → exit 0 (identical); `cmp` plan-dir worker_tmp candidates → exit 0
+- `diff <(jq -S . resp-finalize-b599a4ae) <(jq -S . resp-finalize-def274f0)` → single line: `path` field only; exit 1 (expected)
+- `diff` (raw byte) of the two receipts → single line: `path` only; exit 1 (expected)
+- `cmp` receipt↔model-response JSON copies (b599a4ae↔149c5cef, def274f0↔b10f0596) → exit 0 both
+- `diff <(jq -S . 14:13 repair-0) <(jq -S . raw/repair-0.json)` → only run-identifier fields; exit 1 (expected)
+- `jq -S -c`/`-c`/`-S`/first-4KB sha256 derivation tests vs `candidate:36bcefaf…` → no match (id not content-derived from candidate file)
+- `jq` bounded contract extraction of candidate; `grep -o 'finalize-[0-9a-f]*'` on both JSONLs; `jq -r 'select(.item.id==…)'` receipt/copy-command extraction; plan-state history via `jq -c '.history[]'`; `grep -o '2026-08-06T14:…'` (no timestamps inside JSONLs)
+
+**raw_excerpts:**
+- 14:16 JSONL item_12 command (verbatim): `target='…/finalize-15274aaf2cb2445487647129704dcccd.candidate.json'; source_file='…/finalize-59daae926dcd4447b40cbb790e68e36b.candidate.json'; temp_file="${target}.tmp.$$"; cp "$source_file" "$temp_file" && mv "$temp_file" "$target"; … sha256sum "$target"; wc -c < "$target"`
+- 14:16 receipt: `{"schema":"arnold.megaplan.local-strict-artifact-handoff.v1","path":"…/finalize-15274aaf….candidate.json","sha256":"cfc7d701…","bytes":77557}` — 14:13 receipt identical except path `…/finalize-59daae…`
+- plan-state history: `{"step":"finalize","timestamp":"2026-08-06T14:13:57Z",…,"session_id":"019fd765-148e-7481-a3d2-c67880db7f11","result":"planner_repair_required"…}` + error record; `{"step":"finalize","timestamp":"2026-08-06T14:16:28Z",…,"session_id":"019fd76c-9d1d-7b32-966f-fa2bee186721","result":"planner_repair_blocked"…}` + error record; both errors: `"Finalize rejected a candidate task graph before publication (dependency_unknown ×12, dependency_graph_invalid). The last admitted graph and accepted task authority remain unchanged; repair only the candidate graph."`
+- planner_repair.json: `candidate_id candidate:36bcefaf…`, `failure_fingerprint 382e25a2…`, `occurrences 2`, `circuit_open true`, `prior_admitted_finalize_sha256 null`, `updated_at 2026-08-06T14:16:28Z`
+- candidate contract (both files): `task_contract_version 2; tasks 19 (T0–T18); validation_jobs 0; coverage 95; sense_checks 19; watch_items 23; user_actions 0` — no id/timestamp/model/thread fields inside
+- repro-output.txt: `mutated tasks: 25 … diagnostic count: 13` — `dependency_unknown` on `T2_impl→T1, T3_impl→T2, T4_impl→T1, T5_impl→T4, T6→T1, T8→T7, T9→T1, T10→T3, T11→T1, T13→T5, T15→T3, T15→T5` + `dependency_graph_invalid: Unknown dependency ID 'T1' for task 'T2_impl'`
+
+**trace:**
+1. **Correlation.** plan-state history pins 14:13:57Z → session `019fd765…` = JSONL `6a2b1f73…` (its first line is that thread_id); 14:16:28Z → session `019fd76c…` = JSONL `e477a8ad…`. JSONLs contain no embedded timestamps; timestamps come from plan history + heartbeat (14:16:28Z item.completed for `finalize-15274aaf…`).
+2. **14:13 run** (occurrence `def274f0…`, receipt `b10f0596…`/response-finalize-def274f0): wrote `finalize-59daae…` (atomic rename), self-validated (item_13 jq structural check; item_14 atomic mv; item_15 receipt `cfc7d701…/77557`). During the run an intermediate `84ba179a…/77563` state existed before finalization.
+3. **14:16 run** (occurrence `b599a4ae…`, receipt `149c5cef…`/response-finalize-b599a4ae): item_12 **copied** `finalize-59daae…` → `finalize-15274aaf…` (cp to temp + mv), re-ran structural jq (one local jq syntax error noted, then corrected — item_13/14), handed off `cfc7d701…/77557` under the new name.
+4. **Comparison.** Candidates: sha256 equal, cmp exit 0, canonicalized `jq -S` diff exit 0 (also in plan-dir worker_tmp). Receipts: raw diff = exactly one line (`path`); canonicalized diff = exactly the same one line. Occurrence records: canonical diff shows only invocation_id, nonce, occurrence_id, phase/worker WBC attempt ids, output_path, transport/selected object refs — no contract fields; both `model gpt-5.6-sol`, `repair_ordinal 0`, `selection_status accepted`, selected_terminal_output 384 B.
+5. **Rejection.** Engine rejected both with the identical 13-diagnostic set (12 `dependency_unknown` + 1 `dependency_graph_invalid`); repro-output.txt reproduces the same 13 diagnostics deterministically from the (identical) candidate content — root cause is the split-mutating-validation expansion (25 mutated tasks incl. `T2_impl…`) leaving dependencies unresolved, independent of which filename the content sits under. `failure_fingerprint 382e25a2…`, `occurrences 2`, same `candidate:36bcefaf…` id at planner-repair layer; `prior_admitted_finalize_sha256 null`.
+6. **Identity derivation.** `candidate:36bcefaf…` is not derivable from candidate file content (sha256 of file / `jq -c` / `jq -S` / `jq -S -c` / first 4 KB all differ); it is an engine-level candidate identifier shared by both occurrences — content-deterministic, not filename-deterministic.
+
+**confidence:** High. Every comparison was done with sha256sum + cmp + canonicalized jq -S diffs; the copy operation is verbatim in the transport JSONL; the two occurrence records (one in pack, one in plan dir) both inspected; no contradictions found (minor note: evidence-pack §3 lists worker session `019fd765…` started 14:14:06Z, while plan history records the 14:13:57Z attempt under that session — a pack-side process-note inconsistency that does not affect the contract comparison, which rests on plan history + JSONL thread ids).
+
+**structure_classification:** Deterministic phase failure — content-deterministic finalize rejection over a single candidate **content** identity (`cfc7d701…` / `candidate:36bcefaf…`), with the second occurrence being an **identity-duplicated re-submission** (same bytes copied to a new artifact filename). Both occurrences share one failure fingerprint; the blocker is content-keyed, not filename-keyed.
+
+**immediate_decision_informed:** Yes — the 14:13 and 14:16 candidates are the **same contract content**; the failure reproduced deterministically over that content under two different artifact filenames. A correction that merely re-runs finalize against regenerated content will reproduce the identical rejection unless the candidate graph itself is repaired (the 12 unresolved post-split dependencies + 1 invalid edge). The correction must be keyed on the content hash `cfc7d701…`/`candidate:36bcefaf…`, **not** on the ephemeral filenames 59daae/15274aaf.
+
+**durable_decision_informed:** Yes — preserve the task-contract hash `cfc7d701c18c070ba15679d5279cc943119ec9d4fa412b8ef4d02115a75c76c8` across correction: it is the stable, single content identity of the rejected candidate for **both** occurrences (`prior_admitted_finalize_sha256` is null, so no prior admitted graph competes with it; the repair scope is exactly "the candidate graph"). Any correction/repair record, ledger entry, or audit trail should reference `candidate:36bcefaf…` + `cfc7d701…` (and the failure fingerprint `382e25a2…`) rather than either filename, so that both occurrences remain provably bound to the same rejected artifact and the deterministic blocker is documented as content-deterministic, not identity-deterministic.

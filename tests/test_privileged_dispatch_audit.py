@@ -32,7 +32,7 @@ MIGRATED_CONSUMER_FILES = {
     "arnold_pipelines/megaplan/handlers/override.py",
     "arnold_pipelines/megaplan/observability/introspect.py",
     "arnold_pipelines/megaplan/cli/status_view.py",
-    "arnold_pipelines/megaplan/cli/arnold.py",
+    "arnold_pipelines/megaplan/cli/__init__.py",
     "arnold_pipelines/megaplan/_core/workflow.py",
     "arnold_pipelines/megaplan/supervisor/ladder.py",
     "arnold_pipelines/megaplan/supervisor/chain_runner.py",

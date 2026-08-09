@@ -24,6 +24,8 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.orchestration.completion_contract import CompletionSubject
 from arnold_pipelines.megaplan.orchestration.review_evidence import collect_review_evidence
 from arnold_pipelines.megaplan.types import PlanState
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 
 from ._projection import (
     PromptProjectionCapabilities,
@@ -465,16 +467,17 @@ def _review_template_payload(plan_dir: Path, state: PlanState | None = None) -> 
 
     criteria = _criteria_from_plan_artifacts(plan_dir, state)
 
-    return {
-        "review_verdict": "",
+    template = schema_template_payload(
+        SCHEMAS["review.json"],
+        contract="review scratch template",
+    )
+    template.update({
         "review_completion_status": "",
         "criteria": criteria,
-        "issues": [],
-        "rework_items": [],
-        "summary": "",
         "task_verdicts": task_verdicts,
         "sense_check_verdicts": sense_check_verdicts,
-    }
+    })
+    return template
 
 
 def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]:
@@ -605,6 +608,8 @@ def compact_review_prompt(
         {_review_evidence_block(plan_dir)}
 
         {_settled_decisions_review_block(_gate_summary_or_skipped(plan_dir).get("settled_decisions", []))}
+
+        {_north_star_closeout_review_block(plan_dir)}
 
         {pre_check_block}
 
@@ -812,6 +817,60 @@ def _settled_decisions_review_block(settled_decisions: list[object]) -> str:
     ).strip()
 
 
+def _north_star_closeout_review_block(plan_dir: Path) -> str:
+    """Render carried blocking North Star actions as reviewer closeout blockers.
+
+    Reviewers must treat any carried blocking North Star action that is not
+    concretely resolved in the executed work as a closeout blocker: the
+    milestone must not be marked complete. This complements (does not replace)
+    the hard pre-check in the review→done transition. Returns an empty string
+    when no carried blocking North Star actions are present.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import (
+        blocking_north_star_actions,
+        read_carried_north_star_actions,
+    )
+
+    carried = read_carried_north_star_actions(plan_dir)
+    blocking = blocking_north_star_actions(carried)
+    if not blocking:
+        return ""
+
+    lines: list[str] = [
+        "Carried blocking North Star actions (closeout blockers):",
+        "",
+        "These blocking plan-level concerns were identified by the gate. Each one is",
+        "a closeout blocker: the milestone MUST NOT be marked complete until the action",
+        "is concretely resolved in the executed work. Treat any blocking action that is",
+        "NOT concretely resolved (omitted, prose-only, missing concrete plan refs, or a",
+        "mismatched action type) as a hard `needs_rework` blocker, not an advisory note.",
+        "",
+        "Carried blocking actions:",
+    ]
+    for action in blocking:
+        aid = action.get("id", "?")
+        category = action.get("category", "?")
+        action_type = action.get("action_type", "?")
+        concern = action.get("concern", "")
+        evidence = action.get("evidence", "")
+        lines.append(f"  - {aid} | category={category} | type={action_type}")
+        if concern:
+            lines.append(f"    concern: {concern}")
+        if evidence:
+            ev = evidence[:300] + ("..." if len(evidence) > 300 else "")
+            lines.append(f"    evidence: {ev}")
+    lines.append("")
+    lines.append(
+        "For each action above, verify the executed diff concretely resolves it (a "
+        "traceable change with concrete plan refs and the matching action type marker). "
+        "If it is not concretely resolved, set `review_verdict` to `needs_rework` and add "
+        "a blocking `rework_items` entry citing the unresolved action id. The review→done "
+        "transition is independently gated on these actions, so a milestone with any "
+        "unresolved blocking North Star action cannot be marked complete."
+    )
+    return "\n".join(lines)
+
+
 def single_check_review_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -889,6 +948,8 @@ def single_check_review_prompt(
 
             {_settled_decisions_review_block(context["settled_decisions"])}
 
+            {_north_star_closeout_review_block(plan_dir)}
+
             Advisory mechanical pre-check flags (copy these verbatim into `pre_check_flags` in the output file):
             {json_dump(pre_check_flags).strip()}
 
@@ -945,6 +1006,8 @@ def single_check_review_prompt(
         {_review_evidence_block(plan_dir)}
 
         {_settled_decisions_review_block(context["settled_decisions"])}
+
+        {_north_star_closeout_review_block(plan_dir)}
 
         Advisory mechanical pre-check flags (copy these verbatim into `pre_check_flags` in the output file):
         {json_dump(pre_check_flags).strip()}
@@ -1038,6 +1101,8 @@ def parallel_criteria_review_prompt(
 
             {_settled_decisions_review_block(context["settled_decisions"])}
 
+            {_north_star_closeout_review_block(plan_dir)}
+
             Your output template is at: {output_path}
             Read the file first and write your final answer into that JSON structure.
 
@@ -1083,6 +1148,8 @@ def parallel_criteria_review_prompt(
         {_review_evidence_block(plan_dir)}
 
         {_settled_decisions_review_block(context["settled_decisions"])}
+
+        {_north_star_closeout_review_block(plan_dir)}
 
         Your output template is at: {output_path}
         Read the file first and write your final answer into that JSON structure.
@@ -1134,39 +1201,7 @@ def _write_review_template(plan_dir: Path, state: PlanState) -> Path:
     the same pattern used for critique templates and fixes MiniMax-M2.7's
     tendency to return empty verdict arrays.
     """
-    finalize_data = read_json(plan_dir / "finalize.json")
-
-    task_verdicts = []
-    for task in finalize_data.get("tasks", []):
-        task_id = task.get("id", "")
-        if task_id:
-            task_verdicts.append({
-                "task_id": task_id,
-                "reviewer_verdict": "",
-                "evidence_files": [],
-            })
-
-    sense_check_verdicts = []
-    for sc in finalize_data.get("sense_checks", []):
-        sc_id = sc.get("id", "")
-        if sc_id:
-            sense_check_verdicts.append({
-                "sense_check_id": sc_id,
-                "verdict": "",
-            })
-
-    criteria = _criteria_from_plan_artifacts(plan_dir, state)
-
-    template = {
-        "review_verdict": "",
-        "review_completion_status": "",
-        "criteria": criteria,
-        "issues": [],
-        "rework_items": [],
-        "summary": "",
-        "task_verdicts": task_verdicts,
-        "sense_check_verdicts": sense_check_verdicts,
-    }
+    template = _review_template_payload(plan_dir, state)
 
     output_path = plan_dir / "review_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
@@ -1200,6 +1235,7 @@ def _review_prompt(
     )
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
+    north_star_closeout_block = _north_star_closeout_review_block(plan_dir)
     diff_summary = collect_git_diff_summary(project_dir, base_ref=_milestone_diff_base(state))
     audit_path = plan_dir / "execution_audit.json"
     audit_block = _execution_audit_block(
@@ -1274,7 +1310,11 @@ def _review_prompt(
         Gate summary:
         {json_dump(gate).strip()}
 
-        {settled_decisions_block}{extra_sections}
+        {settled_decisions_block}
+
+        {north_star_closeout_block}
+
+        {extra_sections}
 
         {audit_block}
 

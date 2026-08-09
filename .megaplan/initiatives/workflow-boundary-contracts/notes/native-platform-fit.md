@@ -3,6 +3,11 @@
 This note explains how `native-platform-followup` fits the boundary-contract
 work and the broader push toward Python-native pipeline graphs.
 
+> Corrective update (2026-07-10): the canonical native workflow source now
+> exists. The conceptual ownership split below remains valid, but the old
+> immediate sequencing and absent-file guardrail are superseded by the gated
+> C1-C6 chain and the corrective reshape decision.
+
 ## Relationship
 
 `native-platform-followup` is not a competing boundary-contract epic. It is the
@@ -17,9 +22,11 @@ The intended split is:
 - boundary contracts own the durable proof vocabulary around those semantics:
   expected effects, receipts/evidence, outcomes, authority, temporal policy,
   and semantic findings;
-- native platform owns production execution guarantees: idempotent side effects,
-  reconcile-on-resume, brokered credentials, durable checkpoints, audit records,
-  worker leases, cancellation, and stuck-run supervision.
+- native platform owns production execution mechanics: idempotent side effects,
+  reconcile-on-resume, brokered credentials, durable checkpoints, worker
+  leases, cancellation, and stuck-run supervision; its supported adapter must
+  write the shared kernel execution-attempt ledger rather than keep a separate
+  authoritative audit/effect history.
 
 In other words: Python-native authoring says what the graph is; boundary
 contracts say how each graph boundary is proven healthy; native platform makes
@@ -57,33 +64,21 @@ design has regressed.
 
 ## Sequencing Implication
 
-The boundary epic should not wait for all native-platform milestones before
-shipping the prep semantic guard. But the generalized M3/M10 foundation should
-be designed to consume native-platform evidence cleanly.
-
-Practical sequencing:
-
-1. Boundary M1/M2/M6 can proceed immediately for the known Megaplan prep and
-   repair-trigger incident class.
-2. Boundary M3 should reserve the graph/evidence/outcome/authority/temporal
-   primitives now, because native-platform will need those shapes.
-3. Native-platform M1/M2/M4/M5 should emit evidence that can be adapted into
-   `BoundaryEvidence` rather than inventing separate proof formats.
-4. Boundary M10 should use a native Python / native platform workflow as the
-   non-Megaplan conformance case when the prerequisite composition/platform
-   substrate exists.
+The corrective chain starts only after Run Authority completes. Megaplan
+Maintenance proceeds independently and is not a launch condition. C1 reconciles
+native and Megaplan evidence surfaces against the pinned source; C5 adds generic
+profiles/templates; C6 uses a real native Python-shaped workflow as the
+non-Megaplan conformance case. Native runtime evidence should be adapted into
+`BoundaryEvidence`, not copied into a parallel proof format.
 
 ## Important Guardrail
 
-The native platform north star names
-`arnold_pipelines/megaplan/workflows/workflow.pypeline` as the canonical source,
-but this checkout currently does not contain that file. That appears to be a
-prerequisite-output assumption from the native composition chain, not something
-the boundary epic should silently rely on.
-
-Until `.pypeline` canonical source exists, boundary integration should target
-the current runtime/evidence surfaces and keep the `.pypeline` conformance case
-as a dependency-gated acceptance test.
+The native runtime and persistence seam now exist. C6 uses the pinned
+`arnold.pipeline.native.runtime.run_native_pipeline` adapter through
+`NativePersistenceBackend` and the native-only
+`arnold.pipelines.evidence_pack.pipeline:build_pipeline` conformance workflow.
+C1 verifies their exact source/API/schema vector at the combined-main SHA; drift
+fails closed rather than reopening adapter selection.
 
 ## Judgment
 
@@ -95,7 +90,8 @@ Conceptually these epics should fit together tightly, but not merge:
   interpretation.
 
 The connection point should be adapter-level: native runtime, audit, checkpoint,
-effect-ledger, broker, and worker-lease records become boundary evidence. The
+effect-ledger, broker, and worker-lease records feed or reference the shared
+execution-attempt ledger and become boundary evidence. The
 source-level workflow remains Python-native and readable.
 
 Reusable boundary templates belong in this boundary-contract initiative, not in

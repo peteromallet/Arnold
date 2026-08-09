@@ -32,7 +32,7 @@
       "notes": "Restores execution state from checkpoint; retries only failed tasks"
     }
   ],
-  "native_trace_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json"],
+  "native_trace_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json", "tree.json"],
   "native_trace_events": {
     "expected_event_kinds": ["pipeline.init", "phase.start", "phase.end", "stage.complete", "checkpoint"],
     "checkpoint_kind": "checkpoint",

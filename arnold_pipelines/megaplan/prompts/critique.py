@@ -20,6 +20,12 @@ from arnold_pipelines.megaplan._core import (
     robustness_critique_instruction,
     unresolved_significant_flags,
 )
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_TYPES,
+    read_carried_north_star_actions,
+)
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import PlanState
 
 _CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
@@ -52,6 +58,119 @@ def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _build_north_star_actions_block(actions: list[dict[str, Any]]) -> str:
+    """Render carried North Star actions with explicit instruction per action_type.
+
+    The revise worker must resolve each action by mapping its type to a
+    concrete plan change, gate/scenario/checker addition, dead-delete, or
+    human halt when the action cannot be mapped to the plan.
+    """
+    if not actions:
+        return ""
+
+    # Action-type to concrete revise instruction
+    _action_instructions: dict[str, str] = {
+        "change_plan": (
+            "Change the plan to address this concern directly. The revised plan "
+            "must show a concrete, traceable change — not just a note or TODO."
+        ),
+        "add_gate": (
+            "Add an explicit gate requirement to the plan that blocks completion "
+            "until this concern is resolved. The gate must name a concrete check, "
+            "owner, or blocking condition."
+        ),
+        "add_scenario": (
+            "Add a new scenario / test case to the plan that exercises this concern. "
+            "The scenario must be concrete enough to execute, not just a prose "
+            "placeholder."
+        ),
+        "add_checker": (
+            "Add an automated checker (lint rule, static analysis, CI guard, etc.) "
+            "to the plan that detects or prevents this category of issue."
+        ),
+        "dead_delete": (
+            "Identify and remove plan steps, files, or assumptions that are "
+            "dead weight given this concern. The removal must be explicit in the "
+            "revised plan, not implied."
+        ),
+        "add_human_halt": (
+            "If this concern CANNOT be addressed by any of the above actions, "
+            "do NOT try to work around it — emit a `north_star_actions_addressed` "
+            "entry with `resolution: \"halted\"` and a clear `reason` explaining "
+            "why the action cannot be mapped to a plan change."
+        ),
+    }
+
+    lines: list[str] = [
+        "Carried North Star actions (must be resolved in this revision):",
+        "",
+        "These actions were identified by the gate as plan-level execution-safety "
+        "concerns. Each action has an `action_type` that tells you what concrete "
+        "change is expected. You MUST address every action by mapping its type to "
+        "the corresponding revise behavior below, then record the result in "
+        "`north_star_actions_addressed[]`.",
+        "",
+        "Action type -> expected revise behavior:",
+    ]
+    for at in NORTH_STAR_ACTION_TYPES:
+        instr = _action_instructions.get(at, "Address this action in the revised plan.")
+        lines.append(f"  - `{at}`: {instr}")
+    lines.append("")  # blank line before listing actions
+    lines.append("Carried actions:")
+
+    for action in actions:
+        aid = action.get("id", "?")
+        category = action.get("category", "?")
+        action_type = action.get("action_type", "?")
+        severity = action.get("severity", "?")
+        concern = action.get("concern", "")
+        evidence = action.get("evidence", "")
+
+        line = f"  - {aid} | category={category} | type={action_type} | severity={severity}"
+        lines.append(line)
+        if concern:
+            lines.append(f"    concern: {concern}")
+        if evidence:
+            # Truncate very long evidence strings to keep the prompt readable
+            ev = evidence[:300] + ("..." if len(evidence) > 300 else "")
+            lines.append(f"    evidence: {ev}")
+        # Include required_change / plan_refs as optional guidance
+        required_change = action.get("required_change", "")
+        if required_change:
+            lines.append(f"    required_change: {required_change}")
+        plan_refs = action.get("plan_refs")
+        if isinstance(plan_refs, list) and plan_refs:
+            lines.append(f"    plan_refs: {', '.join(str(r) for r in plan_refs)}")
+
+    lines.append("")
+    lines.append(
+        "For EACH action above, record an entry in `north_star_actions_addressed[]`:"
+    )
+    lines.append(
+        "  - `action_id`: the action `id` from the carried list above"
+    )
+    lines.append(
+        "  - `action_type`: the exact `action_type` from the carried action "
+        "(this is a required structural marker)"
+    )
+    lines.append(
+        "  - `resolution`: `\"addressed\"` (mapped to a plan change), "
+        "`\"rejected\"` (action is invalid/out-of-scope), or "
+        "`\"halted\"` (cannot be mapped — see `add_human_halt` above)"
+    )
+    lines.append("  - `reason`: what you did or why you rejected/halted")
+    lines.append(
+        "  - `where`: pointer to the plan section where the change lives "
+        '(e.g. "Phase 2 — Step 3", "gate.json section preflight")'
+    )
+    lines.append(
+        "  - `plan_refs` (required): a non-empty list of concrete plan section "
+        "references and/or repo-relative file paths this resolution touches"
+    )
+
+    return "\n".join(lines)
+
+
 def _plan_version_unified_diff(plan_dir: Path, iteration: int) -> str:
     """Return a unified diff between plan_v{N-1}.md and plan_v{N}.md.
 
@@ -72,6 +191,31 @@ def _plan_version_unified_diff(plan_dir: Path, iteration: int) -> str:
         tofile=f"plan_v{iteration}.md",
     )
     return "".join(diff)
+
+
+def _revise_retry_feedback(state: PlanState) -> str:
+    """Return actionable feedback for the most recent failed revise attempt."""
+    history = state.get("history")
+    if not isinstance(history, list):
+        return ""
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("step") != "revise":
+            continue
+        if entry.get("result") != "error":
+            return ""
+        message = entry.get("message")
+        if not isinstance(message, str) or "structural validation" not in message:
+            return ""
+        return textwrap.dedent(
+            f"""
+            PRIOR REVISE ATTEMPT FAILED STRUCTURAL VALIDATION:
+            {message}
+            Correct that exact failure in this retry. The `plan` field must contain
+            at least one concrete numbered step heading, for example:
+            `## Step 1: Implement and verify the scoped change`.
+            """
+        ).strip()
+    return ""
 
 
 def _build_verification_delta_block(
@@ -184,6 +328,29 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         elif isinstance(decisions_data, dict):
             settled_decisions = decisions_data.get("decisions", [])
     settled_block = _settled_decisions_block(settled_decisions)
+    load_bearing_imported_decisions = [
+        decision
+        for decision in state["meta"].get("imported_decisions", [])
+        if isinstance(decision, dict)
+        and bool(decision.get("load_bearing"))
+        and isinstance(decision.get("id"), str)
+        and decision.get("id")
+    ]
+    if load_bearing_imported_decisions:
+        imported_decision_block = "\n".join(
+            [
+                "Load-bearing imported-decision success-criteria contract:",
+                *[
+                    f"- {decision['id']}: {decision.get('decision', '')}"
+                    for decision in load_bearing_imported_decisions
+                ],
+                "- Every ID above must appear literally in at least one `criterion`.",
+                "- Each bound criterion must use `priority: \"must\"` and a non-empty `requires` containing at least one container-verifiable capability (`run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, or `run_linter`).",
+                "- Do not replace these bindings with `subjective_judgment`-only criteria; missing mechanical bindings make the revision invalid.",
+            ]
+        )
+    else:
+        imported_decision_block = ""
 
     # Build the mechanical verification delta block from the completion
     # verdict (if present).  The raw log path is used internally for
@@ -193,6 +360,12 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         ctx.get("verification_delta"),
         ctx.get("verification_raw_log_path"),
     )
+
+    # Read carried North Star actions from gate_carry.json (normalized,
+    # carried form). Fall back to gate.json when no carry file exists.
+    north_star_actions = read_carried_north_star_actions(plan_dir)
+    north_star_block = _build_north_star_actions_block(north_star_actions)
+    retry_feedback = _revise_retry_feedback(state)
 
     return textwrap.dedent(
         f"""
@@ -217,7 +390,13 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
 
         {settled_block}
 
+        {imported_decision_block}
+
         {delta_block}
+
+        {north_star_block}
+
+        {retry_feedback}
 
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
@@ -231,14 +410,17 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
         - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
         - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}}`.
-        - For code-mode plans with any `run_tests` success criterion, include or preserve a machine-readable `test_blast_radius` object in the structured output. Use this shape: `{{"strategy":"scoped","confidence":"high","selectors":[{{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}}],"changed_surfaces":["src/relevant.py"],"always_run":[],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes."}}`. If finalize feedback says scoped baseline metadata was missing, the revision must add this object rather than only adding prose validation commands.
+        - For code-mode plans with any `run_tests` success criterion, include or preserve the model-owned `test_blast_radius` proposal in the structured output. Use this exact shape: `{{"strategy":"scoped","selectors":[{{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}}],"changed_surfaces":["src/relevant.py"],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes."}}`. Do not invent `confidence`, `always_run`, or `import_graph`; the harness derives those fields deterministically after validating the proposal.
         - Verify that the plan remains aligned with the user's original intent, not just internal plan quality.
         - Remove unjustified scope growth. If critique raised scope creep, narrow the plan back to the original idea unless the broader work is strictly required.
         - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
         - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
-        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - CRITICAL: Do NOT patch, edit, or rewrite any prior plan artifact file on disk (plan_v1.md, plan_v2.md, or any plan_v*.md). Those files are append-only immutable ledger entries; modifying them in place is a custody violation that blocks the revision. The system writes your new plan version from the `plan` field you return.
+        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `north_star_actions_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - `north_star_actions_addressed` MUST be an array of objects. Every object MUST contain ALL of these fields: `action_id` (string), `action_type` (string), `plan_refs` (array of strings), `resolution` (string), and `reason` (string). Do not omit any field; do not use different names.
+        - `questions` MUST be an array of strings only; do not emit question objects. If a question needs context, put it in the string.
         - Populate `changed_surfaces` with every concrete file path your revised plan will change or create. Include both source files and test files. Use repo-relative paths. This list drives the deterministic test-selection blast radius; be complete. If your revised plan touches a file, list it.
-        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{{"kind": "path", "value": "<path>", "reason": "<why>"}}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor and the prior plan's blast radius; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+        - Populate `test_blast_radius` with only `strategy`, `selectors`, `changed_surfaces`, `full_suite_fallback`, and `rationale`. The system merges this proposal with the deterministic floor and prior plan metadata; it derives the remaining persisted fields itself.
 
         """
     ).strip()
@@ -461,12 +643,11 @@ def _write_critique_template(
     """
     import json
 
-    template: dict[str, object] = {
-        "checks": _build_checks_template(plan_dir, state, checks),
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["critique.json"],
+        contract="critique scratch template",
+    )
+    template["checks"] = _build_checks_template(plan_dir, state, checks)
 
     output_path = plan_dir / "critique_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
@@ -481,12 +662,11 @@ def write_single_check_template(
 ) -> Path:
     import json
 
-    template: dict[str, object] = {
-        "checks": _build_checks_template(plan_dir, state, (check,)),
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["critique.json"],
+        contract="single-check critique scratch template",
+    )
+    template["checks"] = _build_checks_template(plan_dir, state, (check,))
 
     output_path = plan_dir / output_name
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

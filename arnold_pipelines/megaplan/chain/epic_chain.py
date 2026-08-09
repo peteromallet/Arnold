@@ -29,6 +29,13 @@ from arnold_pipelines.megaplan.chain.spec import (
     load_runtime_policy,
     load_spec,
 )
+from arnold_pipelines.megaplan.chain.wbc import (
+    ChainWbcRule,
+    EPIC_PROGRESS_SURFACE,
+    EPIC_PROGRESS_WRITER_ID,
+    record_chain_wbc_evidence,
+    validate_chain_wbc_transition,
+)
 from arnold_pipelines.megaplan.chain.status import classify_chain_status
 from arnold_pipelines.megaplan.planning.state import (
     STATE_ABORTED,
@@ -304,6 +311,7 @@ class ObservedChildEpic:
     chain_state: ChainState
     plan_status: dict[str, Any]
     classification: dict[str, Any]
+    authority_drift: dict[str, Any] | None = None
 
 
 def _state_path_for(spec_path: Path) -> Path:
@@ -477,6 +485,43 @@ def _observe_child_epic(epic: EpicSpec, *, parent_spec_path: Path) -> ObservedCh
     else:
         effective_status = classification.effective_status
         reason = classification.reason
+
+    # ── authority-view drift check ──────────────────────────────────────
+    # When the legacy classification says "complete" and the child has a
+    # project root and a current plan, cross-check against the authority-view
+    # backed completion check (_plan_terminal_completion_is_authoritative).
+    # If the views disagree, capture the drift as a diagnostic — the legacy
+    # effective_status is preserved (fail-safe), but the drift is observable.
+    authority_drift: dict[str, Any] | None = None
+    if effective_status == "complete" and project_root is not None and chain_state.current_plan_name:
+        try:
+            from arnold_pipelines.megaplan.chain import (
+                _plan_terminal_completion_is_authoritative,
+            )
+
+            authoritative, auth_reason = _plan_terminal_completion_is_authoritative(
+                project_root, chain_state.current_plan_name
+            )
+            if not authoritative:
+                authority_drift = {
+                    "kind": "legacy_complete_authority_disagrees",
+                    "legacy_effective_status": effective_status,
+                    "legacy_reason": reason,
+                    "authority_verdict": authoritative,
+                    "authority_reason": auth_reason,
+                    "child_plan": chain_state.current_plan_name,
+                    "child_project_root": str(project_root),
+                }
+        except Exception:
+            # Authority check is best-effort — never block the parent
+            # observation on a cross-check failure.
+            pass
+
+    classification_dict = classification.to_dict()
+    if authority_drift is not None:
+        classification_dict.setdefault("metadata", {})
+        if isinstance(classification_dict.get("metadata"), dict):
+            classification_dict["metadata"]["epic_chain_authority_drift"] = authority_drift
     return ObservedChildEpic(
         effective_status=effective_status,
         reason=reason,
@@ -487,7 +532,8 @@ def _observe_child_epic(epic: EpicSpec, *, parent_spec_path: Path) -> ObservedCh
         chain_spec=chain_spec,
         chain_state=chain_state,
         plan_status=plan_status,
-        classification=classification.to_dict(),
+        classification=classification_dict,
+        authority_drift=authority_drift,
     )
 
 
@@ -666,7 +712,6 @@ def run_epic_chain(
     one: bool = False,
     start_child: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, Any]:
-    del root
     spec = load_epic_chain_spec(spec_path)
     state = load_epic_chain_state(spec_path)
     prefix = _completed_prefix_epic_index(spec, state)
@@ -711,6 +756,39 @@ def run_epic_chain(
             handoff_verified = _verify_handoff(
                 spec, idx, child, parent_spec_path=spec_path
             )
+            completion_evidence = validate_chain_wbc_transition(
+                writer_id=EPIC_PROGRESS_WRITER_ID,
+                surface_name=EPIC_PROGRESS_SURFACE,
+                transition_name="epic_child_complete",
+                subject=epic.id,
+                source_path=spec_path,
+                project_dir=root,
+                rules=(
+                    ChainWbcRule(
+                        "child_status",
+                        "complete",
+                        child.effective_status,
+                        child.effective_status == "complete",
+                    ),
+                    ChainWbcRule(
+                        "observed_spec_exists",
+                        True,
+                        child.observed_spec_path.exists(),
+                        child.observed_spec_path.exists(),
+                    ),
+                ),
+                extra={
+                    "child_spec_path": str(child.spec_path),
+                    "observed_spec_path": str(child.observed_spec_path),
+                    "child_state_path": str(child.state_path),
+                    "handoff_verified": handoff_verified,
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"epic_complete:{epic.id}:{idx}",
+                evidence=completion_evidence,
+            )
             if epic.id not in _completed_epic_ids(state):
                 state.completed.append(
                     {
@@ -743,6 +821,37 @@ def run_epic_chain(
                 )
             continue
         if child.effective_status == "not_started":
+            launch_evidence = validate_chain_wbc_transition(
+                writer_id=EPIC_PROGRESS_WRITER_ID,
+                surface_name=EPIC_PROGRESS_SURFACE,
+                transition_name="epic_child_launch",
+                subject=epic.id,
+                source_path=spec_path,
+                project_dir=root,
+                rules=(
+                    ChainWbcRule(
+                        "child_status",
+                        "not_started",
+                        child.effective_status,
+                        child.effective_status == "not_started",
+                    ),
+                    ChainWbcRule(
+                        "child_spec_exists",
+                        True,
+                        child.spec_path.exists(),
+                        child.spec_path.exists(),
+                    ),
+                ),
+                extra={
+                    "child_spec_path": str(child.spec_path),
+                    "observed_spec_path": str(child.observed_spec_path),
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"epic_launch:{epic.id}:{idx}",
+                evidence=launch_evidence,
+            )
             writer(f"[epic-chain] launching child epic {epic.id}\n")
             proc = start_child(epic, parent_spec_path=spec_path)
             if proc.returncode != 0:

@@ -75,6 +75,15 @@ from arnold.workflow.boundary_evidence import (
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
 from arnold.workflow.semantic_evidence import (
+    S2_CRITIQUE_ROW_ID,
+    S2_GATE_ROW_ID,
+    S2_PLAN_ROW_ID,
+    S2_PREP_ROW_ID,
+    S2_REVISE_ROW_ID,
+    S3_TIEBREAKER_CHALLENGER_ROW_ID,
+    S3_TIEBREAKER_DECISION_ROW_ID,
+    S3_TIEBREAKER_RESEARCHER_ROW_ID,
+    S3_TIEBREAKER_SYNTHESIS_ROW_ID,
     S5_FINALIZE_ARTIFACTS_ROW_ID,
     S5_FINALIZE_FALLBACK_ROW_ID,
     S5_FINAL_PROJECTION_ROW_ID,
@@ -685,7 +694,7 @@ def check_workflow_source(
     boundary_contract_records = tuple(boundary_contracts)
     boundary_evidence_records = tuple(boundary_evidence)
     row_evidence_diagnostics = (
-        _row_evidence_diagnostics(parsed_source, evidence_records)
+        _row_evidence_diagnostics(parsed_source, evidence_records, boundary_contract_records)
         if evidence is not None
         else ()
     )
@@ -722,8 +731,9 @@ def check_workflow_source(
 def _row_evidence_diagnostics(
     parsed_source: ParsedWorkflowSource,
     evidence: Sequence[SemanticEvidence],
+    boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> tuple[AuthoringDiagnostic, ...]:
-    implemented_rows = _implemented_front_half_rows(parsed_source.workflow)
+    implemented_rows = _implemented_front_half_rows(parsed_source.workflow, boundary_contracts)
     if not implemented_rows:
         return ()
     evidenced_row_ids = {record.row_id for record in evidence if record.row_id}
@@ -1251,7 +1261,7 @@ def _boundary_evidence_diagnostics(
     if not boundary_contracts and not boundary_evidence:
         return ()
 
-    implemented_rows = _implemented_boundary_rows(parsed_source.workflow)
+    implemented_rows = _implemented_boundary_rows(parsed_source.workflow, boundary_contracts)
     implemented_by_row_id = {row.row_id: row for row in implemented_rows}
     contracts_by_row_id = {
         contract.row_id: contract
@@ -1681,10 +1691,11 @@ def _boundary_orphan_details(
 
 def _implemented_front_half_rows(
     workflow: WorkflowDeclaration | None,
+    boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> tuple[_ImplementedFrontHalfRow, ...]:
     if workflow is None:
         return ()
-    row_specs = _front_half_row_specs()
+    row_specs = _front_half_row_specs(boundary_contracts)
     if not row_specs:
         return ()
     implemented_by_row_id: dict[str, _ImplementedFrontHalfRow] = {}
@@ -1731,12 +1742,16 @@ def _collect_front_half_rows(
             _collect_front_half_rows(statement.body, row_specs, implemented_by_row_id)
 
 
-def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
-    try:
-        from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS
-    except ImportError:
-        return MappingProxyType({})
+def _front_half_row_specs(
+    boundary_contracts: Sequence[BoundaryContract] = (),
+) -> Mapping[str, tuple[str, str]]:
+    """Build component-ref to stable front-half row/phase mappings.
 
+    Stable row IDs live in the generic ``arnold.workflow`` contract package,
+    so missing or partial caller-supplied contracts can still produce AWF246.
+    Injected contracts extend or override those stable mappings without
+    importing the Megaplan runtime or its concrete contract registry.
+    """
     front_half_phases = frozenset(
         {
             "prep",
@@ -1751,29 +1766,44 @@ def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
         }
     )
     row_specs: dict[str, tuple[str, str]] = {}
-    for contract in BOUNDARY_CONTRACTS:
-        if contract.phase is None or contract.row_id is None:
-            continue
-        if contract.phase.value not in front_half_phases:
-            continue
-        phase_name = contract.phase.value.upper()
+    stable_rows = (
+        (S2_PREP_ROW_ID, "prep"),
+        (S2_PLAN_ROW_ID, "plan"),
+        (S2_CRITIQUE_ROW_ID, "critique"),
+        (S2_GATE_ROW_ID, "gate"),
+        (S2_REVISE_ROW_ID, "revise"),
+        (S3_TIEBREAKER_RESEARCHER_ROW_ID, "tiebreaker_researcher"),
+        (S3_TIEBREAKER_CHALLENGER_ROW_ID, "tiebreaker_challenger"),
+        (S3_TIEBREAKER_SYNTHESIS_ROW_ID, "tiebreaker_synthesis"),
+        (S3_TIEBREAKER_DECISION_ROW_ID, "tiebreaker_decision"),
+    )
+    supplied_rows = tuple(
+        (contract.row_id, contract.phase.value)
+        for contract in boundary_contracts
+        if contract.phase is not None
+        and contract.row_id is not None
+        and contract.phase.value in front_half_phases
+    )
+    for row_id, phase in (*stable_rows, *supplied_rows):
+        phase_name = phase.upper()
         # Prefixed exports (SOURCE_*, AUTHORING_*) plus the bare export name
         # so that components like TIEBREAKER_RESEARCHER (which don't follow
         # the SOURCE_/AUTHORING_ convention) are still detected.
         for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}", phase_name):
             row_specs[
                 f"arnold_pipelines.megaplan.workflows.components:{export_name}"
-            ] = (contract.row_id, contract.phase.value)
+            ] = (row_id, phase)
     return MappingProxyType(row_specs)
 
 
 def _implemented_boundary_rows(
     workflow: WorkflowDeclaration | None,
+    boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> tuple[_ImplementedFrontHalfRow, ...]:
     if workflow is None:
         return ()
     implemented_by_row_id = {
-        row.row_id: row for row in _implemented_front_half_rows(workflow)
+        row.row_id: row for row in _implemented_front_half_rows(workflow, boundary_contracts)
     }
     for row in _implemented_s5_boundary_rows(workflow):
         implemented_by_row_id.setdefault(row.row_id, row)
@@ -2311,7 +2341,10 @@ def _literal_string_set_keyword(call: ast.Call, name: str) -> tuple[str, ...]:
 
 
 def _source_module_for_local_component(source_path: str) -> str:
-    return Path(source_path).with_suffix("").as_posix().replace("/", ".").replace("-", "_")
+    path_parts = Path(source_path).with_suffix("").parts
+    return ".".join(
+        _module_path_part(part) for part in path_parts if part != "."
+    )
 
 
 def _parse_workflow_declaration(
@@ -5747,6 +5780,7 @@ def _bind_route_metadata(
     diagnostics: list[AuthoringDiagnostic],
 ) -> tuple[Route, ...]:
     step_calls = _step_calls_by_id(block)
+    route_target_refs = _route_target_refs_by_id(block)
     routes_by_visible_key: dict[tuple[str, str, str], list[Route]] = {}
     for route in routes:
         routes_by_visible_key.setdefault((route.source, route.target, route.label), []).append(route)
@@ -5796,8 +5830,20 @@ def _bind_route_metadata(
                 )
                 continue
 
-            visible_key = (step_id, target_ref, label)
-            matching_routes = routes_by_visible_key.get(visible_key, [])
+            authored_key = (step_id, target_ref, label)
+            matching_routes = routes_by_visible_key.get(authored_key, [])
+            if not matching_routes:
+                matching_routes = [
+                    route
+                    for route in routes
+                    if route.source == step_id
+                    and route.label == label
+                    and route_target_refs.get(route.target) == target_ref
+                ]
+            visible_keys = {
+                (route.source, route.target, route.label) for route in matching_routes
+            }
+            visible_key = next(iter(visible_keys), authored_key)
             if visible_key in seen_keys or len(matching_routes) > 1:
                 diagnostics.append(
                     _route_metadata_diagnostic(
@@ -5848,6 +5894,24 @@ def _step_calls_by_id(block: ParsedSourceBlock) -> dict[str, ParsedStepCall]:
         elif isinstance(statement, ParsedLoopBlock):
             step_calls.update(_step_calls_by_id(statement.body))
     return step_calls
+
+
+def _route_target_refs_by_id(block: ParsedSourceBlock) -> dict[str, str]:
+    """Map lowered target ids to their authored component/reducer export names."""
+    target_refs: dict[str, str] = {}
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            target_refs[statement.id] = (
+                statement.component.provenance.export_name or statement.local_name
+            )
+        elif isinstance(statement, ParsedParallelMapCall):
+            target_refs[statement.id] = statement.reducer_ref.rsplit(":", 1)[-1]
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                target_refs.update(_route_target_refs_by_id(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            target_refs.update(_route_target_refs_by_id(statement.body))
+    return target_refs
 
 
 def _route_metadata_diagnostic(step: ParsedStepCall, message: str) -> AuthoringDiagnostic:
@@ -6096,7 +6160,7 @@ def _absolute_module_name(statement: ast.ImportFrom, source_path: str) -> str:
     package_parts = _package_parts_for_source_path(source_path)
     if statement.level > 1:
         package_parts = package_parts[: 1 - statement.level]
-    module_parts = tuple(part for part in package_parts if part not in {"", "."})
+    module_parts = tuple(_module_path_part(part) for part in package_parts if part != ".")
     if statement.module:
         module_parts = (*module_parts, *statement.module.split("."))
     return ".".join(module_parts)
@@ -6114,7 +6178,15 @@ def _package_parts_for_source_path(source_path: str) -> tuple[str, ...]:
         except ValueError:
             continue
         return relative.parts[:-1]
-    return resolved.with_suffix("").parts[:-1]
+    return path.with_suffix("").parts[:-1]
+
+
+def _module_path_part(part: str) -> str:
+    """Normalize a filesystem path segment into a valid Python module segment."""
+    normalized = re.sub(r"\W", "_", part)
+    if not normalized or normalized[0].isdigit():
+        normalized = f"_{normalized}"
+    return normalized
 
 
 def _coerce_source_path(source_path: str | Path | None) -> str:

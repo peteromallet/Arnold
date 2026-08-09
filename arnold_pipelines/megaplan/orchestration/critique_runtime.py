@@ -5,21 +5,38 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan import handlers as _pkg
+from arnold_pipelines.megaplan.outcomes import CritiqueOutcome, ReviseOutcome
 from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 from arnold_pipelines.megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from arnold_pipelines.megaplan.orchestration.gate_checks import build_gate_artifact, build_orchestrator_guidance
-from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals, compute_plan_delta_percent, compute_recurring_critiques
+from arnold_pipelines.megaplan.orchestration.gate_signals import (
+    build_gate_signals,
+    compute_adjacent_text_matches,
+    compute_plan_delta_percent,
+    compute_semantic_recurrence,
+)
 from arnold_pipelines.megaplan.orchestration.critique_status import (
     annotate_unverifiable_checks,
     build_unverifiable_warnings,
 )
 from arnold_pipelines.megaplan.orchestration.parallel_critique import run_parallel_critique
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    prepare_critique_payload,
+    write_critique_production_receipt,
+)
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    activate_phase_wbc,
+    phase_wbc_state,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
+from arnold_pipelines.megaplan.schema_projection import schema_property_names
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import (
     CliError,
     FLAG_BLOCKING_STATUSES,
@@ -36,7 +53,9 @@ from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan._core import (
     adaptive_critique_enabled,
     atomic_write_json,
+    atomic_write_text,
     configured_robustness,
+    infer_next_steps,
     is_creative_mode,
     latest_plan_meta_path,
     latest_plan_path,
@@ -47,7 +66,9 @@ from arnold_pipelines.megaplan._core import (
     read_json,
     record_step_failure,
     require_state,
+    save_state_merge_meta,
     scope_creep_flags,
+    set_active_step,
     sha256_file,
     workflow_includes_step,
 )
@@ -58,14 +79,25 @@ from arnold_pipelines.megaplan.handlers.plan import (
     _merge_imported_decision_criteria,
 )
 from arnold_pipelines.megaplan.handlers.shared import (
+    _active_step_fallback_fields,
     _agent_mode_parts,
     _append_to_meta,
     _finish_step,
+    _load_bearing_decision_criteria_issues,
     _raise_step_validation_error,
+    _write_gate_json,
     _write_plan_version,
 )
 from arnold_pipelines.megaplan.handlers.tiebreaker import _build_tiebreaker_reprompt
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_TYPES,
+    NorthStarActionValidationError,
+    blocking_north_star_actions,
+    is_blocking_action,
+    is_blocking_category,
+    normalize_north_star_actions_addressed,
+)
 
 log = logging.getLogger("megaplan")
 _ORIGINAL_VALIDATE_CRITIQUE_CHECKS = validate_critique_checks
@@ -101,6 +133,11 @@ def _recover_evaluator_payload_from_raw(
             continue
         if "selections" not in cand or "skipped" not in cand:
             continue
+        # T10: raw-candidate recovery probe. This intentionally omits
+        # accepted_context so legacy self-contained candidates (no handoff
+        # references) still validate; the validator's conditional
+        # invariants are inert when accepted_context is None. The primary
+        # call site below performs the full fail-closed custody check.
         try:
             validate_evaluator_verdict(
                 cand,
@@ -111,6 +148,106 @@ def _recover_evaluator_payload_from_raw(
             continue
         return cand
     return None
+
+
+# T10: accepted ledger custody context for the primary evaluator call.
+# Each evaluator handoff reference maps to the accepted-context key that
+# must corroborate it. When a verdict references one of these fields but the
+# runtime has no corresponding accepted value, the call fails closed rather
+# than silently accepting an unverifiable provenance claim.
+_EVALUATOR_HANDOFF_REFS: dict[str, str] = {
+    "expected_revision": "expected_revision",
+    "expected_briefing_hash": "expected_briefing_hash",
+    "domain_selections": "known_domains",
+    "domain_skips": "known_domains",
+    "evidence_targets": "known_finding_refs",
+    "budgets": "max_budget_findings",
+    "critique_mode": "allowed_critique_modes",
+    "input_set_hashes": "input_set_hash",
+}
+
+
+def _build_evaluator_accepted_context(
+    state: Any, plan_dir: Any, iteration: int,
+) -> dict[str, Any]:
+    """Assemble accepted ledger custody context for the primary evaluator call.
+
+    Carries the accepted manifest hash/revision, briefing hash, profile
+    budget caps, input-set hash, known finding refs, known domains, and
+    allowed critique modes. Every value is derived defensively from plan
+    state; an unavailable handoff datum is omitted, and
+    ``_fail_closed_on_unverifiable_evaluator_handoff`` rejects any verdict
+    that references a datum the runtime cannot corroborate.
+    """
+    config = state.get("config") or {}
+    meta = state.get("meta") or {}
+
+    # Critique modes are always fully admissible; the evaluator chooses.
+    ctx: dict[str, Any] = {
+        "allowed_critique_modes": ["BLIND", "HISTORY_AWARE"],
+    }
+
+    # Profile budget cap for findings (operator/profile knob).
+    _cap = config.get("critique_max_findings")
+    if isinstance(_cap, int) and not isinstance(_cap, bool) and _cap >= 0:
+        ctx["max_budget_findings"] = _cap
+
+    # Known finding refs: every flag id the ledger currently tracks.
+    try:
+        _reg = load_flag_registry(plan_dir)
+        _ids = sorted({
+            f.get("id") for f in (_reg.get("flags") or [])
+            if isinstance(f, dict) and f.get("id")
+        })
+    except Exception:
+        _ids = []
+    if _ids:
+        ctx["known_finding_refs"] = _ids
+
+    # Known domains: the domain set assigned to this plan, if recorded.
+    _domains = meta.get("critique_domains") or config.get("critique_domains")
+    if isinstance(_domains, (list, tuple)) and _domains:
+        ctx["known_domains"] = list(_domains)
+
+    # Accepted ledger handoff: manifest hash/revision, briefing hash, and
+    # input-set hash, written by the critique ledger when a revision
+    # manifest is accepted. Absent until a manifest is on record.
+    _handoff = meta.get("critique_ledger_handoff") or {}
+    if isinstance(_handoff, dict):
+        for _src, _dst in (
+            ("accepted_manifest_hash", "expected_manifest_hash"),
+            ("accepted_revision", "expected_revision"),
+            ("briefing_hash", "expected_briefing_hash"),
+            ("input_set_hash", "input_set_hash"),
+        ):
+            _val = _handoff.get(_src)
+            if isinstance(_val, str) and _val:
+                ctx[_dst] = _val
+    return ctx
+
+
+def _fail_closed_on_unverifiable_evaluator_handoff(
+    payload: dict[str, Any], accepted_context: dict[str, Any],
+) -> None:
+    """Reject a verdict that references handoff data the runtime lacks.
+
+    A verdict may echo an expected revision/briefing hash, name domains,
+    target finding evidence, declare a critique mode, or mirror input-set
+    hashes. Each such claim is only meaningful against accepted ledger
+    custody. When the runtime cannot supply the corroboration (the accepted
+    value is absent), the verdict references unavailable handoff data and
+    the call fails closed.
+    """
+    for _field, _ctx_key in _EVALUATOR_HANDOFF_REFS.items():
+        _ref = payload.get(_field)
+        if not _ref:
+            continue
+        if accepted_context.get(_ctx_key) is None:
+            raise ValueError(
+                f"critique_evaluator verdict references {_field!r} but the "
+                f"accepted handoff has no {_ctx_key!r} to corroborate it "
+                f"(fail-closed: unverifiable handoff reference)."
+            )
 
 
 def _prefer_nonempty_evaluator_payload(
@@ -125,9 +262,24 @@ def _prefer_nonempty_evaluator_payload(
 # ── T11: Critique-scoped scratch promotion known keys ──────────────────────
 # The model produces only these keys in the scratch template; unknown
 # top-level keys injected by the model are stripped before promotion.
-_CRITIQUE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
-    {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+_CRITIQUE_SCRATCH_KNOWN_KEYS: frozenset[str] = schema_property_names(
+    SCHEMAS["critique.json"],
+    contract="critique scratch promotion",
 )
+
+
+def _critique_scratch_known_keys() -> frozenset[str]:
+    return schema_property_names(
+        SCHEMAS["critique.json"],
+        contract="critique scratch promotion",
+    )
+
+
+def _critique_evaluator_scratch_known_keys() -> frozenset[str]:
+    return schema_property_names(
+        SCHEMAS["critique_evaluator.json"],
+        contract="critique evaluator scratch promotion",
+    )
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -141,25 +293,108 @@ def _critique_check_validator() -> Any:
     return validate_critique_checks
 
 
-def _rebuild_recovered_critique_worker(
+def _critique_producer_binding(
+    state: PlanState,
     worker: WorkerResult,
-    recovered_payload: dict[str, Any],
-    invalid_checks: list[str],
-) -> WorkerResult:
-    return WorkerResult(
-        payload=recovered_payload,
-        raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed validation for checks: " + ", ".join(invalid_checks),
-        duration_ms=worker.duration_ms,
-        cost_usd=worker.cost_usd,
-        session_id=worker.session_id,
-        trace_output=worker.trace_output,
-        rendered_prompt=worker.rendered_prompt,
-        model_actual=worker.model_actual,
-        prompt_tokens=worker.prompt_tokens,
-        completion_tokens=worker.completion_tokens,
-        total_tokens=worker.total_tokens,
-        rate_limit=worker.rate_limit,
+    *,
+    agent: str,
+    scratch_filename: str,
+    scratch_status: str,
+    plan_dir: Path,
+    parallel_reduced: bool,
+) -> dict[str, Any]:
+    """Bind canonical critique custody to the exact producing phase attempt."""
+
+    meta = state.get("meta")
+    invocation_id = (
+        meta.get("current_invocation_id") if isinstance(meta, dict) else None
     )
+    if not isinstance(invocation_id, str) or not invocation_id:
+        raise CritiqueCustodyError(
+            "critique_producer_identity_missing",
+            ["current critique invocation id is unavailable"],
+        )
+    attempt_index = int(worker.attempt_index)
+    parallel_evidence: Mapping[str, Any] | None = None
+    if parallel_reduced:
+        auth_metadata = worker.auth_metadata
+        if not isinstance(auth_metadata, Mapping) or not isinstance(
+            auth_metadata.get("parallel_critique"), Mapping
+        ):
+            raise CritiqueCustodyError(
+                "critique_producer_identity_missing",
+                ["parallel critique reducer has no child custody manifest"],
+            )
+        parallel_evidence = auth_metadata["parallel_critique"]
+        phase = phase_wbc_state(state, step="critique")
+        if (
+            phase is None
+            or phase.get("invocation_id") != invocation_id
+            or parallel_evidence.get("invocation_id") != invocation_id
+            or parallel_evidence.get("phase_attempt_id") != phase.get("attempt_id")
+        ):
+            raise CritiqueCustodyError(
+                "critique_producer_identity_missing",
+                ["parallel critique reducer is not bound to the active critique phase"],
+            )
+    selected_spec: str | None = None
+    if 0 <= attempt_index < len(worker.attempted_specs):
+        candidate = worker.attempted_specs[attempt_index]
+        if isinstance(candidate, str) and candidate:
+            selected_spec = candidate
+    provider: str | None = None
+    if agent in {"codex", "shannon"}:
+        provider = agent
+    elif selected_spec:
+        parts = selected_spec.split(":")
+        if len(parts) >= 2 and parts[1]:
+            provider = parts[1]
+    transport = (
+        "parallel_reduce"
+        if parallel_reduced
+        else "registered_file_fill"
+        if agent == "hermes"
+        else "inline_response"
+    )
+    binding: dict[str, Any] = {
+        "schema_version": "megaplan-critique-producer-binding-v1",
+        "invocation_id": invocation_id,
+        "attempt_index": attempt_index,
+        "attempt_id": f"{invocation_id}:{attempt_index}",
+        "producer": "parallel_critique_reducer" if parallel_reduced else agent,
+        "provider": provider,
+        "selected_spec": selected_spec,
+        "model_actual": worker.model_actual,
+        "session_id": worker.session_id,
+        "transport": transport,
+        "scratch_status": scratch_status,
+        "registered_scratch_artifact": scratch_filename,
+        # WorkerResult does not yet expose a durable output-path attestation.
+        # Exact-path authority still comes from promote_scratch reading only
+        # the registered basename; this explicit false value prevents callers
+        # from mistaking the binding for stronger provider provenance.
+        "output_path_attested": False,
+    }
+    if parallel_evidence is not None:
+        binding.update(
+            {
+                "phase_attempt_id": parallel_evidence.get("phase_attempt_id"),
+                "child_manifest_artifact": parallel_evidence.get(
+                    "manifest_artifact"
+                ),
+                "child_manifest_sha256": parallel_evidence.get("manifest_sha256"),
+                "child_manifest_digest": parallel_evidence.get("manifest_digest"),
+                "child_dispatch_count": parallel_evidence.get(
+                    "child_dispatch_count"
+                ),
+            }
+        )
+    if transport == "registered_file_fill" and scratch_status == "filled":
+        scratch_path = plan_dir / scratch_filename
+        if scratch_path.exists() and scratch_path.is_file():
+            binding["scratch_sha256"] = sha256_file(scratch_path)
+            binding["scratch_bytes"] = scratch_path.stat().st_size
+    return binding
 
 
 def _apply_adaptive_critique_routing(
@@ -254,17 +489,48 @@ def _apply_adaptive_critique_routing(
     _complexity_cache: dict[int, _TierAgentMode] = {}
     _pin_agent_mode: _TierAgentMode | None = None
 
-    def _resolved_routing_tier(complexity: int) -> int:
-        return (complexity + 1) // 2 if _legacy_critique_tiers else complexity
+    def _tier_value_for(tier: int) -> object | None:
+        value = _critique_tiers.get(tier)
+        return _critique_tiers.get(str(tier)) if value is None else value
 
-    def _tier_spec_for(routing_tier: int) -> str | None:
-        _raw = _critique_tiers.get(routing_tier)
+    def _configured_tiers() -> tuple[int, ...]:
+        """Return structurally valid configured tiers in deterministic order."""
+        return tuple(
+            sorted(
+                {
+                    int(raw_tier)
+                    for raw_tier in _critique_tiers
+                    if not isinstance(raw_tier, bool)
+                    and str(raw_tier).isdigit()
+                    and 1 <= int(raw_tier) <= 10
+                    and _tier_value_for(int(raw_tier)) is not None
+                }
+            )
+        )
+
+    def _tier_spec_for(complexity: int) -> str | None:
+        _raw = _tier_value_for(complexity)
+        selected_tier = complexity
+        # Profiles that predate the 1..10 evaluator scale legitimately expose
+        # only 1..5 critique tiers.  A high valid selection maps to their
+        # strongest configured critic; do not use this as a general sparse-map
+        # fallback, because a missing tier inside the configured range remains
+        # a routing-contract error.
         if _raw is None:
-            _raw = _critique_tiers.get(str(routing_tier))
+            tiers = _configured_tiers()
+            if (
+                tiers
+                and tiers == tuple(range(1, tiers[-1] + 1))
+                and complexity > tiers[-1]
+            ):
+                selected_tier = tiers[-1]
+                _raw = _tier_value_for(selected_tier)
         if isinstance(_raw, str):
             return _raw or None
         if isinstance(_raw, list):
-            return select_fallback_spec(_raw, 0, path=f"tier_models.critique.{routing_tier}")
+            return select_fallback_spec(
+                _raw, 0, path=f"tier_models.critique.{selected_tier}"
+            )
         return None
 
     def _resolved_pin_agent_mode() -> _TierAgentMode:
@@ -284,12 +550,56 @@ def _apply_adaptive_critique_routing(
             )
         return _pin_agent_mode
 
+    # T12 (CL3): resolve critique_routing profile metadata (floor_domains,
+    # max_blind_passes) with inheritance and expose it on each routed check so
+    # prompt assembly can enforce blind-mode domain floors and the blind-pass
+    # budget.  Absent metadata leaves routing unchanged (backward compatible).
+    try:
+        from arnold_pipelines.megaplan.profiles import (
+            _resolve_critique_routing_with_inheritance,
+            _load_pipeline_local_metadata,
+            _load_pipeline_local_profiles,
+            _load_system_metadata,
+            _load_system_profiles,
+        )
+        _profiles = _load_pipeline_local_profiles(state.get("config", {}).get("project_dir")) if callable(_load_pipeline_local_profiles) else {}
+        _metadata = _load_pipeline_local_metadata(state.get("config", {}).get("project_dir")) if callable(_load_pipeline_local_metadata) else {}
+        _system_profiles = _load_system_profiles() if callable(_load_system_profiles) else {}
+        _system_metadata = _load_system_metadata() if callable(_load_system_metadata) else {}
+        _profile_name = (state.get("config") or {}).get("profile") or "partnered"
+        _critique_routing = _resolve_critique_routing_with_inheritance(
+            _profile_name,
+            system_metadata=_system_metadata,
+            pipeline_local_metadata=_metadata,
+        )
+    except Exception:
+        _critique_routing = {}
+    _routing_floor_domains = _critique_routing.get("floor_domains")
+    _routing_max_blind_passes = _critique_routing.get("max_blind_passes")
+
     for _check in active_checks:
         _cid = _check.get("id", "?")
         _cx = _check.get("complexity")
-        _routing_tier = _resolved_routing_tier(_cx)
+        # Critique selection and execute-tier routing share the 1..10
+        # complexity scale.  Keep this structural check strict (including
+        # rejecting bool, which is an int subclass) while permitting the high
+        # tiers that the evaluator and profile tier tables can legitimately
+        # select.
+        if (
+            not isinstance(_cx, int)
+            or isinstance(_cx, bool)
+            or _cx < 1
+            or _cx > 10
+        ):
+            raise CliError(
+                "critique_complexity_invariant",
+                f"Check '{_cid}' has missing or invalid "
+                f"complexity ({_cx!r}); cannot resolve tier "
+                "routing. This is an invariant error in "
+                "the evaluator output.",
+            )
         if _cx not in _complexity_cache:
-            _spec = _tier_spec_for(_routing_tier)
+            _spec = _tier_spec_for(_cx)
             if not _spec:
                 if _pin:
                     _complexity_cache[_cx] = _resolved_pin_agent_mode()
@@ -297,7 +607,6 @@ def _apply_adaptive_critique_routing(
                     raise CliError(
                         "critique_tier_missing",
                         f"No tier spec for complexity {_cx} "
-                        f"(resolved critique tier {_routing_tier}) "
                         f"in tier_models.critique; cannot "
                         f"route check '{_cid}'.",
                     )
@@ -316,10 +625,14 @@ def _apply_adaptive_critique_routing(
                         resolved_model=_t_model,
                     )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
-        _check["_routing_selected_spec"] = _tier_spec_for(_routing_tier) or f"critic_model:{_pin}"
+        _check["_routing_selected_spec"] = _tier_spec_for(_cx) or f"critic_model:{_pin}"
         _check["_routing_evaluator_complexity"] = _cx
-        _check["_routing_tier"] = _routing_tier
+        _check["_routing_tier"] = _cx
         _check["_routing_tier_active"] = True
+        if _routing_floor_domains is not None:
+            _check["_routing_floor_domains"] = _routing_floor_domains
+        if _routing_max_blind_passes is not None:
+            _check["_routing_max_blind_passes"] = _routing_max_blind_passes
 
     return None
 
@@ -470,12 +783,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                         require_scratch_filename_for_phase,
                     )
 
-                    _EVAL_KNOWN_KEYS: frozenset[str] = frozenset({
-                        "selections",
-                        "skipped",
-                        "evaluator_model",
-                        "flag_verifications",
-                    })
+                    _EVAL_KNOWN_KEYS = _critique_evaluator_scratch_known_keys()
                     _scratch_filename = require_scratch_filename_for_phase("critique_evaluator")
                     _seed_path = plan_dir / _scratch_filename
                     _seed_json: str | None = None
@@ -522,10 +830,24 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                             )
                     # ────────────────────────────────────────────────────
                     _vendor = state["config"].get("vendor")
+                    # T10: thread accepted ledger custody into the primary
+                    # runtime decision boundary. Build accepted context
+                    # (manifest hash/revision, briefing hash, profile budget
+                    # caps, input_set_hash, known findings, known domains)
+                    # and fail closed when the verdict references handoff
+                    # data the runtime cannot corroborate. The raw probe
+                    # above retains default context for legacy candidates.
+                    _eval_accepted_ctx = _build_evaluator_accepted_context(
+                        state, plan_dir, iteration,
+                    )
+                    _fail_closed_on_unverifiable_evaluator_handoff(
+                        eval_worker.payload, _eval_accepted_ctx,
+                    )
                     _eval_warnings = validate_evaluator_verdict(
                         eval_worker.payload,
                         evaluator_model=evaluator_model,
                         vendor=_vendor if _vendor in ("claude", "codex") else None,
+                        accepted_context=_eval_accepted_ctx,
                     )
                     if _eval_warnings:
                         _append_to_meta(state, "critique_evaluator_warnings", {
@@ -757,8 +1079,60 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 ]
                 _parts.append("Per-flag resolution claims:\n" + "\n".join(_res_lines))
             _revise_ctx = "\n\n".join(_parts)
+        # Establish the registered scratch boundary before dispatch.  Prompt
+        # rendering writes the same template again, but taking this snapshot
+        # now is what lets promotion distinguish a current-invocation Hermes
+        # write from an untouched seed.  Reading the "seed" after dispatch
+        # would make every completed file look unmodified and, worse, would
+        # leave a pre-existing file outside the current invocation boundary.
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            promote_scratch,
+            require_scratch_filename_for_phase,
+        )
+        from arnold_pipelines.megaplan.prompts.critique import (
+            _write_critique_template,
+        )
+
+        _scratch_filename = require_scratch_filename_for_phase("critique")
+
+        def _seed_registered_critique_scratch() -> str | None:
+            try:
+                return _write_critique_template(
+                    plan_dir,
+                    state,
+                    tuple(active_checks),
+                ).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return None
+
+        _seed_json: str | None = None
         _parallel_critique_reduced = False
         if len(active_checks) > 1:
+            # Parallel critique bypasses _run_worker, so establish the same
+            # phase/invocation custody boundary before any child is scattered.
+            # The reducer and every child dispatch must bind to this fresh
+            # invocation, never to the evaluator or a prior phase.
+            set_active_step(
+                state,
+                step="critique",
+                agent=agent_type,
+                mode=mode,
+                model=_critique_resolved_model,
+                **_active_step_fallback_fields(
+                    "critique",
+                    args,
+                    agent=agent_type,
+                    model=_critique_resolved_model,
+                    effort=_critique_effort,
+                ),
+            )
+            activate_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="critique",
+                agent=agent_type,
+            )
+            save_state_merge_meta(plan_dir, state)
             try:
                 worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks, effort=_critique_effort)
             except Exception as exc:
@@ -768,6 +1142,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
+                _seed_json = _seed_registered_critique_scratch()
                 worker, agent, mode, refreshed = _pkg._run_worker(
                     "critique",
                     state,
@@ -776,11 +1151,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     root=root,
                     resolved=resolved,
                     prompt_kwargs=_seq_prompt_kwargs,
+                    reuse_active_phase=True,
                 )
             else:
                 agent = agent_type
                 _parallel_critique_reduced = True
         else:
+            _seed_json = _seed_registered_critique_scratch()
             worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",
                 state,
@@ -797,29 +1174,16 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         # fail hard on modified invalid scratch when file-fill was
         # instructed (hermes agent).  Canonical promotion to
         # critique_v{iteration}.json is preserved unchanged below.
-        from arnold_pipelines.megaplan.handlers.structured_output import (
-            promote_scratch,
-            require_scratch_filename_for_phase,
-        )
-
-        _scratch_filename = require_scratch_filename_for_phase("critique")
-        _seed_path = plan_dir / _scratch_filename
-        _seed_json: str | None = None
-        if _seed_path.exists():
-            try:
-                _seed_json = _seed_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                _seed_json = None
-
         _file_fill_instructed = agent == "hermes"
 
         if _parallel_critique_reduced:
+            _scratch_status = "not_applicable"
             _promoted = worker.payload
         else:
-            _, _promoted = promote_scratch(
+            _scratch_status, _promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
-                _CRITIQUE_SCRATCH_KNOWN_KEYS,
+                _critique_scratch_known_keys(),
                 worker,
                 seed_json=_seed_json,
                 file_fill_instructed=_file_fill_instructed,
@@ -830,42 +1194,26 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         try:
             audit_step_payload("critique", worker.payload)
         except ModelStructuralAuditError as error:
-            recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
-            if recovered_payload is None:
-                _raise_step_validation_error(
-                    plan_dir=plan_dir,
-                    state=state,
-                    step="critique",
-                    iteration=iteration,
-                    worker=worker,
-                    code="invalid_critique",
-                    message=f"Critique output failed schema audit: {error.details}",
-                )
-            _append_to_meta(
-                state,
-                "critique_validation_warnings",
-                {"iteration": iteration, "schema_audit_warning": error.details},
-            )
-            worker = WorkerResult(
-                payload=recovered_payload,
-                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed schema audit: " + error.details,
-                duration_ms=worker.duration_ms,
-                cost_usd=worker.cost_usd,
-                session_id=worker.session_id,
-                trace_output=worker.trace_output,
-                rendered_prompt=worker.rendered_prompt,
-                model_actual=worker.model_actual,
-                prompt_tokens=worker.prompt_tokens,
-                completion_tokens=worker.completion_tokens,
-                total_tokens=worker.total_tokens,
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code="invalid_critique",
+                message=f"Critique output failed schema audit: {error.details}",
             )
         invalid_checks = _critique_check_validator()(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
-            recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
-            if recovered_payload is None:
-                _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
-            _append_to_meta(state, "critique_validation_warnings", {"iteration": iteration, "invalid_checks": invalid_checks})
-            worker = _rebuild_recovered_critique_worker(worker, recovered_payload, invalid_checks)
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code="invalid_critique",
+                message="Critique output failed check validation: " + ", ".join(invalid_checks),
+            )
         worker.payload = _filter_critique_payload_to_expected_checks(worker.payload, expected_ids=expected_ids)
 
         unverifiable_checks = annotate_unverifiable_checks(
@@ -891,7 +1239,46 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         if v_flags:
             worker.payload.setdefault("flags", []).extend(v_flags)
 
+        try:
+            prepare_critique_payload(worker.payload, expected_check_ids=expected_ids)
+        except CritiqueCustodyError as error:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code=error.code,
+                message=str(error),
+            )
+        atomic_write_text(plan_dir / f"critique_raw_v{iteration}.txt", worker.raw_output or "")
         atomic_write_json(plan_dir / critique_filename, worker.payload)
+        try:
+            custody_receipt = write_critique_production_receipt(
+                plan_dir,
+                state,
+                worker.payload,
+                expected_check_ids=expected_ids,
+                producer_binding=_critique_producer_binding(
+                    state,
+                    worker,
+                    agent=agent,
+                    scratch_filename=_scratch_filename,
+                    scratch_status=_scratch_status,
+                    plan_dir=plan_dir,
+                    parallel_reduced=_parallel_critique_reduced,
+                ),
+            )
+        except CritiqueCustodyError as error:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code=error.code,
+                message=str(error),
+            )
         if is_creative_mode(state):
             fired = [
                 check.get("provocation", {})
@@ -922,8 +1309,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         )
         significant = len([flag for flag in registry["flags"] if flag.get("severity") == "significant" and flag["status"] in FLAG_BLOCKING_STATUSES])
         _append_to_meta(state, "significant_counts", significant)
-        recurring = compute_recurring_critiques(plan_dir, iteration)
-        _append_to_meta(state, "recurring_critiques", recurring)
+        adjacent_text_matches = compute_adjacent_text_matches(plan_dir, iteration)
+        semantic_recurrence = compute_semantic_recurrence(plan_dir, iteration)
+        # CL4 (Plan Step 8) / CL5 (Plan Step 7b): write only the canonical
+        # runtime metadata keys. The deprecated ``recurring_critiques``
+        # transition alias was retired in CL5 Step 7b.
+        _append_to_meta(state, "adjacent_text_matches", adjacent_text_matches)
+        _append_to_meta(state, "semantic_recurrence", semantic_recurrence)
         state["current_state"] = STATE_CRITIQUED
         skip_gate = not workflow_includes_step(robustness, "gate")
         if skip_gate:
@@ -935,11 +1327,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "settled_decisions": [],
                 "passed": False,
                 "flag_resolutions": [],
+                "accepted_tradeoffs": [],
+                "north_star_actions": [],
                 "unresolved_flags": [],
                 "preflight_results": {},
                 "orchestrator_guidance": "Light robustness routes critique to one revision pass.",
             }
-            atomic_write_json(plan_dir / "gate.json", minimal_gate)
+            _write_gate_json(plan_dir, minimal_gate, iteration=iteration)
             _write_gate_carry(plan_dir, minimal_gate, iteration=iteration)
             state["last_gate"] = {"recommendation": "ITERATE"}
         scope_flags_list = scope_creep_flags(registry, statuses=FLAG_BLOCKING_STATUSES)
@@ -968,28 +1362,20 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             step="critique",
             worker=worker, agent=agent, mode=mode, refreshed=refreshed,
             summary=f"Recorded {len(worker.payload.get('flags', []))} critique flags.",
-            artifacts=[critique_filename, "faults.json"],
+            artifacts=[critique_filename, f"critique_custody_v{iteration}.json", "faults.json"],
             output_file=critique_filename,
             artifact_hash=sha256_file(plan_dir / critique_filename),
-            response_fields=response_fields,
+            response_fields={
+                **response_fields,
+                "critique_outcome": CritiqueOutcome.COMPLETED,
+                "critique_custody": {
+                    "receipt": f"critique_custody_v{iteration}.json",
+                    "finding_count": custody_receipt["finding_count"],
+                    "loss_count": 0,
+                },
+            },
             history_fields={"flags_count": len(worker.payload.get("flags", []))},
         )
-
-
-def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -> dict[str, Any] | None:
-    output_path = plan_dir / "critique_output.json"
-    if not output_path.exists():
-        return None
-    payload = read_json(output_path)
-    payload = _normalize_critique_payload_for_recovery(payload)
-    try:
-        audit_step_payload("critique", payload)
-    except ModelStructuralAuditError:
-        return None
-    invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
-    if invalid_checks:
-        return None
-    return _filter_critique_payload_to_expected_checks(payload, expected_ids=expected_ids)
 
 
 def _filter_critique_payload_to_expected_checks(
@@ -1013,96 +1399,340 @@ def _filter_critique_payload_to_expected_checks(
     return filtered_payload
 
 
-def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[str, Any]:
-    changed = False
-    clean_payload = dict(payload)
+# --------------------------------------------------------------------------- #
+# North Star pre-worker revise guard
+# --------------------------------------------------------------------------- #
+#
+# Before the revise worker is invoked, halt through the existing
+# ``CliError``/``record_step_failure`` path when a carried North Star action
+# cannot be mapped to concrete worker work. The guard is fail-closed: it only
+# ever *prevents* a revise run, never enables one. The three halt conditions
+# mirror the revise prompt's per-action instructions and the brief:
+#
+#   * ``add_human_halt`` — the gate explicitly requires a human;
+#   * any other unmappable blocking action — its ``action_type`` is not one of
+#     the concrete mappable types the revise worker can act on
+#     (``change_plan``/``add_gate``/``add_scenario``/``add_checker``/
+#     ``dead_delete``);
+#   * a schema-blocking (dangerous) category action that carries no concrete
+#     mappable target (neither ``plan_refs`` nor ``required_change``), so the
+#     worker has nothing concrete to map it to.
 
-    flags = payload.get("flags")
-    if isinstance(flags, list):
-        clean_flags: list[Any] = []
-        for flag in flags:
-            if not isinstance(flag, dict):
-                clean_flags.append(flag)
-                continue
-            clean_flag = _normalize_critique_recovery_flag(flag)
-            if clean_flag != flag:
-                changed = True
-            clean_flags.append(clean_flag)
-        clean_payload["flags"] = clean_flags
+# The concrete action types the revise worker can map to plan/scenario/checker
+# work. ``add_human_halt`` is intentionally excluded — it is never mappable.
+_REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES: frozenset[str] = frozenset(
+    t for t in NORTH_STAR_ACTION_TYPES if t != "add_human_halt"
+)
 
-    checks = payload.get("checks")
-    if not isinstance(checks, list):
-        return clean_payload if changed else payload
-    clean_checks: list[Any] = []
-    for check in checks:
-        if not isinstance(check, dict):
-            clean_checks.append(check)
+
+def _carried_north_star_actions(plan_dir: Path) -> list[dict[str, Any]]:
+    """Read the normalized North Star actions the revise worker will see.
+
+    Mirrors the revise prompt reader: prefer ``gate_carry.json`` and fall back
+    to ``gate.json`` when the carry file is absent or holds no actions. Both
+    sources carry *normalized* actions (severity already derived with schema
+    authority by the gate artifact builder), so the returned actions can be
+    inspected directly with :func:`is_blocking_action` /
+    :func:`is_blocking_category`. Missing/malformed payloads yield an empty
+    list; the guard is the single fail-closed authority.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import (
+        read_carried_north_star_actions,
+    )
+
+    return read_carried_north_star_actions(plan_dir)
+
+
+def _revise_north_star_halt_actions(
+    actions: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return the blocking North Star actions that force a pre-worker halt.
+
+    See the module-level comment for the three halt conditions. Advisory actions
+    and non-blocking entries are never halt triggers. ``plan_refs`` counts as a
+    concrete target only when it holds at least one non-blank string (mirrors
+    the post-revise concrete-ref rule); ``required_change`` only when it is a
+    non-empty (stripped) string.
+    """
+    halt: list[dict[str, Any]] = []
+    for action in actions:
+        if not isinstance(action, Mapping) or not is_blocking_action(action):
             continue
-        # Strip unknown check-level keys as a defense against template/schema drift.
-        allowed_check_keys = {
-            "id",
-            "question",
-            "guidance",
-            "prior_findings",
-            "findings",
-            "status",
-            "unverifiable_reason",
-            "unverifiable_cause",
-            "unverifiable_retryable",
-            "unverifiable_error_kind",
+        action_type = action.get("action_type")
+        category = action.get("category")
+        if action_type == "add_human_halt":
+            halt.append(dict(action))
+            continue
+        if action_type not in _REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES:
+            halt.append(dict(action))
+            continue
+        if is_blocking_category(category):
+            plan_refs = action.get("plan_refs")
+            required_change = action.get("required_change")
+            has_target = (
+                isinstance(plan_refs, list)
+                and any(isinstance(ref, str) and ref.strip() for ref in plan_refs)
+            ) or (
+                isinstance(required_change, str) and bool(required_change.strip())
+            )
+            if not has_target:
+                halt.append(dict(action))
+    return halt
+
+
+def _raise_north_star_revise_halt(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    iteration: int,
+    halt_actions: list[dict[str, Any]],
+) -> None:
+    """Record a revise step failure and raise for an unmappable North Star halt.
+
+    Uses the existing ``CliError``/``record_step_failure`` path (mirroring the
+    revise cost-sanity guard), so the halt shows up in history as a normal
+    step failure without inventing a new runner state.
+    """
+    # This guard runs before the ordinary worker seam establishes a revise
+    # invocation. Mint and persist a fresh deterministic-boundary identity so
+    # the typed revise PhaseResult cannot inherit the prior gate invocation.
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        generate_invocation_id,
+    )
+
+    state.setdefault("meta", {})["current_invocation_id"] = generate_invocation_id()
+    summaries = [
+        {
+            "id": a.get("id"),
+            "category": a.get("category"),
+            "action_type": a.get("action_type"),
+            "concern": a.get("concern"),
         }
-        check_extra_keys = set(check) - allowed_check_keys
-        if check_extra_keys:
-            check = {k: v for k, v in check.items() if k in allowed_check_keys}
-            changed = True
-        findings = check.get("findings")
-        if not isinstance(findings, list):
-            clean_checks.append(check)
+        for a in halt_actions
+    ]
+    bullet_ids = ", ".join(str(a.get("id")) for a in halt_actions)
+    message = (
+        "Revise halted before worker invocation: one or more carried North Star "
+        f"actions require a human and cannot be mapped to revise work ({bullet_ids}). "
+        "Address the halt actions (change the plan/scenario/checker target, or "
+        "resolve the human-halt) and re-run gate/revise."
+    )
+    error = CliError(
+        "north_star_revise_human_halt",
+        message,
+        valid_next=infer_next_steps(state),
+        extra={
+            "step": "revise",
+            "halt_actions": summaries,
+            "count": len(halt_actions),
+        },
+    )
+    record_step_failure(
+        plan_dir,
+        state,
+        step="revise",
+        iteration=iteration,
+        error=error,
+        duration_ms=0,
+    )
+    # ``record_step_failure`` clears the active step before the outer phase
+    # guard can classify the exception. Emit the typed phase boundary here so
+    # callers never mistake an intentional product/human halt for an
+    # infrastructure failure or a stale prior-phase result.
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        BlockedTask,
+        ExitKind,
+        _emit_phase_result,
+    )
+
+    _emit_phase_result(
+        "revise",
+        state,
+        plan_dir,
+        exit_kind=ExitKind.blocked_by_prereq.value,
+        blocked_tasks=tuple(
+            BlockedTask(
+                task_id=str(action.get("id")),
+                reason=str(action.get("concern") or message),
+                blocking_action_ids=(str(action.get("id")),),
+                blocker_kind="north_star_revise_human_halt",
+            )
+            for action in halt_actions
+        ),
+    )
+    raise error
+
+
+def _revise_north_star_unresolved_actions(
+    *,
+    carried_blocking: Sequence[Mapping[str, Any]],
+    addressed: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return the carried blocking actions that are NOT concretely resolved.
+
+    This is the fail-closed authority for revise closeout (Step 6). A carried
+    blocking action is considered resolved only when the worker's
+    ``north_star_actions_addressed[]`` contains a record that:
+
+    * links to the carried action by ``action_id`` (not omitted);
+    * cites *concrete* plan refs — a non-empty ``plan_refs`` list with at least
+      one non-blank string (not prose-only);
+    * echoes the carried action's ``action_type`` marker exactly
+      (satisfies the required action-type structural marker).
+
+    When *addressed* is ``None`` (the worker payload was malformed) every
+    carried blocker is reported as unresolved, mirroring the
+    ``_post_revise_gate_allowed`` / ``flags_addressed`` convention that absent
+    or incomplete metadata can never stand in for evidence of resolution.
+    Advisory actions are never in scope — only carried blocking actions need
+    concrete addressing before revise can close.
+    """
+    # Absent/malformed addressed metadata => all carried blockers unresolved.
+    if addressed is None:
+        return [
+            {
+                "id": action.get("id"),
+                "action_type": action.get("action_type"),
+                "reason": "addressed_metadata_malformed",
+            }
+            for action in carried_blocking
+            if isinstance(action, Mapping)
+        ]
+
+    # Index addressed records by normalized action_id (first occurrence wins;
+    # a duplicate never strengthens resolution).
+    addressed_by_id: dict[str, dict[str, Any]] = {}
+    for rec in addressed:
+        if not isinstance(rec, Mapping):
             continue
-        clean_findings: list[Any] = []
-        check_changed = False
-        for finding in findings:
-            if not isinstance(finding, dict):
-                clean_findings.append(finding)
-                continue
-            extra_keys = set(finding) - {"detail", "flagged"}
-            if extra_keys:
-                finding = {k: v for k, v in finding.items() if k in {"detail", "flagged"}}
-                check_changed = True
-            clean_findings.append(finding)
-        if check_changed:
-            check = dict(check)
-            check["findings"] = clean_findings
-            changed = True
-        clean_checks.append(check)
-    if not changed:
-        return payload
-    clean_payload["checks"] = clean_checks
-    return clean_payload
+        aid = rec.get("action_id")
+        if isinstance(aid, str) and aid.strip():
+            addressed_by_id.setdefault(aid.strip(), dict(rec))
+
+    unresolved: list[dict[str, Any]] = []
+    for action in carried_blocking:
+        if not isinstance(action, Mapping):
+            continue
+        aid = action.get("id")
+        aid_key = aid.strip() if isinstance(aid, str) else None
+        record = addressed_by_id.get(aid_key) if aid_key else None
+
+        if record is None:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": action.get("action_type"),
+                    "reason": "omitted",
+                }
+            )
+            continue
+
+        plan_refs = record.get("plan_refs")
+        has_concrete_refs = isinstance(plan_refs, list) and any(
+            isinstance(ref, str) and ref.strip() for ref in plan_refs
+        )
+        if not has_concrete_refs:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": action.get("action_type"),
+                    "reason": "prose_only",
+                }
+            )
+            continue
+
+        carried_type = action.get("action_type")
+        addressed_type = record.get("action_type")
+        if addressed_type != carried_type:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": carried_type,
+                    "addressed_action_type": addressed_type,
+                    "reason": "action_type_mismatch",
+                }
+            )
+            continue
+    return unresolved
 
 
-def _normalize_critique_recovery_flag(flag: dict[str, Any]) -> dict[str, Any]:
-    severity_hint = flag.get("severity_hint")
-    if not isinstance(severity_hint, str):
-        if severity_hint is None:
-            canonical = "uncertain"
-        else:
-            return flag
-    else:
-        normalized = severity_hint.strip().lower()
-        if normalized in {"likely-significant", "high", "significant", "major", "critical"}:
-            canonical = "likely-significant"
-        elif normalized in {"likely-minor", "low", "minor", "trivial", "cosmetic"}:
-            canonical = "likely-minor"
-        elif normalized in {"uncertain", "medium", "moderate", "unknown", ""}:
-            canonical = "uncertain"
-        else:
-            return flag
-    if canonical == severity_hint:
-        return flag
-    clean_flag = dict(flag)
-    clean_flag["severity_hint"] = canonical
-    return clean_flag
+def _raise_north_star_revise_unresolved(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    iteration: int,
+    unresolved: list[dict[str, Any]],
+    malformed_reason: str | None = None,
+    duration_ms: int = 0,
+) -> None:
+    """Record a revise step failure and raise when carried blocking actions are
+    not concretely resolved in the worker output.
+
+    Mirrors ``_raise_north_star_revise_halt``: routes through the existing
+    ``CliError`` / ``record_step_failure`` path so the failure surfaces in
+    history as a normal step failure without inventing a new runner state.
+    """
+    summaries = [
+        {
+            "id": u.get("id"),
+            "action_type": u.get("action_type"),
+            "reason": u.get("reason"),
+        }
+        for u in unresolved
+    ]
+    bullet_ids = ", ".join(str(u.get("id")) for u in unresolved)
+    reason_counts: dict[str, int] = {}
+    for u in unresolved:
+        key = str(u.get("reason"))
+        reason_counts[key] = reason_counts.get(key, 0) + 1
+    reasons = ", ".join(f"{reason}={count}" for reason, count in reason_counts.items())
+    prefix = f"{malformed_reason} " if malformed_reason else ""
+    message = (
+        f"{prefix}Revise cannot close: {len(unresolved)} carried blocking "
+        f"North Star action(s) unresolved ({bullet_ids}) [{reasons}]. Each "
+        "blocking action needs a north_star_actions_addressed record with "
+        "concrete plan_refs and the matching action_type marker."
+    )
+    error = CliError(
+        "north_star_revise_unresolved_blocking",
+        message,
+        valid_next=infer_next_steps(state),
+        extra={
+            "step": "revise",
+            "unresolved_actions": summaries,
+            "count": len(unresolved),
+        },
+    )
+    record_step_failure(
+        plan_dir,
+        state,
+        step="revise",
+        iteration=iteration,
+        error=error,
+        duration_ms=duration_ms,
+    )
+    from arnold_pipelines.megaplan.orchestration.phase_result import (
+        BlockedTask,
+        ExitKind,
+        _emit_phase_result,
+    )
+
+    _emit_phase_result(
+        "revise",
+        state,
+        plan_dir,
+        exit_kind=ExitKind.blocked_by_prereq.value,
+        blocked_tasks=tuple(
+            BlockedTask(
+                task_id=str(action.get("id")),
+                reason=str(action.get("reason") or message),
+                blocking_action_ids=(str(action.get("id")),),
+                blocker_kind="north_star_revise_unresolved_blocking",
+            )
+            for action in unresolved
+        ),
+    )
+    raise error
 
 
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -1116,6 +1746,19 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         require_state(state, "revise", {STATE_CRITIQUED})
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         _has_gate, revise_transition = _resolve_revise_transition(state, plan_dir)
+        # Pre-worker North Star guard: halt through the existing CliError /
+        # record_step_failure path before spending a worker run when a carried
+        # action requires a human, is unmappable, or is a dangerous-category
+        # blocker with no concrete target.
+        carried_ns_actions = _carried_north_star_actions(plan_dir)
+        ns_halt_actions = _revise_north_star_halt_actions(carried_ns_actions)
+        if ns_halt_actions:
+            _raise_north_star_revise_halt(
+                plan_dir,
+                state,
+                iteration=state["iteration"] + 1,
+                halt_actions=ns_halt_actions,
+            )
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
         revise_start_iso = now_utc()
         notes_consumed = [
@@ -1163,6 +1806,24 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             raise error
         payload = worker.payload
         audit_step_payload("revise", payload)
+        imported_decision_issues = _load_bearing_decision_criteria_issues(
+            state,
+            payload.get("success_criteria", []),
+        )
+        if imported_decision_issues:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="revise",
+                iteration=state["iteration"] + 1,
+                worker=worker,
+                code="invalid_imported_decision_criteria",
+                message=(
+                    "Revise output did not mechanically bind every load-bearing "
+                    "imported decision: "
+                    + "; ".join(imported_decision_issues)
+                ),
+            )
         payload["success_criteria"] = _merge_imported_decision_criteria(
             state,
             payload.get("success_criteria", []),
@@ -1180,6 +1841,11 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             prior_blast_radius = carried if isinstance(carried, dict) else None
         except Exception:
             prior_blast_radius = None
+        # Carrying canonical consumer data is safe only when the revision is
+        # deterministically identical to the prior plan.  The percentage
+        # delta is intentionally not used here: it is rounded and can report
+        # zero for a materially changed plan.
+        unchanged_plan = plan_text == previous_plan
         if revise_blast_radius is not None:
             try:
                 revise_blast_radius = _derive_plan_test_blast_radius(
@@ -1188,10 +1854,46 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
                     payload=payload,
                 )
             except Exception:
-                if prior_blast_radius is not None:
+                if unchanged_plan and prior_blast_radius is not None:
                     revise_blast_radius = prior_blast_radius
+                else:
+                    revise_blast_radius = None
         elif revise_blast_radius is None:
-            revise_blast_radius = prior_blast_radius
+            revise_blast_radius = prior_blast_radius if unchanged_plan else None
+        # Step 6: validate carried blocking North Star actions are concretely
+        # resolved in the worker output, then persist the normalized
+        # north_star_actions_addressed[] beside the revise metadata. Fail
+        # closed (record_step_failure -> CliError, no new runner state) when a
+        # carried blocking action is omitted, prose-only (no concrete
+        # plan_refs), structurally malformed, or mismatches the required
+        # action_type marker. Absent/malformed addressed metadata is treated as
+        # all-carried-blocking-unresolved, mirroring the flags_addressed /
+        # _post_revise_gate_allowed convention (SD1).
+        carried_blocking = blocking_north_star_actions(carried_ns_actions)
+        raw_addressed = payload.get("north_star_actions_addressed")
+        addressed_malformed_reason: str | None = None
+        try:
+            normalized_addressed = normalize_north_star_actions_addressed(
+                raw_addressed
+            )
+        except NorthStarActionValidationError as exc:
+            normalized_addressed = None
+            addressed_malformed_reason = (
+                f"north_star_actions_addressed[] malformed: {exc};"
+            )
+        if carried_blocking:
+            unresolved_actions = _revise_north_star_unresolved_actions(
+                carried_blocking=carried_blocking,
+                addressed=normalized_addressed,
+            )
+            if unresolved_actions:
+                _raise_north_star_revise_unresolved(
+                    plan_dir,
+                    state,
+                    iteration=version,
+                    unresolved=unresolved_actions,
+                    malformed_reason=addressed_malformed_reason,
+                )
         revise_meta_fields = {
             "changes_summary": payload["changes_summary"],
             "flags_addressed": payload["flags_addressed"],
@@ -1199,6 +1901,9 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             "success_criteria": payload.get("success_criteria", []),
             "assumptions": payload.get("assumptions", []),
             "delta_from_previous_percent": delta,
+            # Persist the (normalized) addressed-action metadata beside revise
+            # output so finalize/review can trust it as the closeout contract.
+            "north_star_actions_addressed": normalized_addressed or [],
         }
         if revise_blast_radius is not None:
             revise_meta_fields["test_blast_radius"] = revise_blast_radius
@@ -1246,6 +1951,7 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
                 "flags_addressed": payload["flags_addressed"],
                 "flags_remaining": remaining,
                 "plan_delta_percent": delta,
+                "revise_outcome": ReviseOutcome.COMPLETED,
             },
             history_fields={"flags_addressed": payload["flags_addressed"]},
         )

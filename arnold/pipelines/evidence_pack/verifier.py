@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from arnold.pipeline.contract_validation import validate_payload_against_schema
 from arnold.runtime.state_persistence import atomic_write_json
-
 
 VERIFIER_ARTIFACT_EVIDENCE_PACK = "verifier.evidence_pack"
 VERIFIER_ARTIFACT_ATTESTATION = "verifier.attestation"
@@ -199,14 +199,18 @@ def make_evidence_pack_payload(
     source_ticket: str,
     checkpoints: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    normalized_checkpoints = [
-        {
-            "checkpoint_id": checkpoint["checkpoint_id"],
-            "status": checkpoint["status"],
-            "artifact_refs": list(checkpoint.get("artifact_refs") or []),
-        }
-        for checkpoint in checkpoints
-    ]
+    normalized_checkpoints: list[Any] = []
+    for checkpoint in checkpoints:
+        if not isinstance(checkpoint, Mapping):
+            normalized_checkpoints.append(checkpoint)
+            continue
+        normalized_checkpoints.append(
+            {
+                "checkpoint_id": checkpoint.get("checkpoint_id"),
+                "status": checkpoint.get("status"),
+                "artifact_refs": list(checkpoint.get("artifact_refs") or []),
+            }
+        )
     return _validate_payload(
         {
             "evidence_pack_id": evidence_pack_id,
@@ -317,22 +321,22 @@ __all__ = [
     "CHECKPOINT_STATUS_PASSED",
     "CHECKPOINT_STATUS_SUSPENDED",
     "EVIDENCE_PACK_SCHEMA",
+    "VALIDATOR_KINDS",
     "VALIDATOR_KIND_BUDGET_ENFORCEMENT",
     "VALIDATOR_KIND_BY_REF_VALIDATION",
     "VALIDATOR_KIND_HUMAN_REVIEW_GATE",
     "VALIDATOR_KIND_STRUCTURAL_AUDIT",
     "VALIDATOR_KIND_SUSPENSION_PROPAGATION",
-    "VALIDATOR_KINDS",
+    "VERDICTS",
     "VERDICT_FAIL",
     "VERDICT_PASS",
     "VERDICT_SCHEMA",
-    "VERDICTS",
     "VERIFIER_ARTIFACT_ATTESTATION",
     "VERIFIER_ARTIFACT_CHECKPOINT",
     "VERIFIER_ARTIFACT_EVIDENCE_PACK",
     "VERIFIER_ARTIFACT_VERDICT",
-    "Verdict",
     "_VALIDATOR_KINDS",
+    "Verdict",
     "make_attestation_payload",
     "make_checkpoint_payload",
     "make_evidence_pack_payload",

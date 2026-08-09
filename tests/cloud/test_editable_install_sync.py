@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,7 +10,15 @@ from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.cloud.cli import (
     _megaplan_refresh_command,
     _refresh_then_chain_start_command,
+    _cloud_source_sync_branch,
     _sync_launch_head_to_editable_install_branch,
+)
+from arnold_pipelines.megaplan.cloud.spec import (
+    CloudSpec,
+    CodexSpec,
+    MegaplanSpec,
+    RepoSpec,
+    ResourcesSpec,
 )
 
 
@@ -50,6 +59,64 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
 
 
+def test_cloud_refresh_honors_explicit_megaplan_ref() -> None:
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(
+            ref="main",
+            repo="https://github.com/example/Arnold.git",
+        ),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+
+    command = _megaplan_refresh_command(spec)
+
+    assert "REF=main" in command
+    assert "REF=editible-install" not in command
+
+
+def test_isolated_runtime_syncs_its_own_branch_not_shared_resident() -> None:
+    shared = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="fix/r7", src_path="/workspace/runtime/r7"),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    immutable = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="a" * 40, src_path="/workspace/runtime/r7"),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    default = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="fix/r7"),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+
+    assert _cloud_source_sync_branch(shared) == "fix/r7"
+    assert _cloud_source_sync_branch(immutable) is None
+    assert _cloud_source_sync_branch(default) == "editible-install"
+
+
 def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
     command = _megaplan_refresh_command(
         runtime_src_path="/workspace/project/.megaplan/runtime/editable-engine"
@@ -58,9 +125,78 @@ def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
     assert "RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine" in command
     assert 'source checkout dirty; using clean runtime mirror at $RUNTIME_SRC' in command
     assert 'git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"' in command
-    assert 'git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"' in command
+    assert 'git -C "$RUNTIME_SRC" remote set-url origin "$MIRROR_REMOTE"' in command
+    assert 'git -C "$RUNTIME_SRC" fetch origin "+refs/heads/$REF:refs/remotes/origin/$REF"' in command
+    assert 'git -C "$RUNTIME_SRC" checkout --detach "refs/remotes/origin/$REF"' in command
     assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
     assert 'pip install -e "$MEGAPLAN_RUNTIME_SRC"' in command
+    assert "arnold_pipelines.megaplan.cloud.runtime_provenance" in command
+    assert '--expected-root "$MEGAPLAN_RUNTIME_SRC"' in command
+    assert '--expected-revision "$RUNTIME_REVISION"' in command
+    assert (
+        'env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC"'
+        in command
+    )
+    assert 'PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}"' not in command
+
+
+def test_dirty_source_runtime_mirror_executes_configured_upstream_ref(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    publisher = tmp_path / "publisher"
+    source = tmp_path / "source"
+    runtime = tmp_path / "runtime"
+    fake_bin = tmp_path / "bin"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(publisher))
+    _git(publisher, "config", "user.email", "test@example.com")
+    _git(publisher, "config", "user.name", "Test User")
+    old_head = _commit(publisher, "engine.txt", "old\n", "old engine")
+    _git(publisher, "branch", "-M", "main")
+    _git(publisher, "push", "-u", "origin", "main")
+    _git(tmp_path, "clone", "--branch", "main", str(origin), str(source))
+
+    new_head = _commit(publisher, "engine.txt", "new\n", "new engine")
+    _git(publisher, "push", "origin", "main")
+    (source / "engine.txt").write_text("cloud work in progress\n", encoding="utf-8")
+
+    fake_bin.mkdir()
+    for executable in ("pip", "python"):
+        shim = fake_bin / executable
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(
+            ref="main",
+            repo=str(origin),
+            src_path=str(source),
+        ),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    command = _megaplan_refresh_command(spec, runtime_src_path=str(runtime))
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert _git(source, "rev-parse", "HEAD").stdout.strip() == old_head
+    assert (source / "engine.txt").read_text(encoding="utf-8") == "cloud work in progress\n"
+    assert _git(runtime, "rev-parse", "HEAD").stdout.strip() == new_head
+    assert (runtime / "engine.txt").read_text(encoding="utf-8") == "new\n"
 
 
 def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
@@ -70,6 +206,45 @@ def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
     assert 'force-clean enabled: resetting and cleaning $SRC' in command
     assert 'git -C "$SRC" reset --hard "origin/$REF"' in command
     assert 'git -C "$SRC" clean -fd' in command
+
+
+def test_cloud_refresh_missing_source_cannot_reuse_inherited_runtime_pin(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-runtime"
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(ref="main", repo="", src_path=str(missing)),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    command = _megaplan_refresh_command(spec)
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "MEGAPLAN_RUNTIME_SRC": "/stale/runtime",
+            "MEGAPLAN_LAUNCH_RUNTIME_SRC": "/stale/runtime",
+            "MEGAPLAN_LAUNCH_RUNTIME_REVISION": "a" * 40,
+            "RUNTIME_REVISION": "a" * 40,
+        },
+    )
+
+    assert result.returncode == 21
+    assert f"source clone missing at {missing}" in result.stdout
+    assert "[megaplan-refresh] done" not in result.stdout
+    assert (
+        "unset MEGAPLAN_RUNTIME_SRC MEGAPLAN_LAUNCH_RUNTIME_SRC "
+        "MEGAPLAN_LAUNCH_RUNTIME_REVISION RUNTIME_REVISION" in command
+    )
 
 
 def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
@@ -82,8 +257,11 @@ def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
     assert "} >> .megaplan/cloud-chain.log 2>&1 && " in command
     assert "} >> .megaplan/cloud-chain.log 2>&1 || true" not in command
     assert 'RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine' in command
-    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
-    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
+    assert 'PINNED_LAUNCH_RUNTIME_SRC="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-}"' in command
+    assert 'ENGINE_DIR="${PINNED_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
+    assert 'PYTHONPATH="$ENGINE_DIR"' in command
+    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' not in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_REVISION="${RUNTIME_REVISION:-}"' in command
 
 
 def test_cloud_chain_start_can_force_clean_editable_refresh() -> None:

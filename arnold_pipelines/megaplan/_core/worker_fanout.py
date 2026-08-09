@@ -32,11 +32,13 @@ from arnold_pipelines.megaplan.fallback_chains import (
     ExecuteFallbackUnsafe,
     classify_retryability,
     is_retryable_classification,
+    is_same_family_operational_classification,
     normalize_fallback_spec_list,
     provider_family,
 )
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
 from arnold_pipelines.megaplan.types import (
     AgentMode,
     PlanState,
@@ -193,6 +195,7 @@ class WorkerUnitResult:
     attempted_specs: tuple[str, ...] = ()
     failed_attempt_reasons: tuple[str, ...] = ()
     fallback_trigger: str | None = None
+    auth_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         selected_spec = AgentSpec(
@@ -255,6 +258,11 @@ class WorkerUnitResult:
             attempted_specs=unit.attempted_specs,
             failed_attempt_reasons=unit.failed_attempt_reasons,
             fallback_trigger=unit.fallback_trigger,
+            auth_metadata=(
+                dict(worker.auth_metadata)
+                if isinstance(getattr(worker, "auth_metadata", None), dict)
+                else {}
+            ),
         )
 
 
@@ -460,16 +468,25 @@ def _next_fallback_index(
     failed_index: int,
     classification: str,
 ) -> int | None:
-    if not is_retryable_classification(classification):  # type: ignore[arg-type]
-        return None
     candidate_index = failed_index + 1
     if candidate_index >= len(unit.configured_specs):
         return None
-    if provider_family(unit.configured_specs[candidate_index]) == provider_family(
+    same_family = provider_family(unit.configured_specs[candidate_index]) == provider_family(
         unit.configured_specs[failed_index]
-    ):
-        return None
-    return candidate_index
+    )
+    if same_family:
+        if not unit.read_only:
+            return None
+        return (
+            candidate_index
+            if is_same_family_operational_classification(classification)  # type: ignore[arg-type]
+            else None
+        )
+    return (
+        candidate_index
+        if is_retryable_classification(classification)  # type: ignore[arg-type]
+        else None
+    )
 
 
 def _run_worker_unit_with_ordered_fallback(
@@ -591,6 +608,30 @@ def _dispatch_worker_unit_attempt(
     options = dict(worker_options or {})
     if len(unit.configured_specs) > 1:
         options["_suppress_ambient_agent_fallback"] = True
+    dispatch_key = str(
+        unit.extra.get("wbc_dispatch_key")
+        or unit.extra.get("ledger_step_label")
+        or unit.extra.get("check_id")
+        or unit.extra.get("area_id")
+        or unit.output_path.name
+    )
+    wbc_dispatch = build_worker_dispatch_spec(
+        plan_dir=plan_dir,
+        state=state,
+        step=unit.step,
+        phase_step=state.get("active_step", {}).get("_phase_wbc", {}).get("step")
+        if isinstance(state.get("active_step"), dict)
+        else None,
+        agent=unit.resolved.agent,
+        selected_spec=unit.configured_specs[unit.attempt_index],
+        route_kind="subprocess",
+        attempt_index=unit.attempt_index,
+        configured_specs=unit.configured_specs,
+        attempted_specs=unit.attempted_specs,
+        failed_attempt_reasons=unit.failed_attempt_reasons,
+        fallback_trigger=unit.fallback_trigger,
+        dispatch_key=dispatch_key,
+    )
     worker, _agent, _mode, _refreshed = run_step_with_worker(
         unit.step,
         state,
@@ -618,6 +659,7 @@ def _dispatch_worker_unit_attempt(
         ledger_attempted_specs=unit.attempted_specs,
         ledger_failed_attempt_reasons=unit.failed_attempt_reasons,
         ledger_fallback_trigger=unit.fallback_trigger,
+        wbc_dispatch=wbc_dispatch,
     )
     return worker
 

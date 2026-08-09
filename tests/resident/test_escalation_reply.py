@@ -22,6 +22,33 @@ class AuditSink:
         self.events.append(kwargs)
 
 
+def test_sidecar_delivered_state_is_insufficient_without_canonical_receipt(tmp_path: Path) -> None:
+    _write_escalation(
+        tmp_path,
+        {"session": "demo", "event": "opened", "escalation_id": "esc-1", "target_id": "target-1"},
+        {
+            "session": "demo",
+            "event": "delivered",
+            "escalation_id": "esc-1",
+            "channel_id": "channel-1",
+            "message_ids": ["forged-sidecar-message"],
+        },
+    )
+    (tmp_path / "canonical-delivery" / "esc-1.json").unlink()
+    _write_marker(tmp_path, "demo", "target-1")
+
+    decision = authorize_escalation_answer(
+        authorizer=ResidentAuthorizer(ResidentConfig(allowed_user_ids=("user-1",))),
+        subject=AuthorizationSubject(user_id="user-1", channel_id="channel-1"),
+        action="escalation_reply",
+        escalation_id="esc-1",
+        repair_data_dir=tmp_path,
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "escalation_not_delivered"
+
+
 def test_escalation_reply_allows_delivered_responder_on_current_target(tmp_path: Path) -> None:
     _write_escalation(
         tmp_path,
@@ -299,6 +326,35 @@ def _write_escalation(tmp_path: Path, *records: dict[str, Any]) -> None:
         "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
         encoding="utf-8",
     )
+    delivered = next(
+        (record for record in records if record.get("event") == "delivered"),
+        None,
+    )
+    if delivered is not None:
+        canonical_dir = tmp_path / "canonical-delivery"
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+        escalation_id = str(delivered["escalation_id"])
+        (canonical_dir / f"{escalation_id}.json").write_text(
+            json.dumps(
+                {
+                    "schema": "arnold.resident.delivery-receipt.v1",
+                    "escalation_id": escalation_id,
+                    "status": "delivered",
+                    "effect_identity": "resident-subagent-completion:fixture",
+                    "reservation": {
+                        "attempt_id": "fixture:1",
+                        "glek": "glek:fixture",
+                        "outbox_id": "outbox:fixture",
+                    },
+                    "provider": {"outcome": "COMPLETED"},
+                    "channel_id": delivered.get("channel_id", ""),
+                    "dm_user_id": delivered.get("dm_user_id", ""),
+                    "message_ids": delivered.get("message_ids", []),
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
 
 
 def _write_marker(tmp_path: Path, session: str, target_id: str) -> None:

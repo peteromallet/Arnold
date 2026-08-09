@@ -183,3 +183,225 @@ def test_marker_only_session_shows_all_evidence_fields() -> None:
     assert "status" in payload["marker_evidence"]
     # active_step may be absent
     assert "status" in payload["active_step_evidence"]
+
+
+# ── S4: semantic health and custody rendered separately ────────────────────
+
+
+def test_detailed_format_renders_lifecycle_separate_from_semantic_health() -> None:
+    """Detailed format renders lifecycle/activity and semantic_health as distinct lines."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_detailed,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "demo",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 1,
+                "milestone_count": 3,
+                "lifecycle_state": "finalized",
+                "activity_phase": "execute",
+                "semantic_health": {
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "demo",
+                    "fingerprint": "abc123def456",
+                    "total_count": 3,
+                    "counts_by_boundary": {},
+                    "counts_by_phase": {},
+                    "counts_by_kind": {"ERROR": 2, "WARNING": 1},
+                    "counts_by_repair_domain": {},
+                },
+                "custody_state": "repairing",
+                "repair_state": "active",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": True,
+                "process": True,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    detailed = format_cloud_status_detailed(snap)
+
+    # Lifecycle and activity appear as a distinct line, separate from semantic_health.
+    assert "lifecycle: finalized" in detailed
+    assert "activity: execute" in detailed
+    # Semantic health appears as its own line with findings count and fingerprint.
+    assert "semantic_health:" in detailed
+    assert "findings=3" in detailed
+    assert "fp=abc123def456" in detailed
+    # Custody/repair rendered separately from process liveness.
+    assert "custody=repairing" in detailed
+
+
+def test_detailed_format_warns_unmanaged_process() -> None:
+    """Detailed format emits unmanaged-process warning when process alive but no tmux."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_detailed,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "stray",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 0,
+                "milestone_count": 1,
+                "lifecycle_state": "planned",
+                "activity_phase": "execute",
+                "custody_state": "",
+                "repair_state": "none",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": False,
+                "process": True,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    detailed = format_cloud_status_detailed(snap)
+
+    assert "warnings:" in detailed
+    assert "unmanaged-process" in detailed
+
+
+def test_detailed_format_warns_stale_active_step() -> None:
+    """Detailed format emits stale active-step warning when activity is old."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_detailed,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "stale-session",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 0,
+                "milestone_count": 1,
+                "lifecycle_state": "executed",
+                "activity_phase": "execute",
+                "custody_state": "",
+                "repair_state": "none",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": True,
+                "process": True,
+                "latest_activity": "2026-07-14T00:00:00Z",  # 1h ago → stale
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    detailed = format_cloud_status_detailed(snap)
+
+    assert "warnings:" in detailed
+    assert "stale active-step" in detailed
+
+
+def test_short_format_includes_compact_s4_tags() -> None:
+    """Short/Discord format includes compact S4 tags for findings and custody."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_short,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "demo",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 1,
+                "milestone_count": 3,
+                "lifecycle_state": "finalized",
+                "activity_phase": "execute",
+                "semantic_health": {
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "demo",
+                    "fingerprint": "abc123def456",
+                    "total_count": 3,
+                    "counts_by_boundary": {},
+                    "counts_by_phase": {},
+                    "counts_by_kind": {},
+                    "counts_by_repair_domain": {},
+                },
+                "custody_state": "repairing",
+                "repair_state": "active",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": True,
+                "process": True,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    chunks = format_cloud_status_short(snap)
+    combined = " ".join(chunks)
+
+    assert "[SH:3]" in combined
+    assert "[custody:repairing]" in combined
+    assert "[repair:active]" in combined
+
+
+def test_short_format_warns_unmanaged_process_compact() -> None:
+    """Short format includes unmanaged-process warning as compact tag."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_short,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "stray",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 0,
+                "milestone_count": 1,
+                "lifecycle_state": "planned",
+                "activity_phase": "execute",
+                "custody_state": "",
+                "repair_state": "none",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": False,
+                "process": True,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    chunks = format_cloud_status_short(snap)
+    combined = " ".join(chunks)
+
+    assert "[⚠unmanaged]" in combined

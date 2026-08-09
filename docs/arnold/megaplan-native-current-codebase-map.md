@@ -20,6 +20,11 @@ Together, those three documents should answer:
 The current codebase has real native-workflow machinery, but canonical Megaplan
 is still not source-authoritative in the way the end-state report requires.
 
+This map intentionally retains `.pypeline` when describing the pre-cutover
+codebase. The corrective epic supersedes it with `.pype` as the sole final
+authoring/admission suffix; these current-path observations are migration
+inputs, not a compatibility promise.
+
 The important split is:
 
 - Arnold has native ingredients: `.pypeline` parsing, source spans, static

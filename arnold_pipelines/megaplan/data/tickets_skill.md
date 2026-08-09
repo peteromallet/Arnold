@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: megaplan-tickets
 description: File and manage megaplan tickets — short, repo-scoped notes on problems or observations that get folded into epics and auto-addressed when the resolving epic completes.
@@ -22,7 +24,7 @@ Do **not** use tickets for:
 ## Filing
 
 ```bash
-megaplan ticket new "<title>" -b "<body>" [--tags tag1,tag2]
+megaplan ticket new "<title>" -b "<body>" [--tags tag1,tag2] [--roadmap-horizon Now|Next|Later] [--roadmap-title "..."]
 ```
 
 Conventions:
@@ -31,6 +33,8 @@ Conventions:
 - `--tags` is comma-separated. Tags are freeform; common ones: `bug`, `refactor`, `tech-debt`, `observability`, `docs`, `cross-repo`.
 - `source` is auto-derived: if `MEGAPLAN_TURN_ID` is set (the agent is running under a megaplan-launched worker), `source=agent` and the turn id is recorded; otherwise `source=human`.
 - The repo is resolved from cwd via its root commit SHA (`git rev-list --max-parents=0 HEAD`). Identity survives rename / transfer / remote change.
+- **`--roadmap-horizon` is opt-in.** Without it, the ticket is a normal backlog artifact — it does NOT appear in the strategy roadmap (`.megaplan/STRATEGY.md`). Pass `--roadmap-horizon Now|Next|Later` to also add the ticket to that horizon. Use `--roadmap-title` to set a different display title in the roadmap (defaults to the ticket title).
+- Strategy entries are pointers, never containers — the roadmap bullet references the ticket ULID and never copies the ticket body, lifecycle status, or completion evidence. The JSON projection at `.megaplan/strategy.projection.json` is disposable; delete it and rebuild with `megaplan strategy project --write`.
 
 Multi-line body via stdin:
 ```bash

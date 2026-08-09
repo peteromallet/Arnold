@@ -20,7 +20,7 @@ runtime (`arnold.execution`).  Classifications:
 | `arnold/runtime/CONTRACT.md` | Quarry-only | Historical contract document. |
 | `arnold.runtime.batch*` | M6 deletion target | Product-specific batch scheduling. |
 | `arnold.runtime.driver` | M6 deletion target | Superseded by `arnold.execution.runner.run`. |
-| `arnold.runtime.process` | M6 deletion target | Process model no longer used. |
+| `arnold.runtime.process` | Refactored | Current neutral process-custody primitive used by durable validation and phase supervision. |
 | `arnold.runtime.recovery` | M6 deletion target | Recovery logic is now journal replay. |
 | `arnold.runtime.sandbox` | M6 deletion target | Replaced by artifact-root isolation. |
 | `arnold.runtime.settings*` | M6 deletion target | Settings resolution moved to product harness. |

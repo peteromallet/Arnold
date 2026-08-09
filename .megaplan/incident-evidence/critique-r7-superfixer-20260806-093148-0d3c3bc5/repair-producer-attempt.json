@@ -1,0 +1,19 @@
+{
+ "delegation_built": false,
+ "occurrence": "occ_critique_r7_superfixer_retry_20260806_v1_70c522f651d6859e134250ee",
+ "outcome": "zero_authority_rejected",
+ "reason_if_rejected": "exact F01 repair-occurrence tuple cannot be completed from canonical owners: no canonical finalize attempt record exists (attempt field empty); per arnold_pipelines/megaplan/cloud/wrappers/repair_delegation.py every F01 field must be a non-empty string from a canonical owner; labels/liveness/projection are not authority.",
+ "target_attempted": {
+  "attempt": "",
+  "blocker_or_phase_result_hash": "sha256:f873b9dec0cf98ad65c14f458e51173640ff166b12bd704961e3b8b4e15faf50",
+  "chain": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140",
+  "chain_identity": "sha256:37112335cf82d55cc9ca4edd2a51105f8511713faeef16ee964dccba735fa168",
+  "environment": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+  "fence": "runner-fence:1",
+  "normalized_failure_kind": "phase_failed",
+  "phase": "finalize",
+  "plan_revision": "sha256:4537c985a9e8f1258af71d97d1d631b8ba6d0bcfc83b9a56fbd29cb327160f46",
+  "session": "critique-ledger-accountability-v3-r7-launch-20260805",
+  "task": "phase:finalize"
+ }
+}

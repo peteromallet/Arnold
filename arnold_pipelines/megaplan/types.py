@@ -78,6 +78,13 @@ class PlanMeta(TypedDict, total=False):
     weighted_scores: list[float]
     plan_deltas: list[float | None]
     recurring_critiques: list[str]
+    # CL4 (Plan Step 8): adjacency/recurrence split declared on PlanMeta so
+    # the signal producer's emitted fields are not silently dropped by the
+    # TypedDict. adjacent_text_matches is the informational exact-text list;
+    # semantic_recurrence is the reconciliation-grounded boolean. The legacy
+    # recurring_critiques alias remains for existing consumers.
+    adjacent_text_matches: list[str]
+    semantic_recurrence: bool
     total_cost_usd: float
     overrides: list[dict[str, Any]]
     notes: list[dict[str, Any]]
@@ -131,6 +138,7 @@ class ActivePhase(TypedDict, total=False):
     mode: str
     model: str
     run_id: str
+    invocation_id: str
     session_id: str
     started_at: str
     attempt: int
@@ -143,6 +151,10 @@ class ActivePhase(TypedDict, total=False):
     selected_spec_total: int
     fallback_trigger: str | None
     failed_attempt_reasons: list[str]
+    worker_pid: int
+    runner_incarnation: dict[str, Any]
+    runner_lease: dict[str, Any]
+    orphan_fence: dict[str, str]
 
 
 class PlanVersionRecord(TypedDict, total=False):
@@ -157,6 +169,7 @@ class HistoryEntry(TypedDict, total=False):
     timestamp: str
     duration_ms: int
     cost_usd: float
+    cost_pricing: str
     result: str
     session_mode: str
     session_id: str
@@ -219,6 +232,7 @@ class PlanState(TypedDict):
     clarification: NotRequired[ClarificationRecord]
     latest_failure: NotRequired[dict[str, Any] | None]
     resume_cursor: NotRequired[dict[str, Any] | None]
+    work_ledger: NotRequired[list[dict[str, Any]]]
 
 
 class _FlagRecordRequired(TypedDict):
@@ -360,9 +374,8 @@ _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 # Canonical per-vendor valid effort sets — the SINGLE source of truth for
 # what an effort token may be in an agent spec. These are the *spec-layer*
 # effort tokens (the thinking-depth ladder applied by --depth / --phase-model),
-# NOT the narrower codex-CLI reasoning-effort set in
-# megaplan.workers._impl (_VALID_CODEX_EFFORTS), which is a downstream concern
-# where xhigh/max get clamped before the codex binary is invoked.
+# The Codex CLI dispatch layer accepts the same full ladder and passes explicit
+# xhigh/max requests through unchanged; it must not silently clamp them.
 #
 # Both premium vendors accept the full depth ladder at the spec layer because
 # --depth (VALID_DEPTH_CHOICES) can produce e.g. ``codex:max`` / ``claude:minimal``.
@@ -588,7 +601,7 @@ _SETTABLE_BOOL = {
 _SETTABLE_ENUM = {
     "execution.robustness": _ROBUSTNESS_ACCEPTED,
     "execution.critic_model": CRITIC_MODEL_CHOICES,
-    "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce"),
+    "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce", "atomic"),
     "execution.full_suite_backstop_mode": ("off", "shadow", "enforce"),
 }
 

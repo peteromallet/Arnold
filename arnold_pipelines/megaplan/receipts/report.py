@@ -55,6 +55,37 @@ def _collect_receipts(plan_dir: Path) -> list[dict[str, Any]]:
     return sorted(receipts, key=lambda receipt: (str(receipt.get("timestamp_utc") or ""), _receipt_sort_key(plan_dir / receipt["_file"])))
 
 
+def _collect_dispatch_receipts(plan_dir: Path) -> list[dict[str, Any]]:
+    """Collect current authoritative automatic-dispatch snapshots.
+
+    Only the runtime-resolved model is projected as the report's model.
+    Configuration describes a request and remains separate metadata; only the
+    started receipt is evidence of the command boundary that actually ran.
+    """
+    rows: list[dict[str, Any]] = []
+    receipt_dir = plan_dir / "dispatch_receipts"
+    for path in sorted(receipt_dir.glob("*.json")):
+        payload = _safe_read_json(path)
+        if not isinstance(payload, dict) or not payload.get("dispatch_id"):
+            continue
+        resolved_model = payload.get("resolved_runtime_model")
+        configured_model = payload.get("configured_model")
+        rows.append(
+            {
+                "dispatch_id": payload.get("dispatch_id"),
+                "action": payload.get("action"),
+                "model": resolved_model or "",
+                "resolved_runtime_model": resolved_model,
+                "configured_model": configured_model,
+                "subprocess_started": payload.get("subprocess_started") is True,
+                "outcome": payload.get("outcome"),
+                "mutation_facts": payload.get("mutation_facts") or {},
+                "updated_at_utc": payload.get("updated_at_utc"),
+            }
+        )
+    return sorted(rows, key=lambda row: (str(row.get("updated_at_utc") or ""), str(row["dispatch_id"])))
+
+
 def _artifact_summary(plan_dir: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     interesting = (
@@ -247,6 +278,7 @@ def _build_report_payload(root: Path, plan_name: str | None, compare_name: str |
         "history_count": len(state.get("history") or []),
         "plan_versions": state.get("plan_versions") or [],
         "phase_rows": rows,
+        "dispatch_rows": _collect_dispatch_receipts(plan_dir),
         "receipt_totals": _totals(rows),
         "warnings": _accounting_warnings(rows),
         "gate": _load_gate_summary(plan_dir),
@@ -336,6 +368,24 @@ def render_audit_report_markdown(payload: dict[str, Any]) -> str:
             f"{_duration(row['duration_ms'])} | {_money(row['cost_usd'])} | {_tokens(row['prompt_tokens'])} | "
             f"{_tokens(row['completion_tokens'])} | `{row['output_file']}` |"
         )
+    lines.extend(
+        [
+            "",
+            "## Automatic Dispatch Receipts",
+            "",
+            "| Action | Dispatch | Runtime Model | Configured Model | Started | Outcome |",
+            "|---|---|---|---|---|---|",
+        ]
+    )
+    dispatch_rows = payload.get("dispatch_rows") or []
+    if dispatch_rows:
+        for row in dispatch_rows:
+            lines.append(
+                f"| {row['action']} | `{row['dispatch_id']}` | {row['model']} | "
+                f"{row['configured_model'] or ''} | {str(row['subprocess_started']).lower()} | {row['outcome']} |"
+            )
+    else:
+        lines.append("| n/a | n/a |  |  | false | no dispatch receipts |")
     lines.extend(["", "## Signals", ""])
     gate = payload.get("gate")
     if isinstance(gate, dict):

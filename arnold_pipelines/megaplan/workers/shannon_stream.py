@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
 from arnold_pipelines.megaplan.workers._impl import (
     CommandResult,
     ProgressLivenessState,
+    STEP_CAPTURE_SCHEMA_FILENAMES,
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _activity_callback_for_state,
@@ -411,6 +412,7 @@ def _shannon_stream_auth_metadata(config: ShannonStreamConfig) -> dict[str, Any]
     return {
         "worker_channel": "shannon_stream",
         "auth_channel": config.auth_channel,
+        "provider": "claude",
         "api_key_present": config.auth_channel == "api_key" and bool(key),
         "api_key_source": source if config.auth_channel == "api_key" else None,
         "dry_run": config.auth_channel == "api_key" and config.api_key_dry_run and not key,
@@ -1083,7 +1085,7 @@ def run_shannon_stream_step(
     schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
         if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
+        else STEP_CAPTURE_SCHEMA_FILENAMES.get(step, STEP_SCHEMA_FILENAMES[step])
     )
     schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     schema_text = json.dumps(schema)
@@ -1132,6 +1134,9 @@ def run_shannon_stream_step(
         cfg=config,
         rng=session_rng,
     )
+    auth_metadata["resolved_model"] = model
+    auth_metadata["session_agent"] = session_agent
+    auth_metadata["session_strategy"] = plan.kind
     main_turn = dataclasses.replace(plan.main, body=prompt, delivery="stdin")
     session_id = main_turn.session_id
 

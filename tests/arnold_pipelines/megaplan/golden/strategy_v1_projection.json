@@ -1,0 +1,132 @@
+{
+  "diagnostics": [],
+  "roadmap": {
+    "Later": [
+      {
+        "horizon": "Later",
+        "ref": "01KT50AZRMK5X890TQ565DDB5X",
+        "source": {
+          "column": 1,
+          "line": 52,
+          "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+        },
+        "title": "Migrate legacy config to new schema",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Later",
+        "ref": "multi-tenant-isolation",
+        "source": {
+          "column": 1,
+          "line": 53,
+          "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+        },
+        "title": "Introduce tenant-level isolation for shared runners",
+        "type": "epic"
+      }
+    ],
+    "Next": [
+      {
+        "horizon": "Next",
+        "ref": "01KT50AZRMK5X890TQ565DDB5W",
+        "source": {
+          "column": 1,
+          "line": 47,
+          "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+        },
+        "title": "Add rate-limiting middleware",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Next",
+        "ref": "observability-pipeline",
+        "source": {
+          "column": 1,
+          "line": 48,
+          "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+        },
+        "title": "Build observability pipeline for agent execution traces",
+        "type": "epic"
+      }
+    ],
+    "Now": [
+      {
+        "horizon": "Now",
+        "ref": "01KT50AZRMK5X890TQ565DDB5V",
+        "source": {
+          "column": 1,
+          "line": 42,
+          "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+        },
+        "title": "Fix authentication timeout in gateway",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Now",
+        "ref": "repository-strategy-roadmap",
+        "source": {
+          "column": 1,
+          "line": 43,
+          "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+        },
+        "title": "Implement typed strategy contract and validator",
+        "type": "epic"
+      }
+    ]
+  },
+  "schema_version": "megaplan-strategy-projection-v1",
+  "source_version": "megaplan-strategy-v1",
+  "stable_direction": [
+    {
+      "body": "Provide a reliable, self-service platform for planning, executing, and\ngoverning AI-driven work across multiple repositories with minimal human\nintervention.",
+      "source": {
+        "column": 1,
+        "line": 5,
+        "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+      },
+      "title": "Mission"
+    },
+    {
+      "body": "- **Determinism over convenience**: Parsers and serializers must produce\n  byte-for-byte equivalent output on round-trip.\n- **Identity over display**: Artifact identity is the `(type, ref)` pair;\n  display titles are mutable and advisory.\n- **Fail closed**: Missing or ambiguous data is a hard error, not a silent\n  default.",
+      "source": {
+        "column": 1,
+        "line": 11,
+        "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+      },
+      "title": "Principles"
+    },
+    {
+      "body": "Adopt a layered architecture where the strategy document is the single\nsource of truth.  Downstream projections (JSON, views) are disposable and\nmust be regeneratable from the canonical Markdown.",
+      "source": {
+        "column": 1,
+        "line": 20,
+        "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+      },
+      "title": "Architecture Direction"
+    },
+    {
+      "body": "- Python 3.11+.\n- YAML frontmatter only; no TOML or JSON.\n- Roadmap bullets must use the narrow `- [type:ref] title` grammar.\n- No artifact bodies or lifecycle-status fields in the strategy model.",
+      "source": {
+        "column": 1,
+        "line": 26,
+        "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+      },
+      "title": "Constraints"
+    },
+    {
+      "body": "- Automatic issue tracker synchronization.\n- Real-time dashboard.\n- Multi-repo strategy federation (v1 is single-repo).\n- Migration from legacy plan formats.",
+      "source": {
+        "column": 1,
+        "line": 33,
+        "path": "tests/arnold_pipelines/megaplan/golden/strategy_v1.md"
+      },
+      "title": "Non-Goals"
+    }
+  ],
+  "validation_summary": {
+    "clean": true,
+    "error_count": 0,
+    "total_diagnostics": 0,
+    "warning_count": 0
+  }
+}

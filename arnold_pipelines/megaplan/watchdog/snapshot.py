@@ -1,4 +1,18 @@
-"""Snapshot construction for the live watchdog."""
+"""Snapshot construction for the live watchdog.
+
+Snapshot building uses normalized worker identity to ensure that recycled,
+unrelated, dead, and hung workers produce typed stale or unknown liveness
+only — never false-positive progress.  The process-correlation dimension
+in the source-cursor vector reflects exact worker identity.
+M9 — T17: process, tmux, heartbeat, and activity facts are now correlated
+*evidence only*. ``build_snapshot`` accepts an optional ``source_cursor_vector``
+plus per-plan WBC attempt-identity envelopes and joins them to the discovered
+processes via :func:`classify_worker_liveness`. The resulting liveness verdict
+(matched/recycled/hung/dead/unrelated) is attached to each ``Incident`` and to
+the ``Snapshot`` as a display-only ``liveness_authority`` annotation. No path
+through this module converts liveness into a success, completion, repair, or
+dispatch verdict.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +20,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.pipelines.live_supervisor.model import (
     CheckFinding,
@@ -17,7 +31,16 @@ from arnold_pipelines.megaplan.pipelines.live_supervisor.model import (
     Triage,
 )
 from arnold_pipelines.megaplan.watchdog.correlate import (
+    LIVENESS_DEAD,
+    LIVENESS_HUNG,
+    LIVENESS_MATCHED,
+    LIVENESS_RECYCLED,
+    LIVENESS_UNRELATED,
+    RUNNER_LOST,
+    RUNNER_UNKNOWN,
+    _format_source_cursor,
     _path_contains,
+    classify_worker_liveness,
     correlate_processes_to_plans,
     infer_plan_dirs_from_processes,
 )
@@ -26,6 +49,11 @@ from arnold_pipelines.megaplan.watchdog.log import log_event
 from arnold_pipelines.megaplan.watchdog.orphans import find_orphan_processes
 from arnold_pipelines.megaplan.watchdog.processes import scan_processes
 from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
+from arnold_pipelines.megaplan.watchdog.worker_identity import (
+    LivenessState,
+    ProcessCorrelationSnapshot,
+    WorkerCorrelation,
+)
 
 
 def _triage_from_signals(
@@ -61,10 +89,121 @@ def _plan_recency_age_seconds(plan_dir: Path, signals: SignalBundle) -> float:
     return min(ages) if ages else float("inf")
 
 
+def build_process_correlation_snapshot(
+    correlations: tuple[Any, ...],
+    processes: tuple[Any, ...],
+) -> ProcessCorrelationSnapshot:
+    """Build a typed process-correlation snapshot from watchdog data.
+
+    Converts raw Correlation and ProcessRecord tuples into a
+    :class:`ProcessCorrelationSnapshot` that the source-cursor vector's
+    ``process_correlation`` dimension can consume.  Recycled, dead, hung,
+    and unrelated workers produce ``stale`` or ``unknown`` cursor state.
+    """
+    worker_corrs: list[WorkerCorrelation] = []
+    seen_pids: set[int] = set()
+
+    # Build a lookup from pid to process record
+    proc_by_pid: dict[int, Any] = {}
+    for proc in processes:
+        pid = int(getattr(proc, "pid", 0) or (proc.get("pid", 0) if isinstance(proc, dict) else 0))
+        if pid:
+            proc_by_pid[pid] = proc
+
+    for corr in correlations:
+        pid = corr.process_pid
+        if pid in seen_pids:
+            continue
+        seen_pids.add(pid)
+
+        proc = proc_by_pid.get(pid)
+        if proc is not None:
+            if isinstance(proc, dict):
+                is_pid_live = proc.get("is_live", None)
+                worker_type = proc.get("category", "")
+                cmdline = proc.get("cmdline", "")
+                cwd = proc.get("cwd", "")
+            else:
+                is_pid_live = getattr(proc, "is_live", None)
+                worker_type = getattr(proc, "category", "")
+                cmdline = getattr(proc, "cmdline", "")
+                cwd = getattr(proc, "cwd", "")
+        else:
+            is_pid_live = None
+            worker_type = ""
+            cmdline = ""
+            cwd = ""
+
+        wc = corr.to_worker_correlation(
+            is_pid_live=is_pid_live,
+            worker_type=worker_type,
+            cmdline=cmdline,
+            cwd=cwd or "",
+        )
+        worker_corrs.append(wc)
+
+    return ProcessCorrelationSnapshot(correlations=tuple(worker_corrs))
+def _format_liveness_authority_summary(
+    per_plan: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate per-plan liveness classifications into a display-only summary.
+
+    The summary counts classifications and records the worst ``runner_verdict``
+    observed. It never authorizes action: ``authority`` is always
+    ``evidence_extracted_non_authoritative``.
+    """
+    counts: dict[str, int] = {}
+    worst = RUNNER_UNKNOWN
+    for entry in per_plan.values():
+        classification = entry.get("classification", LIVENESS_UNRELATED)
+        counts[classification] = counts.get(classification, 0) + 1
+        verdict = entry.get("runner_verdict", RUNNER_UNKNOWN)
+        # ``lost`` is "worse" than ``unknown`` for display ordering, but neither
+        # is authority.
+        if verdict == RUNNER_LOST:
+            worst = RUNNER_LOST
+    return {
+        "authority": "evidence_extracted_non_authoritative",
+        "classification_counts": dict(counts),
+        "worst_runner_verdict": worst,
+        "note": (
+            "liveness is correlated evidence about in-flight attempts; it never "
+            "authorizes success, completion, repair, or dispatch"
+        ),
+    }
+
+
+def _collect_snapshot_evidence_gaps(
+    plan: PlanEntry,
+    liveness: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Collect structured evidence gaps for one plan's liveness correlation.
+
+    Gaps are pure display annotations and never feed dispatch/completion/etc.
+    """
+    gaps: dict[str, Any] = {}
+    if liveness is None:
+        gaps["liveness_classification"] = {
+            "gap": "liveness_unclassified",
+            "reason": "no worker process correlated to this plan; liveness unknown",
+            "evidence_status": "missing",
+        }
+        return gaps
+    classification = liveness.get("classification")
+    if classification in (LIVENESS_RECYCLED, LIVENESS_HUNG, LIVENESS_DEAD, LIVENESS_UNRELATED):
+        gaps["liveness_classification"] = {
+            "gap": f"worker_{classification}",
+            "reason": liveness.get("reason", f"worker classified as {classification}"),
+            "evidence_status": "degraded" if classification != LIVENESS_DEAD else "dead",
+        }
+    return gaps
+
+
 def build_incidents(
     plans: tuple[PlanEntry, ...],
     signal_bundles: dict[str, SignalBundle],
     live_plan_ids: set[str],
+    liveness_authority_map: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[Incident, ...]:
     incidents: list[Incident] = []
     for plan in plans:
@@ -77,7 +216,17 @@ def build_incidents(
             failure_reason="missing signal bundle",
         ))
         triage = _triage_from_signals(signals, plan.plan_id in live_plan_ids)
-        incidents.append(Incident(plan_entry=plan, signals=signals, triage=triage))
+        liveness = None
+        if liveness_authority_map is not None:
+            liveness = dict(liveness_authority_map.get(plan.plan_id) or {})
+        incidents.append(
+            Incident(
+                plan_entry=plan,
+                signals=signals,
+                triage=triage,
+                liveness_authority=liveness or {},
+            )
+        )
     return tuple(incidents)
 
 
@@ -87,6 +236,10 @@ def build_snapshot(
     max_age_hours: float | None = None,
     process_scanner: Any | None = None,
     logger: logging.Logger | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
+    wbc_terminal_envelopes: Mapping[str, Mapping[str, Any]] | None = None,
+    wbc_gap_envelopes: Mapping[str, Mapping[str, Any]] | None = None,
+    heartbeat_fresh_by_plan: Mapping[str, bool] | None = None,
 ) -> Snapshot:
     """Discover plans and build a Snapshot with signal bundles and triage.
 
@@ -96,6 +249,20 @@ def build_snapshot(
     When ``max_age_hours`` is set, plans are only included if they have a live
     process or some recent activity (state mtime or event mtime/age) within the
     window. ``None`` means no age filter.
+
+    M9 parameters (all *evidence only*, never authority):
+
+    * ``source_cursor_vector`` — canonical source cursors attached to the
+      snapshot as a display-only ``source_cursor_vector`` field.
+    * ``wbc_terminal_envelopes`` / ``wbc_gap_envelopes`` — per-plan (keyed by
+      ``plan_id``) canonical WBC attempt-identity envelopes used to join process
+      facts to attempt identity for liveness classification.
+    * ``heartbeat_fresh_by_plan`` — per-plan heartbeat freshness booleans.
+
+    The liveness verdict computed from these joins is attached to each incident
+    and to the snapshot as ``liveness_authority``; it is always marked
+    ``evidence_extracted_non_authoritative`` and never feeds dispatch,
+    completion, cancellation, publication, or delivery.
     """
     plan_dirs = discover_plans(roots)
 
@@ -146,6 +313,16 @@ def build_snapshot(
     live_plan_ids: set[str] = {c.plan_dir.name for c in correlations}
     orphans_by_plan = find_orphan_processes(processes, correlations)
 
+    # Build a pid -> process lookup so we can join correlated processes to WBC
+    # attempt identity for liveness classification.
+    proc_by_pid: dict[int, Any] = {}
+    for proc in processes:
+        try:
+            pid = int(proc["pid"]) if isinstance(proc, dict) else int(getattr(proc, "pid"))
+            proc_by_pid[pid] = proc
+        except Exception:
+            continue
+
     if logger is not None:
         log_event(
             logger,
@@ -166,9 +343,26 @@ def build_snapshot(
                     reason=orphan.reason,
                 )
 
+    # ── M9: build process-correlation snapshot for heartbeat liveness ──
+    process_correlation_snapshot = build_process_correlation_snapshot(
+        correlations, processes
+    )
+    # Map plan_dir -> correlated workers for that plan
+    workers_by_plan_dir: dict[str, list[Any]] = {}
+    for wc in process_correlation_snapshot.correlations:
+        for plan_dir in wc.plan_dirs:
+            workers_by_plan_dir.setdefault(plan_dir, []).append(wc)
+
     signal_bundles: dict[str, SignalBundle] = {}
     for plan in plans:
-        signals = compute_signal_bundle(Path(plan.plan_dir), plan.state)
+        plan_path = Path(plan.plan_dir)
+        plan_workers = tuple(workers_by_plan_dir.get(str(plan_path.resolve()), ()))
+        signals = compute_signal_bundle(
+            plan_path,
+            plan.state,
+            worker_correlations=plan_workers,
+            process_correlation_snapshot=process_correlation_snapshot,
+        )
         orphan_findings: list[CheckFinding] = []
         for orphan in orphans_by_plan.get(Path(plan.plan_dir), ()):
             orphan_findings.append(
@@ -195,6 +389,12 @@ def build_snapshot(
                 doctor_findings=live_findings + tuple(orphan_findings),
                 has_in_flight_llm=signals.has_in_flight_llm,
                 last_event_age_seconds=signals.last_event_age_seconds,
+                heartbeat_liveness=signals.heartbeat_liveness,
+                heartbeat_liveness_reason=signals.heartbeat_liveness_reason,
+                worker_states=signals.worker_states,
+                live_worker_count=signals.live_worker_count,
+                stale_worker_count=signals.stale_worker_count,
+                dead_worker_count=signals.dead_worker_count,
             )
         elif orphan_findings:
             signals = SignalBundle(
@@ -204,8 +404,75 @@ def build_snapshot(
                 doctor_findings=signals.doctor_findings + tuple(orphan_findings),
                 has_in_flight_llm=signals.has_in_flight_llm,
                 last_event_age_seconds=signals.last_event_age_seconds,
+                heartbeat_liveness=signals.heartbeat_liveness,
+                heartbeat_liveness_reason=signals.heartbeat_liveness_reason,
+                worker_states=signals.worker_states,
+                live_worker_count=signals.live_worker_count,
+                stale_worker_count=signals.stale_worker_count,
+                dead_worker_count=signals.dead_worker_count,
             )
         signal_bundles[plan.plan_id] = signals
+
+    # M9 — join process facts to WBC attempt identity for liveness
+    # classification. The verdict is evidence-only: recycled/hung/dead/unrelated
+    # workers resolve to unknown/lost, never success or repair.
+    liveness_authority_map: dict[str, dict[str, Any]] = {}
+    correlations_by_plan: dict[str, list[Any]] = {}
+    for corr in correlations:
+        correlations_by_plan.setdefault(corr.plan_dir.name, []).append(corr)
+    for plan in plans:
+        plan_correlations = correlations_by_plan.get(plan.plan_id, [])
+        terminal_env = (wbc_terminal_envelopes or {}).get(plan.plan_id)
+        gap_env = (wbc_gap_envelopes or {}).get(plan.plan_id)
+        heartbeat_fresh = (heartbeat_fresh_by_plan or {}).get(plan.plan_id)
+
+        if plan_correlations:
+            # Classify the first correlated process for this plan.
+            corr = plan_correlations[0]
+            proc = proc_by_pid.get(corr.process_pid)
+            if proc is None:
+                classification = {
+                    "classification": LIVENESS_UNRELATED,
+                    "runner_verdict": RUNNER_UNKNOWN,
+                    "reason": "correlated process pid not found in scan results",
+                    "authority": "evidence_extracted_non_authoritative",
+                    "evidence_basis": [corr.method],
+                    "evidence_gaps": {},
+                }
+            else:
+                attempt_session = None
+                attempt_start = None
+                runner_lease = None
+                identity_supplied = False
+                if isinstance(terminal_env, Mapping):
+                    identity_supplied = True
+                    attempt_session = terminal_env.get("session") or terminal_env.get("session_token")
+                    attempt_start = terminal_env.get("attempt_start_epoch") or terminal_env.get("started_at_epoch")
+                if isinstance(gap_env, Mapping) and not identity_supplied:
+                    identity_supplied = True
+                    attempt_session = attempt_session or gap_env.get("session")
+                verdict = classify_worker_liveness(
+                    proc,
+                    attempt_session_token=attempt_session,
+                    attempt_start_epoch=attempt_start,
+                    runner_lease_ref=runner_lease,
+                    heartbeat_fresh=heartbeat_fresh,
+                    wbc_attempt_identity_supplied=identity_supplied,
+                    source_cursor_vector=source_cursor_vector,
+                )
+                classification = verdict.to_dict()
+                classification["correlation_method"] = corr.method
+        else:
+            # No correlated process for this plan.
+            classification = {
+                "classification": LIVENESS_UNRELATED,
+                "runner_verdict": RUNNER_UNKNOWN,
+                "reason": "no worker process correlated to this plan",
+                "authority": "evidence_extracted_non_authoritative",
+                "evidence_basis": [],
+                "evidence_gaps": _collect_snapshot_evidence_gaps(plan, None),
+            }
+        liveness_authority_map[plan.plan_id] = classification
 
     if max_age_hours is not None:
         max_age_seconds = max_age_hours * 3600
@@ -218,12 +485,21 @@ def build_snapshot(
                 filtered_plans.append(plan)
         plans = filtered_plans
 
-    incidents = build_incidents(tuple(plans), signal_bundles, live_plan_ids)
+    incidents = build_incidents(
+        tuple(plans),
+        signal_bundles,
+        live_plan_ids,
+        liveness_authority_map=liveness_authority_map,
+    )
+
+    liveness_summary = _format_liveness_authority_summary(liveness_authority_map)
 
     return Snapshot(
         scan_ts_utc=datetime.now(timezone.utc).isoformat(),
         plans=tuple(plans),
         incidents=tuple(incidents),
+        source_cursor_vector=_format_source_cursor(source_cursor_vector),
+        liveness_authority=liveness_summary,
     )
 
 

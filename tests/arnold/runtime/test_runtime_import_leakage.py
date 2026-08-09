@@ -19,7 +19,6 @@ import subprocess
 import sys
 import textwrap
 
-
 # ---------------------------------------------------------------------------
 # Subprocess script — installed as the ``-c`` argument
 # ---------------------------------------------------------------------------
@@ -53,6 +52,8 @@ import arnold.pipeline.types         # noqa: E402
 
 expected_durable_ops_exports = {
     "ApprovalLink",
+    "BROKER_APPROVAL_SUSPENSION_KIND",
+    "BrokerApprovalDecision",
     "DurableOpsStore",
     "FileBackedDurableOpsStore",
     "InvalidOperationTransition",
@@ -75,6 +76,8 @@ expected_durable_ops_exports = {
     "ScheduledTaskState",
     "TypedResource",
     "TypedResourceAlreadyExists",
+    "apply_broker_approval_decision",
+    "broker_approval_effect_metadata",
     "can_transition_operation",
     "can_transition_scheduled_task",
     "ensure_operation_transition",
@@ -106,6 +109,7 @@ class TestRuntimeImportLeakage:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
 
         # If any import triggered a megaplan dependency the subprocess fails.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import logging
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import arnold_pipelines.megaplan.workers as worker_module
+from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 from arnold_pipelines.megaplan.execute.batch import build_monitor_hint
 from arnold_pipelines.megaplan.fallback_chains import (
     configured_fallback_chain_for_phase,
@@ -19,8 +21,17 @@ from arnold_pipelines.megaplan.observability.routing_ledger import format_select
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from arnold_pipelines.megaplan.receipts import build_receipt
-from arnold_pipelines.megaplan.receipts.writer import write_receipt
+from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt, write_receipt
 from arnold_pipelines.megaplan.execute.step_edit import next_plan_artifact_name
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    activate_phase_wbc,
+    complete_phase_wbc,
+    fail_phase_wbc,
+    phase_wbc_required,
+    phase_wbc_state,
+    suspend_phase_wbc,
+)
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
 from arnold_pipelines.megaplan.types import AgentMode, CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     _emit_phase_result,
@@ -28,6 +39,10 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
+)
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    resolve_next_steps,
 )
 from arnold_pipelines.megaplan._core import (
     append_history,
@@ -47,18 +62,60 @@ from arnold_pipelines.megaplan._core import (
     set_active_step,
     sha256_file,
     sha256_text,
+    write_immutable_json,
     workflow_next,
 )
+from arnold_pipelines.megaplan._core.plan_integrity import verify_prior_plan_versions
 from arnold_pipelines.megaplan._core.phase_runtime import (
     DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
     PHASE_RUNTIME_POLICY,
     format_duration_hint,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
-from arnold_pipelines.megaplan.route_dispatch import resolve_route_target_for_signal
+from arnold_pipelines.megaplan.workflows.planning import resolve_lowered_route_target_for_signal
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 log = logging.getLogger("megaplan")
+
+_BOUNDARY_EXPECTED_NEXT_STEP_BY_ID = {
+    "prep_to_plan": "plan",
+    "plan_to_critique": "critique",
+    "critique_to_gate": "gate",
+    "gate_to_revise": "revise",
+    "revise_to_critique": "critique",
+}
+
+_FRONT_HALF_BOUNDARY_ID_BY_PHASE = {
+    "prep": "prep_to_plan",
+    "plan": "plan_to_critique",
+    "critique": "critique_to_gate",
+    "gate": "gate_to_revise",
+    "revise": "revise_to_critique",
+}
+
+_TIEBREAKER_BOUNDARY_ID_BY_PHASE = {
+    "tiebreaker_researcher": "tiebreaker_researcher_to_challenger",
+    "tiebreaker_challenger": "tiebreaker_challenger_to_synthesis",
+    "tiebreaker_synthesis": "tiebreaker_synthesis_to_decision",
+    "tiebreaker_decision": "tiebreaker_decision_to_parent",
+}
+
+_TIEBREAKER_EXPECTED_NEXT_STEPS = {
+    "tiebreaker_researcher": frozenset({"tiebreaker_challenger"}),
+    "tiebreaker_challenger": frozenset({"tiebreaker_synthesis"}),
+    "tiebreaker_synthesis": frozenset({"tiebreaker_decision"}),
+    "tiebreaker_decision": frozenset({"finalize", "revise", "override"}),
+}
+
+_FINALIZE_BOUNDARY_ID_BY_NEXT_STEP = {
+    "execute": "finalize_artifacts",
+    "revise": "finalize_fallback",
+}
+
+_ROUTE_SIGNAL_AUTHORITY_STEP_ALIASES = {
+    "tiebreaker_run": "tiebreaker_researcher",
+    "tiebreaker_decide": "tiebreaker_decision",
+}
 
 
 def _agent_mode_parts(resolved: AgentMode | tuple[str, str, bool, str | None]) -> tuple[str, str, bool, str | None]:
@@ -130,6 +187,55 @@ def _merge_imported_decision_criteria(
         )
         referenced_ids.add(decision_id)
     return merged
+
+
+def _load_bearing_decision_criteria_issues(
+    state: PlanState,
+    criteria: list[dict[str, Any]],
+) -> list[str]:
+    """Return exact imported-decision bindings that are not mechanically closed.
+
+    Initial planning still uses ``_merge_imported_decision_criteria`` as a
+    fail-safe so an imported decision cannot disappear.  A revision is
+    different: silently synthesizing a human-only criterion after the worker
+    returns makes the revision appear successful while deterministically
+    recreating the blocker it was asked to remove.  Revision callers use this
+    validator before merging so the next attempt receives an honest,
+    actionable failure instead.
+    """
+    from arnold_pipelines.megaplan.runtime.capabilities import CONTAINER_CAPABILITIES
+
+    issues: list[str] = []
+    imported_decisions = state["meta"].get("imported_decisions", [])
+    for decision in imported_decisions:
+        if not isinstance(decision, dict) or not bool(decision.get("load_bearing")):
+            continue
+        decision_id = decision.get("id")
+        if not isinstance(decision_id, str) or not decision_id:
+            continue
+        bound = [
+            criterion
+            for criterion in criteria
+            if isinstance(criterion, dict)
+            and isinstance(criterion.get("criterion"), str)
+            and decision_id in criterion["criterion"]
+        ]
+        if not bound:
+            issues.append(f"{decision_id}: no success criterion references the exact decision ID")
+            continue
+        mechanical = [
+            criterion
+            for criterion in bound
+            if criterion.get("priority") == "must"
+            and isinstance(criterion.get("requires"), list)
+            and bool(set(criterion["requires"]) & CONTAINER_CAPABILITIES)
+        ]
+        if not mechanical:
+            issues.append(
+                f"{decision_id}: referenced criterion must use priority='must' "
+                "and at least one container-verifiable requires capability"
+            )
+    return issues
 
 
 def _validate_relative_path(project_dir: Path, raw: str, flag_name: str) -> str:
@@ -239,6 +345,8 @@ def _run_worker(
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
     read_only: bool = False,
+    wbc_dispatch: Any = None,
+    reuse_active_phase: bool = False,
 ) -> tuple[WorkerResult, str, str, bool]:
     failure_iteration = state["iteration"] if iteration is None else iteration
     from arnold_pipelines.megaplan import handlers as _handlers_pkg
@@ -250,19 +358,47 @@ def _run_worker(
     refreshed = res.refreshed if isinstance(res, AgentMode) else res[2]
     model = res.resolved_model if isinstance(res, AgentMode) else res[3]
     effort = res.effort if isinstance(res, AgentMode) else None
-    run_id = set_active_step(
-        state,
-        step=step,
-        agent=agent,
-        mode=mode,
-        model=model,
-        **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
-    )
+    if reuse_active_phase:
+        active_step = state.get("active_step")
+        phase = phase_wbc_state(state, step=step)
+        invocation_id = str((state.get("meta") or {}).get("current_invocation_id") or "")
+        if (
+            not isinstance(active_step, dict)
+            or active_step.get("phase") != step
+            or phase is None
+            or phase.get("invocation_id") != invocation_id
+            or not isinstance(active_step.get("run_id"), str)
+        ):
+            raise RuntimeError(
+                f"cannot reuse {step!r}: matching active phase WBC custody is unavailable"
+            )
+        run_id = str(active_step["run_id"])
+    else:
+        run_id = set_active_step(
+            state,
+            step=step,
+            agent=agent,
+            mode=mode,
+            model=model,
+            **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
+        )
     _emit_phase_notice(step)
-    # Phases hold the lock for many minutes; merge meta to avoid clobbering
-    # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
-    save_state_merge_meta(plan_dir, state)
     try:
+        if phase_wbc_required(step) and not reuse_active_phase:
+            activate_phase_wbc(state=state, plan_dir=plan_dir, step=step, agent=agent)
+        if wbc_dispatch is None:
+            selected_spec = format_selected_spec(agent, model, effort) or agent
+            wbc_dispatch = build_worker_dispatch_spec(
+                plan_dir=plan_dir,
+                state=state,
+                step=step,
+                agent=agent,
+                selected_spec=selected_spec,
+                route_kind="direct",
+            )
+        # Phases hold the lock for many minutes; merge meta to avoid clobbering
+        # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
+        save_state_merge_meta(plan_dir, state)
         with phase_result_guard(plan_dir):
             run_step_kwargs: dict[str, Any] = {
                 "root": root,
@@ -273,6 +409,8 @@ def _run_worker(
                 run_step_kwargs["prompt_kwargs"] = prompt_kwargs
             if read_only:
                 run_step_kwargs["read_only"] = True
+            if wbc_dispatch is not None:
+                run_step_kwargs["wbc_dispatch"] = wbc_dispatch
             return worker_module.run_step_with_worker(
                 step,
                 state,
@@ -435,6 +573,328 @@ def _emit_receipt(
         log.warning("Receipt emission failed for step %s", phase, exc_info=True)
 
 
+def _boundary_contract_by_phase(step: str):
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS_BY_ID
+
+    boundary_id = _FRONT_HALF_BOUNDARY_ID_BY_PHASE.get(step) or _TIEBREAKER_BOUNDARY_ID_BY_PHASE.get(step)
+    if boundary_id is None:
+        return None
+    return BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
+
+
+def _boundary_contract_from_id(boundary_id: str):
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS_BY_ID
+
+    return BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
+
+
+def _boundary_contract_for_response(
+    step: str,
+    response: StepResponse,
+):
+    if step == "finalize":
+        boundary_id = _FINALIZE_BOUNDARY_ID_BY_NEXT_STEP.get(str(response.get("next_step") or ""))
+        if boundary_id is None:
+            return None
+        return _boundary_contract_from_id(boundary_id)
+    contract = _boundary_contract_by_phase(step)
+    if contract is None:
+        return None
+    if step in _TIEBREAKER_EXPECTED_NEXT_STEPS:
+        next_step = response.get("next_step")
+        if next_step not in _TIEBREAKER_EXPECTED_NEXT_STEPS[step]:
+            return None
+        return contract
+    expected_next_step = _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID.get(contract.boundary_id)
+    if expected_next_step is not None and response.get("next_step") != expected_next_step:
+        return None
+    return contract
+
+
+def _boundary_history_snapshot(state: PlanState) -> dict[str, Any]:
+    history = state.get("history")
+    if not isinstance(history, list) or not history:
+        return {}
+    entry = history[-1]
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def _boundary_session_snapshot(
+    state: PlanState,
+    *,
+    session_id: str | None,
+) -> dict[str, Any]:
+    if not session_id:
+        return {}
+    sessions = state.get("sessions")
+    if not isinstance(sessions, dict):
+        return {}
+    for session_key, session in sessions.items():
+        if not isinstance(session, dict) or session.get("id") != session_id:
+            continue
+        snapshot = dict(session)
+        snapshot["session_key"] = session_key
+        return snapshot
+    return {"id": session_id}
+
+
+def _boundary_artifact_refs(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    artifacts: list[str],
+    output_file: str,
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    for ref in [*artifacts, output_file]:
+        if isinstance(ref, str) and ref and ref not in refs:
+            refs.append(ref)
+    if contract.phase_result_required and "phase_result.json" not in refs:
+        refs.append("phase_result.json")
+    for required_artifact in contract.required_artifacts:
+        if (
+            isinstance(required_artifact, str)
+            and required_artifact
+            and (plan_dir / required_artifact).exists()
+            and required_artifact not in refs
+        ):
+            refs.append(required_artifact)
+    return tuple(refs)
+
+
+def _boundary_authority_records(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    worker: WorkerResult,
+    agent: str,
+    response: StepResponse,
+) -> tuple[AuthorityRecord, ...]:
+    if not contract.authority_required:
+        return ()
+    auth_metadata = worker.auth_metadata if isinstance(worker.auth_metadata, dict) else {}
+    actor = str(auth_metadata.get("actor") or auth_metadata.get("authority_id") or worker.auth_channel or agent)
+    role = str(auth_metadata.get("role") or auth_metadata.get("authority_role") or "boundary_observer")
+    recommendation = response.get("recommendation")
+    decision = str(recommendation) if isinstance(recommendation, str) and recommendation else None
+    debt_payload = response.get("debt_payload")
+    debt_entries_added = None
+    if isinstance(debt_payload, dict):
+        debt_entries_added = debt_payload.get("debt_entries_added")
+    evidence_refs = tuple(
+        ref
+        for ref in ("gate.json", "gate_carry.json", "phase_result.json")
+        if ref == "phase_result.json" or (plan_dir / ref).exists()
+    )
+    return (
+        AuthorityRecord(
+            actor=actor,
+            role=role,
+            decision=decision,
+            scope=contract.boundary_id,
+            evidence_refs=evidence_refs,
+            details={
+                "passed": response.get("passed"),
+                "rationale": response.get("rationale"),
+                "warnings": response.get("warnings"),
+                "settled_decisions": response.get("settled_decisions"),
+                "debt_entries_added": debt_entries_added,
+                "auth_channel": worker.auth_channel,
+                "auth_metadata": auth_metadata,
+                "worker_channel": worker.worker_channel,
+            },
+        ),
+    )
+
+
+def _emit_boundary_receipt(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    step: str,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    artifacts: list[str],
+    output_file: str,
+    artifact_hash: str,
+    response: StepResponse,
+    run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    strict: bool = False,
+) -> BoundaryReceipt | None:
+    contract = _boundary_contract_for_response(step, response)
+    if contract is None:
+        return None
+    return _emit_boundary_receipt_for_contract(
+        contract=contract,
+        plan_dir=plan_dir,
+        state=state,
+        step=step,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        artifacts=artifacts,
+        output_file=output_file,
+        artifact_hash=artifact_hash,
+        response=response,
+        run_id=run_id,
+        gate_summary=gate_summary,
+        strict=strict,
+    )
+
+
+def _emit_named_boundary_receipt(
+    *,
+    boundary_id: str,
+    plan_dir: Path,
+    state: PlanState,
+    step: str,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    artifacts: list[str],
+    output_file: str,
+    artifact_hash: str,
+    response: StepResponse,
+    run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    strict: bool = False,
+) -> BoundaryReceipt | None:
+    contract = _boundary_contract_from_id(boundary_id)
+    if contract is None:
+        if strict:
+            raise RuntimeError(f"unknown boundary contract {boundary_id!r}")
+        return None
+    return _emit_boundary_receipt_for_contract(
+        contract=contract,
+        plan_dir=plan_dir,
+        state=state,
+        step=step,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        artifacts=artifacts,
+        output_file=output_file,
+        artifact_hash=artifact_hash,
+        response=response,
+        run_id=run_id,
+        gate_summary=gate_summary,
+        strict=strict,
+    )
+
+
+def _emit_boundary_receipt_for_contract(
+    *,
+    contract: Any,
+    plan_dir: Path,
+    state: PlanState,
+    step: str,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    artifacts: list[str],
+    output_file: str,
+    artifact_hash: str,
+    response: StepResponse,
+    run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    strict: bool = False,
+) -> BoundaryReceipt | None:
+    try:
+        project_dir = Path(state["config"]["project_dir"])
+        history_entry = _boundary_history_snapshot(state)
+        session_entry = _boundary_session_snapshot(state, session_id=worker.session_id)
+        details_dict: dict[str, Any] = {
+            "artifact_hash": artifact_hash,
+            "artifacts_written": list(artifacts),
+            "history": {
+                "step": history_entry.get("step"),
+                "result": history_entry.get("result"),
+                "timestamp": history_entry.get("timestamp"),
+                "output_file": history_entry.get("output_file"),
+            },
+            "session": {
+                "id": session_entry.get("id"),
+                "session_key": session_entry.get("session_key"),
+                "mode": mode,
+                "worker_channel": session_entry.get("worker_channel") or worker.worker_channel,
+                "auth_channel": session_entry.get("auth_channel") or worker.auth_channel,
+            },
+        }
+        if run_id:
+            details_dict["run_id"] = run_id
+        # For gate_to_revise boundary, include gate_summary authority data
+        # as receipt metadata so downstream consumers can cross-reference
+        # gate decisions with boundary evidence without re-reading gate.json.
+        if (
+            gate_summary is not None
+            and isinstance(gate_summary, dict)
+            and contract.boundary_id == "gate_to_revise"
+        ):
+            details_dict["gate_authority"] = {
+                "recommendation": gate_summary.get("recommendation"),
+                "passed": gate_summary.get("passed"),
+                "rationale": gate_summary.get("rationale"),
+                "warnings": gate_summary.get("warnings"),
+                "settled_decisions": gate_summary.get("settled_decisions"),
+                "reprompted": gate_summary.get("reprompted"),
+            }
+        receipt = BoundaryReceipt(
+            boundary_id=contract.boundary_id,
+            workflow_id=contract.workflow_id,
+            row_id=contract.row_id,
+            invocation_id=(state.get("meta") or {}).get("current_invocation_id"),
+            artifact_refs=_boundary_artifact_refs(
+                plan_dir=plan_dir,
+                contract=contract,
+                artifacts=artifacts,
+                output_file=output_file,
+            ),
+            state_observation={
+                "current_phase": step,
+                "current_state": state.get("current_state"),
+                "iteration": state.get("iteration"),
+                "next_step": response.get("next_step"),
+            },
+            history_ref=contract.expected_history_entry,
+            phase_result_ref="phase_result.json" if contract.phase_result_required else None,
+            outcome=BoundaryOutcome.COMPLETE,
+            authority_records=_boundary_authority_records(
+                plan_dir=plan_dir,
+                contract=contract,
+                worker=worker,
+                agent=agent,
+                response=response,
+            ),
+            details=details_dict,
+        )
+        history_path = write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+        if strict:
+            receipt_path = plan_dir / "boundary_receipts" / f"{contract.boundary_id}.json"
+            if history_path is None or not receipt_path.exists():
+                raise RuntimeError(f"boundary receipt {contract.boundary_id!r} was not durably persisted")
+            persisted = json.loads(receipt_path.read_text(encoding="utf-8"))
+            expected = receipt.to_dict()
+            historical = json.loads(history_path.read_text(encoding="utf-8"))
+            if persisted != expected or historical != expected:
+                raise RuntimeError(
+                    f"boundary receipt reread mismatch for {contract.boundary_id!r}"
+                )
+        return receipt
+    except Exception:
+        if strict:
+            raise
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_BOUNDARY_RECEIPT",
+            action="boundary-receipt",
+            plan_dir=plan_dir,
+            phase=step,
+            context={"boundary_id": contract.boundary_id},
+        )
+        return None
+
+
 def _finish_step(
     plan_dir: Path,
     state: PlanState,
@@ -455,8 +915,16 @@ def _finish_step(
     response_fields: dict[str, Any] | None = None,
     history_fields: dict[str, Any] | None = None,
     run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    extra_boundary_ids: tuple[str, ...] = (),
 ) -> StepResponse:
-    clear_active_step(state, run_id=run_id)
+    # Capture run_id before the active step is cleared so downstream
+    # evidence writes can join on the same lifecycle identity.
+    effective_run_id = run_id
+    if effective_run_id is None:
+        active = state.get("active_step")
+        if isinstance(active, dict):
+            effective_run_id = active.get("run_id")
     if success and result == "success":
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
@@ -502,10 +970,9 @@ def _finish_step(
             artifact_hash=artifact_hash,
             verdict=(history_fields or {}).get("verdict"),
         )
-    save_state_merge_meta(plan_dir, state)
     resolved_next = next_step
     if resolved_next is _AUTO_NEXT_STEP:
-        next_steps = workflow_next(state)
+        next_steps = resolve_next_steps(state)
         resolved_next = next_steps[0] if next_steps else None
     response: StepResponse = {
         "success": success,
@@ -518,9 +985,17 @@ def _finish_step(
     }
     if response_fields:
         response.update(response_fields)
-    route_target = resolve_route_target_for_signal(step, response.get("route_signal"))
+    route_signal = response.get("route_signal")
+    route_target = None
+    if isinstance(route_signal, str) and route_signal:
+        authority_step = _ROUTE_SIGNAL_AUTHORITY_STEP_ALIASES.get(step, step)
+        route_target = resolve_lowered_route_target_for_signal(authority_step, route_signal)
     if route_target is not None:
-        response["next_step"] = route_target
+        apply_response_projection(
+            response,
+            route_signal=route_signal,
+            next_step=route_target,
+        )
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     # Emit the canonical phase_result.json for the auto driver
@@ -534,6 +1009,112 @@ def _finish_step(
         artifacts_written=tuple(artifacts),
         cli_provenance=_snapshot_cli_provenance(state),
     )
+    try:
+        strict_boundary_receipt = phase_wbc_required(step) and phase_wbc_state(state, step=step) is not None
+        receipt = _emit_boundary_receipt(
+            plan_dir=plan_dir,
+            state=state,
+            step=step,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            artifacts=artifacts,
+            output_file=output_file,
+            artifact_hash=artifact_hash,
+            response=response,
+            run_id=effective_run_id,
+            gate_summary=gate_summary,
+            strict=strict_boundary_receipt,
+        )
+        extra_receipts = tuple(
+            _emit_named_boundary_receipt(
+                boundary_id=boundary_id,
+                plan_dir=plan_dir,
+                state=state,
+                step=step,
+                worker=worker,
+                agent=agent,
+                mode=mode,
+                artifacts=artifacts,
+                output_file=output_file,
+                artifact_hash=artifact_hash,
+                response=response,
+                run_id=effective_run_id,
+                gate_summary=gate_summary,
+                strict=strict_boundary_receipt,
+            )
+            for boundary_id in extra_boundary_ids
+        )
+    except Exception as exc:
+        fail_phase_wbc(
+            state=state,
+            plan_dir=plan_dir,
+            step=step,
+            agent=agent,
+            payload={
+                "phase": step,
+                "status": "failed",
+                "failure_stage": "result_evidence",
+                "error_class": type(exc).__name__,
+                "message": str(exc),
+                "phase_result_ref": "phase_result.json",
+            },
+        )
+        raise
+    else:
+        if phase_wbc_required(step):
+            receipt_ids = [
+                emitted.boundary_id
+                for emitted in (receipt, *extra_receipts)
+                if emitted is not None
+            ]
+            if step == "prep" and str(response.get("prep_outcome")) == "awaiting_human":
+                clarification = state.get("clarification")
+                suspend_phase_wbc(
+                    state=state,
+                    plan_dir=plan_dir,
+                    step=step,
+                    agent=agent,
+                    checkpoint={
+                        "phase": step,
+                        "state": state.get("current_state"),
+                        "phase_result_ref": "phase_result.json",
+                        "output_file": output_file,
+                        "artifact_hash": artifact_hash,
+                        "clarification": (
+                            dict(clarification)
+                            if isinstance(clarification, dict)
+                            else None
+                        ),
+                    },
+                    cursor={
+                        "phase": step,
+                        "resume_action": "override:resume-clarify",
+                        "resume_state": "prepped",
+                        "next_phase": "plan",
+                    },
+                )
+            else:
+                complete_phase_wbc(
+                    state=state,
+                    plan_dir=plan_dir,
+                    step=step,
+                    agent=agent,
+                    payload={
+                        "phase": step,
+                        "status": "completed",
+                        "summary": summary,
+                        "next_step": response.get("next_step"),
+                        "phase_result_ref": "phase_result.json",
+                        "boundary_receipt_id": receipt.boundary_id if receipt is not None else None,
+                        "boundary_receipt_ids": receipt_ids,
+                        "artifacts_written": list(artifacts),
+                        "output_file": output_file,
+                        "artifact_hash": artifact_hash,
+                    },
+                )
+    clear_active_step(state, run_id=run_id)
+    save_state_merge_meta(plan_dir, state)
     return response
 
 
@@ -557,8 +1138,15 @@ def _write_json_artifact(plan_dir: Path, filename: str, payload: dict[str, Any])
     return sha256_file(plan_dir / filename)
 
 
-def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
-    """Write gate.json through _write_json_artifact and return the hash."""
+def _write_gate_json(
+    plan_dir: Path,
+    payload: dict[str, Any],
+    *,
+    iteration: int | None = None,
+) -> str:
+    """Write the legacy gate projection and, when known, immutable evidence."""
+    if iteration is not None:
+        write_immutable_json(plan_dir / f"gate_v{iteration}.json", payload)
     return _write_json_artifact(plan_dir, "gate.json", payload)
 
 
@@ -573,17 +1161,54 @@ def _normalize_plan_text(plan_text: str) -> str:
     # Fast path: already contains real newlines; leave it alone.
     if "\n" in plan_text:
         return plan_text
-    # If the text contains literal \\n but no real newlines, decode them.
+    # Decode only the JSON escapes that can make a one-line Markdown plan
+    # structurally invalid.  ``unicode_escape`` is deliberately not used here:
+    # it can turn a valid ``\\u00a3`` escape into a lone 0xa3 byte during its
+    # raw-unicode repair round trip, raising UnicodeDecodeError and aborting an
+    # otherwise valid execute phase.
     if "\\n" in plan_text or "\\r" in plan_text:
-        decoded = plan_text.encode("utf-8").decode("unicode_escape")
-        # unicode_escape may turn actual Unicode into latin-1 approximations in
-        # some Python versions; re-encode/decode via raw_unicode_escape to keep
-        # the original code points. Fall back to the decoded string if that fails.
-        try:
-            decoded = decoded.encode("raw_unicode_escape").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
-        decoded = decoded.replace("\r\n", "\n").replace("\r", "\n")
+        decoded_parts: list[str] = []
+        index = 0
+        while index < len(plan_text):
+            char = plan_text[index]
+            if char != "\\" or index + 1 >= len(plan_text):
+                decoded_parts.append(char)
+                index += 1
+                continue
+
+            escape = plan_text[index + 1]
+            if escape == "n":
+                decoded_parts.append("\n")
+                index += 2
+                continue
+            if escape == "r":
+                if index + 3 < len(plan_text) and plan_text[index + 2 : index + 4] == "\\n":
+                    decoded_parts.append("\n")
+                    index += 4
+                else:
+                    decoded_parts.append("\n")
+                    index += 2
+                continue
+            if escape == "u" and index + 5 < len(plan_text):
+                digits = plan_text[index + 2 : index + 6]
+                try:
+                    codepoint = int(digits, 16)
+                except ValueError:
+                    codepoint = -1
+                # Decode valid scalar values, leaving malformed and surrogate
+                # escapes literal rather than constructing invalid text.
+                if codepoint >= 0 and not 0xD800 <= codepoint <= 0xDFFF:
+                    decoded_parts.append(chr(codepoint))
+                    index += 6
+                    continue
+
+            # Do not reinterpret unrelated escapes (for example ``\\t`` or
+            # ``\\\\`` in a code sample).  They are not required to restore
+            # Markdown structure and decoding them changes user content.
+            decoded_parts.append(char)
+            index += 1
+
+        decoded = "".join(decoded_parts)
         if "\n" in decoded:
             return decoded
     return plan_text
@@ -601,6 +1226,10 @@ def _write_plan_version(
     plan_filename: str | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     plan_text = _normalize_plan_text(plan_text)
+    # Verify the immutable predecessor chain before structural validation or
+    # any new plan/meta bytes are emitted.  A model or external process that
+    # mutates plan_v2 must fail closed before plan_v3 can hide that mutation.
+    verify_prior_plan_versions(plan_dir=plan_dir, state=state)
     resolved_plan_filename = plan_filename or next_plan_artifact_name(plan_dir, version)
     meta_filename = (
         f"plan_v{version}.meta.json"

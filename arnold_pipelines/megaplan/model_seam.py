@@ -24,8 +24,11 @@ working unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import stat
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -77,7 +80,13 @@ from arnold.pipeline.model_seam import (
     _repair_invocation,
 )
 
-from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    schema_mapping_at_path,
+    schema_owned_field_drops,
+    schema_property_names,
+)
 from arnold_pipelines.megaplan.orchestration.plan_structure import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     validate_plan_structure,
@@ -89,7 +98,6 @@ from arnold_pipelines.megaplan.step_contracts import (
     build_compatibility_mode_by_step,
     contract_to_invocation,
 )
-
 
 # --------------------------------------------------------------------------- #
 # Megaplan render helpers
@@ -196,9 +204,71 @@ def render_compact_review_prompt(
     )
 
 
+def render_compact_gate_prompt(
+    agent: str,
+    step: str,
+    state: Mapping[str, Any],
+    plan_dir: Path,
+    *,
+    root: Path | None = None,
+    worker: str | None = None,
+    model: str | None = None,
+    normalized_model: str | None = None,
+    tier: ModelTier | str = ModelTier.NON_ENFORCED,
+    schema: Mapping[str, Any] | None = None,
+    prompt_size_error: dict[str, Any] | None = None,
+    contract_context: Mapping[str, Any] | None = None,
+) -> RenderedStepMessage:
+    """Render a compacted gate prompt through the model seam.
+
+    Mirrors :func:`render_compact_review_prompt`: the normal gate prompt embeds
+    the full plan, plan metadata, gate signals and the complete open-flag set
+    (with evidence + revise summaries).  On large milestones with many flags the
+    prompt can exceed the phase size guard; this bounded projection keeps every
+    flag id/severity/status/category/weight and all fail-closed decision
+    requirements while truncating long prose and dropping the redundant flag
+    duplicates.  The full artifacts remain on disk for file-tool inspection.
+    """
+
+    from arnold_pipelines.megaplan.prompts.gate import compact_gate_prompt
+
+    compacted_text = compact_gate_prompt(
+        state,  # type: ignore[arg-type]
+        plan_dir,
+        root,
+        contract_context=contract_context,
+        prompt_size_error=prompt_size_error,
+    )
+    tier_value = tier.value if isinstance(tier, ModelTier) else str(tier)
+    return render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": tier_value,
+                "worker": worker or agent,
+                "model": normalized_model or model,
+                "normalized_model": normalized_model or model,
+                "validation_step": step,
+                "prompt": compacted_text,
+                "prompt_components": compacted_text,
+                "schema": dict(schema) if schema is not None else None,
+            },
+        )
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Capture path (recovery-aware wrapper around the generic core)
 # --------------------------------------------------------------------------- #
+
+
+LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA = (
+    "arnold.megaplan.local-strict-artifact-handoff.v1"
+)
+LOCAL_STRICT_ARTIFACT_RECEIPT_FIELDS = frozenset(
+    {"schema", "path", "sha256", "bytes"}
+)
+DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES = 16 * 1024 * 1024
 
 
 def capture_step_output(
@@ -216,7 +286,10 @@ def capture_step_output(
     """
 
     legacy_payload, capture_sources = _capture_payload(invocation, output)
-    legacy_payload = _normalize_native_capture_payload(invocation, legacy_payload)
+    legacy_payload = _normalize_capture_payload_with_contract(
+        invocation,
+        legacy_payload,
+    )
     legacy_payload = _compatibility_projection(invocation, legacy_payload)
     telemetry = ModelSeamTelemetry.from_invocation(
         invocation,
@@ -234,7 +307,12 @@ def capture_step_output(
         ),
     )
     try:
-        _audit_capture_payload(invocation, legacy_payload, contract)
+        _audit_capture_payload(
+            invocation,
+            legacy_payload,
+            contract,
+            already_normalized=True,
+        )
     except ModelStructuralAuditError:
         if telemetry.tier.enforced:
             raise
@@ -269,6 +347,8 @@ def _capture_payload(
         raise TypeError(
             f"model output must be a mapping or JSON string, got {type(output).__name__}"
         )
+    if _uses_local_strict_json(invocation):
+        return _capture_local_strict_json(invocation, output)
     recovery = invocation.metadata.get("capture_recovery")
     if isinstance(recovery, Mapping) and bool(recovery.get("prefer_output_file", False)):
         recovered = _recover_payload_for_invocation(invocation, output)
@@ -284,6 +364,261 @@ def _capture_payload(
     if not isinstance(parsed, Mapping):
         raise TypeError("model output JSON must contain an object")
     return dict(parsed), ("model_step_output",)
+
+
+def _uses_local_strict_json(invocation: StepInvocation) -> bool:
+    attestation = invocation.metadata.get("response_enforcement_attestation")
+    return bool(
+        isinstance(attestation, Mapping)
+        and attestation.get("response_enforcement") == "local_strict_json"
+    )
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ModelStructuralAuditError(
+                f"duplicate JSON object key: {key!r}"
+            )
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json_constant(value: str) -> None:
+    raise ModelStructuralAuditError(
+        f"non-finite JSON number is forbidden: {value}"
+    )
+
+
+def _parse_exact_json_object(raw: str) -> dict[str, Any]:
+    """Parse one RFC-JSON object without the legacy candidate recovery path."""
+
+    parsed = json.loads(
+        raw,
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_constant=_reject_non_finite_json_constant,
+    )
+    if not isinstance(parsed, Mapping):
+        raise ModelStructuralAuditError(
+            "model output JSON must contain exactly one object"
+        )
+    return dict(parsed)
+
+
+def _capture_local_strict_json(
+    invocation: StepInvocation,
+    raw: str,
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Capture the exact Codex output selected for local response enforcement.
+
+    Local-strict mode exists specifically because the provider cannot enforce
+    the canonical schema.  Falling back to fenced/prose/template candidate
+    extraction here would quietly weaken that boundary, so only the dedicated
+    ``-o`` response file (or, when absent, the exact supplied string) is parsed.
+    """
+
+    from arnold_pipelines.megaplan.provider_response import schema_sha256
+
+    attestation = invocation.metadata.get("response_enforcement_attestation")
+    if not isinstance(attestation, Mapping):
+        raise ModelStructuralAuditError(
+            "local-strict JSON capture requires a response-enforcement attestation"
+        )
+    schema = invocation.metadata.get("schema")
+    if not isinstance(schema, Mapping):
+        raise ModelStructuralAuditError(
+            "local-strict JSON capture requires the attested canonical schema"
+        )
+    expected_hash = schema_sha256(schema)
+    if attestation.get("canonical_schema_hash") != expected_hash:
+        raise ModelStructuralAuditError(
+            "local-strict response attestation does not bind the active schema"
+        )
+
+    selected = raw
+    provenance = "model_step_output"
+    recovery = invocation.metadata.get("capture_recovery")
+    if isinstance(recovery, Mapping):
+        output_path = recovery.get("output_path")
+        if output_path is not None:
+            try:
+                output_text = Path(output_path).read_text(encoding="utf-8")
+            except (FileNotFoundError, OSError, UnicodeDecodeError):
+                output_text = ""
+            if output_text.strip():
+                selected = output_text
+                provenance = "output_file_exact_json"
+    selected_payload = _parse_exact_json_object(selected)
+    if selected_payload.get("schema") == LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA:
+        artifact_payload = _capture_local_strict_artifact(
+            invocation,
+            selected_payload,
+        )
+        return artifact_payload, (
+            "model_step_output",
+            "codex_capture:artifact_handoff",
+        )
+    return selected_payload, (
+        "model_step_output",
+        f"codex_capture:{provenance}",
+    )
+
+
+def _capture_local_strict_artifact(
+    invocation: StepInvocation,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Verify and read an explicitly pre-authorized local-strict artifact.
+
+    The expected path is minted by the dispatcher for one invocation.  The
+    model cannot nominate an arbitrary file, and the candidate never becomes
+    authoritative merely by existing: the ordinary capture schema and phase
+    semantic audits still run before the handler writes canonical artifacts.
+    """
+
+    recovery = invocation.metadata.get("capture_recovery")
+    handoff = recovery.get("artifact_handoff") if isinstance(recovery, Mapping) else None
+    if not isinstance(handoff, Mapping):
+        raise ModelStructuralAuditError(
+            "local-strict artifact receipt was not authorized for this invocation"
+        )
+    if set(receipt) != LOCAL_STRICT_ARTIFACT_RECEIPT_FIELDS:
+        raise ModelStructuralAuditError(
+            "local-strict artifact receipt must contain exactly schema, path, sha256, bytes"
+        )
+    receipt_path = receipt.get("path")
+    receipt_sha = receipt.get("sha256")
+    receipt_bytes = receipt.get("bytes")
+    expected_path_raw = handoff.get("candidate_path")
+    root_raw = handoff.get("root")
+    if not all(isinstance(value, str) and value for value in (receipt_path, expected_path_raw, root_raw)):
+        raise ModelStructuralAuditError("local-strict artifact path binding is invalid")
+    if receipt_path != expected_path_raw:
+        raise ModelStructuralAuditError(
+            "local-strict artifact receipt path does not match the invocation candidate"
+        )
+    if not isinstance(receipt_sha, str) or re.fullmatch(r"[0-9a-f]{64}", receipt_sha) is None:
+        raise ModelStructuralAuditError("local-strict artifact receipt sha256 is invalid")
+    if isinstance(receipt_bytes, bool) or not isinstance(receipt_bytes, int) or receipt_bytes <= 0:
+        raise ModelStructuralAuditError("local-strict artifact receipt bytes is invalid")
+    configured_max = handoff.get("max_bytes", DEFAULT_LOCAL_STRICT_ARTIFACT_MAX_BYTES)
+    if isinstance(configured_max, bool) or not isinstance(configured_max, int) or configured_max <= 0:
+        raise ModelStructuralAuditError("local-strict artifact maximum size is invalid")
+    if receipt_bytes > configured_max:
+        raise ModelStructuralAuditError("local-strict artifact exceeds the configured size limit")
+
+    root = Path(root_raw)
+    candidate = Path(receipt_path)
+    if not root.is_absolute() or not candidate.is_absolute():
+        raise ModelStructuralAuditError("local-strict artifact paths must be absolute")
+    try:
+        root_resolved = root.resolve(strict=True)
+        candidate_parent_resolved = candidate.parent.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise ModelStructuralAuditError(
+            "local-strict artifact root or parent is unavailable"
+        ) from error
+    if root_resolved != root or candidate_parent_resolved != candidate.parent:
+        raise ModelStructuralAuditError(
+            "local-strict artifact path contains a symlink or non-canonical component"
+        )
+    if candidate.parent != root or root_resolved not in candidate.parents:
+        raise ModelStructuralAuditError(
+            "local-strict artifact path escapes its invocation handoff root"
+        )
+    try:
+        root_stat = os.lstat(root)
+        candidate_stat = os.lstat(candidate)
+    except (FileNotFoundError, OSError) as error:
+        raise ModelStructuralAuditError("local-strict artifact candidate is unavailable") from error
+    if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        raise ModelStructuralAuditError("local-strict artifact root is not a real directory")
+    if (
+        not stat.S_ISREG(candidate_stat.st_mode)
+        or stat.S_ISLNK(candidate_stat.st_mode)
+        or candidate_stat.st_nlink != 1
+    ):
+        raise ModelStructuralAuditError(
+            "local-strict artifact candidate must be one non-symlink regular file"
+        )
+    if candidate_stat.st_size != receipt_bytes:
+        raise ModelStructuralAuditError("local-strict artifact byte count does not match receipt")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(candidate, flags)
+    except OSError as error:
+        raise ModelStructuralAuditError("local-strict artifact candidate could not be opened safely") from error
+    try:
+        opened = os.fstat(fd)
+        if (
+            (opened.st_dev, opened.st_ino) != (candidate_stat.st_dev, candidate_stat.st_ino)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size != receipt_bytes
+        ):
+            raise ModelStructuralAuditError(
+                "local-strict artifact candidate identity changed before read"
+            )
+        chunks: list[bytes] = []
+        remaining = configured_max + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        after = os.fstat(fd)
+        if (
+            (after.st_dev, after.st_ino, after.st_size)
+            != (opened.st_dev, opened.st_ino, opened.st_size)
+        ):
+            raise ModelStructuralAuditError(
+                "local-strict artifact candidate changed during read"
+            )
+    finally:
+        os.close(fd)
+    if len(data) != receipt_bytes or len(data) > configured_max:
+        raise ModelStructuralAuditError("local-strict artifact bounded read did not match receipt")
+    if hashlib.sha256(data).hexdigest() != receipt_sha:
+        raise ModelStructuralAuditError("local-strict artifact digest does not match receipt")
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise ModelStructuralAuditError("local-strict artifact is not UTF-8 JSON") from error
+    return _parse_exact_json_object(text)
+
+
+def local_strict_repair_input(
+    invocation: StepInvocation,
+    selected_output: str,
+) -> str:
+    """Return the complete selected object that a semantic repair must see.
+
+    In artifact-handoff mode the selected terminal response is only a receipt.
+    Once that receipt and its candidate have passed the same custody checks as
+    ordinary capture, repair must operate on the candidate object rather than
+    the receipt.  Invalid or untrusted receipts remain unchanged so repair
+    cannot use this helper to read an arbitrary path.
+    """
+
+    try:
+        selected_payload = _parse_exact_json_object(selected_output)
+    except ModelStructuralAuditError:
+        return selected_output
+    if selected_payload.get("schema") != LOCAL_STRICT_ARTIFACT_RECEIPT_SCHEMA:
+        return selected_output
+    try:
+        artifact_payload = _capture_local_strict_artifact(invocation, selected_payload)
+    except ModelStructuralAuditError:
+        return selected_output
+    return json.dumps(
+        artifact_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -315,6 +650,8 @@ def _audit_capture_payload(
     invocation: StepInvocation,
     payload: Mapping[str, Any],
     contract: ContractResult,
+    *,
+    already_normalized: bool = False,
 ) -> None:
     step = _optional_str(
         invocation.metadata.get("compatibility_validation_step")
@@ -327,7 +664,18 @@ def _audit_capture_payload(
         schema = _capture_schema_for_invocation(invocation)
     normalized_payload: Mapping[str, Any] = payload
     if isinstance(schema, Mapping):
-        normalized_payload = _normalize_native_capture_payload(invocation, dict(payload))
+        if step == "gate":
+            # Use the exact recursively strict contract materialized for the
+            # worker.  Closing objects alone is insufficient: OpenAI-strict
+            # materialization also promotes every declared property to
+            # ``required``.  Every gate reader must therefore validate the
+            # same shape the producer was instructed to emit.
+            schema = strict_schema(schema)
+        normalized_payload = (
+            payload
+            if already_normalized
+            else _normalize_capture_payload_with_contract(invocation, payload)
+        )
         result = validate_payload_against_schema(normalized_payload, schema)
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())
@@ -345,6 +693,39 @@ def _audit_capture_payload(
                 raise ModelStructuralAuditError(PLAN_STRUCTURE_REQUIRED_STEP_ISSUE)
 
 
+def _normalize_capture_payload_with_contract(
+    invocation: StepInvocation,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize once and reject any undeclared schema-owned field loss."""
+
+    step = _optional_str(
+        invocation.metadata.get("compatibility_validation_step")
+        or invocation.metadata.get("validation_step")
+    )
+    schema = invocation.metadata.get("capture_schema") or invocation.metadata.get(
+        "output_schema"
+    )
+    if not isinstance(schema, Mapping):
+        schema = invocation.metadata.get("schema")
+    if not isinstance(schema, Mapping):
+        schema = _capture_schema_for_invocation(invocation)
+    normalized = _normalize_native_capture_payload(invocation, dict(payload))
+    if not isinstance(schema, Mapping):
+        return normalized
+    dropped = tuple(
+        pointer
+        for pointer in schema_owned_field_drops(payload, normalized, schema)
+        if not _schema_owned_drop_is_declared(step, pointer)
+    )
+    if dropped:
+        raise ModelStructuralAuditError(
+            "schema_owned_field_dropped during capture normalization at "
+            + ", ".join(dropped)
+        )
+    return normalized
+
+
 def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, Any] | None:
     step = _optional_str(
         invocation.metadata.get("compatibility_validation_step")
@@ -354,10 +735,31 @@ def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, A
     if schema_key is not None:
         schema = SCHEMAS.get(schema_key)
         if isinstance(schema, Mapping):
-            capture_schema = deepcopy(schema)
+            capture_schema = (
+                strict_schema(deepcopy(schema))
+                if step == "gate"
+                else deepcopy(schema)
+            )
             capture_schema.setdefault("additionalProperties", False)
             return capture_schema
     return None
+
+
+def _schema_owned_drop_is_declared(step: str | None, pointer: str) -> bool:
+    """Return whether a lossy compatibility transform is explicitly owned."""
+
+    if step != "finalize":
+        return False
+    # OpenAI-strict finalize schemas carry nullable task stance objects. The
+    # authored/stored schema treats them as optional objects, so the adapter
+    # deliberately removes null transport placeholders before local audit.
+    parts = pointer.strip("/").split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == "tasks"
+        and parts[1].isdigit()
+        and parts[2] in {"stance", "stop_signal"}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -413,14 +815,7 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
             continue
         update = {
             key: item[key]
-            for key in (
-                "task_id",
-                "status",
-                "executor_notes",
-                "files_changed",
-                "commands_run",
-                "auto_attributed_files",
-            )
+            for key in execute_capture_task_field_names()
             if key in item
         }
         if "task_id" not in update and isinstance(item.get("id"), str):
@@ -447,16 +842,57 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
         if not isinstance(item, Mapping):
             acknowledgments.append(item)
             continue
-        acknowledgment = {
-            key: item[key]
-            for key in ("sense_check_id", "executor_note")
-            if key in item
-        }
+        acknowledgment = project_schema_owned_fields(
+            item,
+            _execute_capture_sense_check_schema(),
+            contract="execute sense-check capture normalization",
+        )
         if "sense_check_id" not in acknowledgment and isinstance(item.get("id"), str):
             acknowledgment["sense_check_id"] = item["id"]
         acknowledgments.append(acknowledgment)
     normalized["sense_check_acknowledgments"] = acknowledgments
     return normalized
+
+
+_EXECUTE_TASK_CAPTURE_EXTENSION_FIELDS: frozenset[str] = frozenset(
+    {
+        # These fields are handler evidence attached before or immediately
+        # after structural capture. They are not model-schema fields, but they
+        # are part of the durable execute envelope and must survive the adapter.
+        "evidence_files",
+        "sections_written",
+        "stance",
+        "stop_signal",
+        "stance_violations",
+        "head_sha",
+        "code_hash",
+    }
+)
+
+
+def _execute_capture_task_schema() -> Mapping[str, Any]:
+    return schema_mapping_at_path(
+        SCHEMAS["execution_batch_relaxed.json"],
+        ("properties", "task_updates", "items"),
+        contract="execute task capture schema",
+    )
+
+
+def _execute_capture_sense_check_schema() -> Mapping[str, Any]:
+    return schema_mapping_at_path(
+        SCHEMAS["execution_batch_relaxed.json"],
+        ("properties", "sense_check_acknowledgments", "items"),
+        contract="execute sense-check capture schema",
+    )
+
+
+def execute_capture_task_field_names() -> frozenset[str]:
+    """Return schema fields plus documented execute-envelope extensions."""
+
+    return schema_property_names(
+        _execute_capture_task_schema(),
+        contract="execute task capture normalization",
+    ) | _EXECUTE_TASK_CAPTURE_EXTENSION_FIELDS
 
 
 def _normalize_prep_distill_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -489,22 +925,30 @@ def _normalize_prep_key_evidence(item: Any) -> Any:
         return {"point": item, "source": "prep-distill", "relevance": "medium"}
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "key_evidence", "items"),
+            contract="prep key-evidence capture schema",
+        ),
+        contract="prep key-evidence capture normalization",
+    )
     if "point" not in normalized:
         normalized["point"] = _optional_str(
-            normalized.get("finding")
-            or normalized.get("summary")
-            or normalized.get("text")
-            or normalized.get("claim")
+            item.get("finding")
+            or item.get("summary")
+            or item.get("text")
+            or item.get("claim")
         ) or ""
     if "source" not in normalized:
         normalized["source"] = _optional_str(
-            normalized.get("file")
-            or normalized.get("file_path")
-            or normalized.get("code_ref")
+            item.get("file")
+            or item.get("file_path")
+            or item.get("code_ref")
         ) or "prep-distill"
-    normalized["relevance"] = _normalize_prep_relevance(normalized.get("relevance"))
-    return {key: normalized[key] for key in ("point", "source", "relevance")}
+    normalized["relevance"] = _normalize_prep_relevance(item.get("relevance"))
+    return normalized
 
 
 def _normalize_prep_relevant_code(item: Any) -> Any:
@@ -512,27 +956,38 @@ def _normalize_prep_relevant_code(item: Any) -> Any:
         return {"file_path": item, "why": "Referenced by prep-distill.", "functions": []}
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "relevant_code", "items"),
+            contract="prep relevant-code capture schema",
+        ),
+        contract="prep relevant-code capture normalization",
+    )
     file_path = _optional_str(
-        normalized.get("file_path")
-        or normalized.get("path")
-        or normalized.get("file")
-        or normalized.get("code_ref")
+        item.get("file_path")
+        or item.get("path")
+        or item.get("file")
+        or item.get("code_ref")
     ) or ""
     why = _optional_str(
-        normalized.get("why")
-        or normalized.get("reason")
-        or normalized.get("summary")
-        or normalized.get("note")
+        item.get("why")
+        or item.get("reason")
+        or item.get("summary")
+        or item.get("note")
     ) or "Referenced by prep-distill."
-    functions = normalized.get("functions")
+    functions = item.get("functions")
     if functions is None:
-        functions = normalized.get("symbols")
-    return {
-        "file_path": file_path,
-        "why": why,
-        "functions": [_optional_str(item) or "" for item in _as_sequence(functions)],
-    }
+        functions = item.get("symbols")
+    normalized.update(
+        {
+            "file_path": file_path,
+            "why": why,
+            "functions": [_optional_str(item) or "" for item in _as_sequence(functions)],
+        }
+    )
+    return normalized
 
 
 def _normalize_prep_test_expectation(index: int, item: Any) -> Any:
@@ -544,22 +999,33 @@ def _normalize_prep_test_expectation(index: int, item: Any) -> Any:
         }
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "test_expectations", "items"),
+            contract="prep test-expectation capture schema",
+        ),
+        contract="prep test-expectation capture normalization",
+    )
     test_id = _optional_str(
-        normalized.get("test_id")
-        or normalized.get("id")
-        or normalized.get("name")
+        item.get("test_id")
+        or item.get("id")
+        or item.get("name")
     ) or f"prep-distill-{index}"
     what_it_checks = _optional_str(
-        normalized.get("what_it_checks")
-        or normalized.get("checks")
-        or normalized.get("expectation")
-        or normalized.get("description")
+        item.get("what_it_checks")
+        or item.get("checks")
+        or item.get("expectation")
+        or item.get("description")
     ) or ""
-    status = normalized.get("status")
+    status = item.get("status")
     if status not in {"fail_to_pass", "pass_to_pass"}:
         status = "pass_to_pass"
-    return {"test_id": test_id, "what_it_checks": what_it_checks, "status": status}
+    normalized.update(
+        {"test_id": test_id, "what_it_checks": what_it_checks, "status": status}
+    )
+    return normalized
 
 
 def _normalize_prep_open_question(item: Any) -> Any:
@@ -567,24 +1033,31 @@ def _normalize_prep_open_question(item: Any) -> Any:
         return {"severity": "assume_and_proceed", "question": item}
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
-    classification = _optional_str(normalized.pop("classification", None))
-    if normalized.get("severity") not in {"blocking", "assume_and_proceed"}:
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "open_questions", "items"),
+            contract="prep open-question capture schema",
+        ),
+        contract="prep open-question capture normalization",
+    )
+    classification = _optional_str(item.get("classification"))
+    if item.get("severity") not in {"blocking", "assume_and_proceed"}:
         if classification == "blocking":
             normalized["severity"] = "blocking"
         else:
             normalized["severity"] = "assume_and_proceed"
+    else:
+        normalized["severity"] = item["severity"]
     normalized["question"] = _optional_str(
-        normalized.get("question")
-        or normalized.get("gap")
-        or normalized.get("issue")
-        or normalized.get("text")
+        item.get("question")
+        or item.get("gap")
+        or item.get("issue")
+        or item.get("text")
     ) or ""
-    return {
-        "severity": normalized["severity"],
-        "question": normalized["question"],
-        "assumption": _optional_str(normalized.get("assumption")) or "",
-    }
+    normalized["assumption"] = _optional_str(item.get("assumption")) or ""
+    return normalized
 
 
 def _normalize_prep_relevance(value: Any) -> str:
@@ -637,8 +1110,11 @@ def _normalize_critique_capture_payload(payload: dict[str, Any]) -> dict[str, An
     # Strip hallucinated extra properties so strict JSON schemas
     # (additionalProperties=false) don't fail on keys like `check_id`
     # or `critique_iteration` that models occasionally invent.
-    allowed_top = {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
-    normalized = {k: v for k, v in payload.items() if k in allowed_top}
+    normalized = project_schema_owned_fields(
+        payload,
+        SCHEMAS["critique.json"],
+        contract="critique capture normalization",
+    )
 
     checks = normalized.get("checks")
     if isinstance(checks, list):
@@ -660,8 +1136,15 @@ def _normalize_critique_capture_payload(payload: dict[str, Any]) -> dict[str, An
 
 
 def _normalize_critique_check(check: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {"id", "question", "findings"}
-    normalized = {k: v for k, v in check.items() if k in allowed}
+    normalized = project_schema_owned_fields(
+        check,
+        schema_mapping_at_path(
+            SCHEMAS["critique.json"],
+            ("properties", "checks", "items"),
+            contract="critique check capture schema",
+        ),
+        contract="critique check capture normalization",
+    )
     findings = normalized.get("findings")
     if isinstance(findings, list):
         normalized["findings"] = [
@@ -672,18 +1155,34 @@ def _normalize_critique_check(check: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_critique_finding(finding: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {"detail", "flagged"}
-    return {k: v for k, v in finding.items() if k in allowed}
+    return project_schema_owned_fields(
+        finding,
+        schema_mapping_at_path(
+            SCHEMAS["critique.json"],
+            ("properties", "checks", "items", "properties", "findings", "items"),
+            contract="critique finding capture schema",
+        ),
+        contract="critique finding capture normalization",
+    )
 
 
 def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
     # Models sometimes emit `severity`/`status` instead of the schema's
     # `severity_hint`.  Accept `severity` as an alias and drop other extras.
-    allowed = {"id", "concern", "category", "severity_hint", "severity", "evidence"}
-    normalized = {k: v for k, v in flag.items() if k in allowed}
+    flag_schema = schema_mapping_at_path(
+        SCHEMAS["critique.json"],
+        ("properties", "flags", "items"),
+        contract="critique flag capture schema",
+    )
+    normalized = project_schema_owned_fields(
+        flag,
+        flag_schema,
+        contract="critique flag capture normalization",
+    )
+    alias_severity = flag.get("severity")
     severity_hint = normalized.get("severity_hint")
-    if severity_hint is None and "severity" in normalized:
-        severity_hint = normalized.pop("severity")
+    if severity_hint is None and alias_severity is not None:
+        severity_hint = alias_severity
         normalized["severity_hint"] = severity_hint
     if severity_hint in {"high", "significant", "major", "critical"}:
         normalized["severity_hint"] = "likely-significant"
@@ -695,70 +1194,11 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_gate_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(payload)
-    normalized.pop("known_flag_ids", None)
-
-    resolutions = [
-        item
-        for item in normalized.get("flag_resolutions", [])
-        if isinstance(item, Mapping)
-    ]
-    accept_tradeoff_resolutions = [
-        item for item in resolutions if item.get("action") == "accept_tradeoff"
-    ]
-
-    tradeoffs: list[Any] = []
-    for index, item in enumerate(_as_sequence(normalized.get("accepted_tradeoffs"))):
-        resolution = (
-            accept_tradeoff_resolutions[index]
-            if index < len(accept_tradeoff_resolutions)
-            else {}
-        )
-        if isinstance(item, str):
-            text = item.strip()
-            if not text:
-                continue
-            tradeoffs.append(
-                {
-                    "flag_id": _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}",
-                    "concern": text,
-                    "subsystem": "",
-                    "rationale": _optional_str(resolution.get("rationale")) or "",
-                }
-            )
-            continue
-        if not isinstance(item, Mapping):
-            tradeoffs.append(item)
-            continue
-        tradeoff = dict(item)
-        tradeoff_text = _optional_str(tradeoff.pop("tradeoff", None))
-        if "flag_id" not in tradeoff:
-            tradeoff["flag_id"] = _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}"
-        if "concern" not in tradeoff:
-            tradeoff["concern"] = (
-                _optional_str(tradeoff.get("concern_brief"))
-                or tradeoff_text
-                or _optional_str(resolution.get("rationale"))
-                or ""
-            )
-        if "subsystem" not in tradeoff:
-            tradeoff["subsystem"] = ""
-        if "rationale" not in tradeoff:
-            tradeoff["rationale"] = (
-                _optional_str(tradeoff.get("rationale_brief"))
-                or _optional_str(resolution.get("rationale"))
-                or tradeoff_text
-                or ""
-            )
-        tradeoffs.append(
-            {
-                key: tradeoff[key]
-                for key in ("flag_id", "concern", "subsystem", "rationale")
-                if key in tradeoff
-            }
-        )
-    normalized["accepted_tradeoffs"] = tradeoffs
-    return normalized
+    # Keep capture lossless: validation must see both missing required fields
+    # and undeclared fields. Projecting before validation would turn a schema
+    # mismatch into silent data loss. Schema-owned projection is reserved for
+    # already-validated persistence boundaries.
+    return dict(payload)
 
 
 def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -781,7 +1221,11 @@ def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> di
 def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize structured provider plan output to the canonical plan schema."""
 
-    normalized: dict[str, Any] = {}
+    normalized: dict[str, Any] = project_schema_owned_fields(
+        payload,
+        SCHEMAS["plan.json"],
+        contract="plan capture normalization",
+    )
     if isinstance(payload.get("plan"), str):
         normalized["plan"] = payload["plan"]
         extracted = _extract_plan_markdown_metadata(payload["plan"])
@@ -794,53 +1238,70 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         normalized["assumptions"] = _normalize_plan_assumptions(
             payload.get("assumptions", extracted.get("assumptions"))
         )
-        # Pass through changed_surfaces and test_blast_radius if present
-        changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
-        if isinstance(changed, list):
-            normalized["changed_surfaces"] = [
-                str(s) for s in changed if isinstance(s, str) and s.strip()
-            ]
-        blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
-        if isinstance(blast, dict):
-            normalized["test_blast_radius"] = blast
+        normalized_changed, normalized_blast = _normalize_plan_test_proposal(
+            payload,
+            extracted,
+        )
+        normalized["changed_surfaces"] = normalized_changed
+        normalized["test_blast_radius"] = normalized_blast
         return normalized
 
     parts: list[str] = []
     title = _optional_str(payload.get("title"))
-    if title:
-        parts.append(f"# {title}")
     overview = _optional_str(payload.get("overview"))
-    if overview:
-        parts.append("## Overview")
-        parts.append(overview)
     steps = payload.get("steps")
-    if isinstance(steps, list):
+    if isinstance(steps, list) and steps:
+        # Deterministic Plan-IR -> canonical Markdown render (Gap 5).
+        # The structural auditor requires flat `## Step N:` headings, numbered
+        # substeps, and backticked file refs.  Render exactly that so a valid
+        # JSON steps[] payload never trips worker_structural_audit_failed.
+        if title:
+            parts.append(f"# {title}")
+        if overview:
+            parts.append("## Overview")
+            parts.append(overview)
         step_number = 1
         for step in steps:
-            if isinstance(step, Mapping):
-                step_title = _optional_str(step.get("title") or step.get("name"))
-                step_desc = _optional_str(step.get("description") or step.get("details"))
-                if step_title:
-                    if re.match(r"(?i)^step\s+\d+:", step_title):
-                        parts.append(f"### {step_title}")
+            if not isinstance(step, Mapping):
+                continue
+            step_title = _optional_str(step.get("title") or step.get("name") or f"Step {step_number}")
+            parts.append(f"## Step {step_number}: {step_title}")
+            step_desc = _optional_str(step.get("description") or step.get("details"))
+            if step_desc:
+                parts.append(step_desc)
+            files = step.get("files")
+            if isinstance(files, list) and files:
+                file_list = ", ".join(f"`{_optional_str(f)}`" for f in files if _optional_str(f))
+                if file_list:
+                    parts.append(f"Files: {file_list}")
+            actions = (
+                step.get("actions")
+                or step.get("substeps")
+                or step.get("instructions")
+            )
+            if isinstance(actions, list):
+                for idx, act in enumerate(actions, 1):
+                    if isinstance(act, Mapping):
+                        text = _optional_str(act.get("instruction") or act.get("text") or act.get("action"))
                     else:
-                        parts.append(f"### Step {step_number}: {step_title}")
-                    step_number += 1
-                if step_desc:
-                    parts.append(step_desc)
-                substeps = step.get("substeps") or step.get("instructions")
-                if isinstance(substeps, list):
-                    for sub in substeps:
-                        if isinstance(sub, Mapping):
-                            sub_text = _optional_str(
-                                sub.get("instruction") or sub.get("text")
-                            )
-                            if sub_text:
-                                parts.append(f"- {sub_text}")
-                        elif isinstance(sub, str):
-                            parts.append(f"- {sub}")
-            elif isinstance(step, str):
-                parts.append(f"- {step}")
+                        text = _optional_str(act)
+                    if text:
+                        parts.append(f"{idx}. {text}")
+            step_number += 1
+        if isinstance(payload.get("execution_order"), list) and payload["execution_order"]:
+            parts.append("## Execution Order")
+            for i, eid in enumerate(payload["execution_order"], 1):
+                parts.append(f"{i}. Step {eid}")
+        elif len(steps) > 1:
+            parts.append("## Execution Order")
+            for i in range(1, len(steps) + 1):
+                parts.append(f"{i}. Step {i}")
+    else:
+        if title:
+            parts.append(f"# {title}")
+        if overview:
+            parts.append("## Overview")
+            parts.append(overview)
     plan_text = payload.get("plan_text") or payload.get("markdown") or "\n\n".join(parts)
     if not isinstance(plan_text, str):
         plan_text = "\n\n".join(parts)
@@ -855,15 +1316,83 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized["assumptions"] = _normalize_plan_assumptions(
         payload.get("assumptions", extracted.get("assumptions"))
     )
-    # Pass through changed_surfaces and test_blast_radius if present
-    changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
-    if isinstance(changed, list):
-        normalized["changed_surfaces"] = [
-            str(s) for s in changed if isinstance(s, str) and s.strip()
-        ]
+    normalized_changed, normalized_blast = _normalize_plan_test_proposal(
+        payload,
+        extracted,
+    )
+    normalized["changed_surfaces"] = normalized_changed
+    normalized["test_blast_radius"] = normalized_blast
+    return normalized
+
+
+def _normalize_plan_test_proposal(
+    payload: Mapping[str, Any],
+    extracted: Mapping[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    """Materialize optional model hints without granting them floor authority."""
+
     blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
+    changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
+    if changed is None and isinstance(blast, Mapping):
+        changed = blast.get("changed_surfaces")
+    normalized_changed = _normalize_changed_surfaces(changed) or []
     if isinstance(blast, dict):
-        normalized["test_blast_radius"] = blast
+        normalized_blast = _normalize_blast_radius_proposal(
+            blast,
+            normalized_changed,
+        )
+    else:
+        normalized_blast = {
+            "strategy": "none",
+            "selectors": [],
+            "changed_surfaces": list(normalized_changed),
+            "full_suite_fallback": True,
+            "rationale": (
+                "The model omitted optional test-selection hints; the harness "
+                "must derive the authoritative repository floor."
+            ),
+        }
+    return normalized_changed, normalized_blast
+
+
+def _normalize_changed_surfaces(value: Any) -> list[str] | None:
+    """Normalize the two lossless planner encodings seen in provider output.
+
+    Providers sometimes group paths by created/modified surface.  The runtime
+    contract owns a flat path list; flattening list-valued groups preserves all
+    declared paths while deliberately ignoring prose notes.
+    """
+
+    candidates: list[Any]
+    if isinstance(value, list):
+        candidates = value
+    elif isinstance(value, dict):
+        candidates = [
+            item
+            for group in value.values()
+            if isinstance(group, list)
+            for item in group
+        ]
+    else:
+        return None
+    return list(
+        dict.fromkeys(
+            item.strip()
+            for item in candidates
+            if isinstance(item, str) and item.strip()
+        )
+    )
+
+
+def _normalize_blast_radius_proposal(
+    value: dict[str, Any],
+    changed_surfaces: list[str] | None,
+) -> dict[str, Any]:
+    """Bind a proposal to the already-normalized top-level path inventory."""
+
+    normalized = dict(value)
+    if not isinstance(normalized.get("changed_surfaces"), list) and changed_surfaces is not None:
+        normalized["changed_surfaces"] = list(changed_surfaces)
     return normalized
 
 
@@ -1408,6 +1937,7 @@ __all__ = [
     "assert_all_compatibility_modes_native",
     "install_model_step_adapter",
     "render_compact_review_prompt",
+    "render_compact_gate_prompt",
     "render_prompt_for_dispatch",
     "render_step_message",
     "schema_audits_step_payload",

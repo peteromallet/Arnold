@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan import handlers as _pkg
+from arnold_pipelines.megaplan.outcomes import GateOutcome
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,
     build_orchestrator_guidance,
@@ -14,8 +16,23 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_state_projection,
+    resolve_next_steps,
+    resolve_transition,
+)
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    validate_gate_input_custody,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    require_schema_fields,
+    schema_property_names,
+)
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED
 from arnold_pipelines.megaplan.workers import WorkerResult
@@ -36,9 +53,8 @@ from arnold_pipelines.megaplan._core import (
     require_state,
     save_debt_registry,
     workflow_includes_step,
-    workflow_next,
-    workflow_transition,
 )
+from arnold_pipelines.megaplan.flags import update_flags_after_gate
 
 from .critique import _validate_tiebreaker
 from .shared import (
@@ -53,6 +69,24 @@ from .shared import (
     log,
 )
 
+
+def _gate_debt_visibility_policy() -> dict[str, Any]:
+    from arnold_pipelines.megaplan.workflows.components import GATE_DEBT_VISIBILITY_POLICY
+
+    return GATE_DEBT_VISIBILITY_POLICY
+
+
+def _gate_reprompt_policy() -> dict[str, Any]:
+    from arnold_pipelines.megaplan.workflows.components import GATE_REPROMPT_POLICY
+
+    return GATE_REPROMPT_POLICY
+
+
+def _revise_loop_termination_policy() -> dict[str, Any]:
+    from arnold_pipelines.megaplan.workflows.components import REVISE_LOOP_TERMINATION_POLICY
+
+    return REVISE_LOOP_TERMINATION_POLICY
+
 def _build_gate_signals_artifact(
     plan_dir: Path,
     state: PlanState,
@@ -60,7 +94,17 @@ def _build_gate_signals_artifact(
     iteration: int,
     root: Path,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    try:
+        critique_custody = validate_gate_input_custody(plan_dir, state)
+    except CritiqueCustodyError as error:
+        raise CliError(
+            error.code,
+            str(error),
+            valid_next=["critique"],
+            extra={"issues": list(error.issues)},
+        ) from error
     gate_signals = build_gate_signals(plan_dir, state, root=root)
+    gate_signals.setdefault("signals", {})["critique_custody"] = critique_custody
     gate_checks = run_gate_checks(plan_dir, state, command_lookup=find_command)
     signals_artifact = {
         "robustness": gate_signals["robustness"],
@@ -69,6 +113,7 @@ def _build_gate_signals_artifact(
         "criteria_check": gate_checks["criteria_check"],
         "preflight_results": gate_checks["preflight_results"],
         "unresolved_flags": gate_checks["unresolved_flags"],
+        "critique_custody": critique_custody,
     }
     signals_filename = f"gate_signals_v{iteration}.json"
     atomic_write_json(plan_dir / signals_filename, signals_artifact)
@@ -137,6 +182,11 @@ def _gate_summary_for_transition(plan_dir: Path, state: PlanState) -> dict[str, 
     if carry_path.exists():
         carry = read_json(carry_path)
         if isinstance(carry, dict):
+            require_schema_fields(
+                carry,
+                SCHEMAS["gate.json"],
+                contract="gate transition carry consumption",
+            )
             normalized = dict(carry)
             recommendation = normalized.get("recommendation") or normalized.get("verdict")
             if recommendation is not None:
@@ -146,6 +196,11 @@ def _gate_summary_for_transition(plan_dir: Path, state: PlanState) -> dict[str, 
     if gate_path.exists():
         gate = read_json(gate_path)
         if isinstance(gate, dict):
+            require_schema_fields(
+                gate,
+                SCHEMAS["gate.json"],
+                contract="gate transition artifact consumption",
+            )
             return gate
     legacy = state.get("last_gate", {})
     return legacy if isinstance(legacy, dict) else {}
@@ -157,13 +212,13 @@ def _resolve_revise_transition(state: PlanState, plan_dir: Path) -> tuple[bool, 
     recommendation = gate_summary.get("recommendation") or gate_summary.get("verdict")
     if has_gate and recommendation != "ITERATE":
         raise CliError("invalid_transition", "Revise requires a gate recommendation of ITERATE", valid_next=infer_next_steps(state))
-    revise_transition = workflow_transition(state, "revise")
+    revise_transition = resolve_transition(state, "revise")
     if revise_transition is None:
         raise CliError("invalid_transition", "Revise is not available from the current workflow state", valid_next=infer_next_steps(state))
     return has_gate, revise_transition
 
 def _next_progress_step(state: PlanState) -> str | None:
-    next_steps = workflow_next(state)
+    next_steps = resolve_next_steps(state)
     return next((step for step in next_steps if step not in {"plan", "step"}), next_steps[0] if next_steps else None)
 
 def _remaining_significant_flags(plan_dir: Path) -> list[dict[str, str]]:
@@ -187,7 +242,17 @@ def _post_revise_gate_allowed(state: PlanState, plan_dir: Path) -> bool:
     return bool(history and isinstance(history[-1], dict) and history[-1].get("step") == "revise")
 
 def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_entries_added: int) -> dict[str, Any]:
+    require_schema_fields(
+        gate_summary,
+        SCHEMAS["gate.json"],
+        contract="gate response projection",
+    )
     return {
+        **project_schema_owned_fields(
+            gate_summary,
+            SCHEMAS["gate.json"],
+            contract="gate response projection",
+        ),
         "auto_approve": bool(state["config"].get("auto_approve", False)),
         "robustness": configured_robustness(state),
         "recommendation": gate_summary["recommendation"],
@@ -207,6 +272,7 @@ def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_e
 
 
 def _gate_debt_payload(gate_summary: dict[str, Any], debt_entries_added: int) -> dict[str, Any]:
+    debt_visibility_policy = _gate_debt_visibility_policy()
     return {
         "recommendation": gate_summary["recommendation"],
         "entries_added": debt_entries_added,
@@ -215,6 +281,8 @@ def _gate_debt_payload(gate_summary: dict[str, Any], debt_entries_added: int) ->
             for item in gate_summary.get("flag_resolutions", [])
             if isinstance(item, dict) and item.get("action") == "accept_tradeoff"
         ),
+        "visibility_effect": debt_visibility_policy["effect"],
+        "payload_fields": debt_visibility_policy["payload_fields"],
     }
 
 def _brief_text(value: object, *, sentences: int = 3, max_chars: int = 600) -> str:
@@ -268,6 +336,11 @@ def _normalize_settled_decisions(gate_summary: dict[str, Any]) -> list[dict[str,
 
 
 def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[str, Any]:
+    require_schema_fields(
+        gate_summary,
+        SCHEMAS["gate.json"],
+        contract="gate carry persistence",
+    )
     unresolved_by_id = {
         item.get("id"): item
         for item in gate_summary.get("unresolved_flags", [])
@@ -291,6 +364,11 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
         )
     recommendation = str(gate_summary.get("recommendation", "PROCEED"))
     return {
+        **project_schema_owned_fields(
+            gate_summary,
+            SCHEMAS["gate.json"],
+            contract="gate carry persistence",
+        ),
         "version": 1,
         "recommendation": recommendation,
         "passed": bool(gate_summary.get("passed", False)),
@@ -309,7 +387,17 @@ def _write_gate_carry(plan_dir: Path, gate_summary: dict[str, Any], *, iteration
 
 
 def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str, Any]) -> None:
+    require_schema_fields(
+        gate_summary,
+        SCHEMAS["gate.json"],
+        contract="legacy last_gate persistence",
+    )
     state["last_gate"] = {
+        **project_schema_owned_fields(
+            gate_summary,
+            SCHEMAS["gate.json"],
+            contract="legacy last_gate persistence",
+        ),
         "recommendation": gate_summary["recommendation"],
         "rationale": gate_summary["rationale"],
         "reprompted": bool(gate_summary.get("reprompted", False)),
@@ -320,6 +408,10 @@ def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str
         "preflight_results": gate_summary["preflight_results"],
         "orchestrator_guidance": gate_summary["orchestrator_guidance"],
     }
+    # This summary came from a genuine gate evaluation.  Any marker recording
+    # recovery of an older completed gate is now stale and must not continue to
+    # project the plan as blocked after a successful gate/revise transition.
+    state.setdefault("meta", {}).pop("gate_artifact_recovery", None)
 
 
 def _critique_cap_key(robustness: str) -> str:
@@ -328,18 +420,12 @@ def _critique_cap_key(robustness: str) -> str:
     Mirrors the review-loop cap selection (review.py): thorough/extreme pick
     up the higher robust cap, everything else the default cap.
     """
+    termination_policy = _revise_loop_termination_policy()
     return (
-        "max_robust_critique_iterations"
+        termination_policy["iteration_caps"]["robust_config_key"]
         if robustness in {"thorough", "extreme"}
-        else "max_critique_iterations"
+        else termination_policy["iteration_caps"]["default_config_key"]
     )
-
-
-# light revises straight to GATED (workflow_data.py:103-105); keep its critique
-# loop cheap by capping at 2 regardless of the configured max_critique_iterations,
-# which is sized for the full/default path. bare has no revise edge so its ITERATE
-# branch is unreachable and needs no cap (workflow_data.py:108-112).
-_LIGHT_CRITIQUE_CAP = 2
 
 
 def _effective_critique_cap(robustness: str) -> int:
@@ -350,8 +436,10 @@ def _effective_critique_cap(robustness: str) -> int:
     the cap because it has no revise edge.
     """
     cap = int(get_effective("execution", _critique_cap_key(robustness)))
-    if robustness == "light":
-        return min(cap, _LIGHT_CRITIQUE_CAP)
+    termination_policy = _revise_loop_termination_policy()
+    override = termination_policy["iteration_caps"]["robustness_overrides"].get(robustness)
+    if isinstance(override, dict) and "max_value" in override:
+        return min(cap, int(override["max_value"]))
     return cap
 
 
@@ -369,13 +457,6 @@ def _prior_iterate_rounds(state: PlanState) -> int:
     )
 
 
-# Severities that are unambiguously cosmetic — safe to defer at the cap.
-_COSMETIC_SEVERITIES = frozenset({"minor", "likely-minor", "trivial", "cosmetic", "low", "nit"})
-# Categories that carry correctness/security risk — a blocking flag in one of
-# these escalates at the cap even at moderate severity (P2).
-_CRITICAL_CATEGORIES = frozenset({"correctness", "security"})
-
-
 def _is_cap_blocking_flag(flag: dict[str, Any]) -> bool:
     """Whether ``flag`` must force ESCALATE (not force-proceed) at the cap.
 
@@ -388,13 +469,14 @@ def _is_cap_blocking_flag(flag: dict[str, Any]) -> bool:
     if flag.get("status") not in FLAG_BLOCKING_STATUSES:
         return False
     severity = flag.get("severity")
-    if severity in ("significant", "likely-significant"):
+    severity_policy = _revise_loop_termination_policy()["severity_policy"]
+    if severity in severity_policy["significant_severities"]:
         return True
-    if severity in _COSMETIC_SEVERITIES:
+    if severity in severity_policy["cosmetic_severities"]:
         return False
     # Non-cosmetic, non-significant (e.g. "moderate"/"uncertain"/unset):
     # escalate when the flag is correctness/security in nature.
-    return flag.get("category") in _CRITICAL_CATEGORIES
+    return flag.get("category") in severity_policy["critical_categories"]
 
 
 def _open_blocking_flags(gate_summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -486,8 +568,10 @@ def _critique_terminate_branch(
       at review.py:248-252). VERIFIED via workflow_data.py STATE_GATED→finalize.
     """
     open_critical = _open_blocking_flags(gate_summary)
+    termination_policy = _revise_loop_termination_policy()
     if open_critical:
-        state["current_state"] = STATE_BLOCKED
+        apply_state_projection(state, STATE_BLOCKED, route_signal="blocked")
+        outcome = termination_policy["cap_outcomes"]["critical_or_security_blockers"]
         summary = (
             f"{reason} with {len(open_critical)} unresolved correctness/security "
             "flag(s). Plan BLOCKED for human review — the critique loop will not "
@@ -495,7 +579,7 @@ def _critique_terminate_branch(
         )
         return {
             "result": "blocked",
-            "route_signal": "escalate",
+            "route_signal": outcome,
             "summary": summary,
             "blocking_unresolved_ids": [],
             "fallback_payload": {
@@ -503,14 +587,15 @@ def _critique_terminate_branch(
                 "reason": "correctness_or_security_flags",
             },
         }
-    state["current_state"] = STATE_GATED
+    apply_state_projection(state, STATE_GATED, route_signal="proceed")
+    outcome = termination_policy["cap_outcomes"]["cosmetic_only"]
     summary = (
         f"{reason}. Force-proceeding to finalize despite remaining cosmetic flags "
         "(deferred and recorded for audit)."
     )
     return {
         "result": "blocked",
-        "route_signal": "force_proceed",
+        "route_signal": outcome,
         "summary": summary,
         "blocking_unresolved_ids": [],
         "fallback_payload": {
@@ -596,10 +681,10 @@ def _build_gate_route_signal(
             update_flags_after_gate(plan_dir, valid_resolutions)
 
         if blocking_unresolved_ids:
-            state["current_state"] = STATE_CRITIQUED
+            apply_state_projection(state, STATE_CRITIQUED, route_signal="retry_gate")
             return {
                 "result": "unresolved_flags",
-                "route_signal": "retry_gate",
+                "route_signal": GateOutcome.RETRY_GATE,
                 "summary": summary,
                 "blocking_unresolved_ids": blocking_unresolved_ids,
                 "fallback_payload": {
@@ -609,7 +694,7 @@ def _build_gate_route_signal(
             }
 
     if gate_summary["recommendation"] == "PROCEED" and gate_summary["passed"]:
-        state["current_state"] = STATE_GATED
+        apply_state_projection(state, STATE_GATED, route_signal="proceed")
         state["meta"].pop("user_approved_gate", None)
         return {
             "result": result,
@@ -618,7 +703,7 @@ def _build_gate_route_signal(
             "blocking_unresolved_ids": [],
             "fallback_payload": None,
         }
-    state["current_state"] = STATE_CRITIQUED
+    apply_state_projection(state, STATE_CRITIQUED, route_signal="iterate")
     if gate_summary["recommendation"] == "PROCEED":
         result = "blocked"
         preflight_results = gate_summary.get("preflight_results", {})
@@ -662,7 +747,11 @@ def _build_gate_route_signal(
         no_progress_streak = _critique_no_progress_streak(state, gate_summary, plan_dir)
         prior_rounds = _prior_iterate_rounds(state)
         max_iter = _effective_critique_cap(robustness)
-        max_no_progress = get_effective("execution", "max_critique_no_progress")
+        no_progress_cap = _revise_loop_termination_policy()["no_progress_cap"]
+        max_no_progress = get_effective(
+            str(no_progress_cap["config_scope"]),
+            str(no_progress_cap["config_key"]),
+        )
         if prior_rounds >= max_iter:
             return _critique_terminate_branch(
                 state,
@@ -790,97 +879,47 @@ def _prior_unresolved_flag_ids(plan_dir: Path, current_iteration: int) -> set[st
         return set()
 
 
-# ── T10: Gate-scoped scratch promotion known keys ──────────────────────────
-# The model produces only these keys in the scratch template; unknown
-# top-level keys injected by the model are stripped before promotion.
-_GATE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
-    {
-        "recommendation",
-        "rationale",
-        "signals_assessment",
-        "warnings",
-        "flag_resolutions",
-        "accepted_tradeoffs",
-        "settled_decisions",
-    }
-)
-# ────────────────────────────────────────────────────────────────────────────
-
-
-_GATE_RECOMMENDATIONS: frozenset[str] = frozenset({"PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER"})
-
-
 def _normalize_gate_payload(
     gate_payload: dict[str, Any],
-    signals_artifact: dict[str, Any],
+    _signals_artifact: dict[str, Any],
 ) -> dict[str, Any]:
-    """Recover from an empty or structurally invalid gate worker payload.
-
-    Some worker/model combinations (notably DeepSeek via Hermes for the gate
-    phase) occasionally emit empty recommendation/rationale fields even when
-    the surrounding signals make the correct verdict obvious. Rather than
-    failing the whole gate, infer a conservative recommendation from the
-    computed signals and log a warning so the audit trail remains honest.
-    """
+    """Normalize values without synthesizing required contract fields."""
     recommendation = str(gate_payload.get("recommendation", "")).strip().upper()
-    if recommendation not in _GATE_RECOMMENDATIONS:
-        original = gate_payload.get("recommendation")
-        preflight = signals_artifact.get("preflight_results", {})
-        preflight_passed = isinstance(preflight, dict) and all(preflight.values())
-        unresolved = signals_artifact.get("unresolved_flags", [])
-        has_significant = bool(
-            isinstance(unresolved, list)
-            and any(
-                isinstance(f, dict)
-                and f.get("severity") in ("significant", "likely-significant")
-                for f in unresolved
-            )
-        )
-        if has_significant:
-            recommendation = "ITERATE"
-            reason = "significant unresolved flags remain"
-        elif not preflight_passed:
-            recommendation = "ESCALATE"
-            reason = "preflight checks are still failing"
-        else:
-            recommendation = "PROCEED"
-            reason = "no significant unresolved flags and preflight passed"
-        log.warning(
-            "Gate worker emitted invalid/empty recommendation %r; falling back to %s (%s)",
-            original,
-            recommendation,
-            reason,
-        )
+    if recommendation:
         gate_payload["recommendation"] = recommendation
-        if not str(gate_payload.get("rationale", "")).strip():
-            gate_payload["rationale"] = (
-                f"Auto-inferred {recommendation} because the gate worker returned an "
-                f"invalid/empty recommendation and {reason}."
-            )
-        if not str(gate_payload.get("signals_assessment", "")).strip():
-            gate_payload["signals_assessment"] = (
-                "No significant flags were raised by critique; proceeding to execution."
-                if recommendation == "PROCEED"
-                else "Critique signals require further attention before proceeding."
-            )
-
-    # Ensure required array fields exist so later schema validation passes.
-    gate_payload.setdefault("warnings", [])
-    gate_payload.setdefault("settled_decisions", [])
-    gate_payload.setdefault("flag_resolutions", [])
-    gate_payload.setdefault("accepted_tradeoffs", [])
-    # Strip placeholder/empty tradeoff objects emitted by some workers.
-    gate_payload["accepted_tradeoffs"] = [
-        item
-        for item in gate_payload["accepted_tradeoffs"]
-        if isinstance(item, dict)
-        and any(
-            str(value).strip()
-            for key, value in item.items()
-            if key in {"flag_id", "concern", "subsystem", "rationale"}
-        )
-    ]
     return gate_payload
+
+
+def _build_reprompt_downgrade_route(
+    gate_summary: dict[str, Any],
+    blocking_unresolved_ids: list[str],
+) -> tuple[dict[str, Any], str]:
+    downgrade_policy = _gate_reprompt_policy()["downgrade_on_unresolved_blockers"]
+    gate_summary["recommendation"] = str(downgrade_policy["recommendation"])
+    gate_summary["passed"] = bool(downgrade_policy["passed"])
+    gate_summary["rationale"] = (
+        f"{gate_summary['rationale']} "
+        f"[Auto-downgraded from PROCEED: {len(blocking_unresolved_ids)} "
+        "blocking flag(s) not resolved after reprompt]"
+    )
+    gate_summary["orchestrator_guidance"] = (
+        "Gate auto-downgraded to ITERATE because blocking flags remained "
+        "unresolved after reprompt. Revise the plan."
+    )
+    summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+    return (
+        {
+            "result": "blocked",
+            "route_signal": GateOutcome(str(downgrade_policy["route_signal"])),
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": {
+                "kind": downgrade_policy["fallback_kind"],
+                "blocking_unresolved_ids": list(blocking_unresolved_ids),
+            },
+        },
+        summary,
+    )
 
 
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -909,6 +948,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         # fail hard on modified invalid scratch when file-fill was
         # instructed (hermes agent).
         from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
             promote_scratch,
             require_scratch_filename_for_phase,
         )
@@ -924,15 +964,33 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
 
         _file_fill_instructed = agent == "hermes"
 
-        _, _promoted = promote_scratch(
+        _scratch_status, _promoted = promote_scratch(
             plan_dir,
             _scratch_filename,
-            _GATE_SCRATCH_KNOWN_KEYS,
+            schema_property_names(
+                SCHEMAS["gate.json"],
+                contract="gate scratch promotion",
+            ),
             worker,
             seed_json=_seed_json,
             file_fill_instructed=_file_fill_instructed,
         )
         worker.payload = _promoted
+
+        # ── T9: Structured promotion evidence (first attempt) ─────
+        _promotion_evidence = build_promotion_evidence(
+            plan_dir,
+            _scratch_status,
+            phase_identity="gate",
+            scratch_filename=_scratch_filename,
+            worker_payload_used=_scratch_status in ("missing", "unmodified"),
+        )
+        if _promotion_evidence:
+            log.debug(
+                "gate promotion evidence: %s",
+                [e["promotion_state"] for e in _promotion_evidence],
+            )
+        # ───────────────────────────────────────────────────────────
         # ────────────────────────────────────────────────────────────
 
         gate_payload = _normalize_gate_payload(worker.payload, signals_artifact)
@@ -978,18 +1036,32 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         result = route_signal["result"]
         summary = route_signal["summary"]
         blocking_unresolved_ids = list(route_signal["blocking_unresolved_ids"])
+        zero_recovery_canary = os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
+        if zero_recovery_canary and blocking_unresolved_ids:
+            raise CliError(
+                "zero_recovery_gate_not_proceed",
+                "finite canary gate may not reprompt unresolved blocking flags",
+            )
         if result == "tiebreaker_recommended":
-            result, next_step, summary = _validate_tiebreaker(
-                state, gate_summary, plan_dir, worker, args, agent,
-                resolved, signals_artifact, gate_signals, root,
-            )
-            route_signal["result"] = result
-            route_signal["summary"] = summary
-            route_signal["route_signal"] = (
-                "proceed" if next_step == "finalize"
-                else "iterate" if next_step == "revise"
-                else "escalate"
-            )
+            if zero_recovery_canary:
+                # The finite canary has no tiebreaker dispatch authority. Keep
+                # the model's TIEBREAKER product result intact and return it to
+                # the runner as terminal non-PROCEED evidence.
+                route_signal["result"] = "zero_recovery_tiebreaker_terminal"
+                route_signal["route_signal"] = "escalate"
+                result = "zero_recovery_tiebreaker_terminal"
+            else:
+                result, next_step, summary = _validate_tiebreaker(
+                    state, gate_summary, plan_dir, worker, args, agent,
+                    resolved, signals_artifact, gate_signals, root,
+                )
+                route_signal["result"] = result
+                route_signal["summary"] = summary
+                route_signal["route_signal"] = (
+                    "proceed" if next_step == "finalize"
+                    else "iterate" if next_step == "revise"
+                    else "escalate"
+                )
         if blocking_unresolved_ids:
             reprompt_prompt = _build_gate_prompt_override(
                 agent,
@@ -1021,15 +1093,33 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 except (OSError, UnicodeDecodeError):
                     _retry_seed_json = None
 
-            _, _retry_promoted = promote_scratch(
+            _retry_scratch_status, _retry_promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
-                _GATE_SCRATCH_KNOWN_KEYS,
+                schema_property_names(
+                    SCHEMAS["gate.json"],
+                    contract="gate scratch reprompt promotion",
+                ),
                 retry_worker,
                 seed_json=_retry_seed_json,
                 file_fill_instructed=_file_fill_instructed,
             )
             retry_worker.payload = _retry_promoted
+
+            # ── T9: Structured promotion evidence (reprompt) ─────
+            _retry_promotion_evidence = build_promotion_evidence(
+                plan_dir,
+                _retry_scratch_status,
+                phase_identity="gate",
+                scratch_filename=_scratch_filename,
+                worker_payload_used=_retry_scratch_status in ("missing", "unmodified"),
+            )
+            if _retry_promotion_evidence:
+                log.debug(
+                    "gate reprompt promotion evidence: %s",
+                    [e["promotion_state"] for e in _retry_promotion_evidence],
+                )
+            # ────────────────────────────────────────────────────────
             # ────────────────────────────────────────────────────────
 
             worker = _merge_gate_worker_attempt(worker, retry_worker)
@@ -1073,33 +1163,87 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             summary = route_signal["summary"]
             blocking_unresolved_ids = list(route_signal["blocking_unresolved_ids"])
             if blocking_unresolved_ids:
-                gate_summary["recommendation"] = "ITERATE"
-                gate_summary["passed"] = False
-                gate_summary["rationale"] = (
-                    f"{gate_summary['rationale']} "
-                    f"[Auto-downgraded from PROCEED: {len(blocking_unresolved_ids)} "
-                    "blocking flag(s) not resolved after reprompt]"
+                route_signal, summary = _build_reprompt_downgrade_route(
+                    gate_summary,
+                    blocking_unresolved_ids,
                 )
-                gate_summary["orchestrator_guidance"] = (
-                    "Gate auto-downgraded to ITERATE because blocking flags remained "
-                    "unresolved after reprompt. Revise the plan."
-                )
-                result = "blocked"
-                route_signal = {
-                    "result": result,
-                    "route_signal": "iterate",
-                    "summary": f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}",
-                    "blocking_unresolved_ids": [],
-                    "fallback_payload": {
-                        "kind": "reprompt_downgrade",
-                        "blocking_unresolved_ids": list(blocking_unresolved_ids),
-                    },
-                }
-                summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+                result = route_signal["result"]
         _normalize_settled_decisions(gate_summary)
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
         _write_gate_carry(plan_dir, gate_summary, iteration=iteration)
-        gate_hash = _write_gate_json(plan_dir, gate_summary)
+        gate_hash = _write_gate_json(plan_dir, gate_summary, iteration=iteration)
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                WorkClass,
+                emit_transition_activity,
+                emit_worker_inference,
+            )
+
+            emit_worker_inference(
+                plan_dir,
+                phase="gate",
+                worker=worker,
+                work_class=WorkClass.REVIEW_PROOF,
+                attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                agent=agent,
+                model_calls=2 if gate_summary.get("reprompted") else 1,
+                metadata={
+                    "recommendation": gate_summary.get("recommendation"),
+                    "route_signal": route_signal.get("route_signal"),
+                    "boundary": "gate_worker",
+                    "reprompted": bool(gate_summary.get("reprompted")),
+                },
+            )
+            emit_transition_activity(
+                plan_dir,
+                phase="gate",
+                transition="gate_route_signal",
+                from_state=STATE_CRITIQUED,
+                to_state=STATE_GATED if gate_summary.get("recommendation") == "PROCEED" else STATE_PLANNED,
+                metadata={
+                    "recommendation": gate_summary.get("recommendation"),
+                    "route_signal": route_signal.get("route_signal"),
+                },
+            )
+        except Exception:
+            log.debug("Work ledger gate event emission skipped", exc_info=True)
+
+        # ── Step 7A: persist and enforce strict schema hash ─────────
+        from arnold_pipelines.megaplan.handlers.schema_parity import (
+            SchemaParityError,
+            canonical_schema_hash,
+            verify_schema_hash,
+        )
+
+        _gate_schema_hash_path = plan_dir / "gate_schema_hash.json"
+        _gate_schema = SCHEMAS.get("gate.json")
+        if isinstance(_gate_schema, dict):
+            _computed_hash = canonical_schema_hash(_gate_schema)
+            # Persist the schema hash at invocation time
+            atomic_write_json(_gate_schema_hash_path, {
+                "schema_hash": _computed_hash,
+                "phase": "gate",
+                "iteration": iteration,
+                "produced_at": now_utc(),
+            })
+            # Verify the schema carried into the handler matches the persisted
+            # declaration.  ``gate_summary`` is an output instance, not a JSON
+            # Schema; hashing it against the schema declaration made every
+            # successful gate report a false parity drift.
+            try:
+                verify_schema_hash(
+                    _computed_hash, _gate_schema, phase="gate"
+                )
+            except SchemaParityError as exc:
+                log.error("gate schema parity failure: %s", exc)
+                # Record the parity error but do not block the gate —
+                # the receipt carries the evidence for finalize to consume.
+                state.setdefault("meta", {}).setdefault("schema_parity_errors", []).append({
+                    "phase": "gate",
+                    "reason": exc.reason,
+                    "detail": exc.detail,
+                    "iteration": iteration,
+                })
 
         # Emit flag_raised / flag_resolved based on delta vs prior gate pass
         raised: set[str] = set()
@@ -1155,6 +1299,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             artifact_hash=gate_hash,
             result=result,
             success=gate_summary["recommendation"] != "PROCEED" or gate_summary["passed"],
+            gate_summary=gate_summary,
             response_fields={
                 **_gate_response_fields(state, gate_summary, debt_entries_added),
                 "route_signal": route_signal.get("route_signal"),
@@ -1168,6 +1313,3 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             },
             history_fields={"recommendation": gate_summary["recommendation"]},
         )
-
-
-from arnold_pipelines.megaplan.flags import update_flags_after_gate

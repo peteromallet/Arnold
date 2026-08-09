@@ -1,7 +1,19 @@
-"""Planning-owned binding hooks for the shared control interface."""
+"""Planning-owned binding hooks for the shared control interface.
+
+M9 status: This module is a positive-control-path consumer.  It is not
+cut over to the shared SourceCursorVector / WBC adapter seam in M9 (which
+operates in shadow/view-only mode).  Every control-path decision made here
+MUST reread live Run Authority grant/fence, Custody lease/epoch, and WBC
+evidence before any positive dispatch.  Full cutover is deferred to M10.
+
+Compatibility row: control_binding.py – non-authoritative in M9, expiry
+gated by M10 control-path migration readiness.
+"""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -9,16 +21,12 @@ from typing import Any
 from arnold_pipelines.megaplan._core import topology
 from arnold_pipelines.megaplan._core.workflow import workflow_next
 from arnold_pipelines.megaplan._core import (
-    add_or_increment_debt,
     atomic_write_json,
-    extract_subsystem_tag,
     find_command,
-    load_debt_registry,
     load_flag_registry,
     latest_plan_path,
     now_utc,
     read_json,
-    save_debt_registry,
     sha256_file,
     unresolved_significant_flags,
 )
@@ -36,7 +44,19 @@ from arnold.control.interface import (
 )
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.profiles import effective_premium_vendor
-from arnold_pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
+from arnold_pipelines.megaplan.profiles.policy import (
+    DEFAULT_AGENT_ROUTING,
+    ROBUSTNESS_ACCEPTED,
+    _profile_has_premium_slots,
+    _prep_flat_spec_from_profile,
+    normalize_robustness,
+    resolve_prep_models,
+)
+from arnold_pipelines.megaplan.replan_state import (
+    REPLAN_STATE_KEYS_TO_CLEAR,
+    blocked_iterate_gate_replan_allowed,
+    reset_replan_loop_state,
+)
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
 from arnold_pipelines.megaplan.types import (
     AgentSpec,
@@ -68,8 +88,24 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
     run_gate_checks,
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
-from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.blocker_recovery import (
+    command_blocker_details,
+    evaluate_blocker_recovery,
+    validated_deterministic_phase_repair,
+)
+from arnold_pipelines.megaplan.control_interface import declared_override_policy_target
 from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
+from arnold_pipelines.megaplan.orchestration.force_proceed_custody import (
+    build_force_proceed_custody,
+    critique_resolution_rows,
+    project_force_proceed_custody,
+)
+
+# M9: _non_authoritative marker at module level
+# This module's control-path decisions are not yet backed by the shared
+# SourceCursorVector contract.  Consumers must treat output as orientation
+# only until M10 integrates the reread obligations.
+_m9_non_authoritative = True
 
 
 def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
@@ -247,7 +283,6 @@ def _blocked_phase_rerun_target(
     state: Mapping[str, object],
     *,
     phase: str,
-    recovered_state: str,
     source: str | None,
 ) -> ControlTargetRef | None:
     blocked_rerunnable_phases = {"execute"}
@@ -274,7 +309,6 @@ def _blocked_phase_rerun_target(
     return _workflow_step_target(
         phase,
         direction="recovery",
-        target_state=recovered_state,
         source=source,
     )
 
@@ -283,17 +317,19 @@ def _awaiting_human_target(state: Mapping[str, object]) -> ControlTargetRef:
     clarification = state.get("clarification")
     source = clarification.get("source") if isinstance(clarification, Mapping) else None
     if source == "prep":
-        step = "resume-clarify"
-        target_state = "prepped"
-    else:
-        step = "verify-human"
-        target_state = "awaiting_human_verify"
+        return declared_override_policy_target(
+            "resume-clarify",
+            direction="operator",
+            source="awaiting_human",
+            target_state="prepped",
+            operator_action="resume-clarify",
+        )
     return _workflow_step_target(
-        step,
+        "verify-human",
         direction="operator",
-        target_state=target_state,
+        target_state="awaiting_human_verify",
         source="awaiting_human",
-        operator_action=step,
+        operator_action="verify-human",
     )
 
 
@@ -331,6 +367,75 @@ def _replace_delta(state: Mapping[str, object], key: str, value: object) -> Stat
         key=key,
         value=value,
         version=_state_version(state, key),
+    )
+
+
+def _routing_sha256(config: Mapping[str, Any]) -> str:
+    routing = {
+        "phase_model": config.get("phase_model") or [],
+        "tier_models": config.get("tier_models") or {},
+    }
+    return hashlib.sha256(
+        json.dumps(routing, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _profile_source_binding(
+    profile_name: str,
+    *,
+    project_dir: Path,
+    profiles: Mapping[str, Mapping[str, Any]],
+    metadata: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Bind a resolved profile to the registry layer and exact logical content.
+
+    Profile lookup deliberately supports built-in, user, and project layers.
+    A name alone therefore is not custody evidence: a project file can shadow a
+    built-in without changing the requested name.  Keep normal overlay behavior,
+    but make the selected layer and content independently attestable.
+    """
+
+    from arnold_pipelines.megaplan.profiles import load_profile_sources
+
+    candidates: list[dict[str, str]] = []
+    for source, candidate_name, phase_map in load_profile_sources(
+        project_dir=project_dir
+    ):
+        if candidate_name != profile_name:
+            continue
+        candidate_digest = hashlib.sha256(
+            json.dumps(
+                {"profile": profile_name, "phase_map": phase_map},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        candidates.append({"source": source, "phase_map_sha256": candidate_digest})
+    if not candidates:
+        # ``resolve_profile`` normally owns this error.  Retain a defensive
+        # fail-closed guard if the registry changes between the two reads.
+        raise CliError(
+            "profile_source_unavailable",
+            f"Profile '{profile_name}' has no resolvable registry source.",
+        )
+    selected = candidates[-1]
+    effective_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "profile": profile_name,
+                "phase_map": dict(profiles[profile_name]),
+                "metadata": dict(metadata.get(profile_name, {})),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return (
+        {
+            "profile_source": selected["source"],
+            "profile_content_sha256": effective_digest,
+        },
+        candidates,
     )
 
 
@@ -641,6 +746,18 @@ def _force_proceed_gate_artifacts(
         "preflight_results": gate_checks["preflight_results"],
         "unresolved_flags": gate_checks["unresolved_flags"],
     }
+    custody = build_force_proceed_custody(
+        plan_dir,
+        state,
+        reason=str(transition.payload.get("reason") or ""),
+    )
+    # Preserve the actual North-Star subjects.  The CAS-owned custody record
+    # supplies their explicit waiver; replacing them with [] made finalize
+    # consume stale carry data or silently forget the blockers.
+    from arnold_pipelines.megaplan.north_star_actions import (
+        read_carried_north_star_actions,
+    )
+
     gate = build_gate_artifact(
         merged_signals,
         {
@@ -648,6 +765,10 @@ def _force_proceed_gate_artifacts(
             "rationale": transition.payload.get("reason") or "User forced execution past the gate.",
             "signals_assessment": "Forced proceed override applied by the orchestrator.",
             "warnings": signals.get("warnings", []),
+            "settled_decisions": [],
+            "flag_resolutions": critique_resolution_rows(custody),
+            "accepted_tradeoffs": [],
+            "north_star_actions": read_carried_north_star_actions(plan_dir),
         },
         override_forced=True,
         orchestrator_guidance="Force-proceed override applied. Proceed to finalize.",
@@ -656,6 +777,7 @@ def _force_proceed_gate_artifacts(
     return {
         "gate.json": gate,
         "unresolved_flags": unresolved_significant_flags(flag_registry),
+        "force_proceed_custody": custody,
     }
 
 
@@ -664,30 +786,14 @@ def _write_force_proceed_artifacts(
     transition: ControlTransition,
     artifacts: Mapping[str, object],
 ) -> int:
-    plan_dir = _plan_dir(state, transition)
-    root = _root_dir(state, transition)
-    gate = artifacts.get("gate.json")
-    if isinstance(gate, Mapping):
-        _write_gate_json(plan_dir, dict(gate))
-    unresolved_flags = artifacts.get("unresolved_flags")
-    flags = unresolved_flags if isinstance(unresolved_flags, list) else []
-    debt_registry = load_debt_registry(root)
-    for flag in flags:
-        if not isinstance(flag, Mapping):
-            continue
-        concern = flag.get("concern")
-        flag_id = flag.get("id")
-        if not isinstance(concern, str) or not isinstance(flag_id, str):
-            continue
-        add_or_increment_debt(
-            debt_registry,
-            subsystem=extract_subsystem_tag(concern),
-            concern=concern,
-            flag_ids=[flag_id],
-            plan_id=str(state.get("name") or ""),
-        )
-    save_debt_registry(root, debt_registry)
-    return len(flags)
+    """Return the disposition count; durable writes happen after the state CAS."""
+
+    custody = artifacts.get("force_proceed_custody")
+    if not isinstance(custody, Mapping):
+        return 0
+    return len(custody.get("critique_dispositions", [])) + len(
+        custody.get("north_star_dispositions", [])
+    )
 
 
 def _selected_profile_spec_value(spec_value: str | list[str], *, path: str) -> str:
@@ -839,6 +945,17 @@ class PlanningControlBinding:
         ):
             return (_awaiting_human_target(state),)
 
+        if blocked_iterate_gate_replan_allowed(state):
+            return (
+                _workflow_step_target(
+                    "replan",
+                    direction="recovery",
+                    target_state=STATE_PLANNED,
+                    source="last_gate.recommendation",
+                    operator_action="replan",
+                ),
+            )
+
         phase, source = _recovery_phase(state)
         if phase is None:
             return (
@@ -846,6 +963,23 @@ class PlanningControlBinding:
                     "missing_recovery_phase",
                     "planning recovery projection could not find a phase",
                     current_state=current_state,
+                ),
+            )
+
+        if current_state == STATE_BLOCKED:
+            rerun_target = _blocked_phase_rerun_target(
+                state,
+                phase=phase,
+                source=source,
+            )
+            if rerun_target is not None:
+                return (rerun_target,)
+            return (
+                declared_override_policy_target(
+                    "recover-blocked",
+                    direction="recovery",
+                    source=source,
+                    operator_action="recover-blocked",
                 ),
             )
 
@@ -858,25 +992,6 @@ class PlanningControlBinding:
                     current_state=current_state,
                     phase=phase,
                     source=source,
-                ),
-            )
-
-        if current_state == STATE_BLOCKED:
-            rerun_target = _blocked_phase_rerun_target(
-                state,
-                phase=phase,
-                recovered_state=recovered_state,
-                source=source,
-            )
-            if rerun_target is not None:
-                return (rerun_target,)
-            return (
-                _workflow_step_target(
-                    "recover-blocked",
-                    direction="recovery",
-                    target_state=recovered_state,
-                    source=source,
-                    operator_action="recover-blocked",
                 ),
             )
 
@@ -972,6 +1087,23 @@ class PlanningControlBinding:
             _strict_notes_guard(plan_dir, state, transition)
             current_state = state["current_state"]
             reason = transition.payload.get("reason")
+            existing_meta = state.get("meta")
+            existing_custody = (
+                existing_meta.get("force_proceed_custody")
+                if isinstance(existing_meta, Mapping)
+                else None
+            )
+            if current_state == STATE_GATED and isinstance(existing_custody, Mapping):
+                # A repeated delivery of the same operator decision is a
+                # projection repair, not a second waiver/debt occurrence.
+                artifacts = dict(self.synthesize_artifacts(run_state, transition))
+                artifacts["force_proceed_custody"] = dict(existing_custody)
+                return ControlTransitionResult(
+                    accepted=True,
+                    mutated=False,
+                    reason="force-proceed-idempotent",
+                    artifacts=artifacts,
+                )
             override_entry = {
                 "action": "force-proceed",
                 "timestamp": now_utc(),
@@ -1007,6 +1139,17 @@ class PlanningControlBinding:
             debt_entries_added = _write_force_proceed_artifacts(state, transition, artifacts)
             next_meta = _next_meta(state, override_entry=override_entry)
             next_meta.pop("user_approved_gate", None)
+            custody = artifacts.get("force_proceed_custody")
+            if not isinstance(custody, Mapping):
+                raise CliError(
+                    "force_proceed_custody_missing",
+                    "force-proceed could not build an authoritative custody disposition",
+                )
+            next_meta["force_proceed_custody"] = dict(custody)
+            override_entry["custody_transaction_id"] = custody["transaction_id"]
+            override_entry["debt_entries_added"] = debt_entries_added
+            # _next_meta copied the entry before the custody fields above.
+            next_meta["overrides"][-1] = dict(override_entry)
             gate = artifacts.get("gate.json")
             orchestrator_guidance = (
                 gate.get("orchestrator_guidance")
@@ -1030,7 +1173,13 @@ class PlanningControlBinding:
             )
 
         if action == "recover-blocked":
-            if state["current_state"] != STATE_BLOCKED:
+            latest_failure = state.get("latest_failure")
+            aborted_with_blocked_failure = (
+                state["current_state"] == STATE_ABORTED
+                and isinstance(latest_failure, Mapping)
+                and latest_failure.get("state") == STATE_BLOCKED
+            )
+            if state["current_state"] != STATE_BLOCKED and not aborted_with_blocked_failure:
                 raise CliError(
                     "invalid_transition",
                     f"recover-blocked requires state '{STATE_BLOCKED}', got '{state['current_state']}'",
@@ -1058,7 +1207,6 @@ class PlanningControlBinding:
                     f"recover-blocked does not know how to resume phase {phase!r}",
                     extra={"resume_cursor": dict(resume_cursor)},
                 )
-            latest_failure = state.get("latest_failure")
             if isinstance(latest_failure, Mapping) and latest_failure.get("kind") == "authority_divergence":
                 plan_name = state.get("name") or "plan"
                 rerun_command = f"megaplan {phase} --plan {plan_name}"
@@ -1105,21 +1253,43 @@ class PlanningControlBinding:
                         "suggested_recovery_commands": [resume_command],
                     },
                 )
-            if phase_result is None:
+            phase_repair_evidence: dict[str, str] | None = None
+            deterministic_phase_repair_required = bool(
+                isinstance(latest_failure, Mapping)
+                and latest_failure.get("kind") == "deterministic_phase_failure"
+                and resume_cursor.get("retry_strategy") == "repair_phase_contract"
+            )
+            if deterministic_phase_repair_required:
+                project_dir = Path(str(transition.payload.get("root") or plan_dir))
+                phase_repair_evidence = validated_deterministic_phase_repair(
+                    project_dir,
+                    state,
+                    resume_cursor,
+                    transition.payload.get("repair_commit"),
+                    transition.payload.get("failure_fingerprint"),
+                    transition.payload.get("repair_scope"),
+                )
+                if phase_repair_evidence is None:  # defensive: predicate above is exact
+                    raise CliError("missing_phase_result", "deterministic repair evidence is missing")
+                blocker_details: list[dict[str, Any]] = []
+                blocker_ids: list[str] = []
+            elif phase_result is None:
                 raise CliError(
                     "missing_phase_result",
                     "recover-blocked requires phase_result.json with current blocker details",
                     extra={"resume_cursor": dict(resume_cursor)},
                 )
-            evaluation = evaluate_blocker_recovery(
-                finalize_data,
-                state,
-                plan_dir=plan_dir,
-                blocked_tasks=phase_result.blocked_tasks,
-                deviations=phase_result.deviations,
-            )
-            blocker_details = command_blocker_details(evaluation)
-            if not evaluation.can_continue:
+            else:
+                evaluation = evaluate_blocker_recovery(
+                    finalize_data,
+                    state,
+                    plan_dir=plan_dir,
+                    blocked_tasks=phase_result.blocked_tasks,
+                    deviations=phase_result.deviations,
+                )
+                blocker_details = command_blocker_details(evaluation)
+                blocker_ids = [blocker.blocker_id for blocker in evaluation.blockers]
+            if not deterministic_phase_repair_required and phase_result is not None and not evaluation.can_continue:
                 unresolved_blockers = [
                     blocker
                     for blocker in blocker_details
@@ -1130,7 +1300,9 @@ class PlanningControlBinding:
                     "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
                     extra={
                         "resume_cursor": dict(resume_cursor),
-                        "phase_result_exit_kind": phase_result.exit_kind,
+                        "phase_result_exit_kind": (
+                            phase_result.exit_kind if phase_result is not None else None
+                        ),
                         "blocker_ids": [
                             blocker["blocker_id"] for blocker in unresolved_blockers
                         ],
@@ -1148,7 +1320,12 @@ class PlanningControlBinding:
                 "from_state": previous_state,
                 "to_state": recovered_state,
                 "resume_cursor": dict(resume_cursor),
-                "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+                "blocker_ids": blocker_ids,
+                **(
+                    {"phase_contract_repair": phase_repair_evidence}
+                    if phase_repair_evidence is not None
+                    else {}
+                ),
             }
             return ControlTransitionResult(
                 accepted=True,
@@ -1156,6 +1333,7 @@ class PlanningControlBinding:
                 reason="recover-blocked",
                 artifacts={
                     "blockers": blocker_details,
+                    "phase_contract_repair": phase_repair_evidence,
                     "remove_state_keys": ("latest_failure", "active_step"),
                 },
                 state_deltas=(
@@ -1219,7 +1397,8 @@ class PlanningControlBinding:
         if action == "replan":
             allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
             current_state = state["current_state"]
-            if current_state not in allowed:
+            blocked_gate_replan = blocked_iterate_gate_replan_allowed(state)
+            if current_state not in allowed and not blocked_gate_replan:
                 raise CliError(
                     "invalid_transition",
                     f"replan requires state {', '.join(sorted(allowed))}, got '{current_state}'",
@@ -1228,31 +1407,36 @@ class PlanningControlBinding:
             note = transition.payload.get("note")
             plan_dir = _plan_dir(state, transition)
             plan_file = latest_plan_path(plan_dir, state)  # type: ignore[arg-type]
+            timestamp = now_utc()
             override_entry = {
                 "action": "replan",
-                "timestamp": now_utc(),
+                "timestamp": timestamp,
                 "reason": reason,
+                "from_state": current_state,
+                "plan_file": plan_file.name,
             }
             note_entry = None
             if isinstance(note, str) and note:
-                note_entry = {"timestamp": now_utc(), "note": note}
+                note_entry = {"timestamp": timestamp, "note": note}
+            next_state = dict(state)
+            next_state["meta"] = _next_meta(
+                state,
+                note_entry=note_entry,
+                override_entry=override_entry,
+            )
+            reset_replan_loop_state(next_state, target_state=STATE_PLANNED)
             return ControlTransitionResult(
                 accepted=True,
                 mutated=True,
                 reason="replan",
-                artifacts={"plan_file": str(plan_file)},
+                artifacts={
+                    "plan_file": str(plan_file),
+                    "remove_state_keys": REPLAN_STATE_KEYS_TO_CLEAR,
+                },
                 state_deltas=(
-                    _replace_delta(state, "current_state", STATE_PLANNED),
-                    _replace_delta(state, "last_gate", {}),
-                    _replace_delta(
-                        state,
-                        "meta",
-                        _next_meta(
-                            state,
-                            note_entry=note_entry,
-                            override_entry=override_entry,
-                        ),
-                    ),
+                    _replace_delta(state, "current_state", next_state["current_state"]),
+                    _replace_delta(state, "last_gate", next_state["last_gate"]),
+                    _replace_delta(state, "meta", next_state["meta"]),
                 ),
             )
 
@@ -1306,18 +1490,141 @@ class PlanningControlBinding:
                     "set-profile cannot be applied to a plan in terminal state "
                     f"'{state['current_state']}'",
                 )
-            from arnold_pipelines.megaplan.profiles import load_profiles, profile_to_phase_models, resolve_profile
+            from arnold_pipelines.megaplan.profiles import (
+                _canonicalize_tier_models_for_json,
+                _resolve_prep_models_with_inheritance,
+                _resolve_tier_models_with_inheritance,
+                load_profile_metadata,
+                load_profiles,
+                profile_to_phase_models,
+                resolve_profile,
+            )
 
             profiles = load_profiles(project_dir=_project_dir(state))
+            metadata = load_profile_metadata(project_dir=_project_dir(state))
             resolved = resolve_profile(new_profile, profiles)
+            profile_binding, profile_source_candidates = _profile_source_binding(
+                new_profile,
+                project_dir=_project_dir(state),
+                profiles=profiles,
+                metadata=metadata,
+            )
             previous_profile = state["config"].get("profile")
+            previous_binding = state["config"].get("profile_binding")
+            expected_source = transition.payload.get("expected_profile_source")
+            expected_digest = transition.payload.get("expected_profile_sha256")
+            if expected_source is not None and expected_source not in {
+                "built-in",
+                "user",
+                "project",
+            }:
+                raise CliError(
+                    "invalid_args",
+                    "--expected-profile-source must be built-in, user, or project",
+                )
+            if (
+                expected_source is not None
+                and profile_binding["profile_source"] != expected_source
+            ):
+                raise CliError(
+                    "profile_source_mismatch",
+                    f"Profile '{new_profile}' resolved from {profile_binding['profile_source']}, "
+                    f"not expected source {expected_source}.",
+                    extra={"profile_source_candidates": profile_source_candidates},
+                )
+            if (
+                expected_digest is not None
+                and profile_binding["profile_content_sha256"] != expected_digest
+            ):
+                raise CliError(
+                    "profile_content_mismatch",
+                    f"Profile '{new_profile}' content does not match the expected digest.",
+                    extra={"resolved_profile_binding": profile_binding},
+                )
+            if previous_profile == new_profile:
+                prior_source = (
+                    previous_binding.get("profile_source")
+                    if isinstance(previous_binding, Mapping)
+                    else None
+                )
+                if (
+                    prior_source is not None
+                    and profile_binding["profile_source"] != prior_source
+                    and expected_source is None
+                ):
+                    raise CliError(
+                        "profile_source_changed",
+                        f"Same-profile refresh for '{new_profile}' changed source from "
+                        f"{prior_source} to {profile_binding['profile_source']}.",
+                    )
+                if (
+                    prior_source is None
+                    and expected_source is None
+                    and len(profile_source_candidates) > 1
+                ):
+                    raise CliError(
+                        "profile_source_ambiguous",
+                        f"Same-profile refresh for '{new_profile}' has multiple registry "
+                        "definitions; pass --expected-profile-source to bind the intended one.",
+                        extra={"profile_source_candidates": profile_source_candidates},
+                    )
+            try:
+                tier_models = _resolve_tier_models_with_inheritance(
+                    new_profile,
+                    system_profiles=profiles,
+                    system_metadata=metadata,
+                    pipeline_local_profiles={},
+                    pipeline_local_metadata={},
+                )
+            except CliError:
+                tier_models = {}
+            try:
+                inherited_prep_models = _resolve_prep_models_with_inheritance(
+                    new_profile,
+                    system_profiles=profiles,
+                    system_metadata=metadata,
+                    pipeline_local_profiles={},
+                    pipeline_local_metadata={},
+                )
+            except CliError:
+                inherited_prep_models = {}
             next_config = dict(state["config"])
             next_config["profile"] = new_profile
+            next_config["profile_binding"] = profile_binding
             next_config["phase_model"] = profile_to_phase_models(resolved)
+            if tier_models:
+                next_config["tier_models"] = _canonicalize_tier_models_for_json(
+                    tier_models
+                )
+            else:
+                next_config.pop("tier_models", None)
+            if _profile_has_premium_slots(resolved):
+                next_config["vendor"] = effective_premium_vendor(config=state.get("config", {}))
+            else:
+                next_config.pop("vendor", None)
+            prep_models, prep_trace = resolve_prep_models(
+                flat_prep_spec=_prep_flat_spec_from_profile(resolved),
+                prep_models=inherited_prep_models,
+            )
+            if prep_models:
+                next_config["prep_models"] = prep_models
+                next_config["prep_model_resolver_trace"] = prep_trace
+            else:
+                next_config.pop("prep_models", None)
+                next_config.pop("prep_model_resolver_trace", None)
+            profile_refresh_receipt = {
+                "profile": new_profile,
+                "same_profile_refresh": previous_profile == new_profile,
+                **profile_binding,
+                "profile_source_candidates": profile_source_candidates,
+                "from_routing_sha256": _routing_sha256(state["config"]),
+                "to_routing_sha256": _routing_sha256(next_config),
+            }
             return ControlTransitionResult(
                 accepted=True,
                 mutated=True,
                 reason="set-profile",
+                artifacts={"profile_refresh_receipt": profile_refresh_receipt},
                 state_deltas=(
                     _replace_delta(state, "config", next_config),
                     _replace_delta(
@@ -1331,6 +1638,7 @@ class PlanningControlBinding:
                                 "from": previous_profile,
                                 "to": new_profile,
                                 "reason": transition.payload.get("reason"),
+                                **profile_refresh_receipt,
                             },
                         ),
                     ),
@@ -1512,6 +1820,30 @@ class PlanningControlBinding:
         if transition.op == "override" and transition.target_id == "force-proceed":
             return _force_proceed_gate_artifacts(state, transition)
         return {}
+
+    def commit_artifacts(
+        self,
+        state: Mapping[str, object],
+        transition: ControlTransition,
+        artifacts: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        """Materialize repairable projections after the authoritative CAS."""
+
+        if transition.op != "override" or transition.target_id != "force-proceed":
+            return artifacts
+        gate = artifacts.get("gate.json")
+        if not isinstance(gate, Mapping):
+            raise CliError(
+                "force_proceed_gate_projection_missing",
+                "force-proceed committed without a gate projection",
+            )
+        count = project_force_proceed_custody(
+            root=_root_dir(state, transition),
+            plan_dir=_plan_dir(state, transition),
+            state=state,
+            gate=gate,
+        )
+        return {**dict(artifacts), "debt_entries_added": count}
 
 
 def planning_control_binding() -> PlanningControlBinding:

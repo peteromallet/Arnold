@@ -25,6 +25,8 @@ goes to stderr so callers can pipe the output cleanly.
 from __future__ import annotations
 
 import os
+import hashlib
+import subprocess
 import sys
 import time
 import traceback
@@ -105,6 +107,17 @@ def _prefer_legacy_megaplan_distribution() -> None:
     ``sys.path`` than the legacy checkout, so resolve the installed
     ``megaplan`` distribution and put its source root first.
     """
+
+    # A managed resident run carries an occurrence-bound ``ARNOLD_PATH``.  That
+    # path is the runtime identity being repaired and must win over any legacy
+    # ``megaplan`` distribution visible in the worker environment.  Selecting
+    # the legacy checkout here silently reintroduced the old 90-turn agent even
+    # when the scheduler had pinned the corrected runtime.
+    if (
+        os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1"
+        and os.environ.get("ARNOLD_PATH")
+    ):
+        return
 
     try:
         from importlib.metadata import distribution
@@ -193,7 +206,7 @@ def _import_runtime():
         from megaplan.runtime.key_pool import resolve_model
         return AIAgent, SessionDB, resolve_model
     except ModuleNotFoundError as legacy_exc:
-        if legacy_exc.name not in {"megaplan", "run_agent", "hermes_state"}:
+        if legacy_exc.name not in {"megaplan", "megaplan.agent", "run_agent", "hermes_state"}:
             raise
     # Try 2: current Arnold editable-install layout.
     try:
@@ -253,10 +266,152 @@ _MODEL_SHORTCUTS = {
 
 _HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:", "mimo:")
 _HIGH_TOKEN_STREAM_MAX_TOKENS = 4096
+_NESTED_WORKER_ENV = "ARNOLD_NESTED_MANAGED_AGENT_WORKER"
 
 
 def _resolve_model_shortcut(model: str) -> str:
-    return _MODEL_SHORTCUTS.get(str(model).strip(), model)
+    normalized = str(model).strip()
+    if normalized.startswith("hermes:"):
+        normalized = normalized.removeprefix("hermes:")
+    return _MODEL_SHORTCUTS.get(normalized, normalized)
+
+
+def _automatic_managed_reexec() -> int | None:
+    """Put nested automatic Hermes/DeepSeek work under its own durable run."""
+
+    parent_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
+    parent_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
+    machine_origin = str(os.environ.get("ARNOLD_MANAGED_AGENT_ORIGIN") or "").strip()
+    if not parent_run_id or not parent_manifest or not machine_origin:
+        return None
+    if os.environ.get(_NESTED_WORKER_ENV) == "1":
+        return None
+    try:
+        from arnold_pipelines.megaplan.managed_agent import (
+            normalize_machine_origin_provenance,
+            validate_automatic_managed_manifest,
+        )
+
+        parent_manifest_path = Path(parent_manifest).resolve()
+        parent_payload = json.loads(parent_manifest_path.read_text(encoding="utf-8"))
+        validate_automatic_managed_manifest(
+            parent_payload,
+            manifest_path=parent_manifest_path,
+        )
+        inherited_origin = normalize_machine_origin_provenance(json.loads(machine_origin))
+        if parent_payload.get("run_id") != parent_run_id:
+            raise ValueError("parent run id disagrees with manifest")
+        if inherited_origin != parent_payload.get("launch_provenance"):
+            raise ValueError("parent machine origin disagrees with manifest")
+        if not any(
+            item.get("status") == "running"
+            for item in parent_payload.get("status_history") or []
+            if isinstance(item, dict)
+        ):
+            raise ValueError("parent managed run never reached running")
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError("automatic nested launcher inherited invalid managed custody") from exc
+
+    model = "deepseek:deepseek-v4-pro"
+    project_dir = str(Path.cwd())
+    query_file = ""
+    child_args: list[str] = []
+    arguments = sys.argv[1:]
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument.startswith(("--model=",)):
+            model = argument.split("=", 1)[1]
+        elif argument.startswith(("--project_dir=", "--project-dir=")):
+            project_dir = argument.split("=", 1)[1]
+        elif argument.startswith(("--query_file=", "--query-file=")):
+            query_file = argument.split("=", 1)[1]
+            option = argument.split("=", 1)[0]
+            child_args.append(f"{option}=@managed-stdin@")
+            index += 1
+            continue
+        elif argument.startswith("--query="):
+            raise RuntimeError("automatic nested agent requires sealed --query-file input")
+        elif argument in {"--model", "--project_dir", "--project-dir", "--query_file", "--query-file"}:
+            if index + 1 >= len(arguments):
+                raise RuntimeError(f"automatic nested agent option {argument} requires a value")
+            value = arguments[index + 1]
+            if argument == "--model":
+                model = value
+                child_args.extend((argument, value))
+            elif argument in {"--project_dir", "--project-dir"}:
+                project_dir = value
+                child_args.extend((argument, value))
+            else:
+                query_file = value
+                child_args.extend((argument, "@managed-stdin@"))
+            index += 2
+            continue
+        elif argument == "--query":
+            raise RuntimeError("automatic nested agent requires sealed --query-file input")
+        child_args.append(argument)
+        index += 1
+    if not query_file:
+        raise RuntimeError("automatic nested agent requires --query-file")
+    query_path = Path(query_file).expanduser().resolve()
+    identity_material = json.dumps(
+        [parent_run_id, model, child_args, hashlib.sha256(query_path.read_bytes()).hexdigest()],
+        separators=(",", ":"),
+    )
+    identity_digest = hashlib.sha256(identity_material.encode("utf-8")).hexdigest()[:24]
+    identity = f"nested-research:{parent_run_id}:{identity_digest}"
+    command = [
+        sys.executable,
+        "-m",
+        "arnold_pipelines.megaplan.managed_agent",
+        "run",
+        "--run-kind",
+        "automatic_research_subagent",
+        "--identity-key",
+        identity,
+        "--project-dir",
+        str(Path(project_dir).expanduser().resolve()),
+        "--task-kind",
+        "research",
+        "--difficulty",
+        "8",
+        "--model",
+        model,
+        "--reasoning-effort",
+        "high",
+        "--route-class",
+        "managed_parent_research",
+        "--backend",
+        "hermes",
+        "--command-display",
+        f"nested managed research subagent model={model}",
+        "--origin-kind",
+        "managed_parent_agent",
+        "--origin-id",
+        parent_run_id,
+        "--origin-component",
+        "launch_hermes_agent",
+        "--trigger-id",
+        identity_digest,
+        "--parent-run-id",
+        parent_run_id,
+        "--lineage-key",
+        f"nested-research:{parent_run_id}",
+        "--stdin-file",
+        str(query_path),
+        "--require-output",
+        "--link",
+        f"parent_manifest={parent_manifest}",
+        "--link",
+        "phase=nested_research",
+        "--",
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *child_args,
+    ]
+    env = dict(os.environ)
+    env[_NESTED_WORKER_ENV] = "1"
+    return subprocess.run(command, env=env, check=False).returncode
 
 
 def _requires_streaming(model: str, max_tokens: int) -> bool:
@@ -314,6 +469,8 @@ def run(
     max_tokens: int = 65536,
     context_budget_tokens: Optional[int] = None,
     session_id: Optional[str] = None,
+    resume_session: bool = False,
+    metadata_file: Optional[str] = None,
     project_dir: Optional[str] = None,
 ) -> None:
     """Dispatch a hermes-backed agent and print its final response to stdout.
@@ -339,7 +496,11 @@ def run(
             auto-compaction triggers. This raises the per-run compressor cap
             without changing Hermes config or context-length cache. Useful
             when provider metadata/cache underestimates a long-context model.
-        session_id: Reuse a prior hermes session id (optional).
+        session_id: Explicit Hermes session id. Managed launches reserve one
+            before process start so it is recoverable even after a crash.
+        resume_session: Require ``session_id`` to exist and hydrate its stored
+            conversation before running the new turn.
+        metadata_file: Optional path for a structured session/result receipt.
         project_dir: Working directory the agent should treat as cwd.
             Defaults to the script's invoking cwd. Note: this does NOT install
             the megaplan sandbox — see security note in module docstring.
@@ -355,6 +516,9 @@ def run(
     if context_budget_tokens is not None and int(context_budget_tokens) <= 0:
         _eprint("error: --context-budget-tokens must be a positive integer")
         sys.exit(2)
+    if resume_session and not session_id:
+        _eprint("error: --resume-session requires --session-id")
+        sys.exit(2)
 
     if query_file:
         qpath = Path(query_file).expanduser()
@@ -364,6 +528,12 @@ def run(
         query = qpath.read_text(encoding="utf-8")
 
     _load_hermes_env()
+    if os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1":
+        for timeout_name in ("HERMES_API_TIMEOUT", "HERMES_DEEPSEEK_API_TIMEOUT"):
+            if os.environ.get(timeout_name, "").strip().lower() in {
+                "inf", "+inf", "infinity", "+infinity"
+            }:
+                os.environ.pop(timeout_name, None)
 
     # Optional cwd change so file tools resolve relative paths the caller expects.
     if project_dir:
@@ -373,7 +543,27 @@ def run(
             sys.exit(2)
         os.chdir(target)
         target_str = str(target)
-        if target_str not in sys.path:
+        runtime_root = os.environ.get("ARNOLD_PATH", "").strip()
+        if runtime_root:
+            runtime_path = Path(runtime_root).expanduser().resolve()
+            if runtime_path.is_dir():
+                # Keep the project as cwd for file/terminal tools, but make
+                # the occurrence-bound runtime the first import root.  Without
+                # this ordering ``arnold.agent`` resolves from the target
+                # checkout while the worker claims to run the pinned runtime.
+                runtime_str = str(runtime_path)
+                sys.path[:] = [
+                    runtime_str,
+                    target_str,
+                    *(
+                        p
+                        for p in sys.path
+                        if p not in {runtime_str, target_str}
+                    ),
+                ]
+            elif target_str not in sys.path:
+                sys.path.insert(0, target_str)
+        elif target_str not in sys.path:
             sys.path.insert(0, target_str)
 
     # Imports happen after env load so any module-level credential lookups see
@@ -418,16 +608,33 @@ def run(
             "will run with the invoking user's privileges."
         )
 
+    session_db = SessionDB()
+    conversation_history = None
+    if resume_session:
+        if session_db.get_session(str(session_id)) is None:
+            _eprint(f"error: Hermes session {session_id!r} does not exist")
+            sys.exit(8)
+        conversation_history = session_db.get_messages_as_conversation(str(session_id))
+
     try:
+        resident_unbounded = (
+            os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1"
+        )
         agent = AIAgent(
             model=resolved_model,
-            enabled_toolsets=toolset_list or None,
+            # [] is an explicit no-tools capability set.  None means "use the
+            # runtime default" and silently grants file/web tools.
+            enabled_toolsets=toolset_list,
             session_id=session_id,
-            session_db=SessionDB(),
+            session_db=session_db,
             max_tokens=max_tokens,
             skip_context_files=True,
             skip_memory=True,
             quiet_mode=True,
+            # The resident recovery contract is completion-driven.  The
+            # runtime implements ``None`` as an explicit no-call-cap mode;
+            # generic/interactive launches retain the normal 90-turn default.
+            **({"max_iterations": None} if resident_unbounded else {}),
             **agent_kwargs,
         )
     except Exception:
@@ -466,7 +673,11 @@ def run(
     real_stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        result = agent.run_conversation(user_message=query, **run_kwargs)
+        result = agent.run_conversation(
+            user_message=query,
+            conversation_history=conversation_history,
+            **run_kwargs,
+        )
     except KeyboardInterrupt:
         sys.stdout = real_stdout
         _eprint("[launch_hermes_agent] interrupted")
@@ -490,11 +701,65 @@ def run(
         _eprint(f"[launch_hermes_agent] elapsed={elapsed:.1f}s")
         sys.exit(7)
 
+    if metadata_file:
+        metadata_path = Path(metadata_file).expanduser()
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        messages = result.get("messages") if isinstance(result, dict) else []
+        tool_events = []
+        for message in messages if isinstance(messages, list) else []:
+            if not isinstance(message, dict):
+                continue
+            for tool_call in message.get("tool_calls") or []:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function") or {}
+                tool_events.append(
+                    {
+                        "event": "tool.requested",
+                        "tool_call_id": tool_call.get("id"),
+                        "tool": function.get("name") if isinstance(function, dict) else None,
+                    }
+                )
+        receipt = {
+            "schema_version": "arnold-hermes-launcher-metadata-v1",
+            "session_id": agent.session_id,
+            "resumed_session_id": session_id if resume_session else None,
+            "model": model,
+            "resolved_model": resolved_model,
+            "toolsets": toolset_list,
+            "max_tokens": int(max_tokens),
+            "status": "completed",
+            "elapsed_seconds": elapsed,
+            "usage": {
+                key: result.get(key)
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                    "reasoning_tokens",
+                    "total_tokens",
+                    "estimated_cost_usd",
+                )
+                if isinstance(result, dict) and result.get(key) is not None
+            },
+            "events": tool_events,
+        }
+        temporary = metadata_path.with_name(f".{metadata_path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, metadata_path)
+
     print(final)
     _eprint(f"[launch_hermes_agent] done in {elapsed:.1f}s")
 
 
 def main() -> None:
+    nested_returncode = _automatic_managed_reexec()
+    if nested_returncode is not None:
+        raise SystemExit(nested_returncode)
     _check_codex_network_sandbox()
     try:
         import fire

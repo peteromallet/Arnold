@@ -1,0 +1,19 @@
+Here is the structured analysis:
+
+---
+
+**CURRENT INCIDENT: YES**
+
+**Historical S2 Gate (C1):** The watchdog detected `stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live` — 48 occurrences between 2026-07-11T22:46 and 2026-07-13T19:48 (problem-3bc7a5eaa27e). C1 eventually completed (`done`, iteration 4). **Historical verdict: YES**, a spinning-fixer pattern.
+
+**Current S3/T18:** `stale_active_step: plan=s3-megaplan-boundary-coverage-20260713-1934; state=finalized; phase=execute; worker_pid=3136480 not live` — detected at 2026-07-13T22:44 (seq 482) and 2026-07-13T23:47 (seq 486). S3 is stuck at `finalized` with a dead execute worker.
+
+**Repeated signatures:** `repair_exhausted` (problem-461ac04158b3) — 21 occurrences, first 2026-07-12T01:02, last 2026-07-13T19:48. `stale_active_step` S2 signature — 48 occurrences. S3 `stale_active_step` — 2 occurrences so far.
+
+**Repair dispatches:** 26 total repair attempts (attempted-1 through attempted-26). Immediate repair dispatched 15+ times ("repair loop background-dispatched"). Latest: attempted-26 at 2026-07-14T00:02, then `partial_liveness-66` at 00:08. Managed automatic repair claim acquired at seq 483. Two `unavailable` dispatches (canonical blocker identity missing), two `recursion_blocked` (meta-repair guard).
+
+**Chain advancing:** YES — C1→S2→S3 milestones are progressing. C1 and S2 completed. S3 is at finalized/execute and is the active plan. The chain is not deadlocked.
+
+**L1/L2/L3 budgets:** NOT honored. S3 config specifies L1/L2 as deepseek-v4-flash, L3 as deepseek-v4-pro. Sprint-3 execute data shows ALL batches resolved to deepseek-v4-pro regardless of projected complexity tier (3–6). L1/L2 budgets were consumed as L3.
+
+**Circuit breaker:** Meta-repair recursion guard fired (seq 469, 472), blocking meta-repair. But no per-phase circuit breaker fired for the immediate repair loop itself — it spun through 26 attempts without escalation halt. **Should have fired: YES.**

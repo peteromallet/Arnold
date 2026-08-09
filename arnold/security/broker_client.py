@@ -16,7 +16,13 @@ from arnold.security.broker_service import PROTOCOL_VERSION
 from arnold.security.llm_proxy import LlmProxyCredential, credential_from_payload
 from arnold.security.policy import SecurityPolicy
 from arnold.security.redaction import redact_mapping, redact_text
-from arnold.security.types import ActionRequest, ActionResult, ActionVerdict, RetentionPolicy
+from arnold.security.types import (
+    ActionRequest,
+    ActionResult,
+    ActionVerdict,
+    RetentionPolicy,
+)
+from arnold.security.unix_socket import is_unix_socket_path_too_long
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ class BrokerClient:
         *,
         environ: Mapping[str, str] | None = None,
         fallback_policy: SecurityPolicy | None = None,
-    ) -> "BrokerClient":
+    ) -> BrokerClient:
         source = os.environ if environ is None else environ
         return cls(
             socket_path=str(source.get(BROKER_SOCKET_ENV) or "").strip() or None,
@@ -117,6 +123,11 @@ class BrokerClient:
                 client.sendall(body)
                 raw = _read_line(client)
         except OSError as exc:
+            if is_unix_socket_path_too_long(exc):
+                raise BrokerClientError(
+                    "broker socket path exceeds the host AF_UNIX limit; "
+                    "configure a shorter ARNOLD_BROKER_SOCKET path"
+                ) from exc
             raise BrokerClientError("broker socket is unreachable") from exc
         return _decode_response(raw, redact_response=redact_response)
 
@@ -218,8 +229,8 @@ def _result_from_response(response: Mapping[str, Any]) -> ActionResult:
 __all__ = [
     "BROKER_SOCKET_ENV",
     "BROKER_URL_ENV",
+    "DEFAULT_TIMEOUT_SECONDS",
     "BrokerClient",
     "BrokerClientError",
-    "DEFAULT_TIMEOUT_SECONDS",
     "fail_closed_result",
 ]

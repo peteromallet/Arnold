@@ -1,10 +1,10 @@
 """Tests for :mod:`arnold_pipelines.megaplan.workflows.override_matrix`.
 
 Covers:
-* Every ``_OVERRIDE_ACTIONS`` key is present in the matrix.
+* Every legacy-handler or control-only canonical action is present in the matrix.
 * Every matrix entry is classified as either ``terminal_route`` or
   ``additive_config``.
-* Classification sets are disjoint and cover all 11 keys.
+* Classification sets are disjoint and cover all 12 keys (11 legacy + cutover).
 * No key is double-classified or misclassified as ``additive_config`` when
   it has explicit route bindings in the OVERRIDE step component.
 * Convenience exports (``TERMINAL_ROUTE_ACTIONS``, ``ADDITIVE_CONFIG_ACTIONS``)
@@ -12,6 +12,8 @@ Covers:
 * ``get_entry`` returns the correct entry for every key.
 * The matrix raises :class:`OverrideActionClassificationError` when a key
   in ``_OVERRIDE_ACTIONS`` is not classified.
+* The CL5 cutover action is a terminal, control-routed, ``workflow.route_binding``
+  action declaring combined run_authority + maintenance authority.
 
 .. versionadded:: M6
 """
@@ -21,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from arnold_pipelines.megaplan.handlers.override import _OVERRIDE_ACTIONS
+from arnold_pipelines.megaplan.workflows import planning
 from arnold_pipelines.megaplan.workflows.override_matrix import (
     ADDITIVE_CONFIG_ACTIONS,
     CONTROL_ROUTED_ACTIONS,
@@ -36,10 +39,10 @@ from arnold_pipelines.megaplan.workflows.override_matrix import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_ALL_KEYS = frozenset(_OVERRIDE_ACTIONS.keys())
+_ALL_KEYS = frozenset(_OVERRIDE_ACTIONS.keys()) | frozenset(CONTROL_ROUTED_ACTIONS)
 
-# Actions with explicit route_bindings in the OVERRIDE StepComponent
-# (abort→halt, force-proceed→finalize, replan→revise)
+# Actions with explicit native source route bindings in the override interface
+# (abort→halt, force-proceed→finalize, replan→revise).
 _OVERRIDE_ROUTE_BINDING_ACTIONS = frozenset({"abort", "force-proceed", "replan"})
 
 
@@ -51,11 +54,11 @@ _OVERRIDE_ROUTE_BINDING_ACTIONS = frozenset({"abort", "force-proceed", "replan"}
 class TestOverrideActionMatrixCompleteness:
     """Every canonical override key participates in the matrix."""
 
-    def test_all_11_keys_present(self) -> None:
+    def test_all_12_keys_present(self) -> None:
         matrix_keys = frozenset(entry.action for entry in OVERRIDE_ACTION_MATRIX)
-        assert len(matrix_keys) == 11, f"Expected 11 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
+        assert len(matrix_keys) == 12, f"Expected 12 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
         assert matrix_keys == _ALL_KEYS, (
-            f"Matrix keys do not match _OVERRIDE_ACTIONS.\n"
+            f"Matrix keys do not match canonical dispatch registries.\n"
             f"  Missing from matrix: {sorted(_ALL_KEYS - matrix_keys)}\n"
             f"  Extra in matrix:    {sorted(matrix_keys - _ALL_KEYS)}"
         )
@@ -76,17 +79,30 @@ class TestOverrideActionMatrixCompleteness:
         for entry in OVERRIDE_ACTION_MATRIX:
             assert entry.dispatch_surface in {
                 "workflow.route_binding",
-                "workflow.state_resume",
+                "workflow.native_policy",
                 "policy.effect",
-                "policy.recovery_resume",
             }
             assert entry.route_signal is not None, f"{entry.action} is missing a route signal"
             if entry.dispatch_surface == "policy.effect":
-                assert entry.effect_id is not None and entry.target_ref is None
-            elif entry.dispatch_surface == "policy.recovery_resume":
-                assert entry.effect_id is None and entry.target_ref is None
+                assert (
+                    entry.effect_id is not None
+                    and entry.target_ref is None
+                    and entry.declared_target_ref is None
+                    and entry.policy_route_ref is None
+                )
+            elif entry.dispatch_surface == "workflow.native_policy":
+                assert (
+                    entry.effect_id is None
+                    and entry.policy_route_ref is not None
+                    and entry.declared_target_ref is not None
+                )
             else:
-                assert entry.target_ref is not None and entry.effect_id is None
+                assert (
+                    entry.target_ref is not None
+                    and entry.declared_target_ref is not None
+                    and entry.effect_id is None
+                    and entry.policy_route_ref is None
+                )
 
 
 class TestOverrideActionMatrixDisjointClassification:
@@ -108,8 +124,8 @@ class TestOverrideActionMatrixDisjointClassification:
         )
 
     def test_terminal_route_count(self) -> None:
-        assert len(TERMINAL_ROUTE_ACTIONS) == 6, (
-            f"Expected 6 terminal-route actions, got {len(TERMINAL_ROUTE_ACTIONS)}: "
+        assert len(TERMINAL_ROUTE_ACTIONS) == 7, (
+            f"Expected 7 terminal-route actions, got {len(TERMINAL_ROUTE_ACTIONS)}: "
             f"{TERMINAL_ROUTE_ACTIONS}"
         )
 
@@ -121,13 +137,21 @@ class TestOverrideActionMatrixDisjointClassification:
 
 
 class TestOverrideActionMatrixRouteBindingConsistency:
-    """Actions with explicit OVERRIDE route_bindings MUST be terminal-route."""
+    """Actions with explicit native override route bindings MUST be terminal-route."""
+
+    def test_native_override_route_bindings_match_terminal_actions(self) -> None:
+        labels = {
+            binding["label"]
+            for binding in planning.declared_step_route_bindings("override")
+            if binding.get("target_ref") in {"halt", "finalize", "revise"}
+        }
+        assert labels == {"abort", "force_proceed", "replan"}
 
     def test_route_binding_actions_are_terminal(self) -> None:
         for action in _OVERRIDE_ROUTE_BINDING_ACTIONS:
             entry = get_entry(action)
             assert entry.family == "terminal_route", (
-                f"'{action}' has explicit route_bindings in OVERRIDE but is "
+                f"'{action}' has an explicit native route binding but is "
                 f"classified as '{entry.family}'"
             )
 
@@ -136,7 +160,7 @@ class TestOverrideActionMatrixRouteBindingConsistency:
         for action in ADDITIVE_CONFIG_ACTIONS:
             assert action not in _OVERRIDE_ROUTE_BINDING_ACTIONS, (
                 f"'{action}' is classified as additive_config but has explicit "
-                f"route bindings in the OVERRIDE StepComponent"
+                f"native route bindings in the override interface"
             )
 
     def test_control_routed_actions_match_matrix_flag(self) -> None:
@@ -204,3 +228,51 @@ class TestOverrideActionMatrixClassificationError:
         finally:
             om._DECLARED_OVERRIDE_AUTHORITY = original
             importlib.reload(om)
+
+
+class TestCutoverOverrideAction:
+    """The CL5 cutover action declares its route/authority contract (Step 8a).
+
+    These are Phase-1 matrix data-structure assertions: they do NOT invoke the
+    cutover handler (whose dispatch is wired in Step 8b and exercised in Phase 3).
+    """
+
+    def test_cutover_is_a_declared_key(self) -> None:
+        from arnold_pipelines.megaplan.workflows.override_matrix import (
+            _OVERRIDE_ACTION_KEYS,
+        )
+
+        assert "cutover" in _OVERRIDE_ACTION_KEYS
+        assert "cutover" in {entry.action for entry in OVERRIDE_ACTION_MATRIX}
+
+    def test_cutover_is_terminal_route(self) -> None:
+        entry = get_entry("cutover")
+        assert entry.family == "terminal_route"
+        assert "cutover" in TERMINAL_ROUTE_ACTIONS
+        assert "cutover" not in ADDITIVE_CONFIG_ACTIONS
+
+    def test_cutover_uses_workflow_route_binding(self) -> None:
+        entry = get_entry("cutover")
+        assert entry.dispatch_surface == "workflow.route_binding"
+        # workflow.route_binding invariant: route-bound target, no effect/policy refs
+        assert entry.route_signal == "cutover"
+        assert entry.target_ref == "cutover"
+        assert entry.declared_target_ref == "cutover"
+        assert entry.effect_id is None
+        assert entry.policy_route_ref is None
+
+    def test_cutover_is_control_routed(self) -> None:
+        entry = get_entry("cutover")
+        assert entry.control_routed is True
+        assert "cutover" in CONTROL_ROUTED_ACTIONS
+        assert ROUTE_SIGNAL_BY_ACTION["cutover"] == "cutover"
+
+    def test_cutover_description_records_combined_authority(self) -> None:
+        """The cutover action requires combined run_authority (human-gate) AND
+        maintenance (repair_queue) authority — documented in its description."""
+        entry = get_entry("cutover")
+        description = entry.description.lower()
+        assert "human-gate" in description or "human_gate" in description
+        assert "repair_queue" in description or "repair-queue" in description
+        assert "run_authority" in description
+        assert "maintenance" in description

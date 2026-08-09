@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from arnold_pipelines.megaplan.schemas import GateArtifact, GatePayload
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    require_schema_fields,
+)
+from arnold_pipelines.megaplan.schemas import SCHEMAS, GateArtifact, GatePayload
 from arnold_pipelines.megaplan.types import GateCheckResult, PlanState
 from arnold_pipelines.megaplan._core import latest_plan_meta_path, load_flag_registry, read_json, unresolved_significant_flags
 
@@ -110,10 +114,29 @@ def build_gate_artifact(
     override_forced: bool,
     orchestrator_guidance: str = "",
 ) -> GateArtifact:
+    from arnold_pipelines.megaplan.north_star_actions import normalize_north_star_actions
+
+    require_schema_fields(
+        gate_payload,
+        SCHEMAS["gate.json"],
+        contract="gate artifact persistence",
+    )
     preflight = signals["preflight_results"]
     recommendation = gate_payload["recommendation"]
     warnings = list(signals.get("warnings", [])) + list(gate_payload.get("warnings", []))
-    return {
+    raw_north_star = gate_payload["north_star_actions"]
+    if not isinstance(raw_north_star, list):
+        raise RuntimeError(
+            "gate artifact persistence: north_star_actions must be a list; "
+            "refusing to default an invalid required field"
+        )
+    north_star_actions = normalize_north_star_actions(raw_north_star)
+    artifact: GateArtifact = {
+        **project_schema_owned_fields(
+            gate_payload,
+            SCHEMAS["gate.json"],
+            contract="gate artifact persistence",
+        ),
         "passed": recommendation == "PROCEED" and all(preflight.values()),
         "criteria_check": signals["criteria_check"],
         "preflight_results": preflight,
@@ -131,7 +154,9 @@ def build_gate_artifact(
         "flag_resolutions": list(gate_payload.get("flag_resolutions", [])),
         "resolved_flag_ids": list(gate_payload.get("resolved_flag_ids", [])),
         "resolution_summary": gate_payload.get("resolution_summary", ""),
+        "north_star_actions": north_star_actions,
     }
+    return artifact
 
 
 def build_orchestrator_guidance(
@@ -148,7 +173,13 @@ def build_orchestrator_guidance(
     iteration = int(signals.get("iteration", 0))
     weighted_score = float(signals.get("weighted_score", 0.0))
     weighted_history = list(signals.get("weighted_history", []))
-    recurring_critiques = list(signals.get("recurring_critiques", []))
+    # CL5 (Plan Step 7a): read the canonical ``adjacent_text_matches`` list with
+    # ``recurring_critiques`` as the transition fallback.  The deprecated alias
+    # is retained until Step 7b confirms zero remaining consumers.
+    adjacent_text_matches = list(signals.get("adjacent_text_matches", []))
+    if not adjacent_text_matches:
+        adjacent_text_matches = list(signals.get("recurring_critiques", []))
+    recurring_critiques = adjacent_text_matches
     unresolved_flags = list(signals.get("unresolved_flags", []))
     scope_creep = list(signals.get("scope_creep_flags", []))
     previous_score = float(weighted_history[-1]) if weighted_history else None

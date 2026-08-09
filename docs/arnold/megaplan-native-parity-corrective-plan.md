@@ -1,5 +1,14 @@
 # Megaplan Native Parity Corrective Plan
 
+> **Sequencing amendment — 2026-07-30.** The milestone counts and migration
+> diagrams below predate the completion-kernel insertion. For execution order,
+> prerequisite rationale, and ownership, the controlling source is
+> `docs/arnold/completion-spec-sequencing-and-ownership.md`: Custody M11 →
+> milestone-gate bootstrap → Native
+> `S1,S2F,C1,C2,S2R,S3A,S3B,S4,S5A,S5B,S6,S7` → Platformization
+> `S1,S2A,S2B,S3,S4,S5,S6`. The older analysis remains evidence; it must not be
+> used to regenerate or overwrite the prepared chain specs.
+
 ## Purpose
 
 This plan makes canonical Megaplan's native Python source the complete,
@@ -88,10 +97,97 @@ retry loop or create a Native side store/facade.
 
 The canonical semantic source is:
 
-`arnold_pipelines/megaplan/workflows/workflow.pypeline`
+`arnold_pipelines/megaplan/workflows/workflow.pype`
 
 together with named native subworkflows, declared policies attached to named
 source constructs, and audited pure phase bodies behind typed interfaces.
+
+`.pype` is the sole suffix for newly authored or admitted Arnold workflow
+source. S1 performs a fail-closed repository and package migration from
+`.pypeline`: canonical/named source files, compiler and loader recognition,
+discovery/globs, package resources, source maps, manifests and locks, CLI/help,
+validators and generators, tests and fixtures, examples/docs, editor/Linguist
+configuration, and downstream handoff contracts. `.pypeline` may remain only
+in immutable historical evidence or an explicit expiry-bound reader for an
+exactly pinned pre-cutover executable. It cannot admit new source, route,
+silently resume as `.pype`, or satisfy final proof.
+
+The known minimum migration surface includes `workflow.pypeline`,
+`front_half.pypeline`, workflow-authoring fixtures, `pyproject.toml`,
+`.gitattributes`, `.vscode/settings.json`, `arnold/workflow/source_compiler.py`,
+`arnold/cli/workflow.py`, Megaplan's planning/component/provenance/package-
+fingerprint modules, `cli/editor_setup.py`, native-representation
+generators/validators/contracts, installed-package tests and goldens, and the
+prepared Platformization epic. S1 must generate the exhaustive inventory.
+Changing `_SUPPORTED_SOURCE_SUFFIXES` alone is a false pass: every public
+file/CLI/package-resource entry point must enforce the suffix.
+
+### One `.pype`, one workflow
+
+`docs/arnold/pype-authoring-contract.md` is the normative format authority.
+Every `.pype` is statically parsed restricted Python containing exactly one
+top-level canonical `@workflow`; every durable root or child workflow has its
+own `.pype`. “Subworkflow” is the hosting role of a workflow invoked by another
+workflow, not a separate decorator, source kind, or independently authored
+format. There is no `main`, `__all__`, multi-workflow/library-only file,
+declaration-order entrypoint, or file-local export/root table.
+
+A `.pype` may also contain private file-local typed steps and digest-bound pure
+helpers. They cannot be imported, independently addressed, or separately
+pinned, and their behavior folds into the workflow digest. Reusable steps,
+effect adapters, schemas, policies, types, prompts, and helpers live in `.py`.
+A step is a leaf: it may call pure helpers and declared effect adapters but not
+another step or workflow. Helpers call no step, workflow, or effect; workflows
+call no effect adapter directly. Helpers return data for a visible workflow
+branch, never a dynamic invocation target.
+
+Shared step implementations in `.py` may use ordinary Python and third-party
+imports; the `.pype` grammar does not constrain their internal implementation.
+The transitive graph lock or an explicit binding pins every selected
+distribution/version/artifact, optional feature, Python/runtime environment and
+plugin selection that can affect a durable result. Import-time I/O or mutable
+Arnold registration, ambient dependency selection and imported topology/effect
+bypass reject; locked third-party internal import mechanisms are permitted.
+
+Policies live in ordinary `.py`, conventionally `policies.py`, as immutable
+typed canonical values with stable kind/schema, explicit attachment scope,
+source provenance, deterministic precedence, and digest. Retry, timeout,
+fanout, join, cancellation, resource, human, effect, checkpoint, model/tool and
+reconfiguration policy may vary declared mechanics. A policy cannot contain a
+callable target, open route table, ambient/mutable default, or hidden product
+branch. Authored inline/call-site policy requirements change the caller
+component digest; imported policy values have their own executable identity and
+selected compatible versions change the graph lock. Incompatible changes take
+an explicit migration/new-attempt/quarantine disposition.
+
+Cross-file topology uses static Python-shaped imports of the other `.pype`
+file's canonical workflow. Discovery never executes author source. Aliases
+preserve provenance. Dynamic/conditional/star imports, re-export laundering,
+cycles, recursive workflow calls, duplicate identities, incompatible versions,
+private-member imports, and source/descriptor disagreement fail before
+authority. Explicit bounded-loop constructs are finite IR, not recursion.
+
+Logical identity is `(distribution_name, logical_workflow_name)`, where the
+logical name is an explicit workflow ID or decorated function name. Paths and
+wheel resources are provenance. Executable identity adds typed ports/outcomes,
+hostability, topology, policies, child/shared references, and transitive
+behavior-relevant private/helper/prompt/model/tool digests. A pure physical move
+preserves identity while updating provenance; rename, extract/inline,
+hostability change, private/shared promotion, or behavior drift requires an
+explicit migration/new-attempt/quarantine disposition.
+
+The existing canonical Arnold package descriptor owns the optional
+`default_pipeline`, cross-package canonical-workflow allowlist, source
+correspondence, exact lock, and append-only migration log. Explicit CLI/API
+selection may replace only that optional default before one logical workflow is
+frozen across manifest, lock, admission, source map, and checkpoint.
+
+An ordinary `.py @workflow` is legal only in explicit non-durable preview with
+fresh ephemeral identity and fake/ephemeral-only effects with no durable effect
+history. It cannot compile, admit, checkpoint, replay/resume, certify, or
+publish. Exact pinned `.pypeline`,
+authored-subflow, and durable `.py` workflow readers remain read-only only while
+live legacy occurrences require them.
 
 A reviewer can read those files and understand prep, critique, gate, revise,
 tiebreaker, finalize, execute, review, rework, override, human gates, retries,
@@ -104,7 +200,7 @@ The system need not maximize visible steps. It must use the minimum readable
 workflow that completely determines behavior.
 
 The normative composition oracle is
-`.megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md`.
+`.megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md`.
 It is the human-reviewed scenario/invariant contract, not a generated route
 graph. An independent static source oracle derives source occurrences and
 structured-control relations without calling the production lowerer; raw
@@ -332,7 +428,9 @@ The authoritative surface must remain the natural place for future changes:
 ### Execution modes and enforcement disposition
 
 The platform is permissive about experiments and exact about durable claims.
-S1 freezes one machine-readable execution-mode matrix; every CLI/API entry,
+S1 freezes
+`docs/arnold/workflow-execution-mode-dispositions.yaml` as the sole
+machine-readable execution-mode/disposition/store registry; every CLI/API entry,
 trace, checkpoint, artifact and diagnostic names one of these modes, and no
 mode may be inferred from a directory, flag omission or credential accident.
 
@@ -423,7 +521,7 @@ scenarios, and Native-specific conformance.
 
 ## Canonical machinery boundary
 
-Canonical Megaplan executes by lowering `.pypeline` into the existing
+Canonical Megaplan executes by lowering `.pype` into the existing
 DSL/manifest runtime. `build_pipeline()` must consume that lowered topology or
 be replaced and quarantined. It may not filter detailed source nodes into
 component IDs, overlay component metadata, rebuild routes, or drop dynamic
@@ -447,7 +545,33 @@ During migration, compatibility is allowed only as an explicit, tested,
 expiry-bound adapter. It cannot satisfy semantic evidence and cannot choose
 behavior for a corrected slice.
 
-## Eight busy two-week milestones
+## One bootstrap prerequisite and ten busy milestones
+
+Before this epic launches, the one-sprint
+`.megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml` prerequisite
+must complete with a content-addressed manifest. It adds a typed
+`conformance_gate` that runs before PR readiness/auto-merge and reruns against
+merge HEAD. The current chain engine's post-merge final-only gate is
+insufficient. This bootstrap is separate so the Native chain never has to
+self-modify its schema while running. The bootstrap itself is deliberately
+non-self-hosted: it parks its one PR for independent review and manual merge,
+requires external pre-merge CI against the proposed tree, and uses the current
+post-merge final gate only as a backstop. Its completion manifest binds both
+checks before Native may launch. It also adds the fixed optional-transition
+lifecycle used by the two epics:
+pre-merge validation → merge → merge-HEAD readiness validation → typed
+receipt-consuming transition → post-transition verification → completion.
+Transitions use registered non-shell handlers with declared receipt inputs and
+one atomic, idempotent output receipt.
+
+Milestone validation does not itself authorize live actions. Every
+authority-increasing cutover, old-writer fence/delete, and live-effect switch
+must be the milestone's declared typed chain transition, consume its exact
+accepted readiness receipt, and pass the declared post-transition verifier.
+A separate product API may implement the transition handler, but cannot be
+invoked as an untracked convention outside that chain slot. Where the proof
+boundary must remain effect-inert, proof and adoption are separate milestones;
+S5A/S5B is the mandatory example.
 
 Every sprint has two independent closure gates:
 
@@ -464,6 +588,13 @@ admission-lock digest, semantic/identity/decision sets, runtime trace, and all
 blocking subchecks. S7 must consume the complete registry; a prose claim that a
 gate passed is not evidence.
 
+Every milestone declares typed validation: S1 through S6 use
+`conformance_gate`, including the split S2F/S2R and S5A/S5B milestones; S7 uses
+the cumulative `final_conformance_gate`. A red pre-merge gate blocks merge
+eligibility. The post-merge rerun binds authoritative source. Missing, extra,
+stale, unbound, unconsumed, cross-incarnation, self-certified, or pre-proof-
+map-hash evidence fails.
+
 The durable golden trace contract is also a mandatory proof-map input. Its
 fixtures compare total order within occurrences and authority/custody/effect
 causality, explicit partial order among parallel siblings, and multiset
@@ -476,8 +607,19 @@ Admit and pin M11. Build the normative identity/traceability model and a
 fail-closed checker. Characterize the current 85-to-14 collapse, lost dynamic
 fanout, handler/component/runtime route ownership, and false-pass proof.
 
+Inventory and stage the `.pypeline` → `.pype` source/tooling migration, but do
+not select it or reject the old new-authoring/admission suffix in S1. The
+current path remains usable through S2F while S2F implements and proves the
+compiler/linker. S1 hands it a complete rename map, compatibility/legacy
+inventory, expected-red corpus, and rollback contract.
+
 Deliverables:
 
+- closed review-input ledger: exact M11 completion/capability receipt,
+  generated suffix/carrier inventory, canonical pack/lock-owner inventory,
+  pre-result DX baseline, agentic-consumer determination, and the source or a
+  content-addressed non-invention disposition for the oracle's absent numbered
+  transitions 2/3/5/7;
 - validated prerequisite receipt and immutable version inventory;
 - executable M11 capability-probe receipt covering three-plane writer
   registration, opaque executable/product digest binding, restore-durable
@@ -508,11 +650,22 @@ Deliverables:
   audit normalizer/comparator, same-run predicates, forbidden observations,
   mutation interface, and skeletons for `NP-GT-001` through `NP-GT-006`
   including A/B/C. S1 proves these against synthetic/raw mutations; production
-  runtime integration is the first S2/GO-0 receipt;
+  runtime integration is the first S2R/GO-0 receipt;
+- common immutable policy-envelope schema and mutation corpus covering
+  kind/version, canonical values, scope/attachment, provenance, precedence,
+  digest, explicit override, ambient/mutable defaults, callable/open-route
+  smuggling, and compatibility invalidation;
+- portable audit-correlation envelope joining run, workflow/step occurrence,
+  loop/rework/retry/reentry generation, execution attempt, agent session,
+  model/tool/effect call, trace/span and immutable log/transcript artifact in
+  both query directions, with privacy/retention classes and observational-only
+  semantics;
 - frozen authoring readability/edit-locality contract and six future-extension
   mutation specifications;
 - machine-readable five-mode execution matrix and enforcement-disposition
-  registry. Freeze mode identity/provenance, permitted authority/effect/
+  registry as the sole normative source. Markdown tables and trace assertions
+  are generated/informative views that fail on drift. Freeze mode
+  identity/provenance, permitted authority/effect/
   checkpoint surfaces, diagnostic severity, and the prohibition on implicit
   downgrade or promotion. Add `NP-DX-001` through `NP-DX-004` skeletons for
   edited-step repeat, changed-code resume rejection, durable fork provenance,
@@ -537,6 +690,14 @@ Deliverables:
   presentation field classification;
 - quarantined comparison namespace/provenance contract and per-cutover union-
   of-writers shared-validator proof schema;
+- mode-by-capability store matrix covering admitted authority/control,
+  product-history/checkpoint, effect/idempotency, proof/evidence, artifacts,
+  caches and preview/sandbox capabilities. Shared physical storage is allowed
+  only through disjoint credentials, logical namespaces, keys/indexes,
+  retention and discovery;
+- immutable nonvolatile trace-field floor and allowlist amendment protocol:
+  exact table version per receipt, content-addressed amendment, independent
+  re-verification, and invalidation/replay of affected dependent evidence;
 - accepted M11 receipt for restore-resistant fences/epochs and canonical
   repair-request revalidation;
 - diagnostic disposition registry and measurable author-task/trace-latency gate
@@ -556,7 +717,69 @@ Adoption exit: M11 enforcement is active, all executable capability probes pass
 and the four identity domains are separate; no local substitute substrate
 exists. A missing capability exits only as `blocked_on_m11_point_release`.
 
-### S2 - Generic authored control primitives bound to admitted APIs
+### S2F - `.pype` compiler, identity, converter, and GO-FORMAT
+
+Implement the exact-one `.pype` parser/linker, private/local and shared/`.py`
+boundaries, logical/executable identity, canonical descriptor integration,
+source maps, package correspondence, preview-only `.py` bridge, mechanical
+legacy converter, and read-only legacy resolution described above. S2F closes
+with a content-addressed `GO-FORMAT` receipt covering every minimum blocking
+case in `docs/arnold/pype-authoring-contract.md`: zero/two workflows, private
+imports/digests, leaf laws, transitive helper effects, static imports,
+cycles/recursion versus bounded loops, path moves versus logical migrations,
+source/descriptor mismatch, exact legacy pins, and checkout/editable/wheel/
+cloud equivalence. `GO-FORMAT` blocks S2R.
+Its machine contract is
+`docs/arnold/pype-authoring-conformance.yaml` plus
+`scripts/validate_pype_authoring_contract.py`, consuming
+`.megaplan/initiatives/megaplan-native-parity-corrective/go-format-receipt.json`
+with schema `arnold.megaplan.go_format_receipt.v1`. S2F must produce and
+validate readiness through the pre-merge/post-merge `conformance_gate`. The
+chain then runs the typed receipt-consuming transition that selects `.pype`,
+updates the canonical source/descriptor/package bindings, rejects new
+`.pypeline` work, and retains exact-pin legacy resolution. A separate
+post-transition GO-FORMAT verifier must pass before S2F completes; S2R
+independently reruns that final validator before work. Narrative status,
+hash-only receipt, skipped/partial transition, or pre-GO-FORMAT suffix switch
+cannot pass.
+
+Freeze and implement a versioned conservative executable-closure
+canonicalization, not the undecidable phrase “exactly when behavior changes.”
+S1 publishes the machine schemas for
+`arnold.pype.executable_closure.v1`,
+`arnold.workflow.semantic_ir.v1`,
+`arnold.workflow.executable_envelope.v1`, and
+`arnold.workflow.graph_lock.v1`; serialization is RFC 8785 canonical JSON and
+the hash is SHA-256. Undefined tagged scalar/reference encodings reject.
+Hash normalized compiler IR/AST and every statically reachable declared
+dependency requirement, constant, schema, policy, prompt, model/tool binding
+and private/shared behavior slice. Exclude only the closed syntactic list
+frozen in `docs/arnold/pype-authoring-contract.md`; conservative false drift is
+safer than silent omission. Component digests cover own closure and direct
+dependency contract requirements; the separately hashed transitive graph lock
+pins selected concrete child/shared executable digests. Every durable carrier
+binds both. Implement distribution-coordinate ownership and fork lineage
+without treating a legitimate new package version/digest as a collision.
+`default_pipeline` never implies a root-result mapping: the invoking admission
+binding supplies one total adapter unless the producer descriptor explicitly
+names a default adapter.
+
+The frontend permits ordinary static Python and third-party imports inside
+shared `.py` step implementations while keeping `.pype` topology imports
+restricted. It records selected package/artifact/optional-feature requirements
+in the graph lock and rejects import-time effects/registration, ambient or
+runtime plugin selection, and imported topology/effect bypass. It also lowers
+the common immutable policy envelope and source-maps its effective
+scope/attachment, provenance, precedence and digest.
+
+Semantic exit: source, IR, descriptor, lock, resource, source map and digest
+agree across checkout/editable/wheel/sdist/cloud; every structural and
+identity/migration negative fails at the authored span.
+
+Adoption exit: the merged-tree GO-FORMAT receipt is independently recomputed;
+no runtime/product work can consume a stale or self-declared frontend.
+
+### S2R - Durable control primitives bound to admitted APIs
 
 Finish product-neutral typed decisions/outcomes, bounded loops, dynamic
 map/reducer, per-item retry/fallback, deterministic child identity, human
@@ -609,6 +832,20 @@ complete validator; adapters can serialize/validate an already selected action
 but cannot select a route. GO-0 injects an unregistered writer and plane-local
 validator bypass for each plane and rejects all before body/effect intent.
 
+Implement the portable audit-correlation envelope and indexes at the same
+boundary. Every workflow and step occurrence, loop/rework/retry/reentry
+generation and execution attempt joins bidirectionally to its agent session,
+model/tool/effect calls, trace/span, usage/cost and immutable structured-log or
+transcript artifacts; every such record resolves back to its owning semantic
+occurrence and source span, plus an accepted consuming workflow decision or
+terminal when one exists. The platform issues `agent_session_id`; provider
+session/request IDs are optional provenance. Inputs/outputs, attempts, terminals
+and declared effects are durable-boundary facts. Large or sensitive content
+uses digest/schema/retention/redaction-bound artifact references. Arbitrary
+Python line/local-variable tracing is not required, and logs/transcripts never
+route, authorize, terminalize or certify. Durable events carry correlation
+keys; reverse indexes are rebuildable projections.
+
 Before changing serialized topology, implement the S1 manifest evolution
 contract and exercise old/new workers against old/new manifests. At GO-0, use
 two independent clients through the production Run Authority adapter to
@@ -641,9 +878,32 @@ proves unsupported preview code can run without acquiring any durable claim.
 
 Adoption exit: enforce-mode crash/retry/idempotency/stale-fence/stale-epoch,
 effect ambiguity, cancellation, transfer/reclaim, and resume tests pass using
-M11 services. Decision/transition equality and program/policy/WBC-version drift
-tests pass. The three-plane writer/bypass matrix and raw independent trace
-comparison pass. Receipts/projections cannot grant actions.
+M11 services and close GO-0 through the milestone `conformance_gate`.
+Decision/transition equality and program/policy/WBC-version drift tests pass.
+The three-plane writer/bypass matrix and raw independent trace comparison pass.
+Receipts/projections cannot grant actions.
+
+The product migration converges on this organization:
+
+```text
+arnold_pipelines/megaplan/workflows/
+  workflow.pype
+  plan_quality/
+    cycle.pype  critique.pype  gate.pype  tiebreaker.pype
+    steps.py  policies.py  types.py
+  delivery/
+    cycle.pype  execute.pype  execute_batch.pype  review.pype
+    steps.py  policies.py  types.py
+  control/
+    steps.py  policies.py
+```
+
+S3A lands the root and critique; S3B lands gate/cycle and removes any temporary
+`front_half.pype`; S4 lands tiebreaker; S5A lands delivery workflows in shadow
+and per-effect-class GO-2 proof; S5B makes delivery live; S6 keeps
+control operations as leaves with routing visible in callers. Every `.pype`
+shown contains one workflow. Supporting `.py` files never carry durable
+topology.
 
 ### S3A - Prep, plan, and critique native cutover
 
@@ -659,7 +919,7 @@ lowering, `build_pipeline()`, runtime, current M11 validation, relocated WBC
 producer identity, checkout, and clean installed execution. The current critique
 evaluator is a bounded selector/model call, not evidence of a model-determined
 durable inner tool loop. Do not claim a real Megaplan agentic consumer unless
-the implementation inventory identifies one. S2 freezes the generic safety
+the implementation inventory identifies one. S2R freezes the generic safety
 contract and rejection fixtures at GO-0; runtime implementation and product
 adoption are nonblocking and experimental until a concrete consumer exists.
 Any such consumer must give
@@ -683,6 +943,12 @@ one producer writes admitted history, comparison remains excluded, and legacy
 cannot resume a native-bound scope (or vice versa). Failure leaves the old
 prep/plan/critique producer authoritative, validator-registered and not yet
 hard-fenced.
+
+GO-1A runs before merge eligibility and is rebound to merge HEAD. The declared
+S3A chain transition then consumes that exact readiness receipt to perform any
+registry-side authority adoption or old-prefix fence/delete, emits its
+transition receipt, and must pass the post-transition GO-1A verifier. A chain
+state or later cumulative replay is not authority.
 
 Semantic exit: prep/plan/critique are readable and load-bearing through the
 critique join; child identities, attempt-terminal/retry-generation distinction,
@@ -710,7 +976,15 @@ recommendation. At exhaustion, correctness/security blocking flags yield
 high-complexity unverifiable checks may yield `iterate`. No-progress means no
 strict decrease in the canonical set of unresolved blocking flag identities
 between admitted generations; display text, ordering and count alone cannot
-reset it.
+reset it. A schema migration must supply a total old→new flag-identity and
+streak mapping. Without one, emit `progress_incomparable`, do not advance or
+silently reset/carry the ordinary streak, increment a separate bounded
+incomparable counter, and take the declared human/escalate/abort cap
+disposition when exhausted.
+
+Every route compiles through a separately source-mapped finite route key or
+statically named finite predicate set. Whole-payload, open-string and
+undeclared payload-field discriminants reject.
 
 Relocate the remaining front-half WBC/action producers and delete or hard-fence
 the corresponding component routes, handler route strings, manifest defaults,
@@ -731,6 +1005,10 @@ writers registered behind the shared validator and one admitted decision
 consumer/history writer. It closes GO-1. Failure blocks S4 but does not roll
 back an already accepted GO-1A prefix cut; the still-legacy gate/revise slice
 remains old-authoritative, validator-registered and not yet hard-fenced.
+The declared S3B chain transition consumes the exact accepted post-merge GO-1B
+readiness receipt for every remaining front-half authority switch and
+fence/delete operation; the post-transition GO-1B verifier must pass before
+completion.
 
 Semantic exit: source/installed split outcomes and old-carrier/bridge mutations
 prove gate/revise behavior and outer-loop policy are load-bearing.
@@ -746,6 +1024,18 @@ vocabulary, replan reset/rejoin, finalize fallback-to-revise, and scoped
 re-finalization. Make every human gate a named suspension with exact reentry.
 Make `NP-GT-003` green for clarification suspension, Host A/Host B custody, all
 digest checks, and cross-host same-run resume.
+
+The candidate implementation remains non-authoritative through merge. The S4
+stage gate then binds merge HEAD. One atomic switch must validate and consume
+that exact accepted S4 receipt before relocating WBC producer authority,
+fencing/deleting old paths, removing the S3B seam, or activating the outgoing
+delivery bridge. Before the switch the old path and seam remain usable; after
+it exactly one new path is authoritative. Wrong-tree, pre-merge, stale, red,
+cross-incarnation, copied-verdict and replayed-receipt attempts fail without a
+partial switch.
+That switch is the declared S4 chain transition. Its output receipt and selected
+producer/seam/fence state must pass the separate post-transition S4 verifier
+before the milestone completes.
 
 Semantic exit: all tiebreaker/finalize routes are visible and legacy metadata
 cannot alter behavior.
@@ -774,62 +1064,79 @@ production-adapter clients in both release orders. Exactly one compatible
 transition is accepted; the losing answer/cancel remains a durable typed loser
 fact and cannot resume or rewrite terminal truth.
 
-Remove the S3B tiebreaker/finalize bridge. The outgoing finalize-to-retained-
-delivery bridge is generated from a closed typed handoff, registered when it
-writes durable state, route-inert under mutation, and expires in S5.
+Replace the S3B tiebreaker/finalize bridge inside that receipt-consuming
+switch. The outgoing finalize-to-retained-delivery bridge is generated from a
+closed typed handoff, registered when it writes durable state, route-inert
+under mutation, and expires in S5B.
 
-### S5 - One reusable delivery cycle
+### S5A - Delivery shadow and per-effect-class GO-2 proof
 
-Implement one authored:
+Author the finalize/approval/dependency-ready execute/review/bounded-rework
+cycle, but run it only in comparison/shadow mode. It cannot acquire admitted
+effect authority, influence product routes, write admitted idempotency keys, or
+publish terminals.
 
-```text
-finalize -> approval -> dependency-ready dynamic batches
-         -> review fanout/reducer -> bounded scoped rework -> finalize ...
-```
+Use task ID + batch identity + item path for children. Preserve exact
+parent/child WBC joins, custody targets, frozen fanout membership, canonical
+keyed reducers, named `review_blocked -> replan` unwind, cancellation
+obligations, and namespace isolation across generations, siblings and
+concurrent runs.
 
-Use task ID + batch identity + item path for children. Make parent/child WBC
-attempt joins explicit. Acquire custody per exact task/effect target. Cover
-approval, no-review, deferred-human, block/recovery, partial resume,
-cancellation/fallback, review retry/caps, and scoped rework.
+Generate an exhaustive inventory of external-effect protocol classes from
+source, lowered graph, lock, adapters, policy bindings and every live legacy
+writer/reader. A class is bound by external system/operation, destructive
+profile, idempotency semantics, intent/outcome protocol, reconciliation,
+fencing/custody, consistency/store guarantees and crash edges. GO-2 requires
+intent/outcome/crash/cross-host proof per class or an independently verified,
+content-addressed equivalence record. A harmless proxy cannot authorize a
+destructive, non-idempotent, differently fenced or differently reconciled
+class. Only dual-read comparison is allowed; dual-write and live cutover are
+forbidden in S5A.
 
-Prove namespace isolation across two sequential delivery generations,
-same-kind fanout siblings, and concurrent runs with identical product task IDs.
-State, checkpoints, artifacts, effect-idempotency keys, and caches may not
-cross-read, overwrite, or deduplicate across those coordinates.
+GO-2 also binds the complete future-live `NP-GT-004/005` shadow corpus:
+approval, batching, every review outcome, named replan unwind, cancellation and
+late-child disposition, retry/fallback/partial resume, bounded rework/cap
+exits, cross-host reconciliation, raw causality/multiplicity, namespaces,
+routes, policies, locks and expected admitted results. S5B cannot defer first-
+time implementation or proof of any live delivery behavior until after the
+switch.
 
-The review/rework cycle uses a named enclosing-loop typed exit for
-`review_blocked -> replan`, not a sentinel or exception. Acceptance closes the
-target `planning_cycle` ledger, records one `superseded_by_named_exit` control
-terminal for every intervening durable scope in deterministic unwind order,
-and lets the parent explicitly create a new planning-cycle instance at
-generation zero with only declared digest-bound carry fields. Fanout children
-consume one frozen admission binding; review reducers consume canonical keyed
-results and remain invariant under completion-order permutations. GO-2 comparison
-remains in the quarantined namespace and is never an admitted effect writer.
+Semantic exit: authored/runtime child sets and coordinates match in shadow;
+partial failure reruns only incomplete children; one loop replaces duplicated
+passes; every effect class is covered.
 
-Cancellation defaults to waiting for effect ambiguity reconciliation. A site
-may instead declare `cancelled_pending_reconciliation(obligation_id)`: this is
-a child lifecycle terminal, never an effect terminal, and binds a mandatory
-separately fenced reconciliation target. Late resolution updates effect history
-and explanation but cannot rewrite the parent terminal; later compensation
-requires a fresh typed decision. Remove the S4 finalize/delivery bridge and own
-a route-inert delivery-to-legacy-control seam that expires in S6.
+Adoption exit: none. S5A produces the accepted post-merge GO-2 receipt and a
+cutover-consumption contract; it performs no live authority switch.
 
-Before live effect authority cutover, require GO-2: execute one
-production-shaped non-destructive/idempotent effect through checkout and clean
-installed artifact, crash after durable outcome but before product receipt,
-reconcile cross-host exactly once, and prove the old writer inert. Only dual-read
-comparison is allowed; dual-write is forbidden. No old writer may be
-disabled/fenced/deleted and no live cutover may occur until GO-2 is green. This
-receipt makes `NP-GT-004` green; S5 also makes `NP-GT-005` scoped rework green.
+### S5B - Live delivery cutover, review, and rework
 
-Semantic exit: authored/runtime child sets and coordinates match; partial
-failure reruns only incomplete children; one loop replaces duplicated passes.
+Require the live-effect authority switch and every old-writer
+disable/fence/delete operation to validate and consume the exact accepted S5A
+GO-2 receipt. The receipt binds the merged source/lock, exhaustive class
+inventory/equivalence records, production adapter/store/schema,
+proof-registry incarnation/restore generation and raw-history cursor. A copied
+verdict, milestone state or later S7 replay cannot authorize the cut.
+The single cut is the declared S5B chain transition. It consumes both S5B's
+current merge-HEAD readiness receipt and S5A's accepted GO-2 receipt, emits the
+live-delivery transition receipt, and must pass the post-transition S5B
+verifier before completion.
+
+After that single cut, re-execute the already green shadow `NP-GT-004` and
+`NP-GT-005` matrix on the admitted path and prove exact binding/equivalence.
+Complete admitted approval, execute, review/reducer, bounded scoped rework,
+re-finalization, named-exit unwind, cancellation obligations and cross-host
+reconciliation without adding a new route or disposition. Remove the S4
+finalize/delivery bridge and own a route-inert
+delivery-to-legacy-control seam that expires in S6.
+
+Semantic exit: the admitted delivery/review/rework trace matches S5A's authored
+topology and closed outcomes without payload routing or duplicate passes.
 
 Adoption exit: current independent fence and epoch guard every action/effect;
 cross-host transfer/reclaim and crash around effect intent/outcome never
-duplicate accepted effects; verify-only adoption matches revision, task
-contract, tree/tests, semantic target, fence, and epoch.
+duplicate accepted effects; the old writer is reachability-inert and fenced;
+verify-only adoption matches revision, task contract, tree/tests, semantic
+target, fence, epoch and consumed GO-2 receipt.
 
 ### S6 - Override, recovery, auto-drive, and projection adoption
 
@@ -873,6 +1180,14 @@ stable contract fields so future root-host extraction cannot silently replace
 the terminal arbiter or create a second acceptance domain. A Stage-2 root host
 may adapt a closed result only by consuming this same accepted identity.
 
+GO-3 runs before merge eligibility and is rebound to merge HEAD. Every
+registry-side control-authority demotion, legacy-writer fence/delete, or
+heterogeneous rollout must consume that exact accepted receipt; milestone
+status and later S7 replay are not authority.
+Those operations run only in the declared S6 chain transition. Its output
+receipt and final writer/fence/consumer state must pass the post-transition
+GO-3 verifier before S6 completes.
+
 Mechanically derive every control-cutover CAS/arbitration site and participant
 transition family from lowered IR. Require exact equality with the versioned
 arbitration-policy index, then force each participant pair to the pre-CAS
@@ -892,13 +1207,33 @@ Specifically, `_core/workflow_data.py:WORKFLOW` and
 `_ROBUSTNESS_OVERRIDES` are inert/hard-fenced or deleted; mutations across every
 supported robustness level cannot change a normalized trace, and no runtime,
 auto, or CLI entry point reads them as route or live-policy authority.
+“Structurally inert” additionally requires reader/use-def reachability proving
+no data/control path from the carrier to route selection, decision acceptance,
+admission, resume, retry, effect intent, terminalization, or an
+operator-facing action that can bypass current RA/Custody/WBC admission.
+Writer-only inventory and producer-chosen mutations are insufficient.
 
 Adoption exit: all positive actions use M11's existing action/recovery boundary;
 forged/stale but internally consistent projections and receipts cannot cause
 dispatch, resume, retry, completion, cancellation, publication, or delivery.
-The S5 delivery/control seam is removed and no control bridge remains.
+The S5B delivery/control seam is removed and no control bridge remains.
 
 ### S7 - Native-topology conformance on the M11 proof framework
+
+Create and consume a new corrective target gate:
+
+```text
+docs/arnold/megaplan-native-parity-conformance.yaml
+docs/arnold/megaplan-native-parity-traceability.yaml
+scripts/validate_megaplan_native_parity_conformance.py
+.megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json
+```
+
+The older `megaplan-native-representation-*` ledger and
+`validate_native_representation_conformance.py` remain immutable proof of the
+pre-corrective `.pypeline` baseline. Compatible rows may be independently
+reconsumed with provenance, but that old gate cannot certify this target and
+must not remain wired into the S7 validation hook.
 
 Extend M11's generated proof model with Native-specific set equality across
 source, lowering, producer registry, runtime attempts/actions, semantic
@@ -917,11 +1252,20 @@ stale, non-executed, non-commit-bound, or red records; and the receipt records
 the proof-map hash before appending itself. A refreshed old ledger/evidence
 bundle remains a mandatory failing fixture.
 
+Both stage and final validators run synthetic missing, extra, red, stale,
+unbound, unconsumed, cross-incarnation, self-certified and
+pre-proof-map-hash mutations. The validator producer cannot be its sole
+verifier.
+
 Export raw primary-store events and prove raw event-ID/multiplicity equality
 before normalization. Run an audit normalizer/verifier with disjoint code
 provenance from production lowering/runtime trace adaptation; the golden
 contract's versioned volatile-field allowlist is the only permitted elision and
-unknown fields reject. Derive the lowered-IR arbitration-site/participant set
+is pinned by exact version and immutable nonvolatile-floor digest. An
+allowlist/table amendment requires a content-addressed amendment receipt,
+independent re-verification, and invalidation/replay of every affected
+dependent receipt; a newer table cannot silently certify old evidence.
+Unknown fields reject. Derive the lowered-IR arbitration-site/participant set
 and require exact equality with every owning-cutover policy/forced-race receipt.
 Every owning cutover receipt also joins each consumption/arbitration site to the
 certified linearizable canonical store/service operation and records the exact
@@ -972,20 +1316,34 @@ authority, effect, namespace, history and provenance safety.
 Require every golden family including NP-GT-006A/B/C—not a selected subset—to
 match local and installed normalized lifecycle/admission traces under the same
 recorded boundaries within declared virtual-time and wall-latency budgets.
-Require every route divergence to be attributable to a declared outcome or
-decision value; mutate undeclared payload fields to prove they cannot route.
+Require every route divergence to be attributable to a separately source-mapped
+finite route key or statically named finite predicate set declared by a closed
+outcome/decision. Whole-payload, open-string and undeclared payload-field
+discriminants reject.
 Require zero diagnostic codes without either a supported primitive/example or
 explicit deliberate-non-support boundary recipe, and pass a timed ten-task
 author simulation as a blocking readability receipt.
 
 Emit a content-addressed Native-to-Platformization handoff manifest containing
 the reusable-candidate/dependency inventory, exact typed port/outcome/policy/
-effect snapshots, source-to-runtime golden adapters, zero-Megaplan-import proof
-for generic primitives, coupling evidence, exclusions and the executed
-classification rationale. Platformization consumes this manifest; S7 does not
-extract or stabilize product patterns.
+effect snapshots, exact adopted `.pype` contract/compiler/diagnostic/converter/
+preview versions, `GO-FORMAT` plus package/identity/legacy receipts,
+source-to-runtime golden adapters, zero-Megaplan-import proof for generic
+primitives, coupling evidence, exclusions and the executed classification
+rationale. Platformization S2B productizes these generic surfaces without
+re-running Megaplan's product migration; S7 does not extract or stabilize
+patterns.
 
-Semantic exit: the smallest readable `.pypeline` fully determines actual
+The artifact path is
+`.megaplan/initiatives/megaplan-native-parity-corrective/platformization-handoff-manifest.json`.
+It is a mandatory named `final-proof-map.json` row and the Native completion
+manifest hashes it. Platformization relies on the validated predecessor
+completion manifest through
+`chain_completed + require_manifest + required_proof_artifacts`, matching that
+exact path and current hash to one proof row—not a standalone text-presence or
+existence check.
+
+Semantic exit: the smallest readable `.pype` fully determines actual
 behavior and zero hidden route authority remains.
 
 All temporary typed seam bridges are removed or structurally incapable of
@@ -1000,17 +1358,20 @@ topology proof.
 
 ```text
 accepted M11
+  -> P0 pre-merge/post-merge chain conformance-gate bootstrap
   -> S1 capability probes + proof/source-oracle schema + admission lock
-  -> S2 generic primitives + three-plane adapters + neutral composed trace
+  -> S2F .pype compiler/identity/converter/minimal preview
+  -> GO-FORMAT merged-tree receipt
+  -> S2R generic primitives + three-plane adapters + neutral composed trace
   -> GO-0 raw/normalized/decision/digest/writer-bypass receipt
   -> S3A prep/plan/critique + execution-plane binding + typed seam
   -> GO-1A prefix source-load-bearing/installed/adoption receipt
   -> S3B gate/revise/planning-cycle + front-half carrier hard fence
   -> GO-1B complete front-half receipt (closes GO-1)
   -> S4 tiebreaker/finalize/human reentry + NP-GT-003
-  -> S5 delivery cycle shadow/dry-run + exact effect binding
-  -> GO-2 production-shaped effect/crash/cross-host exactly-once receipt
-  -> S5 live delivery cutover + legacy-writer fence
+  -> S5A delivery shadow + exhaustive effect-class inventory/proof
+  -> GO-2 per-class/equivalence/crash/cross-host receipt
+  -> S5B receipt-consuming live delivery cutover + review/rework
   -> S6 control arbitration + NP-GT-006A/B/C
   -> GO-3 stale-worker/race/projection-forgery receipt
   -> S6 auto/CLI/status/projections demoted to request/observation
@@ -1033,13 +1394,14 @@ Binary rules:
 
 At each cutover: land/test the authored producer and generated bindings; permit
 only behaviorally inert dual-read comparison; relocate the WBC/action producer;
-cut authority once at the receipt; move consumers; prove the old producer inert;
+run the pre-merge gate and post-merge rebind; make the authority switch consume
+that exact accepted receipt; move consumers; prove the old producer inert;
 then hard-fence/delete after installed and cross-host proof.
 
 Every partial cut owns one closed typed outgoing seam. The accepted upstream
 decision already names the downstream entry; the seam serializes only and is a
 registered writer when durable. S3A's seam expires in S3B, S3B's in S4, S4's in
-S5 and S5's in S6. S7 proves zero route-capable seam remains.
+S5B and S5B's in S6. S7 proves zero route-capable seam remains.
 
 Comparison execution uses either M11's storage-enforced digest-bound
 `authority_class=comparison` or an immutable isolated comparison-artifact
@@ -1132,6 +1494,10 @@ Every implemented row has generated evidence containing:
 - executable digest-binding and heterogeneous-worker outcome;
 - deterministic replay/diagnostic, local-harness equivalence, LLM/tool result,
   checkpoint-payload, pinned-resolution, and namespace-isolation receipts;
+- exact workflow/step occurrence, loop/rework/retry/reentry generation and
+  execution-attempt correlation to agent session, model/tool/effect call,
+  trace/span, usage/cost and immutable log/transcript artifact references,
+  including reverse lookup to source span and consuming decision;
 - applicable GO-0 through GO-4 receipt and composed explanation/preflight
   receipt.
 
@@ -1195,9 +1561,12 @@ negative even when its old paths and hashes are refreshed.
     installed-artifact, dependency-lock, applicable prompt/tool, and normalized
     product-contract digests; a heterogeneous stale worker is rejected before
     body/effect intent.
-17. GO-2 proves one production-shaped non-destructive/idempotent effect,
-    outcome-before-receipt crash, cross-host exactly-once reconciliation, old
-    writer inertness, and no dual-write interval before live cutover.
+17. GO-2 covers every inventoried external-effect protocol class with direct
+    outcome-before-receipt crash/cross-host reconciliation proof or an
+    independently verified content-addressed equivalence record. A weaker proxy
+    cannot authorize another class. The old writer is reader/use-def
+    reachability-inert, no dual-write occurs, and S5B's switch consumes the
+    exact accepted receipt.
 18. Closed cancel/publish/deliver/terminal CAS arbitration passes all three race
     variants and rejects conflicting terminal truth. The CAS is a linearizable
     conditional operation enforced by the canonical production store/service
@@ -1267,66 +1636,102 @@ negative even when its old paths and hashes are refreshed.
     `always_hard`, `automatic`, `production_admission_gate`,
     `stable_publication_gate`, `authoring_advisory`, or `non_durable_only`
     disposition.
+42. `.pype` is the sole live source suffix across discovery, compiler/loader,
+    package resources, manifests/locks, source maps, CLI/tooling,
+    validators/generators, current examples/tests, and the Platformization
+    handoff; `.pypeline` cannot newly author, admit, route, or resume by alias.
+43. `.pype` format/identity fixtures cover exact-one files, canonical imports,
+    private local definitions, shared `.py` steps, package default/explicit
+    selection, aliases, preview-only `.py` workflows, pure physical moves,
+    logical migrations, positive pure-helper provenance/digest drift,
+    transitive locks, source/package correspondence and source maps across
+    checkout/editable/wheel/cloud. Zero/two workflows, private imports,
+    step/helper leaf-law violations, declaration/path selection, cycles/
+    recursion/collisions/dynamic `.pype`/topology imports, descriptor mismatch,
+    transitive
+    forbidden I/O and hidden durable Python fail before authority.
+44. Shared `.py` steps can use ordinary locked Python/third-party imports
+    without inheriting the `.pype` grammar; import-time effects/registration,
+    ambient/dynamic dependency choice, imported topology and undeclared effect
+    bypass fail, and changing selected concrete code changes the graph lock.
+45. Typed policy envelopes preserve kind/schema, canonical values,
+    scope/attachment, provenance, precedence and digest, and reject
+    mutable/ambient defaults, callables/open route tables and hidden overrides.
+    Every workflow/step attempt joins bidirectionally to its agent session,
+    model/tool/effect calls, cost and log/transcript artifacts and back to the
+    exact source and, when one exists, the accepted consuming decision or
+    terminal; those observational records cannot route, authorize or certify.
 
 ## Required final gates
 
 The epic is incomplete unless all are true:
 
 1. M11 prerequisite manifest/proof map and exact installed revision validate.
-2. `workflow.pypeline` and named subworkflows are the only product-topology
-   authority.
-3. Lowering preserves the complete semantic set and is runtime-load-bearing.
-4. Generic compiler/runtime code has no Megaplan semantic coupling.
-5. Components and retained handlers are pure interfaces/bodies; transitive
+2. `workflow.pype` and the workflow files it invokes as children are the only
+   product-topology authority.
+3. No live `.pypeline` authoring/admission surface remains across source
+   discovery, compiler/loader, package resources, manifests/locks, source maps,
+   CLI/tooling, validators/generators, current tests/examples, or the
+   Platformization handoff. Historical evidence and any unexpired pinned-
+   artifact reader are classified and provably non-authoring/non-routing.
+4. Every `.pype` has exactly one canonical workflow; private/shared boundaries,
+   static canonical imports, package selection, logical identity, migrations,
+   preview-only `.py` workflows and package/source correspondence pass the
+   `GO-FORMAT` matrix, while structural and hidden-durability violations fail
+   before authority.
+5. Lowering preserves the complete semantic set and is runtime-load-bearing.
+6. Generic compiler/runtime code has no Megaplan semantic coupling.
+7. Components and retained handlers are pure interfaces/bodies; transitive
    route ownership is absent.
-6. Compatibility, manifests, `_core`, CLI, auto, WBC queries, and projections
+8. Compatibility, manifests, `_core`, CLI, auto, WBC queries, and projections
    are downstream consumers only.
-7. Four identity domains remain distinct and completely mapped.
-8. Decision-occurrence/accepted-decision/consumed-transition set equality holds.
-9. Every authority-increasing action envelope, including checkpoint/reentry,
+9. Four identity domains remain distinct and completely mapped.
+10. Decision-occurrence/accepted-decision/consumed-transition set equality holds.
+11. Every authority-increasing action envelope, including checkpoint/reentry,
    binds program/topology, policy, exact WBC contract, installed artifact,
    dependency lock, and applicable prompt/tool identities and handles
    heterogeneous drift explicitly.
-10. Every authoritative action uses current independent fence and epoch;
+12. Every authoritative action uses current independent fence and epoch;
    evidence is never authority.
-11. Every row has generated executable semantic, mutation, behavior, identity,
+13. Every row has generated executable semantic, mutation, behavior, identity,
    and provenance proof.
-12. Full split-outcome, restart/resume, partial failure, cross-host, effect
+14. Full split-outcome, restart/resume, partial failure, cross-host, effect
     ambiguity, installed-package, and cloud scenarios pass.
-13. The final validator consumes the complete proof map; its pre-receipt hash,
+15. The final validator consumes the complete proof map; its pre-receipt hash,
     all per-milestone receipts, and every blocking subcheck pass at the landed
     commit. The refreshed old ledger remains failing.
-14. A reviewer can understand the entire product flow from canonical source
+16. A reviewer can understand the entire product flow from canonical source
     without hidden carrier archaeology.
-15. The durable golden trace contract is a consumed proof-map input, never a
+17. The durable golden trace contract is a consumed proof-map input, never a
     route authority, and all six scenario families/mutations pass from one
     composed history in checkout/wheel/cloud.
-16. GO-0, GO-1A, GO-1B, GO-2, GO-3 and GO-4 are green; live external effects
-    were never dual-written and no deletion/cutover crossed a failed binary
-    boundary.
-17. Cancel/publish/deliver/terminal arbitration has one closed authored CAS
+18. GO-FORMAT, GO-0, GO-1A, GO-1B, GO-2, GO-3 and GO-4 are green; every
+    pre-merge gate is rebound to merge HEAD; each authority-increasing cutover
+    consumed its exact accepted receipt; live external effects were never
+    dual-written; and no deletion/cutover crossed a failed binary boundary.
+19. Cancel/publish/deliver/terminal arbitration has one closed authored CAS
     contract and one accepted terminal truth, backed by the certified
     linearizable production persistence operation rather than an application
     critical section.
-18. The one-topology, one-delivery-cycle, small-primitive, generated-binding,
+20. The one-topology, one-delivery-cycle, small-primitive, generated-binding,
     local-policy, closed-vocabulary, readability/edit-locality contract passes
     six future-extension tests with reviewed exceptions.
-19. The rebuildable Native composed explanation/preflight is causally complete,
+21. The rebuildable Native composed explanation/preflight is causally complete,
     observational/request-only, and behaviorally inert.
-20. The deterministic Python fence, source-local diagnostics, and production-
+22. The deterministic Python fence, source-local diagnostics, and production-
     lowerer local harness pass without introducing a second route engine.
-21. LLM/tool replay identity and durable budgets, bounded checkpoint payloads,
+23. LLM/tool replay identity and durable budgets, bounded checkpoint payloads,
     pinned-version retention, and durable namespace isolation pass their
     blocking mutations across installed and cloud execution.
-22. Addressed exits, canonical decisions, keyed reducers, frozen fanout,
+24. Addressed exits, canonical decisions, keyed reducers, frozen fanout,
     declared errors, typed reconfiguration, and agentic-phase protocol pass.
-23. Product-contract pinning, comparison provenance, all-plane one-writer proof,
+25. Product-contract pinning, comparison provenance, all-plane one-writer proof,
     scheduler allowlist, repair revalidation, concrete legacy-table inertness,
     and measurable ergonomics receipts all pass.
-24. Independent source-oracle/raw-event proof, arbitration-site equality,
+26. Independent source-oracle/raw-event proof, arbitration-site equality,
     restore ownership, typed seam expiry and the Native-to-Platformization
     handoff manifest all pass without becoming runtime authority.
-25. Registry and manifest evolution, mixed-worker compatibility, proof-receipt
+27. Registry and manifest evolution, mixed-worker compatibility, proof-receipt
     incarnation/high-water binding, and root-arbitration identity stability are
     explicit, versioned and mutation-tested.
 
@@ -1374,33 +1779,34 @@ Reject these even when imports or reports are green:
 18. **Authoring ceremony regression:** a normal extension needs manually
     synchronized handler/auto/metadata routes or identity/control registries.
 
-## Chain-schema enforcement and limitation
+## Chain-gate bootstrap and enforcement
 
-The current chain schema can enforce:
+Today the chain engine accepts only final-milestone
+`final_conformance_gate`, and its PR path may first validate after merge. This
+epic must not launch under that behavior.
 
-- launch-time completed-chain manifest validation;
-- serial dependency assertions;
-- a blocking final-milestone `final_conformance_gate` with content-addressed
-  receipt inclusion in proof evidence.
+The external P0 bootstrap is a hard `chain_completed + require_manifest`
+precondition. It adds a typed, non-shell `conformance_gate` on any milestone;
+runs it against the proposed commit/tree before PR readiness or auto-merge;
+reruns it against merge HEAD; binds validator/conformance/traceability/proof-map
+digests; blocks missing/red/stale/unbound/unconsumed evidence; and requires a
+real explicit validation whenever `validation_policy: required`. It also adds
+an optional typed `transition` phase with registered non-shell handlers,
+declared input receipts, an atomic/idempotent output receipt, and a mandatory
+post-transition verifier. The fixed order is validation → merge → readiness
+validation → transition → verification → milestone completion.
 
-`prerequisite_policy: required` and `validation_policy: required` are metadata
-used for plan/status classification; they do not create or strengthen gates.
-The explicit `launch_preconditions` entries and final milestone `validate`
-entry carry enforcement. S1/S7 must add a loader invariant or chain-schema test
-that a `required` metadata policy has at least one corresponding explicit
-precondition/validation, so the metadata cannot falsely imply coverage.
+Every Native milestone declares that gate. S7 retains the cumulative
+`final_conformance_gate`. The chain and milestone proof maps retain all accepted
+stage receipts, and S7 independently replays their negative mutations.
 
-It cannot declare arbitrary executable validation commands after every
-milestone; `validate` currently supports only `final_conformance_gate` and only
-on the final milestone. Therefore each sprint's semantic and custody-adoption
-gates are mandatory brief acceptance criteria backed by tests/proof artifacts,
-while S7 replays them all through the single schema-supported blocking final
-gate. Adding generic per-milestone validators is useful harness follow-up but is
-not required for this epic. This epic does require bounded existing-path
-harness work: pass `--proof-map <validation.proof_map>` from the chain runner,
-add the validator argument and full-map consumption, and bind/check the
-pre-receipt proof-map hash. Those are planned S1/S7 deliverables, not runtime
-changes made by this plan revision.
+Authority-increasing cutovers occur only in that transition phase and consume
+the exact accepted merge-HEAD readiness receipt; the chain records and verifies
+the resulting state before advancing. GO-2 additionally splits shadow proof
+(S5A) from live adoption (S5B), whose transition consumes both its current
+readiness receipt and S5A's accepted milestone receipt. A milestone label,
+`depends_on`, receipt filename, green field, product-side call, or later final
+validation never grants cutover authority.
 
 ## Non-goals
 

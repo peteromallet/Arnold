@@ -7,7 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
 
-from arnold_pipelines.megaplan.handlers import critique
+from arnold_pipelines.megaplan.handlers import gate
+from arnold_pipelines.megaplan.orchestration import critique_runtime as critique
 
 
 def test_revise_merge_failure_falls_back_to_prior_floor(
@@ -67,8 +68,8 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
         completion_tokens = 0
         receipt_metrics: dict[str, Any] = {}
         payload = {
-            "plan": "Step 1: Revised\n",
-            "changes_summary": "Changed.",
+            "plan": "Step 1: Existing\n",
+            "changes_summary": "Unchanged.",
             "flags_addressed": [],
             "questions": [],
             "success_criteria": [],
@@ -87,7 +88,7 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
     monkeypatch.setattr(critique, "require_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(critique, "apply_profile_expansion", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        critique,
+        gate,
         "_resolve_revise_transition",
         lambda *args, **kwargs: (False, SimpleNamespace(next_state="critiqued")),
     )
@@ -113,8 +114,8 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
     monkeypatch.setattr(critique, "compute_plan_delta_percent", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(critique, "_write_plan_version", fake_write_plan_version)
     monkeypatch.setattr(critique, "update_flags_after_revise", lambda *args, **kwargs: None)
-    monkeypatch.setattr(critique, "_next_progress_step", lambda *args, **kwargs: "finalize")
-    monkeypatch.setattr(critique, "_remaining_significant_flags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(gate, "_next_progress_step", lambda *args, **kwargs: "finalize")
+    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         critique,
         "_finish_step",
@@ -131,6 +132,57 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
     critique.handle_revise(tmp_path, SimpleNamespace(plan="demo"))
 
     assert captured_meta_fields["test_blast_radius"] == floor_radius
+
+
+def test_revise_changed_plan_does_not_carry_missing_radius(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    plan_path = plan_dir / "plan_v1.md"
+    meta_path = plan_dir / "plan_v1.meta.json"
+    plan_path.write_text("Step 1: Existing\n", encoding="utf-8")
+    meta_path.write_text("{}", encoding="utf-8")
+    prior_radius = {"strategy": "scoped", "selectors": [{"kind": "path", "value": "tests/stale.py"}]}
+    state: dict[str, Any] = {
+        "iteration": 1, "current_state": "critiqued",
+        "config": {"project_dir": str(tmp_path)}, "meta": {},
+        "plan_versions": [{"version": 1, "file": "plan_v1.md", "hash": "sha256:old", "timestamp": "2026-01-01T00:00:00Z"}],
+    }
+    captured: dict[str, Any] = {}
+
+    @contextmanager
+    def fake_load_plan_locked(*args: Any, **kwargs: Any) -> Iterator[tuple[Path, dict]]:
+        yield plan_dir, state
+
+    class FakeWorker:
+        cost_usd = duration_ms = prompt_tokens = completion_tokens = 0
+        session_id = "session"
+        receipt_metrics: dict[str, Any] = {}
+        payload = {"plan": "Step 1: Changed\n", "changes_summary": "Changed.", "flags_addressed": [],
+                   "questions": [], "success_criteria": [], "assumptions": []}
+
+    monkeypatch.setattr(critique, "load_plan_locked", fake_load_plan_locked)
+    monkeypatch.setattr(critique, "require_state", lambda *a, **k: None)
+    monkeypatch.setattr(critique, "apply_profile_expansion", lambda *a, **k: None)
+    monkeypatch.setattr(gate, "_resolve_revise_transition", lambda *a, **k: (False, SimpleNamespace(next_state="critiqued")))
+    monkeypatch.setattr(critique, "latest_plan_path", lambda *a, **k: plan_path)
+    monkeypatch.setattr(critique, "latest_plan_meta_path", lambda *a, **k: meta_path)
+    monkeypatch.setattr(critique, "read_json", lambda *a, **k: {"test_blast_radius": prior_radius})
+    monkeypatch.setattr(critique._pkg, "_run_worker", lambda *a, **k: (FakeWorker(), "agent", "mode", False))
+    monkeypatch.setattr(critique, "audit_step_payload", lambda *a, **k: None)
+    monkeypatch.setattr(critique, "_merge_imported_decision_criteria", lambda _s, c: c)
+    monkeypatch.setattr(critique, "compute_plan_delta_percent", lambda *a, **k: 0.0)
+    monkeypatch.setattr(critique, "_write_plan_version", lambda **k: (captured.update(k["meta_fields"]) or ("plan_v2.md", "meta", {"hash": "new", "timestamp": "now"})))
+    monkeypatch.setattr(critique, "update_flags_after_revise", lambda *a, **k: None)
+    monkeypatch.setattr(gate, "_next_progress_step", lambda *a, **k: "finalize")
+    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *a, **k: [])
+    monkeypatch.setattr(critique, "_finish_step", lambda *a, **k: {"summary": ""})
+
+    critique.handle_revise(tmp_path, SimpleNamespace(plan="demo"))
+
+    assert "test_blast_radius" not in captured
 
 
 def test_revise_replaces_stale_prior_full_radius_with_new_scoped_radius(
@@ -222,7 +274,7 @@ def test_revise_replaces_stale_prior_full_radius_with_new_scoped_radius(
     monkeypatch.setattr(critique, "require_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(critique, "apply_profile_expansion", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        critique,
+        gate,
         "_resolve_revise_transition",
         lambda *args, **kwargs: (False, SimpleNamespace(next_state="critiqued")),
     )
@@ -243,8 +295,8 @@ def test_revise_replaces_stale_prior_full_radius_with_new_scoped_radius(
     monkeypatch.setattr(critique, "compute_plan_delta_percent", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(critique, "_write_plan_version", fake_write_plan_version)
     monkeypatch.setattr(critique, "update_flags_after_revise", lambda *args, **kwargs: None)
-    monkeypatch.setattr(critique, "_next_progress_step", lambda *args, **kwargs: "finalize")
-    monkeypatch.setattr(critique, "_remaining_significant_flags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(gate, "_next_progress_step", lambda *args, **kwargs: "finalize")
+    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         critique,
         "_finish_step",

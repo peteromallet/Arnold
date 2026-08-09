@@ -1,260 +1,18 @@
 from __future__ import annotations
 
+import base64
 import json
-import subprocess
-import sys
+import os
 from pathlib import Path
 
-import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan import auto
-from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan._core.phase_runtime import current_runner_incarnation
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
 )
-
-
-def test_read_state_data_reconciles_failed_no_next_after_finalize(tmp_path: Path) -> None:
-    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
-    plan_dir.mkdir(parents=True)
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": "demo",
-                "current_state": "failed",
-                "iteration": 1,
-                "config": {},
-                "sessions": {},
-                "plan_versions": [],
-                "history": [{"step": "finalize", "result": "success"}],
-                "meta": {},
-                "last_gate": {},
-                "latest_failure": {"kind": "no_next_step"},
-                "resume_cursor": {"phase": "status", "retry_strategy": "repair_state"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    (plan_dir / "phase_result.json").write_text(
-        json.dumps(
-            PhaseResult(
-                phase="finalize",
-                invocation_id="test-finalize-success",
-                exit_kind="success",
-                artifacts_written=("finalize.json",),
-            ).to_dict()
-        ),
-        encoding="utf-8",
-    )
-
-    state = auto._read_state_data(plan_dir)
-
-    assert state is not None
-    assert state["current_state"] == "finalized"
-    assert state["latest_failure"] is None
-    assert "resume_cursor" not in state
-
-
-def test_chain_recovers_failed_plan_before_auto_drive(monkeypatch, tmp_path: Path) -> None:
-    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
-    plan_dir.mkdir(parents=True)
-    (plan_dir / "state.json").write_text(
-        json.dumps({"name": "demo", "current_state": "failed"}),
-        encoding="utf-8",
-    )
-    commands: list[list[str]] = []
-
-    def fake_run_command(root: Path, cmd: list[str], **_kwargs) -> None:
-        commands.append(cmd)
-        assert root == tmp_path
-
-    monkeypatch.setattr(chain_module, "_run_command", fake_run_command)
-
-    chain_module._recover_failed_plan_before_drive(tmp_path, "demo", writer=lambda _: None)
-
-    assert commands == [
-        [
-            sys.executable,
-            "-P",
-            "-m",
-            "arnold_pipelines.megaplan",
-            "resume",
-            "--plan",
-            "demo",
-        ]
-    ]
-
-
-def test_chain_current_state_reconciles_failed_review_after_successful_execute(
-    tmp_path: Path,
-) -> None:
-    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
-    plan_dir.mkdir(parents=True)
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": "demo",
-                "current_state": "failed",
-                "iteration": 1,
-                "config": {},
-                "sessions": {},
-                "plan_versions": [],
-                "history": [{"step": "execute", "result": "success"}],
-                "meta": {},
-                "last_gate": {},
-                "latest_failure": {
-                    "kind": "phase_failed",
-                    "phase": "review",
-                    "message": (
-                        '{"success": false, "error": "invalid_transition", '
-                        '"message": "Cannot run \'review\' while current state is '
-                        '\'failed\'", "details": {"current_state": "failed"}}'
-                    ),
-                    "metadata": {
-                        "stderr": (
-                            '{"success": false, "error": "invalid_transition", '
-                            '"message": "Cannot run \'review\' while current state is '
-                            '\'failed\'", "details": {"current_state": "failed"}}'
-                        )
-                    },
-                },
-                "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    atomic_write_phase_result(
-        plan_dir,
-        PhaseResult(
-            phase="execute",
-            invocation_id="test-execute-success",
-            exit_kind="success",
-            artifacts_written=("execution.json",),
-        ),
-    )
-
-    current_state = chain_module._plan_current_state_from_payload(tmp_path, "demo")
-
-    assert current_state == "executed"
-    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["current_state"] == "executed"
-    assert state["latest_failure"] is None
-    assert "resume_cursor" not in state
-
-
-def test_git_text_normalizes_timeout_as_cli_error(monkeypatch, tmp_path: Path) -> None:
-    def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(
-            cmd=kwargs.get("args") or args[0],
-            timeout=kwargs["timeout"],
-            output="partial stdout",
-            stderr="partial stderr",
-        )
-
-    monkeypatch.setattr(auto.subprocess, "run", fake_run)
-
-    try:
-        auto._git_text(tmp_path, ["git", "push"], timeout=3)
-    except CliError as error:
-        assert error.code == "git_publish_timeout"
-        assert "git push timed out after 3 seconds" == error.message
-        assert error.extra["stdout"] == "partial stdout"
-        assert error.extra["stderr"] == "partial stderr"
-    else:
-        raise AssertionError("expected CliError")
-
-
-def test_publish_done_plan_records_push_timeout_without_raising(monkeypatch, tmp_path: Path) -> None:
-    plan_dir = tmp_path / "demo"
-    plan_dir.mkdir()
-    commands: list[list[str]] = []
-
-    def fake_git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
-        commands.append(list(argv))
-        if argv == ["git", "status", "--porcelain"]:
-            return " M changed.txt"
-        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-            return "feature"
-        if argv == ["git", "rev-parse", "HEAD"]:
-            return "abc1234567890"
-        if argv[:2] == ["git", "switch"] or argv[:2] == ["git", "add"]:
-            return ""
-        if argv[:2] == ["git", "commit"]:
-            return "committed"
-        if argv[:3] == ["git", "push", "--no-verify"]:
-            raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
-        if argv[:4] == ["git", "ls-remote", "--heads", "origin"]:
-            return ""
-        if argv == ["git", "remote", "get-url", "origin"]:
-            return ""
-        raise AssertionError(f"unexpected git command: {argv}")
-
-    class Completed:
-        returncode = 1
-
-    monkeypatch.setattr(auto, "_git_text", fake_git_text)
-    monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: Completed())
-
-    lines: list[str] = []
-    payload = auto._publish_done_plan(
-        plan="demo",
-        plan_dir=plan_dir,
-        root=tmp_path,
-        branch=None,
-        writer=lines.append,
-    )
-
-    assert payload is not None
-    assert payload["status"] == "publish_failed"
-    assert payload["reason"] == "git_publish_timeout"
-    assert payload["push_output"] == "git push timed out after 180 seconds"
-    assert "publish publish_failed" in lines[-1]
-    assert json.loads((plan_dir / "publish.json").read_text(encoding="utf-8")) == payload
-
-
-def test_publish_done_plan_accepts_push_timeout_when_remote_has_commit(monkeypatch, tmp_path: Path) -> None:
-    plan_dir = tmp_path / "demo"
-    plan_dir.mkdir()
-
-    def fake_git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
-        if argv == ["git", "status", "--porcelain"]:
-            return " M changed.txt"
-        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-            return "feature"
-        if argv == ["git", "rev-parse", "HEAD"]:
-            return "abc1234567890"
-        if argv[:2] == ["git", "switch"] or argv[:2] == ["git", "add"]:
-            return ""
-        if argv[:2] == ["git", "commit"]:
-            return "committed"
-        if argv[:3] == ["git", "push", "--no-verify"]:
-            raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
-        if argv[:4] == ["git", "ls-remote", "--heads", "origin"]:
-            return "abc1234567890\trefs/heads/megaplan/demo"
-        if argv == ["git", "remote", "get-url", "origin"]:
-            return "git@github.com:example/repo.git"
-        raise AssertionError(f"unexpected git command: {argv}")
-
-    class Completed:
-        returncode = 1
-
-    monkeypatch.setattr(auto, "_git_text", fake_git_text)
-    monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: Completed())
-
-    payload = auto._publish_done_plan(
-        plan="demo",
-        plan_dir=plan_dir,
-        root=tmp_path,
-        branch=None,
-        writer=lambda _: None,
-    )
-
-    assert payload is not None
-    assert payload["status"] == "pushed"
-    assert payload["reason"] == "remote_verified_after_push_error"
-    assert payload["push_output"] == "git push timed out after 180 seconds"
 
 
 def test_drive_forwards_live_phase_model_to_phase_subprocess(
@@ -305,36 +63,6 @@ def test_drive_forwards_live_phase_model_to_phase_subprocess(
     ]
 
 
-def test_execute_compat_consumes_phase_model_flag() -> None:
-    from arnold_pipelines.megaplan.cli import (
-        _consume_execute_compat_flags,
-        _normalize_execute_compat_argv,
-        build_parser,
-    )
-
-    argv = _normalize_execute_compat_argv(
-        [
-            "execute",
-            "--confirm-destructive",
-            "--user-approved",
-            "--retry-blocked-tasks",
-            "--plan",
-            "demo",
-            "--phase-model",
-            "execute=codex:gpt-5.5",
-            "--fresh",
-        ]
-    )
-    args, remaining = build_parser().parse_known_args(argv)
-
-    remaining = _consume_execute_compat_flags(args, remaining)
-
-    assert remaining == []
-    assert args.confirm_destructive is True
-    assert args.user_approved is True
-    assert args.retry_blocked_tasks is True
-    assert args.phase_model == ["execute=codex:gpt-5.5"]
-
 def test_drive_clears_stale_latest_failure_before_phase_redispatch(
     monkeypatch,
     tmp_path: Path,
@@ -346,6 +74,7 @@ def test_drive_clears_stale_latest_failure_before_phase_redispatch(
             {
                 "name": "demo",
                 "current_state": "initialized",
+                "config": {"with_prep": True},
                 "latest_failure": {
                     "kind": "phase_failed",
                     "phase": "prep",
@@ -573,18 +302,27 @@ def test_drive_keeps_quality_failure_on_terminal_quality_block(
     assert state["resume_cursor"] == {"phase": "review", "retry_strategy": "manual_review"}
 
 
-def test_drive_blocked_resume_clarify_without_prep_clarification_fails_in_override(
+def test_drive_ignores_legacy_resume_clarify_hint_and_uses_recovery_projection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     plan_dir = tmp_path / "demo"
     plan_dir.mkdir()
     (plan_dir / "state.json").write_text(
-        json.dumps({"name": "demo", "current_state": "blocked"}),
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "manual_review",
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
-    captured_failures: list[dict[str, object]] = []
+    run_calls = 0
 
     def fake_status(plan: str, **kwargs):
         assert plan == "demo"
@@ -596,46 +334,30 @@ def test_drive_blocked_resume_clarify_without_prep_clarification_fails_in_overri
         }
 
     def fake_run_planning_phase(args, **kwargs):
-        assert args == ["override", "resume-clarify", "--plan", "demo"]
-        return (
-            1,
-            json.dumps(
-                {
-                    "success": False,
-                    "error": "invalid_transition",
-                    "message": (
-                        "resume-clarify can only resume a prep-sourced "
-                        "clarification halt; use verify-human for "
-                        "criteria-verification awaiting_human states"
-                    ),
-                }
-            ),
-            "",
-        )
+        nonlocal run_calls
+        run_calls += 1
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
+        return (0, "", "")
 
     monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
     monkeypatch.setattr(auto, "_status", fake_status)
     monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
-    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
     monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
 
-    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=80, poll_sleep=0)
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
 
-    assert outcome.status == "blocked"
+    assert outcome.status == "cap"
     assert outcome.final_state == "blocked"
-    assert outcome.iterations == 2
-    assert outcome.last_phase == "resume-clarify"
-    assert outcome.blocking_reasons == ["invalid_transition_loop"]
-    assert "resume-clarify can only resume a prep-sourced clarification halt" in outcome.reason
-    failure = captured_failures[-1]
-    assert failure["kind"] == "invalid_transition_loop"
-    assert failure["phase"] == "resume-clarify"
-    assert failure["resume_cursor"] == {
-        "phase": "resume-clarify",
-        "retry_strategy": "repair_control_binding",
-    }
-    assert failure["metadata"]["required_state"] is None
-    assert failure["metadata"]["actual_state"] == "blocked"
+    assert outcome.iterations == 1
+    assert outcome.last_phase == "recover-blocked"
+    assert run_calls == 1
 
 
 def test_drive_breaks_repeated_control_invalid_transition(
@@ -645,7 +367,16 @@ def test_drive_breaks_repeated_control_invalid_transition(
     plan_dir = tmp_path / "demo"
     plan_dir.mkdir()
     (plan_dir / "state.json").write_text(
-        json.dumps({"name": "demo", "current_state": "critiqued"}),
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "manual_review",
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -655,7 +386,7 @@ def test_drive_breaks_repeated_control_invalid_transition(
     def fake_status(plan: str, **kwargs):
         assert plan == "demo"
         return {
-            "state": "critiqued",
+            "state": "blocked",
             "next_step": "override force-proceed",
             "valid_next": ["override force-proceed"],
             "progress": {},
@@ -664,7 +395,14 @@ def test_drive_breaks_repeated_control_invalid_transition(
     def fake_run_planning_phase(args, **kwargs):
         nonlocal run_calls
         run_calls += 1
-        assert args == ["override", "force-proceed", "--plan", "demo"]
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
         return (
             1,
             "",
@@ -672,7 +410,7 @@ def test_drive_breaks_repeated_control_invalid_transition(
                 {
                     "success": False,
                     "error": "invalid_transition",
-                    "message": "routed override rejected",
+                    "message": "recover-blocked rejected",
                 }
             ),
         )
@@ -688,12 +426,12 @@ def test_drive_breaks_repeated_control_invalid_transition(
     assert outcome.status == "blocked"
     assert outcome.final_state == "blocked"
     assert outcome.iterations == 2
-    assert outcome.last_phase == "force-proceed"
+    assert outcome.last_phase == "recover-blocked"
     assert outcome.blocking_reasons == ["invalid_transition_loop"]
     assert run_calls == 2
     failure = captured_failures[-1]
     assert failure["kind"] == "invalid_transition_loop"
-    assert failure["phase"] == "force-proceed"
+    assert failure["phase"] == "recover-blocked"
     assert failure["metadata"]["count"] == 2
     assert failure["metadata"]["max_attempts"] == 2
 
@@ -758,67 +496,6 @@ def test_drive_auto_approve_resumes_prep_clarification(
     assert notes[-1]["source"] == "auto_approve_prep_clarification"
     assert "structured params" in notes[-1]["note"]
     assert state["meta"]["overrides"][-1]["action"] == "auto-resume-clarify"
-
-
-def test_drive_allows_blocked_prep_resume_clarify(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    plan_dir = tmp_path / "demo"
-    plan_dir.mkdir()
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": "demo",
-                "current_state": "blocked",
-                "clarification": {
-                    "source": "prep",
-                    "questions": ["Is the prerequisite complete?"],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    status_calls = 0
-    commands: list[list[str]] = []
-
-    def fake_status(plan: str, **kwargs):
-        nonlocal status_calls
-        status_calls += 1
-        assert plan == "demo"
-        if status_calls == 1:
-            return {
-                "state": "blocked",
-                "next_step": "override resume-clarify",
-                "valid_next": ["override resume-clarify"],
-                "progress": {},
-            }
-        return {
-            "state": "prepped",
-            "next_step": None,
-            "valid_next": [],
-            "progress": {},
-        }
-
-    def fake_run_planning_phase(args, **kwargs):
-        commands.append(list(args))
-        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-        state["current_state"] = "prepped"
-        state.pop("clarification", None)
-        (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-        return 0, json.dumps({"success": True, "state": "prepped"}), ""
-
-    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
-    monkeypatch.setattr(auto, "_status", fake_status)
-    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
-    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
-
-    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=2, poll_sleep=0)
-
-    assert outcome.status == "failed"
-    assert outcome.final_state == "prepped"
-    assert commands == [["override", "resume-clarify", "--plan", "demo"]]
 
 
 def test_drive_internal_error_log_prefers_latest_failure_over_warning_stderr(
@@ -958,6 +635,457 @@ def test_drive_internal_error_ignores_warning_only_stderr_when_stdout_has_failur
     assert "M_WARN_ROUTING_DEGRADED" in phase_failure["metadata"]["stderr_raw"]
 
 
+def test_drive_bounds_identical_structural_phase_failures(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "critiqued"}),
+        encoding="utf-8",
+    )
+    detail = (
+        "worker_structural_audit_failed: missing_required at "
+        "/north_star_actions"
+    )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "gate",
+            "valid_next": ["gate"],
+            "progress": {},
+        },
+    )
+
+    def fail_gate(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="gate",
+                invocation_id="test",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return 1, detail, ""
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_gate)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=10, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 3
+    terminal = failures[-1]
+    assert terminal["kind"] == "deterministic_phase_failure"
+    assert terminal["resume_cursor"]["retry_strategy"] == "repair_phase_contract"
+    assert terminal["metadata"]["count"] == 3
+
+
+def test_predispatch_validation_signature_ignores_volatile_evidence() -> None:
+    def payload(evidence_hash: str, artifact_path: str) -> str:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "validation_job_failed",
+                "message": "validation job VJ2 exited 124; expected one of [0]",
+                "details": {
+                    "job_id": "VJ2",
+                    "validation_job_kind": "post_execute_suite",
+                    "exit_code": 124,
+                    "expected_exit_codes": [0],
+                    "evidence_hash": evidence_hash,
+                    "artifact_path": artifact_path,
+                },
+            }
+        )
+
+    first = auto._predispatch_validation_failure(
+        "",
+        payload("sha256:first", "/tmp/validation_VJ2_run-1.json"),
+    )
+    second = auto._predispatch_validation_failure(
+        "",
+        payload("sha256:second", "/tmp/validation_VJ2_run-2.json"),
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first["signature"] == second["signature"]
+    assert first["occurrence_id"] == second["occurrence_id"]
+    assert first["retryable_infrastructure"] is True
+    assert first["worker_dispatched"] is False
+
+
+def test_drive_bounds_predispatch_validation_infrastructure_without_model_escalation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "finalized",
+                "config": {
+                    "tier_models": {
+                        "execute": {
+                            "1": "hermes:zhipu:glm-5.2",
+                            "2": "codex:gpt-5.6-sol:high",
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_count = 0
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        },
+    )
+
+    def fail_validation(args, **kwargs):
+        nonlocal run_count
+        run_count += 1
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="execute",
+                invocation_id=f"validation-{run_count}",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "validation_job_failed",
+                    "message": "validation job VJ2 exited 124; expected one of [0]",
+                    "details": {
+                        "job_id": "VJ2",
+                        "validation_job_kind": "post_execute_suite",
+                        "exit_code": 124,
+                        "expected_exit_codes": [0],
+                        "evidence_hash": f"sha256:attempt-{run_count}",
+                        "artifact_path": f"verification/validation_VJ2_{run_count}.json",
+                    },
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_validation)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=10,
+        poll_sleep=0,
+        escalate_after_fails=1,
+    )
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 2
+    assert run_count == 2
+    assert outcome.tier_escalations_used == 0
+    # The retry is telemetry only; lifecycle/repair/notification admission is
+    # performed once when the stable occurrence exhausts its bounded budget.
+    assert len(failures) == 1
+    terminal = failures[0]
+    assert terminal["kind"] == "pre_dispatch_validation_failed"
+    assert terminal["resume_cursor"]["retry_strategy"] == "repair_validation_infrastructure"
+    assert terminal["metadata"]["count"] == 2
+    assert terminal["metadata"]["worker_dispatched"] is False
+    assert terminal["metadata"]["notification_occurrence_id"].startswith(
+        "validation-"
+    )
+
+
+def test_drive_does_not_retry_predispatch_validation_assertion_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        },
+    )
+
+    def fail_validation(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="execute",
+                invocation_id="validation-1",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "validation_job_failed",
+                    "message": "validation job VJ2 exited 1; expected one of [0]",
+                    "details": {
+                        "job_id": "VJ2",
+                        "validation_job_kind": "post_execute_suite",
+                        "exit_code": 1,
+                        "expected_exit_codes": [0],
+                        "evidence_hash": "sha256:failure",
+                    },
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_validation)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=10,
+        poll_sleep=0,
+        escalate_after_fails=1,
+    )
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 1
+    assert outcome.tier_escalations_used == 0
+    assert len(failures) == 1
+    assert failures[0]["resume_cursor"]["retry_strategy"] == "repair_validation_failure"
+
+
+def test_drive_does_not_latch_distinct_critique_validation_failures(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "planned"}),
+        encoding="utf-8",
+    )
+    messages = [
+        "Critique output failed check validation: issue_hints, correctness",
+        "Critique output failed check validation: issue_hints, correctness, scope",
+        (
+            "Critique output failed check validation: "
+            "issue_hints, correctness, scope, conventions"
+        ),
+    ]
+    call_count = 0
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "planned",
+            "next_step": "critique",
+            "valid_next": ["critique"],
+            "progress": {},
+        },
+    )
+
+    def fail_critique(args, **kwargs):
+        nonlocal call_count
+        message = messages[call_count]
+        call_count += 1
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="critique",
+                invocation_id=f"attempt-{call_count}",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_critique",
+                    "message": message,
+                    "details": {"raw_output": "parallel"},
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_critique)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=3, poll_sleep=0)
+
+    assert outcome.status == "cap"
+    assert outcome.iterations == 3
+    assert call_count == 3
+    phase_failures = [
+        failure for failure in failures if failure["kind"] == "phase_failed"
+    ]
+    assert len(phase_failures) == 3
+    assert not any(
+        failure["kind"] == "deterministic_phase_failure" for failure in failures
+    )
+    for failure, message in zip(phase_failures, messages, strict=True):
+        assert message in str(failure["message"])
+        assert "inspect critique_check_* artifacts" in str(failure["message"])
+        assert '"raw_output": "parallel"' not in str(failure["message"])
+
+
+def test_drive_still_latches_identical_critique_validation_failures(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "planned"}),
+        encoding="utf-8",
+    )
+    message = "Critique output failed check validation: issue_hints, correctness"
+    call_count = 0
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "planned",
+            "next_step": "critique",
+            "valid_next": ["critique"],
+            "progress": {},
+        },
+    )
+
+    def fail_critique(args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="critique",
+                invocation_id=f"attempt-{call_count}",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_critique",
+                    "message": message,
+                    "details": {"raw_output": "parallel"},
+                }
+            ),
+        )
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_critique)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=10, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 3
+    assert call_count == 3
+    terminal = failures[-1]
+    assert terminal["kind"] == "deterministic_phase_failure"
+    assert terminal["metadata"]["count"] == 3
+    assert message in str(terminal["message"])
+
+
+def test_drive_phase_failure_preserves_native_exception_forensics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "prepped"}),
+        encoding="utf-8",
+    )
+    try:
+        raise UnicodeDecodeError("utf-8", b"agent output: \\xa3", 14, 15, "invalid start byte")
+    except UnicodeDecodeError as error:
+        diagnostic = auto._native_exception_diagnostic(error)
+
+    def fake_status(plan: str, **kwargs):
+        return {"state": "prepped", "next_step": "plan", "valid_next": ["plan"], "progress": {}}
+
+    def fake_run_planning_phase(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(phase="plan", invocation_id="test", exit_kind=ExitKind.internal_error.value),
+        )
+        return 1, "", auto._PhaseDiagnosticText("UnicodeDecodeError: invalid start byte", diagnostic)
+
+    captured_failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    phase_failure = next(item for item in captured_failures if item.get("kind") == "phase_failed")
+    metadata = phase_failure["metadata"]
+    assert metadata["stderr_raw"] == "UnicodeDecodeError: invalid start byte"
+    assert metadata["exception_type"] == "UnicodeDecodeError"
+    assert metadata["exception_traceback"]
+    assert metadata["exception_callsite"]["function"] == "test_drive_phase_failure_preserves_native_exception_forensics"
+    assert base64.b64decode(metadata["diagnostic_bytes_b64"]).decode("utf-8") == metadata["exception_traceback"]
+
+
 def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_blocked_loop(
     monkeypatch,
     tmp_path: Path,
@@ -1023,7 +1151,7 @@ def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_bloc
     }
 
 
-def test_drive_bails_on_repeated_finalize_failure_signature(
+def test_drive_blocks_when_observed_cursor_disagrees_with_forward_projection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -1060,13 +1188,15 @@ def test_drive_bails_on_repeated_finalize_failure_signature(
             "next_step": "revise",
             "valid_next": ["revise"],
             "progress": {},
+            "workflow_cursor": {
+                "phase": "gate",
+                "dispatch_phase": "gate",
+                "next_dispatch_phases": ["revise"],
+            },
         }
 
     def fake_run_planning_phase(args, **kwargs):
-        nonlocal run_calls
-        run_calls += 1
-        assert args == ["revise", "--plan", "demo"]
-        return (0, "", "")
+        raise AssertionError("cursor mismatch must stop before dispatch")
 
     def fake_record_failure(**kwargs):
         captured_failures.append(dict(kwargs))
@@ -1087,18 +1217,76 @@ def test_drive_bails_on_repeated_finalize_failure_signature(
 
     assert outcome.status == "blocked"
     assert outcome.final_state == "blocked"
-    assert outcome.iterations == 3
-    assert outcome.blocking_reasons == ["repeated_failure_signature"]
-    assert run_calls == 2
+    assert outcome.iterations == 1
+    assert outcome.blocking_reasons == ["workflow_cursor_mismatch"]
+    assert run_calls == 0
     assert captured_failures
     failure = captured_failures[-1]
-    assert failure["kind"] == "repeated_failure_signature"
+    assert failure["kind"] == "workflow_cursor_mismatch"
     assert failure["current_state"] == "blocked"
     assert failure["resume_cursor"] == {
-        "phase": "finalize",
-        "retry_strategy": "repair_repeated_failure",
+        "phase": "gate",
+        "retry_strategy": "repair_workflow_projection",
     }
-    assert failure["metadata"]["count"] == 3
+    assert failure["metadata"]["observed_phase_source"] is None
+
+
+def test_drive_reconciles_completed_execute_before_cursor_projection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A persisted finalized->executed gap must not become a cursor mismatch.
+
+    This is the real recovery shape: status still projects ``execute`` from
+    ``finalized`` while the last completed execute event projects ``review``.
+    Artifact adoption is deliberately evidence-gated in production; this test
+    isolates the ordering contract and proves that gate runs before cursor
+    comparison can falsely terminal-block the plan.
+    """
+
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized", "history": []}),
+        encoding="utf-8",
+    )
+    reconciliations: list[Path | None] = []
+    failures: list[dict[str, object]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+            "last_step": {"step": "execute", "result": "success"},
+            "workflow_cursor": {
+                "phase": "execute",
+                "dispatch_phase": "execute",
+                "next_dispatch_phases": ["review"],
+            },
+        }
+
+    def fake_reconcile(candidate: Path | None) -> bool:
+        reconciliations.append(candidate)
+        return True
+
+    def fail_projection(*args, **kwargs):
+        raise AssertionError("cursor projection must run only after reconciliation")
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_recover_completed_execute_artifacts_after_failure", fake_reconcile)
+    monkeypatch.setattr(auto, "_project_auto_dispatch", fail_projection)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(dict(kwargs)))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    assert reconciliations == [plan_dir]
+    assert outcome.status == "cap"
+    assert all(failure["kind"] != "workflow_cursor_mismatch" for failure in failures)
 
 
 def test_drive_stall_marks_manual_review_origin_auto_stall(
@@ -1154,19 +1342,23 @@ def test_drive_stall_marks_manual_review_origin_auto_stall(
 
     outcome = auto.drive("demo", cwd=tmp_path, stall_threshold=5, max_iterations=10)
 
-    assert outcome.status == "stalled"
+    # Native workflow authority refuses the legacy status fixture because it
+    # supplies no source-derived actionable target; it must fail rather than
+    # manufacture a legacy dispatch.
+    assert outcome.status == "failed"
     assert outcome.final_state == "executing"
     assert captured_failures
     failure = captured_failures[-1]
-    assert failure["kind"] == "stalled"
+    assert failure["kind"] == "no_next_step"
     assert failure["resume_cursor"] == {
-        "phase": "execute",
-        "retry_strategy": "manual_review",
+        "phase": "status",
+        "retry_strategy": "repair_state",
     }
     assert failure["metadata"] == {
-        "stall_count": 5,
-        "iteration": 6,
-        "manual_review_origin": "auto_stall",
+        "iteration": 1,
+        "legacy_next_step": "execute",
+        "legacy_valid_next": ["execute"],
+        "valid_next": [],
     }
 
 
@@ -1181,11 +1373,15 @@ def test_drive_execute_prereq_block_without_user_actions_surfaces_blocked(
             {
                 "name": "demo",
                 "current_state": "finalized",
-                "active_step": {
-                    "phase": "execute",
-                    "run_id": "stale-run",
-                    "worker_pid": 12345,
-                    "started_at": "2026-07-03T10:44:49Z",
+                    "active_step": {
+                        "phase": "execute",
+                        "run_id": "stale-run",
+                        "worker_pid": os.getpid(),
+                        "runner_incarnation": {
+                            **current_runner_incarnation(),
+                            "worker_process_start_identity": "reused-process-start",
+                        },
+                        "started_at": "2026-07-03T10:44:49Z",
                     "last_activity_at": "2026-07-03T10:44:49Z",
                 },
             }
@@ -1294,3 +1490,106 @@ def test_drive_execute_prereq_block_with_user_action_stays_awaiting_human(
     assert outcome.status == "awaiting_human"
     assert outcome.final_state == "finalized"
     assert "awaiting user action" in outcome.reason
+def test_drive_stall_preserves_original_blocked_cursor_not_recover_blocked(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A stall after repeated recover-blocked attempts must not wedge the cursor.
+
+    Bounded sibling instance (r7 CL2): the stall path recorded
+    ``resume_cursor={"phase": last_phase or next_step, ...}`` where last_phase
+    was the recovery helper ``recover-blocked`` (no topology predecessor), so
+    the plan wedged: recover-blocked rejected ``invalid_resume_cursor`` and
+    resume tried to exec a nonexistent ``recover-blocked`` binary.  The stall
+    path must preserve the original blocked-phase cursor exactly like the
+    iteration-cap path via ``_failure_resume_cursor_for_step``.
+    """
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    original_cursor = {
+        "phase": "gate",
+        "retry_strategy": "repair_workflow_projection",
+    }
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "workflow_cursor_mismatch",
+                    "phase": "gate",
+                    "state": "blocked",
+                },
+                "resume_cursor": original_cursor,
+                "history": [
+                    {"step": "gate", "result": "success"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status_calls = 0
+    run_calls = 0
+
+    def fake_status(plan: str, **kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        assert plan == "demo"
+        return {
+            "state": "blocked",
+            "next_step": "recover-blocked",
+            "valid_next": ["recover-blocked"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        nonlocal run_calls
+        run_calls += 1
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
+        # Retryable recover-blocked failure: missing phase_result, not one of
+        # the non-retryable codes, so the loop keeps iterating into the stall.
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "missing_phase_result",
+                    "message": (
+                        "recover-blocked requires phase_result.json with "
+                        "current blocker details"
+                    ),
+                }
+            ),
+        )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        stall_threshold=2,
+        max_iterations=10,
+        poll_sleep=0,
+    )
+
+    assert outcome.status == "stalled"
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    persisted_cursor = persisted.get("resume_cursor") or {}
+    assert persisted_cursor.get("phase") == "gate", (
+        f"stall must preserve original blocked-phase cursor, got {persisted_cursor!r}"
+    )
+    assert persisted_cursor.get("retry_strategy") == "manual_review"
+    assert persisted.get("latest_failure", {}).get("kind") == "stalled"
+    assert status_calls >= 2

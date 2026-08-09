@@ -1,0 +1,13 @@
+{
+  "success": false,
+  "step": "resume",
+  "plan": "cl2-wbc-backed-ledger-20260805-2140",
+  "phase": "execute",
+  "resume_cursor": {
+    "phase": "execute",
+    "retry_strategy": "repair_validation_failure"
+  },
+  "exit_code": 1,
+  "stdout": "{\n  \"success\": false,\n  \"error\": \"validation_job_failed\",\n  \"message\": \"validation job VJ1 exited -9; expected one of [0]\",\n  \"valid_next\": [\n    \"execute\",\n    \"revise\",\n    \"finalize\"\n  ],\n  \"details\": {\n    \"job_id\": \"VJ1\",\n    \"validation_job_kind\": \"post_execute_suite\",\n    \"exit_code\": -9,\n    \"expected_exit_codes\": [\n      0\n    ],\n    \"evidence_hash\": \"sha256:0967ff4fdee763c32a2088076da4ad2ec69618ee4bddf5a066b65ce787c597ff\",\n    \"artifact_path\": \"/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/verification/validation_VJ1_c70ac74f8514.json\"\n  }\n}\n",
+  "stderr": ""
+}

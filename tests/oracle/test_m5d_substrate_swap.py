@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from arnold_pipelines.megaplan.auto import DriverOutcome
+from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
@@ -147,6 +148,8 @@ def _materialize_canary(tmp_path: Path, *, beta_maxed: bool = False) -> tuple[Pa
     shutil.copytree(CANARY_FIXTURE_DIR, fixture_root)
     alpha = (fixture_root / "alpha.md").resolve()
     beta = (fixture_root / "beta.md").resolve()
+    north_star = fixture_root / "NORTHSTAR.md"
+    north_star.write_text("# Canary North Star\n\nExercise supervisor chain control flow.\n", encoding="utf-8")
     spec_path = fixture_root / "supervisor-canary.yaml"
     beta_lines = ["  - label: beta", f"    idea: {beta}", "    depends_on: [alpha]"]
     if beta_maxed:
@@ -164,6 +167,8 @@ def _materialize_canary(tmp_path: Path, *, beta_maxed: bool = False) -> tuple[Pa
                 "  - label: alpha",
                 f"    idea: {alpha}",
                 *beta_lines,
+                "anchors:",
+                "  north_star: NORTHSTAR.md",
                 "driver:",
                 "  max_iterations: 5",
                 "  poll_sleep: 0.0",
@@ -212,6 +217,41 @@ def _run_supervisor_canary(
         writer=lambda _msg: None,
     )
     return result
+
+
+def test_supervisor_persists_successor_lifecycle_before_driving(tmp_path: Path) -> None:
+    root, spec_path = _materialize_canary(tmp_path)
+    state = chain_spec.load_chain_state(spec_path)
+    state.last_state = "done"
+    chain_spec.save_chain_state(spec_path, state)
+
+    class InspectingDriver:
+        def drive(self, request: RunRequest) -> DriverOutcome:
+            saved = chain_spec.load_chain_state(spec_path)
+            assert saved.current_milestone_index == 0
+            assert saved.current_plan_name == request.plan
+            assert saved.last_state == "initialized"
+            return DriverOutcome(
+                status="blocked",
+                plan=request.plan,
+                final_state="blocked",
+                iterations=1,
+                reason="fixture stop after successor-state assertion",
+                last_phase="prep",
+                events=[],
+                blocking_reasons=["fixture"],
+            )
+
+    result = run_chain(
+        spec_path,
+        root,
+        driver=InspectingDriver(),
+        pack_runner=OraclePackRunner(),
+        binding="planning",
+        writer=lambda _msg: None,
+    )
+
+    assert result["status"] == "stopped"
 
 
 def test_supervisor_replay_manifest_covers_all_boundary_vocab() -> None:
@@ -415,6 +455,7 @@ def test_retirement_oracle_awaiting_pr_boundary_passes_against_canary_supervisor
     )
 
     assert result["status"] == "done"
+    assert result["chain_state"]["last_state"] == "done"
     assert _result_target_ids(result) == []
     pr_events = [event for event in result["events"] if event["kind"] == "pr_merge_resolution"]
     assert pr_events == [

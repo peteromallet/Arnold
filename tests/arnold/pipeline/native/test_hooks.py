@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +20,49 @@ from arnold.pipeline.native.hooks import (
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.trace import NativeTraceHooks
 from arnold.runtime.envelope import RunEnvelope
+from arnold.kernel.native_wbc import native_wbc_dir
 
 
 class _StepResult:
     def __init__(self, outputs: dict[str, Any], envelope: Any = None) -> None:
         self.outputs = outputs
         self.envelope = envelope
+
+
+def _git_status(repo_root: Path) -> str:
+    return subprocess.run(
+        ("git", "status", "--porcelain=v1", "--untracked-files=all"),
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def test_default_artifact_root_does_not_mutate_source_tree(tmp_path: Path) -> None:
+    repo_root = Path(__file__).parents[4]
+    before = _git_status(repo_root)
+
+    @phase
+    def child_step(ctx: dict) -> dict:
+        return {"child": "done"}
+
+    @workflow(name="isolated_child")
+    def child(ctx: dict) -> dict:
+        state = yield child_step(ctx)
+        return state
+
+    @pipeline
+    def parent(ctx: dict) -> dict:
+        state = yield child(ctx)
+        return state
+
+    result = run_native_pipeline(compile_pipeline(parent))
+
+    assert result.state == {"child": "done"}
+    assert (tmp_path / ".native_wbc").is_dir()
+    assert (tmp_path / "_child_isolated_child").is_dir()
+    assert _git_status(repo_root) == before
 
 
 def test_null_hooks_implements_protocol() -> None:
@@ -155,6 +193,36 @@ def test_effect_ledger_hooks_marks_side_effect_fulfilled() -> None:
         "effect_class": "filesystem_mutation",
         "duplicate_action": None,
     }
+
+
+def test_effect_ledger_hooks_emit_wbc_effect_and_reconciliation_evidence(tmp_path: Path) -> None:
+    hooks = EffectLedgerHooks(artifact_root=tmp_path, program_name="hook-demo")
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        return {"attempt": ctx["attempt"]}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+    run_native_pipeline(prog, hooks=hooks, artifact_root=tmp_path)
+    run_native_pipeline(prog, hooks=hooks, artifact_root=tmp_path)
+
+    path = native_wbc_dir(
+        tmp_path,
+        producer_family="arnold_native",
+        surface="effect_ledger_hooks",
+    ) / "events.ndjson"
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+    assert "effect_intent" in [event["event"] for event in events]
+    assert "effect_outcome" in [event["event"] for event in events]
+    assert "reconciliation" in [event["event"] for event in events]
+    assert all(event["authority"]["grants_authority"] is False for event in events)
+    assert all(event["authority"]["leases_authority"] is False for event in events)
 
 
 def test_effect_ledger_hooks_marks_side_effect_failed() -> None:

@@ -4,6 +4,7 @@ from typing import Any, Sequence
 
 from arnold_pipelines.megaplan.schemas import Ticket, TicketEpicLink
 from arnold_pipelines.megaplan.schemas.base import utc_now
+from arnold_pipelines.megaplan.tickets.relationships import auto_address_predicate
 
 from ..base import StoreError
 from .common import _new_id, _utc_key
@@ -114,6 +115,8 @@ class FileTicketMixin:
         ticket_id: str,
         epic_id: str,
         resolves_on_complete: bool = False,
+        kind: str = "associated",
+        provenance: str | None = None,
         idempotency_key: str | None = None,
     ) -> TicketEpicLink:
         for path, record in self._ticket_file_records():
@@ -127,6 +130,8 @@ class FileTicketMixin:
                 ticket_id=ticket_id,
                 epic_id=epic_id,
                 resolves_on_complete=resolves_on_complete,
+                kind=kind,
+                provenance=provenance,
                 linked_at=linked_at,
             )
             links = [row for row in links if row.epic_id != epic_id]
@@ -169,7 +174,7 @@ class FileTicketMixin:
     def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
         addressed: list[str] = []
         for link in self.list_ticket_epic_links(epic_id=epic_id):
-            if not link.resolves_on_complete:
+            if not auto_address_predicate(link):
                 continue
             ticket = self.load_ticket(link.ticket_id)
             if ticket is None or ticket.status != "open":

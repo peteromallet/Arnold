@@ -104,7 +104,6 @@ def test_run_describe_creative_prints_metadata() -> None:
 
 def test_registered_pipelines_includes_writing_panel_strict() -> None:
     """The registry surfaces writing-panel-strict alongside the built-ins."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.registry import registered_pipelines
     names = registered_pipelines()
     assert "writing-panel-strict" in names
@@ -114,7 +113,6 @@ def test_registered_pipelines_includes_writing_panel_strict() -> None:
 
 def test_registered_pipelines_includes_creative() -> None:
     """The registry surfaces creative alongside the built-ins."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.registry import registered_pipelines
     names = registered_pipelines()
     assert "creative" in names
@@ -154,7 +152,6 @@ def test_global_registry_restores_builtin_after_mutation() -> None:
 
 def test_describe_pipeline_writing_panel_strict(capsys) -> None:
     """_describe_pipeline for writing-panel-strict prints metadata."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli.run import _describe_pipeline
     rc = _describe_pipeline("writing-panel-strict")
     assert rc == 0
@@ -174,7 +171,6 @@ def test_describe_pipeline_unknown(capsys) -> None:
 
 def test_describe_pipeline_creative(capsys) -> None:
     """_describe_pipeline for creative prints metadata + SKILL.md."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli.run import _describe_pipeline
     rc = _describe_pipeline("creative")
     assert rc == 0
@@ -185,7 +181,6 @@ def test_describe_pipeline_creative(capsys) -> None:
 
 def test_handle_list_pipelines() -> None:
     """handle_list with list_target='pipelines' returns pipeline listing."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli import handle_list
     args = argparse.Namespace(
         list_target="pipelines",
@@ -209,7 +204,6 @@ def test_handle_list_pipelines() -> None:
 
 def test_handle_list_pipelines_verbose() -> None:
     """handle_list with list_target='pipelines' and verbose includes extra fields."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli import handle_list
     args = argparse.Namespace(
         list_target="pipelines",
@@ -237,7 +231,6 @@ def test_handle_list_pipelines_verbose() -> None:
 
 def test_handle_describe_writing_panel_strict(capsys) -> None:
     """handle_describe for writing-panel-strict prints metadata + SKILL.md."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli import handle_describe
     args = argparse.Namespace(pipeline_name="writing-panel-strict")
     result = handle_describe(args)
@@ -260,7 +253,6 @@ def test_handle_describe_unknown_pipeline() -> None:
 
 def test_handle_describe_creative(capsys) -> None:
     """handle_describe for creative prints metadata + SKILL.md."""
-    pytest.skip("Canonical list/describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli import handle_describe
     args = argparse.Namespace(pipeline_name="creative")
     result = handle_describe(args)
@@ -288,7 +280,6 @@ def test_cli_run_list_dispatches(monkeypatch) -> None:
 
 def test_cli_run_describe_dispatches(monkeypatch) -> None:
     """cli_run with --describe for a YAML pipeline prints description."""
-    pytest.skip("Canonical describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli.run import cli_run
 
     args = argparse.Namespace(
@@ -356,6 +347,12 @@ def _native_capable_megaplan_pipeline() -> SimpleNamespace:
         "review",
         "tiebreaker",
     )
+    return SimpleNamespace(
+        entry="prep",
+        stages={name: object() for name in stage_order},
+        resource_bundles=(),
+        native_program=NativeProgram(name="megaplan"),
+    )
 
 
 def _stub_profile_resolution(
@@ -369,12 +366,6 @@ def _stub_profile_resolution(
         "_resolve_profile_for_run",
         lambda **kwargs: dict(resolved_profile or {}),
     )
-    return SimpleNamespace(
-        entry="prep",
-        stages={name: object() for name in stage_order},
-        resource_bundles=(),
-        native_program=NativeProgram(name="megaplan"),
-    )
 
 
 def test_creative_invalid_form_validates_before_profile_preflight(
@@ -382,7 +373,6 @@ def test_creative_invalid_form_validates_before_profile_preflight(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pytest.skip("Direct helper preflight interception is not authoritative in the editable-install runtime.")
     from arnold_pipelines.megaplan import preflight as preflight_module
     from arnold_pipelines.megaplan.cli.run import cli_run
 
@@ -447,7 +437,6 @@ def test_run_pipeline_injects_pipeline_context_without_persisting_internal_input
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
@@ -489,7 +478,6 @@ def test_creative_run_seeds_runtime_state_before_step_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
     from arnold_pipelines.megaplan.cli.run import cli_run
@@ -532,10 +520,8 @@ def test_run_persists_runtime_identity_for_new_non_resume_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold.runtime.envelope import RuntimeEnvelope
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
-    from arnold_pipelines.megaplan import preflight as preflight_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
     from arnold_pipelines.megaplan.cli.run import cli_run
@@ -592,7 +578,6 @@ def test_run_persists_native_runtime_identity_for_native_capable_fresh_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
@@ -637,7 +622,6 @@ def test_run_runtime_arg_is_ignored_by_canonical_cli_surface(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
@@ -687,7 +671,6 @@ def test_run_graph_runtime_arg_is_ignored_by_canonical_cli_surface(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
@@ -740,7 +723,6 @@ def test_run_executor_arg_is_ignored_by_canonical_cli_surface(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
@@ -790,7 +772,6 @@ def test_run_accepts_extra_runtime_arg_for_non_native_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
@@ -841,8 +822,6 @@ def test_run_fails_closed_when_runtime_identity_metadata_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
-    from arnold_pipelines.megaplan import preflight as preflight_module
     from arnold_pipelines.megaplan import registry as registry_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
     from arnold_pipelines.megaplan.cli.run import cli_run
@@ -876,7 +855,6 @@ def test_run_uses_profile_validate_operation_when_advertised(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     from arnold.execution.operations import OperationKind, OperationResult
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import preflight as preflight_module
@@ -941,8 +919,6 @@ def test_run_preserves_generic_preflight_fallback_when_profile_validate_not_adve
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
-    from arnold.execution.operations import OperationKind
     from arnold_pipelines.megaplan.runtime import bridge as executor_module
     from arnold_pipelines.megaplan import preflight as preflight_module
     from arnold_pipelines.megaplan import registry as registry_module
@@ -997,7 +973,6 @@ def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fall
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.skip("Editable-install direct runtime helper coverage is not authoritative in M7.")
     import arnold_pipelines.megaplan.profiles as arnold_profiles_module
     from arnold_pipelines.megaplan.cli import run as run_cli_module
 
@@ -1053,7 +1028,6 @@ def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fall
 
 def test_cli_run_list_includes_creative(capsys) -> None:
     """cli_run --list output includes creative."""
-    pytest.skip("Canonical list coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli.run import cli_run
 
     args = argparse.Namespace(
@@ -1069,7 +1043,6 @@ def test_cli_run_list_includes_creative(capsys) -> None:
 
 def test_cli_run_describe_creative(capsys) -> None:
     """cli_run --describe for creative prints metadata + SKILL.md."""
-    pytest.skip("Canonical describe coverage is exercised through subprocess CLI assertions.")
     from arnold_pipelines.megaplan.cli.run import cli_run
 
     args = argparse.Namespace(
@@ -1173,7 +1146,6 @@ def test_preflight_resolves_symbolic_premium_with_selected_vendor(monkeypatch) -
 
 
 def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) -> None:
-    pytest.skip("Other premium-vendor preflight tests cover this behavior without editable-install shadowing.")
     from arnold_pipelines.megaplan import profiles as profiles_module
     from arnold_pipelines.megaplan import preflight as preflight_module
 

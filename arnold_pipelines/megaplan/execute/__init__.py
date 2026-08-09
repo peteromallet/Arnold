@@ -60,6 +60,10 @@ from arnold_pipelines.megaplan.execute.merge import (
     _validate_merge_inputs,
     reconcile_latest_execution_batch,
 )
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_DISPATCH_WBC_KEY,
+    EXECUTE_TRANSITION_WBC_KEY,
+)
 
 __all__ = [
     "BatchResult",
@@ -71,4 +75,6 @@ __all__ = [
     "worker_module",
     "run_quality_checks",
     "_validate_and_merge_batch",
+    "EXECUTE_DISPATCH_WBC_KEY",
+    "EXECUTE_TRANSITION_WBC_KEY",
 ]

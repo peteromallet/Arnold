@@ -21,6 +21,7 @@ from arnold.agent.providers.pool import (  # noqa: F401
     _ENV_ALIASES,
     _PROVIDER_BASE_URL_VARS,
     _PROVIDER_KEY_VARS,
+    provider_credential_env_vars,
 )
 
 # KeyPathSource that resolves the megaplan api_keys.json path.

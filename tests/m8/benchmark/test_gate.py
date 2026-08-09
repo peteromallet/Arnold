@@ -1,8 +1,8 @@
-"""M8 acceptance-gate benchmark module — opt-in, width-32 profile.
+"""M8 acceptance-gate benchmark module — default, width-32 profile.
 
 This module implements the deterministic benchmark gate for the M8 acceptance
-suite. It is opt-in (``@pytest.mark.m8_benchmark``), defaults to skip when the
-marker is not explicitly selected, and enforces width-32 threshold failures
+suite. It runs by default and uses ``@pytest.mark.m8_benchmark`` for targeted
+selection while enforcing width-32 threshold failures
 with precise diagnostics.
 
 Locked profile
@@ -27,12 +27,11 @@ REPORT_SCHEMA defined in this module.  The report includes:
 * ``tiers`` — per-tier timing and hash records.
 * ``aggregate`` — total runtime and pass/fail verdict.
 
-Default skip posture
---------------------
+Default execution posture
+-------------------------
 
-Tests decorated with ``@pytest.mark.m8_benchmark`` are skipped unless the
-``--m8-benchmark`` flag is passed on the command line.  This is implemented
-via a session-scoped fixture that inspects ``request.config.option``.
+Tests decorated with ``@pytest.mark.m8_benchmark`` are part of the default
+acceptance suite. The marker supports targeted benchmark-only execution.
 
 Marker registration
 -------------------
@@ -234,7 +233,7 @@ class TestM8BenchmarkGate:
         report, verdict = _build_report(manifests, runtimes, timeout=timeout)
         diagnostics = _validate_report(report)
         assert not diagnostics, (
-            f"Report schema validation failed:\n" + "\n".join(diagnostics)
+            "Report schema validation failed:\n" + "\n".join(diagnostics)
         )
 
         # Width-32 threshold check
@@ -249,7 +248,7 @@ class TestM8BenchmarkGate:
                 pytest.fail(msg)
 
         assert verdict == "PASS", (
-            f"Benchmark verdict is FAIL; check tier runtimes:\n"
+            "Benchmark verdict is FAIL; check tier runtimes:\n"
             + "\n".join(
                 f"  {t['label']}: {t['runtime_seconds']:.3f}s"
                 for t in report["tiers"]

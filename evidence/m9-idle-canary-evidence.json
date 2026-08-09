@@ -1,0 +1,71 @@
+{
+  "_non_authoritative": true,
+  "description": "M9 cutover evidence artifact. Projections are evidence identifiers only — never bearer authority for dispatch, repair, retry, completion, cancellation, or publication.",
+  "generated_by": "M9 T64 — execute_batch_14",
+  "idle_canary_evidence": {
+    "_non_authoritative": true,
+    "idle_detection": {
+      "description": "Detect when processes are idle/stale/quiet to prevent false liveness",
+      "quiet_range_seconds": {
+        "default": 120,
+        "max": 300,
+        "min": 60
+      },
+      "states": {
+        "QUIET": "No events observed within quiet range (60-300s parametrized)",
+        "STALLED": "Stale events without in-flight LLM → stalled (no false liveness)",
+        "TIMEOUT_IMMINENT": "Timeout-imminent priority when deadline approaching"
+      }
+    },
+    "liveness_states": {
+      "description": "All typed liveness states with associated evidence",
+      "states": {
+        "dead": "PID not live → worker has terminated",
+        "hung": "PID live + no heartbeat → worker is unresponsive",
+        "live": "PID live + recent heartbeat → worker is actively executing",
+        "quiet": "No recent events → canary is idle",
+        "recycled": "PID match + boot_id mismatch → different process instance",
+        "stale": "PID live + stale heartbeat → worker may be hung",
+        "stalled": "Stale events without in-flight work → not making progress",
+        "unknown": "No boot_id → cannot verify identity",
+        "unrelated": "No plan correlation → different or unknown plan"
+      }
+    },
+    "observer_agreement": {
+      "agreement_proof": "Same inputs → same liveness classification across all 4 surfaces",
+      "description": "Introspect, status, resident, and cloud views agree on identical inputs",
+      "surfaces": [
+        "introspect",
+        "status_signals",
+        "resident_tree",
+        "cloud_snapshot"
+      ],
+      "test_reference": "test_phase_scoped_llm_liveness.py — TestExactCursorLivenessParity (4 tests)"
+    },
+    "stale_process_exclusion": {
+      "description": "Exclude stale/recycled/same-basename processes from liveness signals",
+      "excluded_types": [
+        "DEAD — pid not live",
+        "RECYCLED — pid match + boot_id mismatch",
+        "SAME_BASENAME — different plan with same basename",
+        "UNRELATED — no plan correlation",
+        "HUNG — pid live + no heartbeat",
+        "UNKNOWN — no boot_id available"
+      ],
+      "test_reference": "test_phase_scoped_llm_liveness.py — TestStaleProcessExclusion (4 tests)"
+    },
+    "typed_unknowns": {
+      "cases": [
+        "missing active_step → UNKNOWN (not running)",
+        "unknown dimension → surfaced as unknown (not fresh)",
+        "missing heartbeat → unknown liveness (not live)",
+        "no events → quiet (not healthy)"
+      ],
+      "description": "Unknown dimensions never collapse to healthy or live",
+      "test_reference": "test_phase_scoped_llm_liveness.py — TestTypedUnknowns (3 tests)"
+    }
+  },
+  "plan_ref": "m9-rebuildable-projections-20260722-0431",
+  "schema": "m9.cutover-evidence.v1.evidence.m9-idle-canary-evidence",
+  "timestamp_utc": "2026-07-23T03:46:00.000000+00:00"
+}
