@@ -650,6 +650,18 @@ def _bind_repair_claim(manifest: dict[str, Any]) -> None:
         manifest["repair_claim"]["repair_identity"] = repair_identity
 
 
+def _managed_incident_root(manifest: Mapping[str, Any]) -> Path:
+    """Keep cloud control journals outside immutable runtime candidates."""
+
+    links = manifest.get("links")
+    links = links if isinstance(links, Mapping) else {}
+    if str(links.get("cloud_session") or "").strip():
+        return Path(
+            os.environ.get("ARNOLD_INCIDENT_LEDGER_ROOT") or "/workspace"
+        ).resolve(strict=False)
+    return Path(str(manifest.get("project_dir") or ".")).resolve(strict=False)
+
+
 def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
     links = manifest.get("links")
     if not isinstance(links, Mapping):
@@ -678,6 +690,7 @@ def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
         or run_kind == "automatic_root_cause_repair"
         else "immediate_repair"
     )
+    incident_root = _managed_incident_root(manifest)
     claim_event = incident_bridge.append_managed_repair_claim(
         incident_id=incident_id,
         claim_id=f"managed:{manifest.get('run_id')}",
@@ -692,7 +705,7 @@ def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
             else "immediate_repair.repair_attempt"
         ),
         links={"managed_agent": str(manifest.get("manifest_path"))},
-        root=str(manifest.get("project_dir") or "."),
+        root=incident_root,
     )
     claim_event_id = str(
         claim_event.get("event_id")
@@ -709,7 +722,7 @@ def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
         problem_id=str(links.get("problem_id") or "") or None,
         parent_event_ids=[claim_event_id] if claim_event_id else [],
         links={"managed_agent": str(manifest.get("manifest_path"))},
-        root=str(manifest.get("project_dir") or "."),
+        root=incident_root,
     )
     if manifest.get("run_kind") in {
         "automatic_meta_repair",
