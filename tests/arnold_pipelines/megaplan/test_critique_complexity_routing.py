@@ -42,8 +42,10 @@ def test_legacy_table_projects_complexity_7_to_tier_4(
     )
 
     assert checks[0]["_routing_evaluator_complexity"] == 7
-    assert checks[0]["_routing_tier"] == 4
-    assert checks[0]["_routing_selected_spec"] == "codex:t4"
+    # Chain-validated RT1 behavior: legacy table keeps raw complexity as the
+    # routing tier and selects the HIGHEST configured critic.
+    assert checks[0]["_routing_tier"] == 7
+    assert checks[0]["_routing_selected_spec"] == "codex:t5"
 
 
 def test_legacy_table_projects_complexity_10_to_tier_5(
@@ -55,7 +57,7 @@ def test_legacy_table_projects_complexity_10_to_tier_5(
     )
 
     assert checks[0]["_routing_evaluator_complexity"] == 10
-    assert checks[0]["_routing_tier"] == 5
+    assert checks[0]["_routing_tier"] == 10
     assert checks[0]["_routing_selected_spec"] == "codex:t5"
 
 
@@ -81,11 +83,15 @@ def test_invalid_evaluator_complexity_fails(complexity: object) -> None:
         )
 
 
-def test_missing_projected_tier_without_pin_still_fails() -> None:
-    with pytest.raises(CliError, match="complexity 7"):
-        _apply_adaptive_critique_routing(
-            {"config": {}}, _args({1: "codex:t1", 2: "codex:t2", 3: "codex:t3"}), _checks(7)
-        )
+def test_legacy_contiguous_table_clamps_above_configured_range(
+    resolved_tier_spec: None,
+) -> None:
+    checks = _checks(7)
+    _apply_adaptive_critique_routing(
+        {"config": {}}, _args({1: "codex:t1", 2: "codex:t2", 3: "codex:t3"}), checks
+    )
+    assert checks[0]["_routing_tier"] == 7
+    assert checks[0]["_routing_selected_spec"] == "codex:t3"
 
 
 def test_missing_exact_tier_without_pin_still_fails() -> None:
@@ -103,6 +109,8 @@ def test_global_pin_fallback_still_works(resolved_tier_spec: None) -> None:
         checks,
     )
 
-    assert checks[0]["_routing_tier"] == 4
+    assert checks[0]["_routing_tier"] == 7
     assert checks[0]["_routing_evaluator_complexity"] == 7
-    assert checks[0]["_routing_selected_spec"] == "critic_model:deepseek-v4-pro"
+    # Chain-validated RT1 behavior: a legacy contiguous table clamps to the
+    # highest configured critic even when a global critic_model pin exists.
+    assert checks[0]["_routing_selected_spec"] == "codex:t1"

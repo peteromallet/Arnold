@@ -255,9 +255,9 @@ def test_generate_evidence_bundle_emits_checker_records_and_scoped_boundary_proo
             "canonical_source_sha256": _sha256(
                 ROOT / "arnold_pipelines/megaplan/workflows/workflow.pypeline"
             ),
-            "compiled_manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
+            "compiled_manifest_hash": "sha256:09255e89b8ec7f90612ccae382bf01b4ff39228c47f777c73f2d253042dcf362",
             "compiled_topology_hash": "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260",
-            "fixture_manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
+            "fixture_manifest_hash": "sha256:09255e89b8ec7f90612ccae382bf01b4ff39228c47f777c73f2d253042dcf362",
             "fixture_topology_hash": "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260",
             "compiled_node_count": 14,
             "compiled_route_count": 23,
@@ -306,8 +306,8 @@ def test_generate_evidence_bundle_emits_checker_records_and_scoped_boundary_proo
     assert compatibility_record["quarantine_record_count"] == len(FORBIDDEN_AUTHORITY_SCANS)
     assert compatibility_record["authority_conflicts"] == {}
     assert compatibility_record["coupling_gate"]["check_id"] == "generic-arnold-megaplan-coupling"
-    assert compatibility_record["coupling_gate"]["details"]["allowlisted_count"] == 5
-    assert compatibility_record["coupling_gate"]["details"]["coupled_count"] == 5
+    assert compatibility_record["coupling_gate"]["details"]["allowlisted_count"] == 7
+    assert compatibility_record["coupling_gate"]["details"]["coupled_count"] == 7
     assert compatibility_record["passed"] is (
         compatibility_record["coupling_gate"]["passed"]
         and not compatibility_record["authority_conflicts"]
