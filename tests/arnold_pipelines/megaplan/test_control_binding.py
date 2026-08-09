@@ -120,6 +120,11 @@ def test_control_interface_declares_native_policy_targets_without_cursor_authori
             "target_ref": "plan",
             "policy_route_ref": "megaplan.override.resume_clarify",
         },
+        "reconcile-plan-ledger": {
+            "route_signal": "reconcile_plan_ledger",
+            "target_ref": "plan",
+            "policy_route_ref": "megaplan.override.reconcile_plan_ledger",
+        },
     }
 
 

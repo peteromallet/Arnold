@@ -509,16 +509,34 @@ def _apply_adaptive_critique_routing(
         )
 
     def _resolved_routing_tier(complexity: int) -> int:
-        # Historical 1..5 tier tables project a 1..10 evaluator complexity
-        # onto the 1..5 range arithmetically ((c + 1) // 2); a 1..10 table
-        # uses the complexity directly as the tier.
-        if _legacy_critique_tiers:
-            return (complexity + 1) // 2
+        # The evaluator complexity IS the routing tier for both legacy 1..5
+        # and current 1..10 tables.  A legacy table selects the HIGHEST
+        # configured critic when complexity exceeds the configured range
+        # (see _tier_spec_for), never a halved intermediate tier: under-
+        # routing a complexity-7 check to a mid-tier critic when a stronger
+        # one is configured would regress the chain-validated behavior.
         return complexity
 
     def _tier_spec_for(complexity: int) -> str | None:
         selected_tier = _resolved_routing_tier(complexity)
         _raw = _tier_value_for(selected_tier)
+        # Legacy 1..5 tables: a complexity above the configured range selects
+        # the HIGHEST configured critic (chain-validated RT1 behavior) —
+        # never an intermediate/unconfigured tier.  Missing tiers INSIDE the
+        # configured range remain a routing-contract error.
+        if _raw is None and _legacy_critique_tiers:
+            tiers = _configured_tiers()
+            # Clamp to the highest critic only when the legacy table is a
+            # CONTIGUOUS 1..N range (a full legacy table).  A sparse table
+            # with interior tiers missing is a routing-contract error and
+            # must raise, never silently clamp.
+            if (
+                tiers
+                and tiers == tuple(range(1, tiers[-1] + 1))
+                and complexity > tiers[-1]
+            ):
+                selected_tier = tiers[-1]
+                _raw = _tier_value_for(selected_tier)
         if isinstance(_raw, str):
             return _raw or None
         if isinstance(_raw, list):
