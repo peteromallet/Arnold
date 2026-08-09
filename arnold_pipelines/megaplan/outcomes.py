@@ -109,6 +109,7 @@ class OverrideOutcome(StrEnum):
     """Closed routing vocabulary for the override step."""
 
     ABORT = "abort"
+    CUTOVER = "cutover"
     FORCE_PROCEED = "force_proceed"
     REPLAN = "replan"
 
@@ -122,6 +123,7 @@ class OverridePolicyRoute(StrEnum):
     """
 
     ADOPT_EXECUTION = "adopt_execution"
+    RECONCILE_PLAN_LEDGER = "reconcile_plan_ledger"
     RECOVER_BLOCKED = "recover_blocked"
     RESUME_CLARIFY = "resume_clarify"
 

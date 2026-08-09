@@ -55,6 +55,13 @@ DECLARED_OVERRIDE_POLICY_ROUTES = {
         "policy_route_ref": "megaplan.override.resume_clarify",
         "description": "Resume a prep clarification halt at the plan step.",
     },
+    "reconcile-plan-ledger": {
+        "route_signal": OverridePolicyRoute.RECONCILE_PLAN_LEDGER,
+        "target_ref": "plan",
+        "declared_target_ref": "plan",
+        "policy_route_ref": "megaplan.override.reconcile_plan_ledger",
+        "description": "Append-only ledger repair for a drifted plan version (preserves original attestation).",
+    },
 }
 
 DECLARED_OVERRIDE_OUTCOME_TARGETS = {
@@ -75,6 +82,12 @@ DECLARED_OVERRIDE_OUTCOME_TARGETS = {
         "target_ref": "revise",
         "reentry_target_ref": "critique",
         "description": "Re-enter the planning loop by routing through revise and back to the critique reentry.",
+    },
+    "cutover": {
+        "route_signal": OverrideOutcome.CUTOVER,
+        "target_ref": "cutover",
+        "declared_target_ref": "cutover",
+        "description": "Execute the legacy-to-canonical cutover (combined run_authority + maintenance authority).",
     },
 }
 
@@ -642,6 +655,12 @@ def planning_workflow(brief: str) -> None:
                     else:
                         AUTHORING_HALT(id="tiebreaker_override_review_halt", review_payload=review_route_signal)
                         return None
+                elif override_result == OverrideOutcome.CUTOVER:
+                    AUTHORING_HALT(
+                        id="tiebreaker_override_cutover",
+                        override_result=override_result,
+                    )
+                    return None
                 elif override_result == OverrideOutcome.REPLAN:
                     AUTHORING_REVISE(id="tiebreaker_override_revise", gate_payload=override_result)
                 else:
@@ -730,6 +749,9 @@ def planning_workflow(brief: str) -> None:
                 else:
                     AUTHORING_HALT(id="override_review_halt", review_payload=review_route_signal)
                     return None
+            elif override_result == OverrideOutcome.CUTOVER:
+                AUTHORING_HALT(id="override_cutover", override_result=override_result)
+                return None
             elif override_result == OverrideOutcome.REPLAN:
                 AUTHORING_REVISE(id="override_revise", gate_payload=override_result)
             else:
