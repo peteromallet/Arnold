@@ -241,7 +241,8 @@ shapes:
         - event: on_suspend
           slot: suspension
   tournament:
-    description: Tournament lowers two full tiebreaker rounds plus a bounded retry loop-back to the judge.
+    description: Tournament lowers two full tiebreaker rounds plus a bounded retry
+      loop-back to the judge.
     nodes:
     - id: tourney-judge
       kind: branch
@@ -482,7 +483,7 @@ python_authoring_m3:
       fixture: tests/fixtures/workflow_authoring/m3/valid_m3_canonical_megaplan_topology.py
       canonical_shape: fanout_panel
       topology_hash: sha256:6680554eb181f686d0058cb1f5f837c709bee098fb00f41941ed8ffdc5fd0cf9
-      manifest_hash: sha256:2a5d35e6931acac7b57ffeec87fd1998f5e139bb5725125028553befc73b3fdc
+      manifest_hash: sha256:e30c1ac57aa8573d2d990174cfc7993042f369c329d5b4d588ddc0bd2f78c82c
       nodes:
       - id: blocked_override
         kind: megaplan:override
@@ -1077,16 +1078,21 @@ python_authoring_m3:
         condition_ref: null
   deferred_canonical_shapes:
     fanout_panel:
-      reason: Static compile-time panel remains a DSL shape; M3-owned runtime-list fanout is covered by parallel_map in canonical_megaplan_topology.
+      reason: Static compile-time panel remains a DSL shape; M3-owned runtime-list
+        fanout is covered by parallel_map in canonical_megaplan_topology.
       expected_diagnostic: AWF014_UNSUPPORTED_POLICY_CARRIER
     retry:
-      reason: M3 lowers retry as a policy carrier, not as an explicit retry wrapper node.
+      reason: M3 lowers retry as a policy carrier, not as an explicit retry wrapper
+        node.
     suspension_capability:
-      reason: M3 lowers suspension as workflow policy/intrinsic carriers, not as a standalone capability-gated suspension node fixture.
+      reason: M3 lowers suspension as workflow policy/intrinsic carriers, not as a
+        standalone capability-gated suspension node fixture.
     override_fallback:
-      reason: M3 branch labels are literal decision routes; override/fallback route policy syntax is not supported.
+      reason: M3 branch labels are literal decision routes; override/fallback route
+        policy syntax is not supported.
     escalation:
-      reason: M3 control transitions lower to policy slots, not explicit escalation edges.
+      reason: M3 control transitions lower to policy slots, not explicit escalation
+        edges.
     compensation:
       reason: M3 has no lowerable compensation carrier in this checkout.
     supervisor_promotion:
@@ -1094,7 +1100,8 @@ python_authoring_m3:
     feedback:
       reason: M3 allows only bounded review/rework loop backedges with loop policy.
     robustness_budget:
-      reason: M3 deliberately diagnoses robustness/budget-like policy families without explicit carriers.
+      reason: M3 deliberately diagnoses robustness/budget-like policy families without
+        explicit carriers.
       expected_diagnostic: AWF014_UNSUPPORTED_POLICY_CARRIER
     dynamic_topology_overlay:
       reason: M3 source lowering does not expose dynamic topology overlay slots.
