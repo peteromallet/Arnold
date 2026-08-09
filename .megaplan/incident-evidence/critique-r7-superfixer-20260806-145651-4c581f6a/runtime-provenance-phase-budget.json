@@ -1,0 +1,73 @@
+{
+  "content_sha256": "9535dd3279863323f7920330ac7deb26384dd7bfb2126b461b5054448d014e5a",
+  "interpreter": {
+    "base_prefix": "/root/.pyenv/versions/3.11.11",
+    "executable": "/tmp/arnold-independent-python3.11",
+    "prefix": "/root/.pyenv/versions/3.11.11",
+    "sha256": "2575448bc13e2a87f48b65eeaa6d72de75e250616340b377a8989a80317a0ec5"
+  },
+  "provenance": {
+    "direct_url": {
+      "dir_info": {
+        "editable": true
+      },
+      "url": "file:///workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+    },
+    "editable_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+    "errors": [],
+    "expected_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52",
+    "expected_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+    "import_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+    "imports": {
+      "arnold": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold/__init__.py",
+      "arnold_pipelines": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/__init__.py",
+      "megaplan": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/__init__.py"
+    },
+    "ok": true,
+    "pth": [
+      {
+        "entries": [
+          "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+          "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+          "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+        ],
+        "path": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth",
+        "readable": true,
+        "sha256": "a2e6bee4907592da90ed9ed56d2e1bfa8dfabf6b9c5cd8b9b5f30d1194eae9ff"
+      }
+    ],
+    "runtime_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52",
+    "source_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52"
+  },
+  "runtime_identity": {
+    "content_sha256": "fd21e55a007d31bcf53dd57ed7049dc32814941a158101fff1d556d82e829ca3",
+    "direct_url": {
+      "dir_info": {
+        "editable": true
+      },
+      "url": "file:///workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+    },
+    "editable_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52",
+    "editable_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+    "import_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+    "imports": {
+      "arnold": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold/__init__.py",
+      "arnold_pipelines": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/__init__.py",
+      "megaplan": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/__init__.py"
+    },
+    "pth": [
+      {
+        "entries": [
+          "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+          "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+          "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+        ],
+        "path": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth",
+        "readable": true,
+        "sha256": "a2e6bee4907592da90ed9ed56d2e1bfa8dfabf6b9c5cd8b9b5f30d1194eae9ff"
+      }
+    ],
+    "source_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52"
+  },
+  "schema": "arnold.megaplan.runtime_provenance_receipt.v1"
+}

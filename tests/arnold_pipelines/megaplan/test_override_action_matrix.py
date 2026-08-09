@@ -4,7 +4,7 @@ Covers:
 * Every legacy-handler or control-only canonical action is present in the matrix.
 * Every matrix entry is classified as either ``terminal_route`` or
   ``additive_config``.
-* Classification sets are disjoint and cover all 11 keys.
+* Classification sets are disjoint and cover all 12 keys (11 legacy + cutover).
 * No key is double-classified or misclassified as ``additive_config`` when
   it has explicit route bindings in the OVERRIDE step component.
 * Convenience exports (``TERMINAL_ROUTE_ACTIONS``, ``ADDITIVE_CONFIG_ACTIONS``)
@@ -12,6 +12,8 @@ Covers:
 * ``get_entry`` returns the correct entry for every key.
 * The matrix raises :class:`OverrideActionClassificationError` when a key
   in ``_OVERRIDE_ACTIONS`` is not classified.
+* The CL5 cutover action is a terminal, control-routed, ``workflow.route_binding``
+  action declaring combined run_authority + maintenance authority.
 
 .. versionadded:: M6
 """
@@ -52,9 +54,9 @@ _OVERRIDE_ROUTE_BINDING_ACTIONS = frozenset({"abort", "force-proceed", "replan"}
 class TestOverrideActionMatrixCompleteness:
     """Every canonical override key participates in the matrix."""
 
-    def test_all_11_keys_present(self) -> None:
+    def test_all_12_keys_present(self) -> None:
         matrix_keys = frozenset(entry.action for entry in OVERRIDE_ACTION_MATRIX)
-        assert len(matrix_keys) == 11, f"Expected 11 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
+        assert len(matrix_keys) == 12, f"Expected 12 keys, got {len(matrix_keys)}: {sorted(matrix_keys)}"
         assert matrix_keys == _ALL_KEYS, (
             f"Matrix keys do not match canonical dispatch registries.\n"
             f"  Missing from matrix: {sorted(_ALL_KEYS - matrix_keys)}\n"
@@ -122,8 +124,8 @@ class TestOverrideActionMatrixDisjointClassification:
         )
 
     def test_terminal_route_count(self) -> None:
-        assert len(TERMINAL_ROUTE_ACTIONS) == 6, (
-            f"Expected 6 terminal-route actions, got {len(TERMINAL_ROUTE_ACTIONS)}: "
+        assert len(TERMINAL_ROUTE_ACTIONS) == 7, (
+            f"Expected 7 terminal-route actions, got {len(TERMINAL_ROUTE_ACTIONS)}: "
             f"{TERMINAL_ROUTE_ACTIONS}"
         )
 
@@ -226,3 +228,51 @@ class TestOverrideActionMatrixClassificationError:
         finally:
             om._DECLARED_OVERRIDE_AUTHORITY = original
             importlib.reload(om)
+
+
+class TestCutoverOverrideAction:
+    """The CL5 cutover action declares its route/authority contract (Step 8a).
+
+    These are Phase-1 matrix data-structure assertions: they do NOT invoke the
+    cutover handler (whose dispatch is wired in Step 8b and exercised in Phase 3).
+    """
+
+    def test_cutover_is_a_declared_key(self) -> None:
+        from arnold_pipelines.megaplan.workflows.override_matrix import (
+            _OVERRIDE_ACTION_KEYS,
+        )
+
+        assert "cutover" in _OVERRIDE_ACTION_KEYS
+        assert "cutover" in {entry.action for entry in OVERRIDE_ACTION_MATRIX}
+
+    def test_cutover_is_terminal_route(self) -> None:
+        entry = get_entry("cutover")
+        assert entry.family == "terminal_route"
+        assert "cutover" in TERMINAL_ROUTE_ACTIONS
+        assert "cutover" not in ADDITIVE_CONFIG_ACTIONS
+
+    def test_cutover_uses_workflow_route_binding(self) -> None:
+        entry = get_entry("cutover")
+        assert entry.dispatch_surface == "workflow.route_binding"
+        # workflow.route_binding invariant: route-bound target, no effect/policy refs
+        assert entry.route_signal == "cutover"
+        assert entry.target_ref == "cutover"
+        assert entry.declared_target_ref == "cutover"
+        assert entry.effect_id is None
+        assert entry.policy_route_ref is None
+
+    def test_cutover_is_control_routed(self) -> None:
+        entry = get_entry("cutover")
+        assert entry.control_routed is True
+        assert "cutover" in CONTROL_ROUTED_ACTIONS
+        assert ROUTE_SIGNAL_BY_ACTION["cutover"] == "cutover"
+
+    def test_cutover_description_records_combined_authority(self) -> None:
+        """The cutover action requires combined run_authority (human-gate) AND
+        maintenance (repair_queue) authority — documented in its description."""
+        entry = get_entry("cutover")
+        description = entry.description.lower()
+        assert "human-gate" in description or "human_gate" in description
+        assert "repair_queue" in description or "repair-queue" in description
+        assert "run_authority" in description
+        assert "maintenance" in description

@@ -1,6 +1,6 @@
 {
   "schema": "m6.proof-index.v2",
-  "generated_at": "2026-07-31T00:32:05.004199+00:00",
+  "generated_at": "2026-08-08T17:42:45.674953+00:00",
   "generator": "tools/validate_m6_evidence.py",
   "north_star_guard": "M6 is observe-only. This proof index is the aggregate validation result: every content hash is recomputed from disk, stale hashes are rejected, unexplained rows are flagged, WBC ancestry is re-verified, and incomplete prerequisites are recorded as blockers. Unavailable denominators and blocked prerequisites are recorded as UNKNOWN, never as success evidence or zero.",
   "validation_passed": false,
@@ -20,7 +20,7 @@
   "entries": [
     {
       "artifact_key": "authority_reader_registry",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/authority-reader-registry.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/authority-reader-registry.json",
       "expected_schema": "m6.authority-reader-registry.v1",
       "actual_schema": "m6.authority-reader-registry.v1",
       "content_hash_fresh": "833ffe0a826c2fdaadc18de148cda0b22cc38b50bad62b10240988108bfb095d",
@@ -34,7 +34,7 @@
     },
     {
       "artifact_key": "controlled_writer_registry",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/controlled-writer-registry.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/controlled-writer-registry.json",
       "expected_schema": "m6.controlled-writer-registry.v1",
       "actual_schema": "m6.controlled-writer-registry.v1",
       "content_hash_fresh": "00d7e538ce46b0d57a387e123fc9399437cfc1536d4a2b2d734bd49fb6084eb4",
@@ -48,7 +48,7 @@
     },
     {
       "artifact_key": "finding_prevention_register",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/finding-prevention-register.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/finding-prevention-register.json",
       "expected_schema": "m6.finding-prevention-register.v1",
       "actual_schema": "m6.finding-prevention-register.v1",
       "content_hash_fresh": "2b5d627c45a3a8c5c322d7de81b9f8c838afa29699aad92e1b458d150f375a3c",
@@ -62,7 +62,7 @@
     },
     {
       "artifact_key": "migration_matrix_reconciled",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/migration-matrix-reconciled.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/migration-matrix-reconciled.json",
       "expected_schema": "m6.migration-matrix-reconciled.v1",
       "actual_schema": "m6.migration-matrix-reconciled.v1",
       "content_hash_fresh": "2632fa40f0c1b11dd6a34579ad0d5662f6f7a839b0345f694f48b233f9bca488",
@@ -76,7 +76,7 @@
     },
     {
       "artifact_key": "ownership_decision_record",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/ownership-decision-record.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/ownership-decision-record.json",
       "expected_schema": "m6.ownership-decision-record.v1",
       "actual_schema": "m6.ownership-decision-record.v1",
       "content_hash_fresh": "aea9ba9c5e9f5f753d8d962af2c6d9e038968184b6e3b1c26b461610c13888fc",
@@ -90,7 +90,7 @@
     },
     {
       "artifact_key": "pc_scope_decision",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/pc-scope-decision.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/pc-scope-decision.json",
       "expected_schema": "m6.pc-scope-decision.v1",
       "actual_schema": "m6.pc-scope-decision.v1",
       "content_hash_fresh": "8b6acc050263e5cdf6e6f95b29604fe94fc93f5c4a6604d452e8b6574f790b5b",
@@ -104,11 +104,11 @@
     },
     {
       "artifact_key": "prerequisite_verification",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/m6-prerequisite-verification.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/m6-prerequisite-verification.json",
       "expected_schema": "m6.prerequisite-verification.v1",
       "actual_schema": "m6.prerequisite-verification.v1",
-      "content_hash_fresh": "91d8c6eaa42b12f813f8c6465855952c3e489b57274918def4e7e8bc2b8f53e0",
-      "content_hash_stored": "91d8c6eaa42b12f813f8c6465855952c3e489b57274918def4e7e8bc2b8f53e0",
+      "content_hash_fresh": "33abec8a72384c04ea648276853c3ad8e9609b62775d988c22f19b788e56708a",
+      "content_hash_stored": "33abec8a72384c04ea648276853c3ad8e9609b62775d988c22f19b788e56708a",
       "row_count": 0,
       "present": true,
       "generator": "tools/verify_m6_prerequisites.py",
@@ -118,7 +118,7 @@
     },
     {
       "artifact_key": "replay_strategy_roadmap",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/replay/strategy-roadmap.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/replay/strategy-roadmap.json",
       "expected_schema": "m6.strategy-roadmap-replay-fixture.v1",
       "actual_schema": "m6.strategy-roadmap-replay-fixture.v1",
       "content_hash_fresh": "ca92776df13760c4db490f8042dda1cdbf121cd7d108b6cad814fd3027588a6f",
@@ -132,7 +132,7 @@
     },
     {
       "artifact_key": "replay_transaction_spine",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/replay/transaction-spine.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/replay/transaction-spine.json",
       "expected_schema": "m6.transaction-spine-replay-fixture.v1",
       "actual_schema": "m6.transaction-spine-replay-fixture.v1",
       "content_hash_fresh": "458833037eb4fc573601efc335110d745407973fb205ab4b21dcf15edc6b1a00",
@@ -146,7 +146,7 @@
     },
     {
       "artifact_key": "rollout_deletion_register",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/rollout-deletion-register.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/rollout-deletion-register.json",
       "expected_schema": "m6.rollout-deletion-register.v1",
       "actual_schema": "m6.rollout-deletion-register.v1",
       "content_hash_fresh": "c72dbd392bebcbfad9604511f71d568db847536c4b2671b798477a06bcd0c06d",
@@ -160,11 +160,11 @@
     },
     {
       "artifact_key": "wbc_boundary_discovery_rules",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/wbc-boundary-discovery-rules.yaml",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/wbc-boundary-discovery-rules.yaml",
       "expected_schema": "m6.wbc-boundary-discovery-rules.v1",
       "actual_schema": "UNKNOWN",
-      "content_hash_fresh": "c207e8dcb44df143ae3f8ed6eca93d7a4eb1292760ecd93337b4414e37ec8025",
-      "content_hash_stored": "c207e8dcb44df143ae3f8ed6eca93d7a4eb1292760ecd93337b4414e37ec8025",
+      "content_hash_fresh": "22d27065c24954e792e41be8aa6f1d4931eacd892e068ce91bb34429c133f58c",
+      "content_hash_stored": "22d27065c24954e792e41be8aa6f1d4931eacd892e068ce91bb34429c133f58c",
       "row_count": "UNKNOWN",
       "present": true,
       "generator": "manual (T3 artifact, committed)",
@@ -174,11 +174,11 @@
     },
     {
       "artifact_key": "wbc_boundary_inventory",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/wbc-boundary-inventory.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/wbc-boundary-inventory.json",
       "expected_schema": "m6.wbc-boundary-inventory.v1",
       "actual_schema": "UNKNOWN",
-      "content_hash_fresh": "9e142befc04e0897d8f1d8f92a610b4bb88ffbeb37b1d79588a059a6e0059b35",
-      "content_hash_stored": "9e142befc04e0897d8f1d8f92a610b4bb88ffbeb37b1d79588a059a6e0059b35",
+      "content_hash_fresh": "1766dd9564e62931890e7dabbe0485d0d72c3b6edc2b48ce65ecb47bfe976b75",
+      "content_hash_stored": "1766dd9564e62931890e7dabbe0485d0d72c3b6edc2b48ce65ecb47bfe976b75",
       "row_count": 1328,
       "present": true,
       "generator": "tools/generate_wbc_boundary_inventory.py",
@@ -188,11 +188,11 @@
     },
     {
       "artifact_key": "wbc_boundary_inventory_validation",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/wbc-boundary-inventory-validation.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/wbc-boundary-inventory-validation.json",
       "expected_schema": "m6.wbc-boundary-inventory-validation.v1",
-      "actual_schema": "m8.wbc-boundary-inventory-validation.v1",
-      "content_hash_fresh": "435dc5ef610114740cac5f57ee8f24d313b2e59b654c7c1d07391619aa439bb8",
-      "content_hash_stored": "435dc5ef610114740cac5f57ee8f24d313b2e59b654c7c1d07391619aa439bb8",
+      "actual_schema": "m6.wbc-boundary-inventory-validation.v1",
+      "content_hash_fresh": "43efd541687859be626e2891bc14a8a6a4793f5abb2c69426e379978143c05ae",
+      "content_hash_stored": "43efd541687859be626e2891bc14a8a6a4793f5abb2c69426e379978143c05ae",
       "row_count": 0,
       "present": true,
       "generator": "tools/generate_wbc_boundary_inventory.py",
@@ -202,11 +202,11 @@
     },
     {
       "artifact_key": "wbc_historical_adapters",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/wbc-historical-adapters.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/wbc-historical-adapters.json",
       "expected_schema": "m6.wbc-historical-adapters.v1",
       "actual_schema": "UNKNOWN",
-      "content_hash_fresh": "251a9ed6b5ebc315eb4cbac178f1404928557e23474eeb85de8294cc991e3628",
-      "content_hash_stored": "251a9ed6b5ebc315eb4cbac178f1404928557e23474eeb85de8294cc991e3628",
+      "content_hash_fresh": "4750744e82c7855a7df7a62c798d0dee9433851fe5f91911d5b9f389ce9e985f",
+      "content_hash_stored": "4750744e82c7855a7df7a62c798d0dee9433851fe5f91911d5b9f389ce9e985f",
       "row_count": 0,
       "present": true,
       "generator": "tools/generate_wbc_boundary_inventory.py",
@@ -216,7 +216,7 @@
     },
     {
       "artifact_key": "work_ledger_vocabulary",
-      "path": "/Users/peteromalley/Documents/Arnold/.megaplan-worktrees/custody-m11-cloud-20260730/evidence/work-ledger-vocabulary.json",
+      "path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/evidence/work-ledger-vocabulary.json",
       "expected_schema": "m6.work-ledger-vocabulary.v1",
       "actual_schema": "m6.work-ledger-vocabulary.v1",
       "content_hash_fresh": "9cd5d4f88dfd13e7b67791b2e76a8eb8cbb96711cf2fbdc30176d48d3116a185",
@@ -229,12 +229,12 @@
       "has_unexplained_rows": false
     }
   ],
-  "repository_head": "88f1f39c8f06832e155501ff13dd4e00a1522f94",
+  "repository_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
   "wbc_ancestry_result": {
     "check": "wbc_ancestry_reverified",
     "status": "PASS",
     "integration_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
-    "current_head": "88f1f39c8f06832e155501ff13dd4e00a1522f94",
+    "current_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
     "merge_parents": [
       "7644f55dd9be75632670f990268e045d3ee1c2f7",
       "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
@@ -250,8 +250,8 @@
     "prerequisite_verification_status": "INCOHERENT",
     "prerequisite_summary": {
       "blocked": 0,
-      "incoherent": 3,
-      "pass": 5,
+      "incoherent": 2,
+      "pass": 6,
       "total": 10,
       "unknown": 2
     },
@@ -260,9 +260,7 @@
     "stale_hash_artifacts": [],
     "missing_artifacts": [],
     "unexplained_row_artifacts": [],
-    "schema_mismatches": [
-      "wbc_boundary_inventory_validation: expected schema 'm6.wbc-boundary-inventory-validation.v1', got 'm8.wbc-boundary-inventory-validation.v1'"
-    ],
+    "schema_mismatches": [],
     "mutating_command_warnings": []
   },
   "global_unknowns": {
@@ -287,7 +285,7 @@
     "productive_replay_ledger_rationale": "Productive-versus-replayed token/cost baselines are UNKNOWN until joined per-task/attempt/repair receipts exist. Source: F14 finding, work-ledger-vocabulary.",
     "wbc_ancestry_coherent": "UNKNOWN",
     "wbc_ancestry_rationale": "WBC ancestry is re-verified during aggregate validation. Any deviation from expected merge parents or ancestor relationships will be recorded as INCOHERENT.",
-    "repository_head": "88f1f39c8f06832e155501ff13dd4e00a1522f94",
+    "repository_head": "ab4b174bbaf76ce03860ed9aff2edf7e865db083",
     "repository_head_valid": true,
     "wbc_ancestry_parent_match": true,
     "wbc_first_parent_is_ancestor": true,
@@ -298,8 +296,8 @@
     "status": "INCOHERENT",
     "summary": {
       "blocked": 0,
-      "incoherent": 3,
-      "pass": 5,
+      "incoherent": 2,
+      "pass": 6,
       "total": 10,
       "unknown": 2
     }

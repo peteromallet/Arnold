@@ -52,6 +52,41 @@ GATE_SIGNAL_WEIGHT_POLICY = MappingProxyType(
 )
 
 # --------------------------------------------------------------------------- #
+# CL4 (Plan Step 8): BRIDGE-mode in-band markers.
+#
+# CL4 operates in BRIDGE mode because the CL3 handoff is missing and five
+# CL1/CL2 blockers are carried forward unresolved. The gate signal carries
+# these markers in-band so a downstream gate/finalize consumer reading the
+# signal can never mistake a BRIDGE-mode artifact for canonical gate or
+# finalize authority. The markers are sourced from the same constants used
+# by the CL4 handoff (docs/critique-ledger/handoffs/cl4-role-flow.json) and
+# the inherited CL1/CL2 blocker set.
+# --------------------------------------------------------------------------- #
+
+#: CL4 runs in canonical (non-BRIDGE) mode after the CL5 cutover. The CL3
+#: handoff is now resolved, all CL1/CL2 blockers are cleared, and the
+#: module-level BRIDGE markers are disabled. NOTE: this constant only governs
+#: the marker freshly emitted on each gate signal; canonical gate authority is
+#: still denied at runtime whenever any *source receipt* in the clearance chain
+#: carries bridge_mode=true (enforced at critique_custody.py from the aggregated
+#: clearance chain, NOT from this constant). The cutover receipt generator
+#: produces bridge_mode=false source receipts by construction once this flips.
+CL4_BRIDGE_MODE: bool = False
+
+#: The CL1/CL2 blockers previously carried forward into CL4. After the CL5
+#: cutover all five blockers are resolved, so the carried set is empty. (The
+#: same ids remain recorded as resolved in cl1-contract-oracle.json /
+#: cl2-ledger-replay.json and the CL4 handoff's cl1_cl2_blockers_carried block.)
+CL4_CARRIED_BLOCKERS: tuple[str, ...] = ()
+
+#: Reconciliation relationships that ground a semantic-recurrence judgment.
+#: Unlike exact-text adjacency, semantic recurrence requires evaluator-
+#: authored reconciliation evidence asserting that two findings are the same
+#: concern. NEW/UNRELATED/UNCERTAIN are deliberately excluded — they assert
+#: non-sameness or uncertainty, not recurrence.
+_SEMANTIC_RECURRENCE_RELATIONSHIPS = frozenset({"DUPLICATE", "REFINEMENT", "MERGE"})
+
+# --------------------------------------------------------------------------- #
 # Git-plumbing baseline-presence oracle (Horizon B)
 #
 # The gate worker must never infer that a pinned baseline commit is "absent"
@@ -203,6 +238,66 @@ def compute_recurring_critiques(plan_dir: Path, iteration: int) -> list[str]:
     return sorted(previous_concerns.intersection(current_concerns))
 
 
+def compute_adjacent_text_matches(plan_dir: Path, iteration: int) -> list[str]:
+    """Return the exact-text adjacency matches for an iteration.
+
+    This is the renamed informational form of the exact-text comparison
+    previously emitted only as ``recurring_critiques``. The deprecated
+    ``recurring_critiques`` alias is now populated from this list so the six
+    ``.get("recurring_critiques", ...)`` consumers keep working unchanged.
+    """
+    return compute_recurring_critiques(plan_dir, iteration)
+
+
+def compute_semantic_recurrence(plan_dir: Path, iteration: int) -> bool:
+    """Return True when reconciliation evidence grounds a semantic-recurrence
+    judgment for the current iteration.
+
+    Unlike ``adjacent_text_matches`` (exact-text overlap), semantic recurrence
+    is grounded in evaluator-authored reconciliation data: it is True only
+    when a reconciliation event carrying a DUPLICATE, REFINEMENT, or MERGE
+    relationship is present. This prevents recurrence from collapsing back to
+    text equality. NEW / UNRELATED / UNCERTAIN assert non-sameness or
+    uncertainty and are excluded.
+
+    The reconciliation evidence is read from either a dedicated
+    ``reconciliation_v{iteration}.json`` artifact or a
+    ``reconciliation_events`` list embedded in the critique artifact. When no
+    reconciliation evidence is available (the normal case until CL5 wires the
+    critique-ledger semantic loop into the runtime), the result is False — a
+    truthful ``no evidence`` rather than a silent text-derived True.
+    """
+    payloads: list[Any] = []
+    reconciliation_path = current_iteration_artifact(plan_dir, "reconciliation", iteration)
+    if reconciliation_path.exists():
+        try:
+            payloads.append(read_json(reconciliation_path))
+        except (OSError, ValueError):
+            pass
+    critique_path = current_iteration_artifact(plan_dir, "critique", iteration)
+    if critique_path.exists():
+        try:
+            critique_payload = read_json(critique_path)
+        except (OSError, ValueError):
+            critique_payload = {}
+        embedded = critique_payload.get("reconciliation_events") if isinstance(critique_payload, dict) else None
+        if isinstance(embedded, list):
+            payloads.append({"reconciliation_events": embedded})
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        events = payload.get("reconciliation_events", [])
+        if not isinstance(events, list):
+            continue
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            relationship = str(event.get("relationship", ""))
+            if relationship in _SEMANTIC_RECURRENCE_RELATIONSHIPS:
+                return True
+    return False
+
+
 def _previous_iteration_plan_path(plan_dir: Path, state: PlanState) -> Path | None:
     current_version = state["iteration"]
     previous_version = current_version - 1
@@ -243,7 +338,16 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
     if previous_plan_path is not None and previous_plan_path.exists():
         previous_text = previous_plan_path.read_text(encoding="utf-8")
     plan_delta = compute_plan_delta_percent(previous_text, latest_plan_text)
-    recurring = compute_recurring_critiques(plan_dir, iteration)
+    # CL4 (Plan Step 8): split the exact-text output into the informational
+    # ``adjacent_text_matches`` list and its boolean complement
+    # ``no_adjacent_text_match``, add the reconciliation-grounded
+    # ``semantic_recurrence`` flag, and keep ``recurring_critiques`` as a
+    # deprecated alias populated from adjacent_text_matches so the six legacy
+    # .get()-based consumers keep working unchanged.
+    adjacent_text_matches = compute_adjacent_text_matches(plan_dir, iteration)
+    recurring = adjacent_text_matches  # deprecated alias, same value
+    no_adjacent_text_match = len(adjacent_text_matches) == 0
+    semantic_recurrence = compute_semantic_recurrence(plan_dir, iteration)
     from arnold_pipelines.megaplan.flags import flag_resolution_summary
 
     addressed_flags = [
@@ -340,7 +444,21 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
             "weighted_score": weighted_score,
             "weighted_history": weighted_history,
             "plan_delta_from_previous": plan_delta,
-            "recurring_critiques": recurring,
+            # CL4 (Plan Step 8) / CL5 (Plan Step 7b): exact-text adjacency
+            # split + reconciliation-grounded recurrence + BRIDGE-mode in-band
+            # markers. ``adjacent_text_matches`` is informational (the exact-
+            # text overlap); ``no_adjacent_text_match`` is its boolean
+            # complement; ``semantic_recurrence`` is True only when
+            # reconciliation evidence (DUPLICATE/REFINEMENT/MERGE) supports it.
+            # The deprecated ``recurring_critiques`` output alias was retired
+            # in CL5 Step 7b; the internal ``compute_recurring_critiques``
+            # function remains as the implementation of
+            # ``compute_adjacent_text_matches`` (a cosmetic naming detail).
+            "adjacent_text_matches": adjacent_text_matches,
+            "no_adjacent_text_match": no_adjacent_text_match,
+            "semantic_recurrence": semantic_recurrence,
+            "bridge_mode": CL4_BRIDGE_MODE,
+            "carried_blockers": list(CL4_CARRIED_BLOCKERS),
             "scope_creep_flags": [flag["id"] for flag in open_scope_creep],
             "loop_summary": loop_summary,
             "debt_overlaps": debt_overlaps,

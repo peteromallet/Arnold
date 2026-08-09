@@ -234,6 +234,34 @@ CREATE INDEX IF NOT EXISTS idx_global_effect_conflict_attempt
     ON global_effect_conflict_quarantine(attempt_id);
 """
 
+# ── Cutover quiesce tables (Step 12b) ────────────────────────────────────────
+#
+# During cutover quiesce every in-flight attempt that fails to drain to a
+# natural terminal event within the drain timeout is resolved fail-closed to
+# ``INDETERMINATE``. The resolution mark is durable evidence (not authority):
+# it records WHY the attempt could not drain (its last non-terminal event type
+# and the exhaustive drain-category classification) so a post-cutover operator
+# or reconciliation policy can inspect it. The mark never grants dispatch or
+# completion — it only makes the fail-closed outcome observable and crash-safe.
+_CUTOVER_INDETERMINATE_MARKS_TABLE_DDL: str = """\
+CREATE TABLE IF NOT EXISTS cutover_indeterminate_marks (
+    attempt_id          TEXT    NOT NULL PRIMARY KEY,
+    last_event_type     TEXT    NOT NULL,
+    last_event_sequence INTEGER NOT NULL,
+    drain_category      TEXT    NOT NULL,
+    resolved_outcome    TEXT    NOT NULL,
+    mark_reason         TEXT    NOT NULL,
+    marked_at_ns        INTEGER NOT NULL
+);
+"""
+
+#: Metadata key persisting the ``cutover_in_progress`` admission fence. The
+#: fence is stored in the durable ``_store_metadata`` table (NOT in-memory) so a
+#: crash during cutover preserves the admission-closed state: reopening the
+#: database sees the fence still set and continues to reject new admissions.
+_CUTOVER_IN_PROGRESS_KEY: str = "cutover_in_progress"
+_CUTOVER_IN_PROGRESS_SET: str = "1"
+
 # String literal set of terminal event types. Mirrors the schema-private
 # ``_TERMINAL_EVENT_TYPES`` frozenset (COMPLETED/FAILED/CANCELLED) but is
 # kept as SQL string literals so it is fully self-contained in DML.
@@ -385,6 +413,24 @@ class GlobalEffectConflictError(AttemptLedgerError):
             f"Global-effect conflict for attempt_id={attempt_id!r}, "
             f"glek={global_logical_effect_key!r}: {conflict_kind}"
         )
+
+
+class CutoverInProgressError(AttemptLedgerError):
+    """Raised when a new attempt admission is attempted during cutover quiesce.
+
+    Once the durable ``cutover_in_progress`` admission fence is engaged
+    (Step 12b), no NEW attempt stream may be admitted. Appends that
+    CONTINUE an existing in-flight attempt — in particular the natural
+    terminal events that drain an attempt to completion — remain allowed
+    so the cutover can reach a quiescent state.
+
+    This error is raised at the admission boundary (``reserve_attempt`` for a
+    brand-new attempt and ``append_event`` for the first event of a new stream)
+    and is therefore observable to every admission caller. The fence itself is
+    persisted in ``_store_metadata`` so it survives a crash: reopening the
+    database continues to reject new admissions until the cutover completes and
+    clears the fence.
+    """
 
 
 # ── Gate types (Step 5: durable start and terminal verification) ───────────
@@ -600,6 +646,30 @@ class GlobalEffectConflict:
     conflict_kind: str
     detail: dict[str, Any]
     quarantined_at_ns: int
+
+
+@dataclass(frozen=True)
+class CutoverIndeterminateMark:
+    """Durable resolution mark for an in-flight attempt that failed to drain.
+
+    Recorded by cutover quiesce (Step 12b) when an attempt does not reach a
+    natural terminal event within the drain timeout. The mark is evidence only
+    — it makes the fail-closed ``INDETERMINATE`` outcome observable and
+    crash-safe. It never grants dispatch or completion; resolution of an
+    indeterminate attempt requires the post-cutover reconciliation policy.
+
+    ``drain_category`` is one of the :class:`~arnold.critique_ledger.cutover.drain_map.DrainCategory`
+    values (``indeterminate`` or ``persistence_fail_closed`` for a marked
+    attempt — a terminal-drain attempt is never marked because it drained).
+    """
+
+    attempt_id: str
+    last_event_type: str
+    last_event_sequence: int
+    drain_category: str
+    resolved_outcome: str
+    mark_reason: str
+    marked_at_ns: int
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
@@ -901,6 +971,84 @@ class AttemptLedgerStore(ABC):
         """Return the single terminal event for *attempt_id*, if any.
 
         Returns ``None`` if no terminal event has been persisted.
+        """
+        ...
+
+    # ── Step 12b: cutover quiesce ──────────────────────────────────────
+
+    @abstractmethod
+    def list_in_flight_attempts(self) -> list[str]:
+        """Return the attempt_ids that have NOT reached a terminal event.
+
+        An attempt is in-flight when it has at least one persisted event but
+        no terminal event (``COMPLETED``/``FAILED``/``CANCELLED``). Attempts
+        that have drained to a terminal event are excluded. The list is
+        ordered for stable, deterministic enumeration during quiesce.
+
+        This is evidence only — it does not grant authority.
+        """
+        ...
+
+    @abstractmethod
+    def set_cutover_in_progress(self) -> bool:
+        """Atomically engage the durable ``cutover_in_progress`` admission fence.
+
+        The fence is persisted in ``_store_metadata`` (not in-memory) so a
+        crash during cutover preserves the admission-closed state: reopening
+        the database continues to reject new admissions.
+
+        Returns ``True`` when the fence was already engaged before this call
+        (so callers can detect a resumption after a crash) and ``False`` when
+        the fence was newly engaged.
+        """
+        ...
+
+    @abstractmethod
+    def is_cutover_in_progress(self) -> bool:
+        """Return whether the durable ``cutover_in_progress`` fence is engaged.
+
+        Reads the persisted metadata value, so the result reflects a freshly
+        reopened store (e.g. after a crash) and not just in-process state.
+        """
+        ...
+
+    @abstractmethod
+    def clear_cutover_in_progress(self) -> bool:
+        """Disengage the durable ``cutover_in_progress`` admission fence.
+
+        Called once the cutover has completed. Returns ``True`` when the fence
+        was engaged before this call (so callers can detect a spurious double
+        completion) and ``False`` when it was already clear.
+        """
+        ...
+
+    @abstractmethod
+    def mark_attempt_indeterminate(
+        self,
+        attempt_id: str,
+        last_event_type: str,
+        last_event_sequence: int,
+        drain_category: str,
+        resolved_outcome: str,
+        mark_reason: str,
+    ) -> CutoverIndeterminateMark:
+        """Durablely mark an in-flight attempt resolved to ``INDETERMINATE``.
+
+        Idempotent per ``attempt_id`` (UPSERT on the primary key). The mark is
+        evidence only — it never grants dispatch or completion. An attempt that
+        has since drained to a terminal event is not marked (the call is a
+        no-op that returns the existing terminal-coherent state).
+
+        Raises:
+            ValueError: if *attempt_id* is empty.
+        """
+        ...
+
+    @abstractmethod
+    def get_cutover_indeterminate_marks(self) -> list[CutoverIndeterminateMark]:
+        """Return all durable cutover-indeterminate resolution marks.
+
+        Ordered by ``marked_at_ns``. Evidence only.
         """
         ...
 
@@ -1231,6 +1379,7 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                 _GLOBAL_EFFECT_OUTCOME_GLEK_UNIQUE_INDEX_DDL,
                 _GLOBAL_EFFECT_CONFLICT_QUARANTINE_TABLE_DDL,
                 _GLOBAL_EFFECT_CONFLICT_ATTEMPT_INDEX_DDL,
+                _CUTOVER_INDETERMINATE_MARKS_TABLE_DDL,
             ):
                 for stmt in ddl.split(";"):
                     s = stmt.strip()
@@ -1304,6 +1453,35 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
             )
             existing = cur.fetchone()
             if existing is None:
+                # Cutover admission fence (Step 12b): once the durable
+                # ``cutover_in_progress`` fence is engaged, no NEW attempt may
+                # be reserved. An attempt that already exists in the store —
+                # either via a prior reservation or via persisted events (an
+                # in-flight stream that was appended without reserving) — is a
+                # CONTINUATION, not a new admission, and may still be
+                # re-reserved so the cutover can drain it.
+                cur.execute(
+                    "SELECT 1 FROM attempt_events WHERE attempt_id = ? LIMIT 1",
+                    (attempt_id,),
+                )
+                already_has_events = cur.fetchone() is not None
+                if not already_has_events:
+                    cur.execute(
+                        "SELECT value FROM _store_metadata WHERE key = ?",
+                        (_CUTOVER_IN_PROGRESS_KEY,),
+                    )
+                    fence_row = cur.fetchone()
+                    if (
+                        fence_row is not None
+                        and fence_row[0] == _CUTOVER_IN_PROGRESS_SET
+                    ):
+                        conn.execute("ROLLBACK")
+                        raise CutoverInProgressError(
+                            f"Cannot reserve new attempt {attempt_id!r}: the "
+                            f"cutover_in_progress admission fence is engaged. "
+                            f"New admissions are rejected until the cutover "
+                            f"completes."
+                        )
                 is_new = True
                 cur.execute(
                     "INSERT INTO attempt_reservations (attempt_id, first_reserved_ns, last_reserved_ns, reservation_count) VALUES (?, ?, ?, 1)",
@@ -1952,6 +2130,38 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
         try:
             cur = conn.cursor()
 
+            # Cutover admission fence (Step 12b): once the durable
+            # ``cutover_in_progress`` fence is engaged, no NEW attempt stream
+            # may be admitted. An append that CONTINUES an existing attempt
+            # (it already has at least one persisted event) — including the
+            # natural terminal events that drain an in-flight attempt —
+            # remains allowed. This check reads the fence metadata only when a
+            # new stream would be created, so the steady-state append path
+            # (fence not set) pays a single tiny metadata SELECT.
+            cur.execute(
+                "SELECT value FROM _store_metadata WHERE key = ?",
+                (_CUTOVER_IN_PROGRESS_KEY,),
+            )
+            fence_row = cur.fetchone()
+            if (
+                fence_row is not None
+                and fence_row[0] == _CUTOVER_IN_PROGRESS_SET
+            ):
+                cur.execute(
+                    "SELECT COALESCE(MAX(sequence), 0)"
+                    " FROM attempt_events WHERE attempt_id = ?",
+                    (attempt_id,),
+                )
+                existing_max = int(cur.fetchone()[0])
+                if existing_max == 0:
+                    conn.execute("ROLLBACK")
+                    raise CutoverInProgressError(
+                        f"Cannot admit new attempt {attempt_id!r}: the "
+                        f"cutover_in_progress admission fence is engaged. "
+                        f"New admissions are rejected until the cutover "
+                        f"completes."
+                    )
+
             # (3) Idempotency-key dedup. Checked BEFORE any rejection so
             #     retries of an event that has since become post-terminal
             #     still return the existing event rather than raising.
@@ -2081,6 +2291,7 @@ VALUES (?, ?, ?, ?, ?, ?)
             conn.execute("COMMIT")
         except (
             CausalPredecessorError,
+            CutoverInProgressError,
             DivergentDuplicateError,
             DuplicateTerminalError,
             MissingStartEventError,
@@ -2244,6 +2455,216 @@ WHERE  attempt_id = ?
         if row is None:
             return None
         return _deserialize_ledger_event(json.loads(row[0]))
+
+    # ── Step 12b: cutover quiesce ──────────────────────────────────────
+
+    def list_in_flight_attempts(self) -> list[str]:
+        """Return the attempt_ids that have NOT reached a terminal event.
+
+        An attempt is in-flight when it has at least one persisted event but
+        no terminal event (``COMPLETED``/``FAILED``/``CANCELLED``). The list
+        is ordered by ``attempt_id`` for stable, deterministic enumeration.
+
+        Implementation mirrors the SQL in CL5 Step 12b.1: a ``NOT EXISTS``
+        correlated subquery against the terminal event types.
+        """
+        cur = self.conn.cursor()
+        placeholders = ",".join("?" * len(_TERMINAL_EVENT_TYPE_VALUES))
+        cur.execute(
+            f"""
+SELECT DISTINCT ae.attempt_id
+FROM   attempt_events AS ae
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM   attempt_events AS terminal
+    WHERE  terminal.attempt_id = ae.attempt_id
+      AND  terminal.event_type IN ({placeholders})
+)
+ORDER BY ae.attempt_id ASC
+""",
+            tuple(_TERMINAL_EVENT_TYPE_VALUES),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+    def set_cutover_in_progress(self) -> bool:
+        """Atomically engage the durable ``cutover_in_progress`` admission fence.
+
+        The fence is persisted in ``_store_metadata`` so it survives a crash.
+        Returns ``True`` when the fence was already engaged (resumption after a
+        crash) and ``False`` when newly engaged.
+        """
+        conn = self.conn
+        self._begin_immediate_retry(conn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT value FROM _store_metadata WHERE key = ?",
+                (_CUTOVER_IN_PROGRESS_KEY,),
+            )
+            row = cur.fetchone()
+            previously_engaged = (
+                row is not None and row[0] == _CUTOVER_IN_PROGRESS_SET
+            )
+            if row is None:
+                cur.execute(
+                    "INSERT INTO _store_metadata (key, value) VALUES (?, ?)",
+                    (_CUTOVER_IN_PROGRESS_KEY, _CUTOVER_IN_PROGRESS_SET),
+                )
+            elif not previously_engaged:
+                cur.execute(
+                    "UPDATE _store_metadata SET value = ? WHERE key = ?",
+                    (_CUTOVER_IN_PROGRESS_SET, _CUTOVER_IN_PROGRESS_KEY),
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        return previously_engaged
+
+    def is_cutover_in_progress(self) -> bool:
+        """Return whether the durable ``cutover_in_progress`` fence is engaged.
+
+        Reads the persisted metadata value, so the result reflects a freshly
+        reopened store (e.g. after a crash) rather than in-process state.
+        """
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT value FROM _store_metadata WHERE key = ?",
+            (_CUTOVER_IN_PROGRESS_KEY,),
+        )
+        row = cur.fetchone()
+        return row is not None and row[0] == _CUTOVER_IN_PROGRESS_SET
+
+    def clear_cutover_in_progress(self) -> bool:
+        """Disengage the durable ``cutover_in_progress`` admission fence.
+
+        Returns ``True`` when the fence was engaged before this call and
+        ``False`` when it was already clear.
+        """
+        conn = self.conn
+        self._begin_immediate_retry(conn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT value FROM _store_metadata WHERE key = ?",
+                (_CUTOVER_IN_PROGRESS_KEY,),
+            )
+            row = cur.fetchone()
+            was_engaged = (
+                row is not None and row[0] == _CUTOVER_IN_PROGRESS_SET
+            )
+            # Remove the key entirely so a fresh store (key absent) is
+            # indistinguishable from a post-cutover store.
+            if row is not None:
+                cur.execute(
+                    "DELETE FROM _store_metadata WHERE key = ?",
+                    (_CUTOVER_IN_PROGRESS_KEY,),
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        return was_engaged
+
+    def mark_attempt_indeterminate(
+        self,
+        attempt_id: str,
+        last_event_type: str,
+        last_event_sequence: int,
+        drain_category: str,
+        resolved_outcome: str,
+        mark_reason: str,
+    ) -> CutoverIndeterminateMark:
+        """Durablely mark an in-flight attempt resolved to ``INDETERMINATE``.
+
+        Idempotent per ``attempt_id`` (UPSERT). Evidence only. An attempt that
+        has since drained to a terminal event is not marked; the call returns
+        the mark reflecting the requested inputs (the caller is responsible for
+        not marking drained attempts — the quiesce ``drain`` helper only marks
+        non-terminal attempts).
+        """
+        if not attempt_id or not attempt_id.strip():
+            raise ValueError("attempt_id must be non-empty")
+
+        now_ns = time.time_ns()
+        conn = self.conn
+        self._begin_immediate_retry(conn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+INSERT INTO cutover_indeterminate_marks
+    (attempt_id, last_event_type, last_event_sequence,
+     drain_category, resolved_outcome, mark_reason, marked_at_ns)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(attempt_id) DO UPDATE SET
+    last_event_type     = excluded.last_event_type,
+    last_event_sequence = excluded.last_event_sequence,
+    drain_category      = excluded.drain_category,
+    resolved_outcome    = excluded.resolved_outcome,
+    mark_reason         = excluded.mark_reason,
+    marked_at_ns        = excluded.marked_at_ns
+""",
+                (
+                    attempt_id,
+                    last_event_type,
+                    last_event_sequence,
+                    drain_category,
+                    resolved_outcome,
+                    mark_reason,
+                    now_ns,
+                ),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+
+        return CutoverIndeterminateMark(
+            attempt_id=attempt_id,
+            last_event_type=last_event_type,
+            last_event_sequence=last_event_sequence,
+            drain_category=drain_category,
+            resolved_outcome=resolved_outcome,
+            mark_reason=mark_reason,
+            marked_at_ns=now_ns,
+        )
+
+    def get_cutover_indeterminate_marks(self) -> list[CutoverIndeterminateMark]:
+        """Return all durable cutover-indeterminate resolution marks.
+
+        Ordered by ``marked_at_ns``. Evidence only.
+        """
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+SELECT attempt_id, last_event_type, last_event_sequence,
+       drain_category, resolved_outcome, mark_reason, marked_at_ns
+FROM   cutover_indeterminate_marks
+ORDER  BY marked_at_ns ASC
+"""
+        )
+        return [
+            CutoverIndeterminateMark(
+                attempt_id=row[0],
+                last_event_type=row[1],
+                last_event_sequence=int(row[2]),
+                drain_category=row[3],
+                resolved_outcome=row[4],
+                mark_reason=row[5],
+                marked_at_ns=int(row[6]),
+            )
+            for row in cur.fetchall()
+        ]
 
     # ── Step 5: durable gates (SQLite-optimized) ───────────────────────
 
@@ -3092,6 +3513,8 @@ __all__ = [
     "AttemptLedgerStore",
     "AttemptReservation",
     "CausalPredecessorError",
+    "CutoverInProgressError",
+    "CutoverIndeterminateMark",
     "DuplicateTerminalError",
     "GapEntry",
     "GateStatus",

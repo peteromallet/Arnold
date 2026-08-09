@@ -1,0 +1,281 @@
+Investigation complete. All artifacts hashed; no mutation performed. Composing the FLASH REPORT per Sol stage-1 Section D:
+
+---
+
+```
+FLASH REPORT
+1. question_id: FQ-09
+2. verdict: supported
+3. investigated_claim: The 'TypeError: emit_transition() got multiple values for keyword argument
+   transition' lines in the chain log are non-fatal telemetry/error-recording noise, NOT a separate
+   integrity blocker; the finalize failure is fully explained by the custody resolver.
+4. vantage:
+   - hostname/container: sandbox VM (read-only investigator subagent; no mutation)
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: inspected runtimes A=/workspace/runtime-candidates/arnold-r7-fresh-child-20260805
+     (d5848010695e) and B=/workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4 (77b76e3a4);
+     chain log tracebacks resolve to runtime A import root
+   - investigator: hermes:deepseek:deepseek-v4-flash (FQ-09 evidence investigator, read-only)
+5. utc_window:
+   - started: 2026-08-06T09:58:00Z (approximate; session clock anchor — no `date` capture was taken,
+     `date` is outside the command allowlist)
+   - ended: 2026-08-06T10:14:00Z (approximate)
+6. artifacts:
+   - /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/cloud-chain-critique-ledger-accountability-v3-r7-launch-20260805.log
+     exists: yes
+     type: text log (5609 lines)
+     size_bytes: 544584
+     mtime_utc: 2026-08-06T00:53:46.680854165Z
+     sha256: 26603408ea0aca61c73ad51180e8a5e3725d7624247e440e97a21653042ede22
+     role: log (primary evidence: 12 TypeError occurrences + finalize window lines 5313-5323 + terminal chain state)
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/observability/work_ledger.py
+     exists: yes
+     type: python source
+     size_bytes: 53585
+     mtime_utc: 2026-08-05T21:40:33.333332034Z
+     sha256: 2d1f843c417b1b366228792ca7f08e8e86e5433a9545170b9e1c1566ab362a6e
+     role: policy (emit_transition / emit_transition_activity implementation)
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/observability/work_ledger.py
+     exists: yes
+     type: python source
+     size_bytes: 53585
+     mtime_utc: 2026-08-06T09:02:58.936593441Z
+     sha256: 2d1f843c417b1b366228792ca7f08e8e86e5433a9545170b9e1c1566ab362a6e  (byte-identical to A)
+     role: policy
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/auto.py
+     exists: yes
+     type: python source
+     size_bytes: 318729
+     mtime_utc: 2026-08-05T21:40:33.283333026Z
+     sha256: 9ded523c150aba43bf1595975b29129b5b5dbdcac91bc39ac438f1ebb7965e08
+     role: producer/policy (_emit_work_boundary at 4800-4864; state-change handler 5895-5928)
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/auto.py
+     exists: yes
+     type: python source
+     size_bytes: 318729
+     mtime_utc: 2026-08-06T09:02:58.882594527Z
+     sha256: 9ded523c150aba43bf1595975b29129b5b5dbdcac91bc39ac438f1ebb7965e08  (byte-identical to A)
+     role: producer/policy
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/handlers/finalize.py
+     exists: yes
+     type: python source
+     size_bytes: 101410
+     mtime_utc: 2026-08-05T21:40:33.326332173Z
+     sha256: 13efbdb7937bb73330f5aa4d19abeaf73904bea082d13cb0fbac650522695a4e
+     role: policy (finalize phase handler; contains ZERO work_ledger/emit_transition references)
+   - /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines/megaplan/handlers/finalize.py
+     exists: yes
+     type: python source
+     size_bytes: 101410
+     mtime_utc: 2026-08-06T09:02:58.928593602Z
+     sha256: 13efbdb7937bb73330f5aa4d19abeaf73904bea082d13cb0fbac650522695a4e  (byte-identical to A)
+     role: policy
+   - /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/evidence-pack.md
+     exists: yes
+     type: markdown evidence pack
+     size_bytes: 11966
+     mtime_utc: 2026-08-06T09:42:35.620959008Z
+     sha256: ca22f99f7de663a8901eeec8636467a919013b15d4a2b10894a7b3f413cb2401
+     role: persistence (prior observer record; source of the "two lines" claim, corrected below)
+   - /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/sol-stage1.md
+     exists: yes
+     type: markdown adjudication brief
+     size_bytes: 26055
+     mtime_utc: 2026-08-06T09:47:38.239659605Z
+     sha256: 0b923557a0e630986cfdfb451ddfc43e3fb875c583a21034e5683b7bd10f1e65
+     role: policy (report contract + FQ-09 allowlist)
+7. commands (cwd = /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold unless noted;
+   started/ended are approximate UTC within the window; all exit 0 unless noted):
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n --hidden -C 12 'work_ledger|emit_transition|TypeError' /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan
+     started_utc: ~2026-08-06T09:59:00Z; ended_utc: ~2026-08-06T09:59:30Z; exit_code: 0
+     stdout_summary: located evidence-pack mention (line 133: "two TypeError ... secondary anomalies") and patch/log noise; output truncated at 50k chars
+     stderr_summary: none
+   - cwd: /workspace/runtime-candidates
+     exact_command: rg -n -C 10 'def emit_transition|emit_transition\(' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines
+     started_utc: ~09:59:30Z; ended_utc: ~10:00:00Z; exit_code: 0
+     stdout_summary: emit_transition def at work_ledger.py:824 (**extra, no transition param); emit_transition_activity at 1056 passes transition= AND **dict(metadata); callers auto.py:4847, chain/__init__.py:6690, handlers/gate.py:1197, handlers/review.py:2184; all call sites inside try/except
+     stderr_summary: none
+   - cwd: /workspace
+     exact_command: stat --format='%n|%s|%y' <chain-log, work_ledger A/B, auto.py A/B>; sha256sum <same>
+     started_utc: ~10:00:00Z; ended_utc: ~10:00:15Z; exit_code: 0
+     stdout_summary: sizes/mtimes/hashes per section 6; work_ledger.py and auto.py byte-identical A vs B
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n --hidden -C 30 'TypeError.*emit_transition|emit_transition.*TypeError|got multiple values' /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/cloud-chain-critique-ledger-accountability-v3-r7-launch-20260805.log
+     started_utc: ~10:00:20Z; ended_utc: ~10:00:50Z; exit_code: 0
+     stdout_summary: M9_WARN_EMIT_AUTO_WORK_LEDGER + traceback frames auto.py:4847 -> work_ledger.py:1066 -> TypeError; loop activity continues after each
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -C 15 'emit_transition_activity\(' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines /workspace/runtime-candidates/arnold-r7-fresh-child-20260805-77b76e3a4/arnold_pipelines
+     started_utc: ~10:00:50Z; ended_utc: ~10:01:15Z; exit_code: 0
+     stdout_summary: same 4 call sites in A and B; every caller wrapped in except Exception (auto.py:4856, chain/__init__.py:6699, gate.py:1208, review.py:2196)
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -c 'got multiple values for keyword argument' <chain-log>; echo ---; rg -n 'M9_WARN_EMIT_AUTO_WORK_LEDGER best-effort observability emit failed' <chain-log>
+     started_utc: ~10:01:20Z; ended_utc: ~10:01:40Z; exit_code: 0
+     stdout_summary: count = 12; M9 lines at iterations 3,5,6,10,11,13,14,17,18,21,22,23 (lines 414,699,1480,1580,2504,2573,3506,3641,4313,4398,5270,5293)
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: wc -l <chain-log>
+     started_utc: ~10:01:45Z; ended_utc: ~10:01:50Z; exit_code: 0
+     stdout_summary: 5609 lines
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -o "phase '[a-z_]+' exited with internal_error|ended blocked|repeated the same internal_error|\[auto [^]]+\] (running|iter) [^0-9][^\"]{0,80}" <chain-log>
+     started_utc: ~10:02:00Z; ended_utc: ~10:02:15Z; exit_code: 0
+     stdout_summary: phase-exit map: plan@572, gate@1537, revise@1553/3607/4462, finalize@5313/5316/5319, ended blocked@5320,5323
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -o "critique_finding_unresolved|CF-0B506E1EDCD92E90C192|accepted_tradeoff" <chain-log> | head -40
+     started_utc: ~10:02:15Z; ended_utc: ~10:02:30Z; exit_code: 0
+     stdout_summary: all finalize-failure content is critique_finding_unresolved/CF-0B506E1EDCD92E90C192/accepted_tradeoff at lines 5313,5316,5319,5320 only (plus plan-prose at 1553)
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: sed -n '5280,5325p' <chain-log>
+     started_utc: ~10:02:35Z; ended_utc: ~10:02:45Z; exit_code: 0
+     stdout_summary: exact finalize window: TypeError@5293 (iter 23) -> gate -> iter 23 state=gated next=finalize -> 3x finalize internal_error -> [chain] ended blocked (3x same) -> {"status":"stopped","reason":"milestone cl2-ledger-replay ended blocked"}
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: sed -n '5450,5609p' <chain-log>
+     started_utc: ~10:03:00Z; ended_utc: ~10:03:15Z; exit_code: 0
+     stdout_summary: terminal chain-state projection: runtime_binding A d5848010695e (content_sha256 e8b12504...), rebind_events [], fresh_child_admissions receipt
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: sed -n '824,900p' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/observability/work_ledger.py
+     started_utc: ~10:03:20Z; ended_utc: ~10:03:30Z; exit_code: 0
+     stdout_summary: emit_transition body appends via append_work_ledger_event(event_class="transition") AFTER kwarg binding; TypeError aborts before body
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: sed -n '4800,4880p' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/auto.py
+     started_utc: ~10:03:35Z; ended_utc: ~10:03:50Z; exit_code: 0
+     stdout_summary: _emit_work_boundary: payload={"boundary":kind,"iteration":N,**metadata}; kind=transition calls emit_transition_activity(transition=str(payload.get("transition")...), metadata=payload); whole block wrapped in except Exception -> _warn_best_effort_emit_failure("M9_WARN_EMIT_AUTO_WORK_LEDGER",...)
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg --files /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/handlers | rg -i 'final'; rg -n 'work_ledger|emit_transition|emit_transition_activity' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/handlers/finalize.py
+     started_utc: ~10:04:00Z; ended_utc: ~10:04:10Z; exit_code: 0
+     stdout_summary: finalize.py exists (101410 B); zero work_ledger/emit_transition references in it
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -C 8 '_emit_work_boundary\(' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/auto.py | rg -n 'transition|_emit_work_boundary|metadata' | head -40
+     started_utc: ~10:04:15Z; ended_utc: ~10:04:25Z; exit_code: 0
+     stdout_summary: producer call site auto.py:5903-5908: _emit_work_boundary("transition", ..., metadata={"transition": "auto_state_transition"})
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -o 'File "/workspace/runtime-candidates/[^"]+/(auto\.py|chain/__init__\.py|handlers/[a-z_]+\.py)", line [0-9]+, in [a-z_]+' <chain-log> | sort | uniq -c
+     started_utc: ~10:04:30Z; ended_utc: ~10:04:45Z; exit_code: 0
+     stdout_summary: 12 occurrences, ALL the single frame auto.py:4847 in _emit_work_boundary (runtime A path); no chain/__init__.py, gate.py, or review.py frames
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: sed -n '5890,5935p' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/auto.py
+     started_utc: ~10:05:00Z; ended_utc: ~10:05:10Z; exit_code: 0
+     stdout_summary: state-change handler: emit_event(STATE_TRANSITION) + _emit_work_boundary("transition", metadata={"transition":...}) inside one try; THEN separate try: emit_transition(task_id="auto_loop", from_state, to_state, duration_ms=0) with clean kwargs
+     stderr_summary: none
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+     exact_command: rg -n -c 'M3A_WARN_EMIT_AUTO_STATE_TRANSITION' <chain-log>; echo ---; rg -o 'M9_WARN_EMIT_AUTO_WORK_LEDGER best-effort observability emit failed \(action=auto-work-ledger, event_kind=[a-z_]+' <chain-log> | sort | uniq -c; echo ---; rg -n -c 'append_work_ledger_event|work ledger append|work-ledger append' <chain-log>
+     started_utc: ~10:05:20Z; ended_utc: ~10:05:40Z; exit_code: 1 (last rg: 0 matches)
+     stdout_summary: M3A warnings: 0; M9 kinds: 12/12 event_kind=transition; work-ledger append failure mentions: 0
+     stderr_summary: none
+   - cwd: /workspace
+     exact_command: stat/sha256sum on evidence-pack.md, sol-stage1.md, finalize.py A and B
+     started_utc: ~10:06:00Z; ended_utc: ~10:06:15Z; exit_code: 0
+     stdout_summary: hashes per section 6; finalize.py byte-identical A vs B
+     stderr_summary: none
+8. trace:
+   - producer: auto.py:5903-5908 (auto driver state-change handler) — produces payload
+     {"boundary":"transition","iteration":N,"transition":"auto_state_transition"} (passed as metadata)
+     produced_value_or_key: payload key "transition"="auto_state_transition" embedded in metadata
+     consumer: auto.py:4847 _emit_work_boundary -> emit_transition_activity(transition=str(payload.get("transition")...), metadata=payload)
+     consumed_value_or_key: explicit kwarg transition="auto_state_transition" AND **dict(metadata) containing "transition"
+     persistence: work_ledger.py:1066 emit_transition — TypeError raised at keyword binding; append_work_ledger_event NEVER reached for the wrapper emission (no partial/corrupt record)
+     persisted_value_or_key: (wrapper) none; canonical transition record separately appended via auto.py:5920 emit_transition(task_id="auto_loop",...) -> append_work_ledger_event(event_class="transition") — 0 append failures logged
+     policy: auto.py:4856-4864 except Exception -> _warn_best_effort_emit_failure("M9_WARN_EMIT_AUTO_WORK_LEDGER", action="auto-work-ledger", event_kind=kind, ...) — best-effort downgrade; loop continues (iterations 3..23 progressed; chain reached finalize)
+     predicate_and_result: "best-effort observability emit" — failure is non-fatal by construction; 12/12 observed instances follow this exact path
+   - finalize trace (claim half 2):
+     producer: critique_custody.py _resolution_for_finding (runtime A) raises CritiqueCustodyError("critique_finding_unresolved", ...) for CF-0B506E1EDCD92E90C192 status=accepted_tradeoff (per evidence-pack §5-6 read-only reproduction; source not re-inspected in this pass)
+     produced_value_or_key: error message "...finding CF-0B506E1EDCD92E90C192 / flag CF-0B506E1EDCD92E90C192 remains 'accepted_tradeoff'..."
+     consumer: megaplan finalize CLI / auto driver phase runner
+     consumed_value_or_key: same message echoed as [auto ...] phase 'finalize' exited with internal_error (log lines 5313, 5316, 5319)
+     persistence: chain log lines 5313/5316/5319; chain state {"status":"stopped","reason":"milestone cl2-ledger-replay ended blocked"}; [chain] ended blocked @5320/5323
+     persisted_value_or_key: "phase 'finalize' repeated the same internal_error 3 times: critique_finding_unresolved ..."
+     policy: chain driver on_failure abort stop_chain; max 3 identical retries then blocked (chain.yaml per evidence-pack §6)
+     predicate_and_result: finalize blocked on custody resolver error — zero TypeError/work_ledger content in the finalize payloads; finalize.py handler has zero work_ledger references
+9. adherence_classification: MISSING_STRUCTURE
+10. missing_or_contradictory_structure:
+    - The TypeError telemetry trace (producer->consumer->persistence->policy) IS complete and directly
+      verified. The MISSING_STRUCTURE is on the claim's second half: the "custody resolver" edge
+      (critique_custody.py `_resolution_for_finding` in runtime A) was not re-inspected in this FQ-09 pass;
+      it rests on evidence-pack §5-6 reproduction, so the finalize producer edge is evidence-pack-sourced
+      rather than directly verified here (FQ-02 is the direct source-level pass).
+    - Contradiction with evidence pack wording: pack §7 says "two TypeError ... lines"; the log contains
+      TWELVE (iterations 3,5,6,10,11,13,14,17,18,21,22,23). Qualitative conclusion (secondary anomaly,
+      not the terminal blocker) is nonetheless confirmed.
+    - Claim wording "error-recording noise" is imprecise: the 12 TypeErrors are auto-loop ITERATION-BOUNDARY
+      telemetry emissions (phase=auto, event_kind=transition), not error-recording of the finalize failure;
+      the finalize window (lines 5313-5320) contains zero TypeErrors.
+11. evidence_supporting_verdict:
+    - 12/12 TypeError lines share one frame: auto.py:4847 in _emit_work_boundary (runtime A import root),
+      immediately followed by continued agent tool activity and further iterations — non-fatal by observation.
+    - Mechanism: duplicate-kwarg collision — payload "transition" key + explicit transition= kwarg at
+      work_ledger.py:1066; raised at binding BEFORE append_work_ledger_event, so no partial record; canonical
+      transition record still written by the parallel clean call auto.py:5920; 0 append failures logged.
+    - All call sites of emit_transition_activity (auto.py:4847, chain/__init__.py:6690, gate.py:1197,
+      review.py:2184) are wrapped in except Exception (best-effort by construction).
+    - Last TypeError at log line 5293 (iteration 23) precedes the finalize window; lines 5313/5316/5319
+      finalize failures are exclusively critique_finding_unresolved/CF-0B506E1EDCD92E90C192/accepted_tradeoff
+      — the exact CritiqueCustodyError signature; [chain] ended blocked: "phase 'finalize' repeated the same
+      internal_error 3 times".
+    - handlers/finalize.py contains zero work_ledger/emit_transition references (byte-identical A/B,
+      sha256 13efbdb7...) — finalize custody path is disjoint from the work-ledger telemetry path.
+    - work_ledger.py and auto.py are byte-identical between A and B — the TypeError defect is pre-existing
+      and NOT the 77b76e3a4 delta (which touched only critique_custody.py + tests); it cannot explain the
+      A-only finalize blocker.
+12. evidence_against_verdict:
+    - Evidence pack §7's "two lines" count is factually wrong (12 actual); this is a pack-accuracy defect,
+      not a contradiction of the claim's substance.
+    - The word "fully" in "fully explained by the custody resolver": the finalize FAILURE PAYLOAD is fully
+      explained (critique_finding_unresolved); the root-cause attribution (runtime A missing
+      accepted_tradeoff relaxation branch) is evidence-pack-documented reproduction, not re-derived in this
+      pass — so "fully" is supported at the failure-mechanism level, not independently re-proven here.
+    - No counter-evidence found showing any TypeError on the finalize path or any work-ledger append failure.
+13. confidence: high
+14. confidence_basis: direct full-log inspection (all 12 TypeError occurrences enumerated with frames and
+    iterations; complete finalize window 5280-5325 read verbatim; terminal chain state read); source-level
+    mechanism confirmed in byte-identical A/B files (work_ledger.py, auto.py, finalize.py) with exact line
+    numbers; all call sites' try/except boundaries verified; counts and kinds exhaustively enumerated
+    (12/12 event_kind=transition; 0 M3A; 0 append failures). Remaining uncertainty is confined to the
+    custody-resolver source edge (evidence-pack-sourced) and the pack's "two" count discrepancy.
+15. immediate_decision_informed: Work-ledger integrity is NOT a separate stop gate for this occurrence:
+    the 12 TypeError lines are non-fatal telemetry noise from the auto driver's redundant
+    emit_transition_activity wrapper; they did not block, corrupt, or explain the finalize outcome. The
+    chain blocked solely on the custody resolver error (critique_finding_unresolved, CF-0B506E1EDCD92E90C192)
+    repeated 3x. Therefore ledger transition-integrity does not independently prohibit a bounded retry
+    consideration; the retry-safety question reduces to the custody/runtime classification (FQ-02, FQ-07)
+    and the other stop-gate checks (FQ-05 idempotency, FQ-10 locks/fences). Note: a retry under B would
+    still emit the same M9 warnings at iteration boundaries (files identical) — expected noise, not an
+    unsafety signal.
+16. durable_decision_informed: The emit_transition_activity -> emit_transition duplicate-kwarg collision
+    (metadata containing a "transition" key colliding with the explicit kwarg) is a genuine, reproducible
+    observability defect present in BOTH A and B runtimes (work_ledger.py:1066 with callers at auto.py:4847,
+    chain/__init__.py:6690, gate.py:1197, review.py:2184 — all best-effort). It should be tracked as a
+    durable defect (dedupe/sanitize reserved keys in metadata before **splat), but it is not in this
+    incident's causal path and is not a release/retry blocker. Durable records should also correct the
+    evidence-pack count (2 -> 12 occurrences).
+17. safety_observations: No mutation performed — all commands were read-only (rg/sed/stat/sha256sum/wc);
+    no credentials inspected or exposed; no lifecycle/authority commands executed; chain log mtime
+    (00:53:46Z) consistent with terminal blocked state; no evidence of a live runner. All three failed
+    finalize attempts produced identical error payloads with no side-effect evidence in the log; the
+    work-ledger wrapper aborted before any append, so no partial transition records exist from the TypeError
+    path.
+18. unresolved_questions:
+    - Whether the redundant wrapper's missing records (task_id="auto" transition events) create a telemetry
+      completeness gap for downstream work-ledger reconciliation consumers (out of scope for this
+      occurrence's causal classification; canonical auto_loop records are present).
+    - Exact in-memory fault registry at the 00:53:36Z failure instant (already flagged by evidence pack §7;
+      on-disk state reproduces identically under A).
+    - The custody-resolver producer edge of the finalize trace was not re-inspected at source in this pass
+      (FQ-02 is the dedicated pass); "fully explained" is supported at the failure-payload level here.
+    - Whether any future fix for the kwarg collision should apply at emit_transition_activity (metadata
+      sanitization) vs. the four call sites (dedupe before **splat) — durable-design question, no patch
+      proposed by this investigator.
+```

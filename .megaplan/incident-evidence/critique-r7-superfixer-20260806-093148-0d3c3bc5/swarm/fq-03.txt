@@ -1,0 +1,140 @@
+Investigation complete. All artifacts hashed, all commands executed read-only. Here is the FLASH REPORT.
+
+---
+
+```
+FLASH REPORT
+1. question_id: FQ-03
+2. verdict: supported
+3. investigated_claim: The chain driver stop (liveness lease status=stopped at
+   00:53:46.682Z) was a clean terminal handoff with no retained authority or
+   partially committed effects from the three failed finalize attempts.
+4. vantage:
+   - hostname/container: container 782c6da82a8f (host_boot_id ce621a49-56ca-4d09-9df7-001093e67efe); resident listener pids 1/7; investigation subagent worker 844068/844069
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: bound/launched runtime A = /workspace/runtime-candidates/arnold-r7-fresh-child-20260805 @ d5848010695e (content_sha256 e8b12504...7fe5e6); inspection ran read-only; no runtime code executed
+   - investigator: hermes:deepseek:deepseek-v4-flash (resident managed subagent, occ_critique_r7_superfixer_retry_20260806_v1_70c522f651d6859e134250ee)
+5. utc_window:
+   - started: 2026-08-06T09:51:00Z (approx; harness did not stamp per-command start/end; all commands were read-only)
+   - ended:   2026-08-06T09:58:00Z (approx)
+6. artifacts:
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/.chains/chain-880bd6e04632.json
+     exists: yes; type: regular file (JSON); size_bytes: 15254; mtime_utc: 2026-08-06T00:53:46.678854203Z
+     sha256: 143e1a8573e5246477b8e8674248ea4c538139adf532f40444bce91a72e0aa37
+     role: persistence (chain state; last_state=blocked, completed=[], retry_counts={}, candidate_invalidation={}, no resume cursor; runtime_binding current_identity = runtime A d5848010, rebind_events=[])
+   - absolute_path: /workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v3-r7-launch-20260805.liveness-lease.json
+     exists: yes; type: regular file (JSON); size_bytes: 1332; mtime_utc: 2026-08-06T00:53:46.681854146Z
+     sha256: 4d7499888f6b46bdb888d118d7499d4a19e945a4104d9c897c617d7108eb316b
+     role: persistence/authority (runner_liveness_lease.v2; status="stopped", authority="runner-owned-liveness-only", expires_at=generated_at=2026-08-06T00:53:46.682173Z, sequence=2315, publisher_pid=629623, runner_fence=1, lease_id 5962d7fc-4182-4eb2-b6f0-0964d13054cd)
+   - absolute_path: /workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v3-r7-launch-20260805.liveness-fence.json
+     exists: yes; type: regular file (JSON); size_bytes: 136; mtime_utc: 2026-08-05T21:40:51.889963816Z
+     sha256: c3eb7fc691386e47b3c7459089cde77399ff77b454a3ea5730647c8cc79fa858
+     role: persistence (runner_liveness_fence.v1, runner_fence=1; unchanged since launch; fence is an identity token, not a held lock)
+   - absolute_path: /workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v3-r7-launch-20260805.json
+     exists: yes; type: regular file (JSON); size_bytes: 39949; mtime_utc: 2026-08-05T21:40:57.696848590Z
+     sha256: 9eb2559460e4767ede0a809ac6cdc9d24f2d75c093a615d5dc0aee9649ef524e
+     role: producer (launch receipt: run_id 9f46fff6-7f30-4978-99c8-f039368b8f66, attempt_id 02e5c83b-e50f-4d4c-be5c-6f0b3aa8c1e7, pid 629623; launch_outcome.status="running", observed_at 21:40:56.788986Z; STALE — never updated at stop)
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/cloud-chain-critique-ledger-accountability-v3-r7-launch-20260805.log
+     exists: yes; type: regular file (log); size_bytes: 544584; mtime_utc: 2026-08-06T00:53:46.680854165Z
+     sha256: 26603408ea0aca61c73ad51180e8a5e3725d7624247e440e97a21653042ede22
+     role: log (5609 lines; lines 5311-5319 three finalize invocations each failing immediately; line 5320 "[chain] plan ... ended blocked: phase 'finalize' repeated the same internal_error 3 times"; lines 5321-5609 terminal stop record {"status":"stopped","reason":"milestone cl2-ledger-replay ended blocked", chain_state last_state=blocked}; 12 M9_WARN_EMIT_AUTO_WORK_LEDGER TypeErrors at lines 414,699,1480,1580,2504,2573,3506,3641,4313,4398,5270,5293 — ALL before finalize window)
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/events.ndjson
+     exists: yes; type: regular file (ndjson); size_bytes: 27046229; mtime_utc: 2026-08-06T00:53:46.670854356Z
+     sha256: 87e923a67af8535f3268cb000f47855df945b2505cc6396f2b1d7d6f07fe691d
+     role: persistence (3099 lines; seq 3087 phase_end gate 00:53:27.150; seq 3088 critiqued->gated 00:53:27.566; seq 3089/3091 attempt1 start/end 00:53:27.893/00:53:36.371; seq 3093/3095 attempt2 00:53:36.908/00:53:45.577; seq 3097 attempt3 start 00:53:46.130; seq 3098 final state_written — NO phase_end for attempt 3, superseded by driver stop; all state_written payloads effect=null)
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/state.json
+     exists: yes; type: regular file (JSON); size_bytes: 90023; mtime_utc: 2026-08-06T00:53:46.548856695Z
+     sha256: ab9c1a0eee59058d3c55ae49d890d3802bf0bf840910e13bd7493433e5d6e0b3
+     role: persistence (current_state=blocked, iteration=5, phase_result=null, latest_failure/ resume_cursor present in schema; final state write at stop)
+   - absolute_path: .../cl2-wbc-backed-ledger-20260805-2140/work_ledger.ndjson
+     exists: yes; type: regular file (ndjson); size_bytes: 18291; mtime_utc: 2026-08-06T00:53:37.574028691Z
+     sha256: b4486767f950f7c3f8bdfccb65be02cd8f131b1ec80da9dc57428382ed4219a6
+     role: log (telemetry only; every entry `_non_authoritative: true`; final entries: retry_wait auto_loop attempt 23 at 00:53:28.369, attempt 24 at 00:53:37.575; NO finalize transition events)
+   - absolute_path: .../cl2-wbc-backed-ledger-20260805-2140/.events.seq and .events.projection.seq
+     exists: yes; type: regular file; size_bytes: 4 each; mtime_utc: 2026-08-06T00:53:46.550856657Z / 00:53:46.671854337Z
+     sha256: 4e12486c3a0f8fa2dae48d8dbce2a52e30db7ac114acdadf2357c28ace86c1a2 (both; content "3098")
+     role: persistence
+   - absolute_path: .../cl2-wbc-backed-ledger-20260805-2140/phase_result.json
+     exists: yes; type: regular file; size_bytes: 3745; mtime_utc: 2026-08-06T00:53:17.950404452Z
+     sha256: ace7cfef733f532ba929c014984a050651d5009c56d535e7ff477090d5b6e6fd
+     role: persistence (gate phase_result, written at gate PROCEED, NOT modified by finalize attempts)
+   - absolute_path: .../cl2-wbc-backed-ledger-20260805-2140/gate.json
+     exists: yes; sha256: 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b (matches evidence-pack gate hash)
+     role: persistence (gate PROCEED; mtime 00:53:12.990)
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/authority/custody/lease:arnold.megaplan.fresh_child_admission.v1:8ef0d95eb34a7a55563cfeb5fd92a066bc8ae386a54ef3bea6d749d546906c74.state.json
+     exists: yes; type: regular file (JSON); size_bytes: ~1.1KB; mtime_utc: 2026-08-05T21:40:57.167859086Z
+     sha256: 090c827b2a46c101682f065ad977e5c541407613e1911d996190a6d6d36e4d05
+     role: authority (admission custody lease; acquired 21:40:57Z, expires_at 2026-08-05T22:10:57.167393Z (TTL-expired), owner_pid 629623, occurrence_digest sha256:f3b952be...; blocker_or_phase_result_hash "sha256:r6-finalize-artifact-mismatch", phase=plan — NOT a finalize-phase lease; never renewed, no release)
+   - absolute_path: .../lease:...fresh_child_admission...history.jsonl
+     exists: yes; type: regular file; size_bytes: ~1 line; mtime_utc: 2026-08-05T21:40:57.166859106Z
+     sha256: 40944102b0067d68299fd21ec0575df978f30cec54c4c36b5e7320a624e0f57a
+     role: authority (contains ONLY the acquire event; no renew, no release)
+   - absolute_path: /workspace/.megaplan/repair-queue/requests/74403266d5cb0592770cffe5f8c0d31c627dff7ef62577994808df588c603bd7.json
+     exists: yes; type: regular file (JSON); mtime_utc: 2026-08-06T00:13:08Z (per content)
+     sha256: 4bc0d9fc4260292c3b81fa073bd8e6b0f64aa2d1badc139e84171adf96be86b3
+     role: persistence (ONLY repair request for this session; phase_or_step=revise, current_state=critiqued, attempt 6 — created 00:13:08Z, PREDATES the finalize blocker; not a finalize request)
+   - absolute_path: /workspace/.megaplan/repair-queue/decisions/20260806T001308Z-b416ed0172abd76b4f519d29a4b035f6367487b4313030499808eb7af1ce9a4d.json
+     exists: yes; sha256: 2b8a5858399991bd5e1202ed43c730bdd0fa0d7574f2f0f6ed67958ee2c3640f
+     role: persistence (decision accepted for the revise request)
+   - finalize.json / finalize_history / any *finalize* artifact under plan dir: exists: no (size_bytes/mtime_utc/sha256: not-applicable) — `find` over plan dir returned zero finalize-named files
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/.events.supervision-checkpoint.json
+     exists: yes; size_bytes: 27149688; mtime_utc: 2026-08-06T09:07:19.497358046Z
+     role: persistence (resident supervision checkpoint, `_non_authoritative:true`, fold_version megaplan-supervision-v1 — post-stop activity is supervisory only)
+7. commands (all read-only; cwd noted; per-command wall-clock not stamped by harness — executed within the utc_window above):
+   - cwd: /; command: ps -p 629623 -o pid=,ppid=,lstart=,etime=,stat=,args=; exit_code: 1 (no such process — EMPTY output, driver dead)
+   - cwd: /; command: stat -c '%n|%F|%s|%y' <5 core artifacts>; sha256sum <5 core artifacts>; exit_code: 0
+   - cwd: /workspace/.../plans/cl2-wbc-backed-ledger-20260805-2140; command: sed -n '1,340p' .../plans/.chains/chain-880bd6e04632.json; exit_code: 0
+   - cwd: /workspace/.../plans/cl2-wbc-backed-ledger-20260805-2140; command: rg -n '"seq":308[7-9]|"seq":309[0-8]' events.ndjson; sed -n '3088,3099p' events.ndjson (per-line truncated reads); tail/wc -l events.ndjson; exit_code: 0
+   - cwd: /workspace/.../plans/cl2-wbc-backed-ledger-20260805-2140; command: find . -maxdepth 1 -type f -printf ... | sort (mtime inventory); find . -newermt '2026-08-06 00:53:27' ! -newermt '2026-08-06 00:53:50' ...; find ... -iname '*finalize*'; exit_code: 0
+   - cwd: /workspace/.../Arnold; command: GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD (d5848010695e...), git log -1 (d5848010695e|2026-08-05 23:38:39 +0200|chore(critique): pin r7 initiative...), git log --since='2026-08-05T21:40:00Z' (EMPTY — no commit during run), git status --porcelain (2 untracked: .megaplan/authority/, .megaplan/incident-evidence/); exit_code: 0
+   - cwd: /; command: rg -n -C 6 'TypeError|emit_transition' <chain log>; rg -c/-n M9_WARN_EMIT_AUTO_WORK_LEDGER; rg -n 'iter 2[0-9]|running: megaplan finalize|exited with internal_error|ended blocked' <chain log>; sed -n '5305,5345p' / 5345,5420p / tail -15 <chain log>; exit_code: 0
+   - cwd: /; command: python3 -c <json field extraction> on session marker / state.json / custody lease state / history / repair requests (read-only parse); exit_code: 0
+   - cwd: /; command: rg -l --hidden '74403266' /workspace --glob '*.json' (found only /workspace/.megaplan/repair-queue/requests/74403266...json + its decision + incident-evidence docs); find /workspace/.megaplan/repair-queue -type f -newermt '2026-08-06 00:53:17' (EMPTY); exit_code: 0
+   - cwd: /; command: ps aux | rg -i 'megaplan|codex|629623|auto\.py' (only resident listener 1/7, this investigation's subagent 844068/844069, swarm fan.py 897988/898198 — NO chain driver); exit_code: 0
+   - cwd: /; command: sha256sum <remaining inspected artifacts>; exit_code: 0
+   No command wrote, created, moved, or deleted any file. No lifecycle/network/git-mutating commands executed.
+8. trace:
+   - producer: chain driver (pid 629623, run_id 9f46fff6-7f30-4978-99c8-f039368b8f66, runtime A d5848010)
+     produced_value_or_key: liveness lease terminal record (status="stopped", reason "milestone cl2-ledger-replay ended blocked", sequence 2315, generated_at=expires_at=00:53:46.682173Z) + chain log stop record + chain state last_state=blocked + plan state.json current_state=blocked
+     consumer: /workspace/.megaplan/cloud-sessions/*.liveness-lease.json, cloud-chain-*.log, .chains/chain-880bd6e04632.json, plans/.../state.json
+     consumed_value_or_key: identical fields as above (lease status stopped; log "ended blocked"; chain last_state=blocked; state blocked)
+     persistence: files listed in field 6 with matching mtimes 00:53:46.548–.682Z
+     persisted_value_or_key: as recorded (hashes in field 6)
+     policy: chain.yaml driver on_failure=abort stop_chain; max_iterations=60; observed 3x repeated identical internal_error (critique_finding_unresolved CF-0B506E1EDCD92E90C192) at iters 23/24/25 → predicate "same internal_error 3 times" → stop; lease authority scoped "runner-owned-liveness-only"
+     result: terminal stop consistent across lease/log/chain-state/plan-state
+   - producer: finalize CLI invocations (3x, phase model codex:gpt-5.6-sol:high under runtime A)
+     produced_value_or_key: phase_start/phase_end events (seq 3089/3091, 3093/3095, 3097), immediate internal_error payloads
+     consumer: plan dir artifacts (finalize.json, finalize_history, custody, WBC, ledger) — NONE CREATED (find: zero *finalize* files; window sweep shows only state/events/projection + one telemetry work_ledger line)
+     persistence: absent for any finalize effect; only state_written events with effect=null (state.json rewrites), .events.seq/.events.projection.seq (3098), work_ledger.ndjson telemetry (retry_wait, _non_authoritative)
+     policy: finalize custody pre-check `_resolution_for_finding` raises CritiqueCustodyError("critique_finding_unresolved") before any test/effect execution (log lines "running: megaplan finalize" immediately followed by "exited with internal_error" — nothing between)
+     result: zero committed finalize effects; git HEAD unchanged (d5848010, no commit after 21:38:39Z); chain pr_number/pr_state/branch_head/last_pushed_commit all null; no notification/outbox artifacts
+9. adherence_classification: ADHERENCE
+10. missing_or_contradictory_structure:
+    - fresh-child admission custody lease state.json has NO release event (history.jsonl = 1 acquire line); it expired by TTL at 2026-08-05T22:10:57.167393Z and its owner pid 629623 is dead. This is a stale expired record, NOT live authority, but the release leg of the custody trail is absent — the "handoff" is evidenced by the liveness stop record, not by a custody release.
+    - session marker (.json) still records launch_outcome.status="running" (pid 629623, observed_at 21:40:56.788986Z; mtime 21:40:57.696Z). It was never updated at stop; it is a launch receipt and contradicts nothing terminal, but a reader could misread it as liveness.
+    - liveness-fence.json runner_fence=1 persists unchanged (identity token, not a held lock).
+    - No finalize-phase custody lease, repair request, or claim exists for this blocker (global queue: no request >= 2026-08-06T00:53:17Z; only pre-blocker request 74403266 created 00:13:08Z for the earlier revise failure, decision accepted).
+    - events.ndjson has no phase_end for attempt 3 (seq 3098 is a state_written); the driver stop superseded the third phase_end — an observability gap in the events stream, not evidence of an in-flight phase.
+    - The 12 work_ledger emit_transition TypeErrors (M9_WARN_EMIT_AUTO_WORK_LEDGER, "best-effort observability emit failed") all occur at log lines 414–5293, i.e., BEFORE the finalize window (iter 23 at ~5301/5311); none occurred during the three finalize attempts; they are telemetry-only (work_ledger entries all _non_authoritative) and non-fatal (run continued through 25 iterations).
+11. evidence_supporting_verdict:
+    - Lease terminal record: status="stopped", authority="runner-owned-liveness-only", expires_at == generated_at == 2026-08-06T00:53:46.682173Z, sequence 2315, publisher_pid 629623 — a deliberate driver-written stop, not a TTL expiry or crash artifact.
+    - Chain log stop record (lines 5320–5609): "plan ... ended blocked: phase 'finalize' repeated the same internal_error 3 times" + {"status":"stopped","reason":"milestone cl2-ledger-replay ended blocked"}; log ends at 5609 lines, mtime 00:53:46.680Z; nothing written after.
+    - Driver dead: ps -p 629623 exit 1 (empty); no megaplan/auto/codex process for this chain in ps aux.
+    - No partial effects: plan-dir window sweep (00:53:27–00:53:50) shows ONLY work_ledger.ndjson (00:53:37.574, telemetry retry_wait, _non_authoritative) and state/events/seq/projection writes (00:53:46.548–.671); zero *finalize* artifacts; .phase_wbc_attempts.sqlite3 and .worker_dispatch_wbc_attempts.sqlite3 mtimes 00:53:13 (gate phase, not finalize); git HEAD unchanged with no commit after 21:38:39Z; chain pr/branch/push fields null.
+    - Each attempt failed at the custody pre-check before any execution: log lines "running: megaplan finalize" (5312/5315/5318) are immediately followed by "exited with internal_error" (5313/5316/5319) with no intervening activity; events show effect=null on every state_written.
+    - No retained authority: no finalize repair request (global queue empty >= 00:53:17Z; only pre-blocker 74403266 from 00:13:08Z, decision accepted, phase=revise); no finalize custody lease (custody/ contains only the TTL-expired, dead-owner admission lease); chain state has empty retry_counts and no resume cursor; candidate_invalidation {}.
+    - Post-stop writes (09:07Z) are resident supervision checkpoints marked _non_authoritative — not driver activity.
+12. evidence_against_verdict:
+    - No affirmative contradictory evidence found. Residual caveats (not contradictions): un-released (but TTL-expired and dead-owner) admission custody lease; stale "running" session marker; absence of a phase_end for attempt 3 in events.ndjson; in-memory state of the three finalize CLI subprocesses is not observable post-mortem, and external side effects outside the workspace (beyond the null PR/push fields) were not independently verifiable.
+13. confidence: high
+14. confidence_basis: Multiple independent, hash-consistent artifacts agree on the same terminal facts (lease stopped at 00:53:46.682173Z; chain/plan state blocked; log stop record; driver pid dead; no finalize artifacts; no post-blocker repair request; no git/PR/push change; no finalize-window TypeErrors). The effect boundary is directly enumerable via mtime inventory of the plan dir. Confidence is high for the claim as scoped; the caveats in field 10 are record-keeping gaps, none of which affirmatively contradicts the claim.
+15. immediate_decision_informed: Same-occurrence finalize is NOT precluded by driver-stop semantics or by any discovered partial effect: the stop is a deliberate terminal record, the driver is dead, no finalize-phase custody lease/repair request/claim exists, and the three attempts committed no observable plan/custody/ledger/WBC/git effect. However, this report does NOT authorize any retry: re-entry remains gated on Sol-only judgments (fresh blocker-specific authority/custody/repair-request minting; runtime binding A→B identity policy; finalize idempotency/CAS proof — see FQ-05/FQ-07). No quarantine trigger was found from the finalize attempts themselves, but the stale admission-lease record and stale "running" marker should be treated as expired/stale, not as authority.
+16. durable_decision_informed: The driver's terminal handoff trail should record explicit custody release/terminal-marker updates (the admission lease and session marker are never formally closed); the events stream should emit a terminal phase_end (or explicit stop event) for the in-flight phase; work_ledger emit_transition TypeError (auto.py:4847 → work_ledger.py:1066, "got multiple values for keyword argument 'transition'") is a recurring telemetry bug (12 occurrences pre-finalize) that should be fixed independently — it did not affect finalize but is a durable observability defect. No design change to finalize effects was observed to be required.
+17. safety_observations: Zero mutations performed; all commands read-only (ps/sed/rg/stat/sha256sum/find/python3 -c parsing/GIT_OPTIONAL_LOCKS=0 git rev-parse/log/status). No credentials, tokens, or secrets inspected or printed. No live or ambiguous authoritative runner exists for this chain (ps exit 1 for 629623; only resident listener + investigation subagents + swarm fan.py present). No artifact changed during the investigation window (single-pass hashing consistent with evidence-pack fingerprints; gate.json hash matches evidence pack exactly).
+18. unresolved_questions:
+    - Whether the three finalize CLI subprocesses performed any in-memory or out-of-workspace side effect before raising (not observable post-mortem; no artifact evidence of any).
+    - Whether the missing phase_end for attempt 3 is a benign stop-supersession or a signal that the stop path preempted an in-flight phase (events show no intervening effect; plan state is terminal blocked).
+    - Whether the TTL-expired, un-released admission custody lease (owner pid 629623) requires an explicit release record before any new authority can be minted (Sol judgement; FQ-04 seam).
+    - Whether the session marker's stale "running" status is reconciled by any watchdog/resident sweep (supervision checkpoint at 09:07Z is _non_authoritative).
+    - Whether runtime A's finalize custody exception (critique_finding_unresolved) could have written anything to the run-authority/wbc sqlite stores (both mtime 21:40:57Z — unchanged since admission; not re-opened during finalize).
+```

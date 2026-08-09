@@ -173,7 +173,13 @@ def build_orchestrator_guidance(
     iteration = int(signals.get("iteration", 0))
     weighted_score = float(signals.get("weighted_score", 0.0))
     weighted_history = list(signals.get("weighted_history", []))
-    recurring_critiques = list(signals.get("recurring_critiques", []))
+    # CL5 (Plan Step 7a): read the canonical ``adjacent_text_matches`` list with
+    # ``recurring_critiques`` as the transition fallback.  The deprecated alias
+    # is retained until Step 7b confirms zero remaining consumers.
+    adjacent_text_matches = list(signals.get("adjacent_text_matches", []))
+    if not adjacent_text_matches:
+        adjacent_text_matches = list(signals.get("recurring_critiques", []))
+    recurring_critiques = adjacent_text_matches
     unresolved_flags = list(signals.get("unresolved_flags", []))
     scope_creep = list(signals.get("scope_creep_flags", []))
     previous_score = float(weighted_history[-1]) if weighted_history else None

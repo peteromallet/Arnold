@@ -1,0 +1,33 @@
+{
+  "bound": {
+    "errors": [],
+    "exists": true,
+    "file_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+    "git_blob": "28eea3d1f018b03387406e53b369141037c91e09",
+    "git_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+    "git_revision": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+    "project_relative_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+    "schema": "arnold.megaplan.canonical_source_binding.v1",
+    "semantic_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+    "source_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md"
+  },
+  "changed_fields": [],
+  "checked_at": "2026-08-06T14:05:51Z",
+  "current": {
+    "errors": [],
+    "exists": true,
+    "file_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+    "git_blob": "28eea3d1f018b03387406e53b369141037c91e09",
+    "git_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+    "git_revision": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+    "project_relative_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+    "schema": "arnold.megaplan.canonical_source_binding.v1",
+    "semantic_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+    "source_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md"
+  },
+  "operation": "auto",
+  "outcome": "admitted",
+  "reason": "",
+  "schema": "arnold.megaplan.canonical_source_check.v1",
+  "status": "match"
+}

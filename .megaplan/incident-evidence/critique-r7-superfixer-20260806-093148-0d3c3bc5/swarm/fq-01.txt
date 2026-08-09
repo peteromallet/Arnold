@@ -1,0 +1,123 @@
+Investigation complete. All inspections were read-only; no files were modified. Here is the FLASH REPORT.
+
+---
+
+```
+FLASH REPORT
+1. question_id: FQ-01
+2. verdict: refuted
+3. investigated_claim: Plan v5 has a complete, unambiguous mapping from every selector
+   to its producer, declared task output, persisted artifact, and finalize consumer
+   (selector/task-output declaration integrity).
+4. vantage:
+   - hostname/container: shared R7 superfixer VM (read-only observer subagent)
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold
+   - runtime_or_commit: inspection only; no runtime execution. Referenced runtimes for
+     policy context (NOT executed): bound A d5848010695e; installed/pinned B 77b76e3a4.
+   - investigator: hermes:deepseek:deepseek-v4-flash (resident managed subagent)
+5. utc_window:
+   - started: 2026-08-06T09:52:00Z (occurrence window 09:32:00Z..09:52:00Z; this pass began after)
+   - ended: 2026-08-06T09:52:57Z
+6. artifacts: (exists: yes for all; all hashes computed via sha256sum)
+   - .../cl2-wbc-backed-ledger-20260805-2140/plan_v1.md
+     exists: yes | type: markdown plan v1 | size_bytes: 15450 | mtime_utc: 2026-08-05T22:05:19.275846Z
+     sha256: f2e00315ead524cf0c06b485eff4954115ccd8f57dbe1c684f648535dfc1f1c2
+     role: producer (plan version 1; state.json plan_versions[0] hash matches)
+   - .../plan_v2.md | yes | markdown | 29232 | 2026-08-05T22:35:53.622448Z
+     sha256: e16d1225b5e91e3c3414c73afa199011b1b899b992ea1f4e968e39174711fec4 | producer
+   - .../plan_v3.md | yes | markdown | 35610 | 2026-08-05T23:04:57.105546Z
+     sha256: ff25676b0a08765b7ff4559d5cd9c7256363e902593d638a911cb2e71cdda5e6 | producer
+   - .../plan_v4.md | yes | markdown | 47757 | 2026-08-05T23:51:30.724434Z
+     sha256: 4541645ff6ff594384e3bf61762a47e9fdfc1f6a3441301ed97bde87fa571c89 | producer
+   - .../plan_v5.md | yes | markdown | 56469 | 2026-08-06T00:21:31.198940Z
+     sha256: 4537c985a9e8f1258af71d97d1d631b8ba6d0bcfc83b9a56fbd29cb327160f46 | producer (accepted version)
+   - .../plan_v5.meta.json | yes | json meta | 147189 | 2026-08-06T00:21:31.473934Z
+     sha256: 16e177b75e0d6f8f1d8b854a31c97387554fb517114430b4a686bd6d86068a8a | policy (test_blast_radius.selectors)
+   - .../plan.md | yes | json/markdown bundle | (see stat) | sha256: 444c386a7204e94eb85049de1876610b76575145da50f2d475492b6f198b1127 | policy
+   - .../faults.json | yes | json registry | 268915 | 2026-08-06T00:53:12.983499Z
+     sha256: 3ef99c152944f7923019da65bbd43231313b62d159c908a3517dac2f7df21fdd | persistence
+   - .../gate_carry.json | yes | json | 20178 | 2026-08-06T00:53:12.985499Z
+     sha256: 023a7bb2f8769f054ba1d6237d1b43a2aab30ea0246b472747124d461b4b6310 | persistence (gate PROCEED; differs from gate_v5.json, diff exit 1)
+   - .../gate_v5.json | yes | json | (see stat) | sha256: 9df9582599f9fe096df87ab1ff23665a9e116ea959deae3e3102feab9dbead3b | persistence
+     (matches evidence-pack gate.json hash 9df9582599…)
+   - .../state.json | yes | json | 90023 | 2026-08-06T00:53:46.548856Z
+     sha256: ab9c1a0eee59058d3c55ae49d890d3802bf0bf840910e13bd7493433e5d6e0b3 | persistence
+     (plan_versions v1..v5 hashes match on-disk sha256sums; current_state=blocked, iteration=5)
+   - .../step_receipt_plan_v1.json | yes | json | 3390 | sha256: ec7386557975532f7ea2c38de9149fefd1c64976124f41cad5aa8cf65c9e644e | log
+     (metrics: step_count=14, task_count=14, files_referenced=22; no selector mapping)
+   - .../gate_signals_v5.json | yes | json | sha256: 0ace951466e67135b1e5075cdd8e333b05c575e80df1583aada58f9921a6b55c | consumer (gate input)
+   - .../boundary_receipts/critique_to_gate.json | yes | json | sha256: b9471abc67050fde6229ba70394e80a54200ec49f20f713bf245c2090c85257c | persistence
+   - .../critique_parallel_manifest_v5.json | yes | json | sha256: aa04d5dbf8e5c6d4e3ce576f8df128607e588ecc1243c967c26bd6457cbe7c58 | persistence
+     (critique-check producer binding; NOT a task-selector manifest)
+   - .../phase_result.json | yes | json | sha256: ace7cfef733f532ba929c014984a050651d5009c56d535e7ff477090d5b6e6fd | persistence
+   - .../incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/evidence-pack.md | yes | md | sha256: ca22f99f7de663a8901eeec8636467a919013b15d4a2b10894a7b3f413cb2401 | authority
+   - .../incident-evidence/critique-r7-superfixer-20260806-093148-0d3c3bc5/sol-stage1.md | yes | md | sha256: 0b923557a0e630986cfdfb451ddfc43e3fb875c583a21034e5683b7bd10f1e65 | authority
+7. commands: (all read-only; cwd = plan dir unless noted; GIT_OPTIONAL_LOCKS not needed — no git ops)
+   - cwd: .../cl2-wbc-backed-ledger-20260805-2140
+     exact_command: sha256sum plan_v1.md plan_v2.md plan_v3.md plan_v4.md plan_v5.md plan_v5.meta.json faults.json gate_carry.json state.json
+     started_utc: 2026-08-06T09:52:04Z | ended_utc: 09:52:05Z | exit_code: 0
+     stdout_summary: hashes above; all match state.json plan_versions + evidence-pack gate hash | stderr: none
+   - exact_command: stat --format='%n|%s|%y' <same 9 files> ; exit 0; sizes/mtimes above.
+   - exact_command: rg -n --hidden -i 'selector|task[_ -]?output|declared[_ -]?output|producer|consumer|artifact|CF-0B506E1EDCD92E90C192' (dir, excluding .db/.sqlite3/.ndjson)
+     exit 0; 120 lines; matches only in critique-check artifacts and meta test selectors — NO match in plan_v1..v5.md body.
+   - exact_command: rg -n -i 'selector|declared[_ -]?output|task[_ -]?output|finalize' plan_v1.md plan_v2.md plan_v3.md plan_v4.md plan_v5.md plan_v5.meta.json plan.md ; exit 0
+     stdout: "selector" only at plan.md:639 (test_blast_radius.selectors) and plan_v5.meta.json:257 (same); zero matches for declared/task output; zero 'finalize' matches in any plan version.
+   - exact_command: rg -n '^#{2,4} Step ' plan_v5.md ; exit 0 → 16 step sections (`### Step 0:`..`### Step 15:`, incl. 13a/13b).
+   - exact_command: rg --files . | rg -i 'manifest|selector|output|task' ; exit 0 → only critique_parallel_manifest_v*.json, critique_evaluator_output.json, gate_output.json; no selector/task/output manifest.
+   - exact_command: sha256sum plan.md step_receipt_plan_v1.json gate_v5.json gate_signals_v5.json gate_carry.json boundary_receipts/critique_to_gate.json critique_parallel_manifest_v5.json phase_result.json ; exit 0 (hashes above)
+   - exact_command: diff -q gate_carry.json gate_v5.json ; exit 1 (files differ; gate_carry carries accepted_tradeoffs + carried_flags)
+   - exact_command: rg -n 'Step N:|at least one step section' /workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan (read-only, runtime A path)
+     exit 0 → orchestration/plan_structure.py:9 defines the ONLY structural audit requirement: "Plan must include at least one step section (`## Step N:` or `### Step N:` under a phase)."
+   - exact_command: rg -n 'selector' <runtime A>/arnold_pipelines/megaplan/orchestration ; exit 0 → all uses are TEST selectors (task_splitter.py, validation_jobs.py, acceptance_transaction.py: narrow/focused/scoped pytest selectors).
+   - exact_command: sed -n '620,700p' plan.md ; sed -n '1,80p' gate_v5.json ; sed -n '1,60p' boundary_receipts/critique_to_gate.json ; sed -n '257,340p' plan_v5.meta.json ; all exit 0.
+   - exact_command: date -u '+%Y-%m-%dT%H:%M:%SZ' ; exit 0 → 2026-08-06T09:52:57Z
+   - No mutation, no lifecycle, no network, no credential access performed.
+8. trace:
+   - producer: planner hermes:zhipu:glm-5.2 (plan phase, session c7176996…)
+     produced_value_or_key: plan_v5.md (sha256 4537c985…) + plan_v5.meta.json (16e177b7…) — step-prose declarations only
+     consumer: critique (deepseek-v4-pro) → critique_v5.json / critique_custody_v5.json / faults.json (24→12→17→12→30 flags);
+       gate (deepseek-v4-pro) → gate_v5.json PROCEED 2026-08-06T00:53:17Z; executor (glm-5.2) would consume steps at execute (finalize.py:119 "For each ## Step N: emit 1-N tasks")
+     consumed_value_or_key: step sections + prose file paths; test_blast_radius.selectors consumed by acceptance_transaction/validation_jobs as pytest paths
+     persistence: state.json plan_versions (ab9c1a0e…), faults.json (3ef99c15…, mtime 00:53:12.983Z), gate_carry.json (023a7bb2…, mtime 00:53:12.985Z)
+     persisted_value_or_key: plan_versions v1..v5 hashes; CF-0B506E1EDCD92E90C192 status=accepted_tradeoff, verified=false, addressed_in=plan_v2.md, resolution.kind=fixed, NO gate_resolution; v5 accepted_tradeoffs=[CF-CCF03AAFF3C69AF4DF35, CF-8F19D157FEE360DC5050, CF-671323AC99A1FF9A93A6]; carried_flags=10; CF-0B506E1EDCD92E90C192 NOT carried
+     policy: plan_structure.py:9 structural audit = step sections only (satisfied: 16 sections; all 5 plan/revise structural audits passed per state.json history); chain finalize custody policy = critique_custody.py _resolution_for_finding (runtime A raises critique_finding_unresolved for accepted_tradeoff+gate_expected+fixed_claim; runtime B relaxes) — separate from FQ-01
+     predicate_and_result: framework selector concept = pytest test selectors only; plan v5 contains NO task-selector → producer → declared-output → persisted-artifact → finalize-consumer declaration → claim's mapping does not exist
+9. adherence_classification: MISSING_STRUCTURE
+10. missing_or_contradictory_structure:
+    - No selector identifiers of any task/step kind in plan v5 (the term "selector" appears ONLY as test-blast-radius path selectors in plan_v5.meta.json:257 and plan.md:639; 620 path-kind entries, all pytest paths with "reason" strings — no producer/consumer/finalize semantics).
+    - No "declared output"/"task output" construct anywhere in plan_v1..v5.md (0 matches).
+    - No persisted-artifact mapping table (outputs are named inside step prose, e.g., arnold/critique_ledger/persistence_service.py, tests/...; no registry enumerating selector→persisted path).
+    - No finalize-consumer declaration: "finalize" has 0 matches in plan_v1..v5.md; the only in-dir "finalize" references are gate_carry.json orchestrator_guidance and meta.json test-selector paths.
+    - Gate self-admission of prose-level (not explicit) declarations: gate_v5.json/gate_carry.json warnings — "CumulativeProjection dataclass shape must be inferred from prose — executor should declare it explicitly".
+    - Directory scan: no selector/task/output manifest file exists; only critique_parallel_manifest_v*.json (critique-phase producer bindings).
+    - Structural-audit contradiction check: the framework's ONLY plan-structure requirement (plan_structure.py:9) is step sections; plan v5 satisfies it (passed plan structural audit 22:05:19Z and all revise audits). The claimed selector/output mapping is therefore absent from plan v5 but also NOT required by framework policy.
+    - Per-selector rows (the only selectors that exist — test-blast-radius path selectors from plan.md:639 / plan_v5.meta.json):
+      selector tests/arnold/critique_ledger/ (dir) → producer: planner declaration | declared output: none (test path is an input) | persisted path: n/a (execution-time) | consumer: pytest via acceptance_transaction/validation_jobs | missing/contradictory edge: no task output, no artifact, no finalize consumer
+      selector tests/arnold/workflow/test_attempt_ledger_store.py → same edges; reason "no regression in store contract" | missing: producer/output/finalize edges
+      selector tests/arnold/workflow/test_attempt_ledger_store_glek.py → same | missing: producer/output/finalize edges
+      selector tests/arnold/workflow/test_execution_attempt_ledger.py → same | missing: producer/output/finalize edges
+      selector tests/arnold/critique_ledger/test_schemas.py → same | missing: producer/output/finalize edges
+      selector tests/arnold/critique_ledger/test_semantic_loop.py → same | missing: producer/output/finalize edges
+      selector tests/arnold/critique_ledger/test_semantic_loop_failures.py → same | missing: producer/output/finalize edges
+      (plan_v5.meta.json additionally lists 613 more path selectors incl. tests/agentbox/*, tests/arnold_pipelines/megaplan/test_finalize_*.py — same structure: test-path selectors, no task-output/artifact/finalize-consumer edges)
+    - Conclusion: the mapping asserted by the claim does not exist in any inspected artifact.
+11. evidence_supporting_verdict: none found. No artifact in the plan directory contains a selector→producer→declared-output→persisted-artifact→finalize-consumer mapping. gate_carry.json PROCEED is semantic acceptance of step-prose plan content, not evidence of the claimed declaration structure (consistent with sol-stage1 §A "Hypothesized" #3, which already treated this as unproven).
+12. evidence_against_verdict: affirmative contradictory evidence —
+    (a) full text of plan_v5.md (all 206 lines): 0 occurrences of selector/declared output/task output/finalize;
+    (b) plan_v5.meta.json + plan.md: only test-blast-radius path selectors (no producer/output/consumer/finalize edges);
+    (c) directory enumeration: no selector/task-output manifest;
+    (d) state.json history: structural audits that DID fail (21:57:37Z step-section requirement; 22:24:09Z enum; 22:30:49Z missing fields) never mention selector/output mappings — the framework does not model this structure;
+    (e) faults.json + gate_carry.json: flag-resolution records (e.g., CF-0B506E1EDCD92E90C192 addressed_in=plan_v2.md) are critique-flag traces, not selector mappings.
+13. confidence: medium
+14. confidence_basis: Complete, direct inspection of the exact artifacts named in FQ-01 (all 5 plan versions, meta, faults, gate_carry, state) plus full directory enumeration and framework-policy lookup (plan_structure.py). Verdict "refuted" is grounded in the demonstrated absence of the asserted structure in the fully-inspected artifact. Confidence capped at medium because the term "selector" is not defined by the claim; under the framework's own meaning (test selectors) the claim also fails (no producer/output/finalize edges), but under an unstated third-party meaning of "selector" the claim cannot be fully settled. No credential, network, or mutation activity.
+15. immediate_decision_informed: For Horizon A: plan v5 satisfies every framework plan-structure requirement that exists (step sections per plan_structure.py:9 — passed), and the claimed selector/task-output declaration mapping is not a framework-required structure; its absence is therefore NOT a framework-validated plan defect and no structural plan adjudication is triggered by framework policy. However, the specific investigated claim is REFUTED — no complete unambiguous selector→producer→output→artifact→finalize-consumer mapping exists in plan v5 — so any Horizon A rationale that presumes such a mapping (e.g., the E-section stop gate "selector/output producer-consumer integrity is incomplete") must NOT treat the mapping as established. Whether absence of a non-framework-required structure still mandates a stop is a Sol-only judgement call; I report only that the structure is absent and the plan's step prose + Execution Order + changed_surfaces are the only producer/consumer trace available (prose-level, not explicit declarations).
+16. durable_decision_informed: If selector/task-output declaration integrity is intended as a durable invariant, it is not part of the current framework plan schema (plan_structure.py requires only step sections); durable remediation would be a framework/policy-schema change, not a plan-content edit. Separately, the finalize blocker (CF-0B506E1EDCD92E90C192 custody gap, runtime A vs B) is independent of FQ-01 and remains governed by FQ-02/03/04/05 findings.
+17. safety_observations: No files read, written, or mutated; no git/chain/lifecycle commands; no network; no credentials exposed. Artifact fingerprints stable across the pass (state.json 00:53:46.549Z mtime predates investigation; no change observed). Plan directory contains no selector/task-output manifest; only pre-existing critique-phase manifests.
+18. unresolved_questions:
+    - Definition of "selector" in the claim: task/step selector vs framework test selector. Under both readings the mapping is absent; a third, external meaning cannot be evaluated from these artifacts.
+    - Whether the chain's executor (task_splitter) derives implicit step→output mappings at execute time that the plan itself never declares (finalize.py:119 emits tasks per `## Step N:`; no plan-level declaration exists).
+    - Whether the plan is expected to declare a "finalize consumer" at all — the chain-level finalize phase is configured in chain.yaml/state.json, never referenced in plan v5.
+    - Whether the framework's structural audit should be extended to require selector/output declarations (durable question; out of scope for this occurrence).
+```
+
+**Bottom line for the decision this report informs:** The claim "plan v5 has a complete, unambiguous mapping from every selector to its producer, declared task output, persisted artifact, and finalize consumer" is **refuted** (medium confidence) — the mapping does not exist in plan v5 or any inspected artifact; the only "selectors" present are pytest test-blast-radius paths. This absence is **not** a violation of the framework's actual plan-structure policy (which requires only step sections, all satisfied), so the framework itself does not compel a stop for "missing selector/output structure" — but any Horizon A rationale must not presume the claimed declaration integrity exists. Adjudication of whether the E-section stop gate applies despite the structure being non-framework-required is Sol's call; I report only the evidence.
