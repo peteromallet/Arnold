@@ -1,0 +1,112 @@
+Investigation complete. All searches bounded, read-only, and cross-verified. Findings are conclusive:
+
+- **Fingerprint `382e25a2…`** appears in exactly **23 files** under the r7 workspace (6 live canonical plan files + 17 evidence files), **0** in repair-data, **0** in r2/r5/r6 sibling workspaces.
+- **Live canonical source**: plan `cl2-wbc-backed-ledger-20260805-2140`, session `critique-ledger-accountability-v3-r7-launch-20260805`, failure recorded 2026-08-06T14:16:28Z, `occurrences: 2`, circuit open — the sole original.
+- **v5 (142036) and current (145651) evidence dirs**: `raw/` copies are **byte-identical** to the live artifacts (sha256 `31f7c10a…`, `2f7827e7…`, `12638269…`, `79b72725…`) — copied evidence, same canonical occurrence. No independent failures anywhere in the bounded roots.
+
+```
+FLASH REPORT
+1. question_id: fq-07 — Horizon-B fingerprint scope (bounded search, fingerprint 382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df / 12× dependency_unknown / split-original-ID failure)
+
+2. verdict: refuted
+
+3. investigated_claim: The Horizon-B systemic-scope claim — that failure fingerprint 382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df, its 12 dependency_unknown pairs, and the characteristic split-original-ID failure recur as independent failures across multiple sessions/plans (r7 workspace, sibling incident-evidence dirs, /workspace/.megaplan/cloud-sessions/repair-data). REFUTED: exactly one canonical occurrence exists; every other match is a copied evidence artifact or observer report of that same occurrence; zero matches in repair-data and sibling workspaces.
+
+4. vantage:
+   - hostname/container: e0740d2fcb36
+   - workspace: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold (canonical plan root), /workspace/.megaplan/cloud-sessions/repair-data (bounded)
+   - runtime_or_commit: N/A (read-only inspection; no runtime executed; GIT_OPTIONAL_LOCKS=0 used for git-invoking scans)
+   - investigator: hermes:deepseek:deepseek-v4-flash (READ-ONLY; no mutations, no lifecycle commands)
+
+5. utc_window:
+   - started: 2026-08-06T15:15Z (evidence-pack.md + flash-report-contract.md reads)
+   - ended: 2026-08-06T15:18:20Z (last stat/sha256 command)
+
+6. artifacts:
+   - absolute_path: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/finalize_candidates/36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07.json
+     exists: yes | type: canonical rejected-candidate record (12× dependency_unknown + dependency_graph_invalid, observed_at 14:16:28Z) | size_bytes: 5944 | mtime_utc: 2026-08-06T14:16:28Z | sha256: 79b727252945e58989f1631531b4fddf511df0e59b7ed629029d85cef7645bf5 | role: producer
+   - absolute_path: .../plans/cl2-wbc-backed-ledger-20260805-2140/planner_repair.json
+     exists: yes | type: planner-repair circuit record (fingerprint, occurrences 2, circuit_open true) | size_bytes: 535 | mtime_utc: 2026-08-06T14:16:28Z | sha256: 31f7c10acb8b999ea53fd4af71ffb2bd30697749eec643654b3c0e54dc7f5087 | role: persistence
+   - absolute_path: .../plans/cl2-wbc-backed-ledger-20260805-2140/state.json
+     exists: yes | type: plan state (meta.planner_repair carries fingerprint) | size_bytes: 93599 | mtime_utc: 2026-08-06T14:16:29Z | sha256: 2f7827e75ff6cef15c253b0397735d73793b22178b19fb65ade0f9571694a754 | role: persistence
+   - absolute_path: .../plans/cl2-wbc-backed-ledger-20260805-2140/finalize_revise_feedback.json
+     exists: yes | type: finalize feedback (fingerprint) | size_bytes: 1233 | mtime_utc: 2026-08-06T14:16:28Z | sha256: 12638269d6fa7fcd60f83d036348c423154501ae6aa4024d40d8b00ff89c8fa8 | role: persistence
+   - absolute_path: .../plans/cl2-wbc-backed-ledger-20260805-2140/events.ndjson
+     exists: yes | type: event log (last phase_end finalize 14:16:37Z; fingerprint in state_written events) | size_bytes: 29346999 | mtime_utc: 2026-08-06T14:16:37Z | sha256: f8b7a5f2e858942d16bdf9efb782f0a813a886c3e2a8f587b56f41f8820dd2de | role: log
+   - absolute_path: .../plans/.chains/chain-880bd6e04632.json
+     exists: yes | type: chain state (NO fingerprint — negative check) | size_bytes: 31335 | mtime_utc: 2026-08-06T14:16:37Z | sha256: 4114151924cc9669c404ccc97c24331f833b6d3b893bab955e8cec36fe647466 | role: persistence
+   - absolute_path: /workspace/.megaplan/cloud-sessions/critique-ledger-accountability-v3-r7-launch-20260805.json
+     exists: yes | type: session marker (NO fingerprint — negative check) | size_bytes: 39949 | mtime_utc: 2026-08-05T21:40:57Z | sha256: 9eb2559460e4767ede0a809ac6cdc9d24f2d75c093a615d5dc0aee9649ef524e | role: persistence
+   - absolute_path: .../incident-evidence/critique-r7-superfixer-20260806-142036-1ea42c25/raw/{planner_repair,plan-state,finalize_revise_feedback}.json
+     exists: yes | type: copied evidence (byte-identical to live: 31f7c10a…, 2f7827e7…, 12638269…) | size_bytes: 535/93599/1233 | mtime_utc: 2026-08-06T14:29:28Z | sha256: same as live originals | role: consumer
+   - absolute_path: .../incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/raw/{planner_repair,plan-state}.json
+     exists: yes | type: copied evidence (byte-identical to live) | size_bytes: 535/93599 | mtime_utc: 2026-08-06T15:05:46Z | sha256: 31f7c10a… / 2f7827e7… | role: consumer
+   - absolute_path: .../incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/raw/failure-candidate-record.json
+     exists: yes | type: copied candidate record (byte-identical to live candidate, 79b72725…) | size_bytes: 5944 | mtime_utc: 2026-08-06T15:05:46Z | sha256: 79b727252945e58989f1631531b4fddf511df0e59b7ed629029d85cef7645bf5 | role: consumer
+   - absolute_path: .../incident-evidence/critique-r7-superfixer-20260806-145651-4c581f6a/{evidence-pack.md,flash-report-contract.md,briefs/fq-07.md,raw/repro_splitter_feasibility.out.txt}
+     exists: yes | type: observer/contract/repro artifacts | size_bytes: 15716/2009/1224/2060 | mtime_utc: 2026-08-06T15:05–15:09Z | sha256: 678b1cdf2e1e592b7cc56d207c95e8bd7c71df6f203a291abb446bff1f9360b7 / 4b62706a8742340fce4d32f9cc95395b00130632eae85083f8333a528187847d / d8545792997ea97d3597ae7839b5dea103ebf1b54316d5a3dd3c32690a7621e8 / 5b84e561242c93a4e35fe29e78306d1370c811920d08c67f4b24c6eac0e10669 | role: policy/consumer
+   - absolute_path: .../incident-evidence/critique-r7-superfixer-20260806-142036-1ea42c25/evidence-pack.md
+     exists: yes | type: v5 observer report (distinct bytes, same canonical failure; v5 cancelled as obsolete) | size_bytes: 12967 | mtime_utc: 2026-08-06T14:31:33Z | sha256: 9cdeb6cb311c19c1787f053348e9668b39307752cf0ab445854b8ad8fe2b9a8e | role: consumer
+   - absolute_path: /workspace/.megaplan/cloud-sessions/repair-data (1020 files enumerated; incl. critique-ledger-accountability-v3-r2-20260803.repair-data.json, r3-20260803.repair-data.json, bigbang, m9-glm, custody-control-plane)
+     exists: yes | type: cross-chain repair data (NO fingerprint / dependency_unknown / T2_impl / diagnostic-string matches — negative check) | size_bytes: n/a (directory) | mtime_utc: n/a | sha256: not-applicable | role: persistence
+
+7. commands:
+   - cwd: /workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/incident-evidence
+     exact_command: for f in <7 evidence files>; do stat -c '%s bytes | mtime %y' "$f"; sha256sum "$f"; done
+     started_utc: 2026-08-06T15:17Z | ended_utc: 2026-08-06T15:17Z | exit_code: 0 | stdout_summary: sizes/mtimes/sha256 (planner_repair 535B 31f7c10a… identical in both dirs; plan-state 93599B 2f7827e7… identical; evidence packs distinct) | stderr_summary: none
+   - cwd: session default (absolute paths)
+     exact_command: GIT_OPTIONAL_LOCKS=0 rg -l --hidden '382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df' <r7 root> <repair-data> <r2/r5/r6 sibling workspaces> | sort
+     started_utc: 2026-08-06T15:16Z | ended_utc: 2026-08-06T15:18Z | exit_code: 0 | stdout_summary: r7 root default(17 files; --no-ignore 23 files = 6 live plan + 17 evidence); repair-data 0; r2/r5/r6 0 | stderr_summary: none
+   - cwd: session default (absolute paths)
+     exact_command: GIT_OPTIONAL_LOCKS=0 rg -l --hidden 'dependency_unknown' <r7 root> <repair-data>; rg -l --hidden 'Dependency must reference a different finalized task' <r7 root> <repair-data>; rg -l --hidden "Unknown dependency ID" <r7 root> <repair-data>; rg -l --hidden 'T2_impl' <r7 root> <repair-data>
+     started_utc: 2026-08-06T15:16Z | ended_utc: 2026-08-06T15:18Z | exit_code: 0 | stdout_summary: r7 root: only the two occurrence dirs + engine code (task_feasibility.py, io.py, topo.py, test_task_splitter.py); repair-data: 0 for all signatures | stderr_summary: none
+   - cwd: session default (absolute paths)
+     exact_command: GIT_OPTIONAL_LOCKS=0 rg -l --hidden '36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07' <r7 root> | sort
+     started_utc: 2026-08-06T15:16Z | ended_utc: 2026-08-06T15:16Z | exit_code: 0 | stdout_summary: 18 files, all within 145651 + 142036 occurrence dirs (candidate_id co-located with fingerprint) | stderr_summary: none
+   - cwd: session default (absolute paths)
+     exact_command: for f in <live plan files>; do stat ...; sha256sum ...; done; GIT_OPTIONAL_LOCKS=0 rg -c '"code": "dependency_unknown"' <live candidate json>
+     started_utc: 2026-08-06T15:17Z | ended_utc: 2026-08-06T15:18Z | exit_code: 0 | stdout_summary: live mtimes 14:16:28–29Z; candidate sha 79b72725…; dependency_unknown count 24 (=12 top-level + 12 in report.diagnostics, i.e. 12 unique pairs) | stderr_summary: none
+
+8. trace:
+   - producer: engine finalize phase (finalize.py _split_finalize_tasks → compile_task_feasibility, task_feasibility.py:305-307 dependency_unknown emission) — produced_value_or_key: candidate_id candidate:36bcefafd10ff23e6af1162c5b7186275630cec534cfd5aa0f257e9a9d69bc07, failure_fingerprint 382e25a279dbb2b7784f56d8a0b59eae9422a0625d48c9bb1185aa3fec4a33df (attempts 14:13:57Z + 14:16:28Z → occurrences 2)
+   - consumer: v5 observer (142036, raw copies 14:29:28Z, byte-identical sha256) and current observer (145651, raw copies 15:05:46Z, byte-identical sha256) — consumed_value_or_key: same fingerprint/candidate_id; repro outputs reproduce the same 12 pairs byte-identically
+   - persistence: planner_repair.json (31f7c10a…, 14:16:28Z), state.json meta.planner_repair (2f7827e7…), finalize_candidates/36bcefaf….json (79b72725…), finalize_revise_feedback.json (12638269…), events.ndjson (f8b7a5f2…) — persisted_value_or_key: fingerprint + candidate record + diagnostics
+   - policy: planner-repair circuit (occurrences≥2 → circuit_open true, implementation_dispatch_allowed false) + task-feasibility admission gate (admitted false) — predicate_and_result: fingerprint equality on 2nd occurrence → circuit open, no dispatch; identity chain verified end-to-end via sha256
+
+9. adherence_classification: ADHERENCE
+
+10. missing_or_contradictory_structure:
+   - Tool-level caveat: the search_files helper skipped gitignored .megaplan/plans/ state files (Arnold/.gitignore rules `.megaplan/` + plans runtime scaffolding); compensated with explicit `rg --hidden --no-ignore` scans — the 23-file complete set was enumerated (6 live + 17 evidence). No file with the fingerprint exists outside that set.
+   - The failure fingerprint (382e25a2…) is NOT the sha256 of the candidate JSON (79b72725…); it is the engine's failure-signature digest (carried in planner_repair/finalize_revise_feedback) — noted to prevent misattribution; does not affect scope classification.
+   - v5 (142036) evidence-pack.md is a distinct observer document (different sha) referencing the same canonical failure — a report of the same occurrence, not an independent failure; v5 was cancelled as obsolete per its own evidence-pack.
+   - No separate finalize_candidates entry exists for the 14:13:57Z attempt (occurrences=2 counted via planner_repair, not via two candidate files).
+
+11. evidence_supporting_verdict:
+   - Single canonical source: live plan cl2-wbc-backed-ledger-20260805-2140 (session critique-ledger-accountability-v3-r7-launch-20260805) holds the only original fingerprint-bearing records (mtime 14:16:28–29Z), with occurrences=2 and circuit_open=true.
+   - Byte-identical copies: v5 and current occurrence raw/ files hash-identical to live originals (31f7c10a…, 2f7827e7…, 12638269…, 79b72725…) ⇒ copied evidence artifacts, not new failures.
+   - All 12 dependency_unknown pairs + dependency_graph_invalid verified present only in the canonical candidate record and its copies/repro outputs (T2_impl→T1, T3_impl→T2, T4_impl→T1, T5_impl→T4, T6→T1, T8→T7, T9→T1, T10→T3, T11→T1, T13→T5, T15→T3, T15→T5).
+   - Zero matches in /workspace/.megaplan/cloud-sessions/repair-data (1020 files incl. critique-ledger r2/r3 repair-data, bigbang, m9-glm, custody-control-plane) for fingerprint, dependency_unknown, T2_impl, or the diagnostic strings.
+   - Zero matches in sibling workspaces critique-ledger-accountability-v3-r2-20260803 / r5-20260803 / r6-20260805; zero in sibling occurrence dirs v1 (093148), v2 (104038), v3 (113119), v4 (130215); zero in chain state (41141519…) and session marker (9eb25594…).
+   - Engine code hits (task_feasibility.py, task_splitter.py, io.py, topo.py, test_task_splitter.py) are code/tests containing the signature strings — not occurrences.
+
+12. evidence_against_verdict:
+   - The root cause is a shared engine defect (task_splitter.py split_task removes original ids and splits to {id}_impl/_proof without rewiring downstream depends_on/dependency_reasons/coverage, lines ~212, ~461) — the *capability* is engine-wide, so any future plan with a complexity ≥7 task referenced by another task can reproduce the identical fingerprint; absence of other occurrences is a negative finding, not proof the defect cannot spread.
+   - Bounded search caveat: scans were limited to the three mandated roots; other /workspace trees (e.g., runtime-candidates, arnold-* sessions) were not swept, so an occurrence outside the bounded scope cannot be excluded.
+
+13. confidence: high
+
+14. confidence_basis: Complete --no-ignore enumeration of the fingerprint across all mandated roots (23/23 files located and attributed); byte-level identity verification via sha256 of every canonical and copied artifact; negative results confirmed twice (tool + terminal rg) with exit 0; canonical record read directly (live finalize_candidates/36bcefaf….json) confirming all 12 pairs and occurrence metadata.
+
+15. immediate_decision_informed: Isolated incident — the recovery decision for the canonical r7 run (plan cl2-wbc-backed-ledger-20260805-2140) stands as a single-occurrence deterministic finalize blocker (circuit open, occurrences 2, dead runner); no cross-session/cross-plan sweep or fleet-wide repair is warranted by fingerprint evidence; no repair-data chain is affected.
+
+16. durable_decision_informed: Durable fix targets the shared task_splitter rewire defect (map original_id → impl_id for downstream depends_on/dependency_reasons and coverage references) with a focused regression test in tests/arnold_pipelines/megaplan/test_task_splitter.py; consider a fingerprint registry/scan across plan dirs so the same signature on a future plan opens its own circuit with prior-art linkage; note the per-plan planner_repair circuit gives no cross-plan protection today.
+
+17. safety_observations: Investigation was strictly read-only (rg/sed/stat/sha256sum; GIT_OPTIONAL_LOCKS=0; no writes, launches, claims, or lifecycle commands); no file mtimes were altered during inspection; the canonical plan remains blocked with no live runner (consistent with evidence-pack section 3); no recovery-in-flight existed and none was started.
+
+18. unresolved_questions:
+   - Where is the 14:13:57Z finalize attempt's rejected-candidate record (occurrences=2 implies two attempts, but only candidate 36bcefaf… at 14:16:28Z is persisted)?
+   - What exactly does the engine hash to produce failure fingerprint 382e25a2… (it is not the candidate-file sha256 79b72725…)? Needed if a cross-plan fingerprint registry is to be built.
+   - Can _apply_programmatic_coverage / verification-task mutations reference split ids in the real pipeline (the 12-pair repro used the raw candidate; recorded failure is consistent with no such references, but not proven for the live pipeline path)?
+```
+
+**Bottom line for fq-07:** the Horizon-B systemic-scope claim is **refuted**. Fingerprint `382e25a2…` traces to one canonical occurrence (plan `cl2-wbc-backed-ledger-20260805-2140`, session `critique-ledger-accountability-v3-r7-launch-20260805`, 14:16:28Z, occurrences=2); all other matches (v5 142036, current 145651) are byte-identical copied evidence artifacts and observer reports of that same occurrence; repair-data and sibling workspaces/occurrence dirs (v1–v4) show zero traces. The latent splitter defect is shared engine code, but no independent failure exists in the bounded scope — isolated incident, not systemic.

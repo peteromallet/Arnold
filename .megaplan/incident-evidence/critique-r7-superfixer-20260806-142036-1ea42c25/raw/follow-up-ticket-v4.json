@@ -1,0 +1,23 @@
+{
+  "schema": "arnold.megaplan.follow_up_ticket.v1",
+  "id": "ticket-r7-superfixer-v4-20260806-1329",
+  "created_at": "2026-08-06T13:40:16.812077+00:00",
+  "occurrence": "occ_critique_r7_superfixer_retry_20260806_v4_14834310cdddb1f2b0eed77e",
+  "handoff_id": "sha256:0e3c1467d6f0b1484168d1bca455171b28f8587754d4d763d6843c4e69599e06",
+  "title": "R7 finalize critique-custody contract: versioned resolution envelope + runtime-policy admission",
+  "horizon_b": {
+    "agent_actionable": false,
+    "canonical_owner": "Megaplan critique-custody contract spanning flags/evaluator, gate carry, orchestration/critique_custody.py, handlers/finalize.py, phase WBC, and recovery admission",
+    "category_closure_proof": [
+      "Replay R7 and critique-ledger-bigbang fixtures through the real validator under each supported runtime-policy version",
+      "For each logical recovery prove exactly one occurrence, one Custody claim/epoch, one WBC attempt/effect reservation, one terminal result, and at most one deduplicated notification effect",
+      "Crash/retry at producer, gate, rebind, request, authority, claim, WBC start, finalize publish, release, notification intent, and notification effect; prove no orphaned or duplicate authority/effects"
+    ],
+    "epic_slug": "critique-ledger-accountability-v3-r7-20260805",
+    "epic_update_required": true,
+    "first_broken_contract": "accepted_tradeoff plus a traceable fixed-plan mutation was persisted without the gate_resolution/carry envelope required by finalize, while finalize lacked the equivalent fixed_claim resolution branch",
+    "missed_backstop": "Gate/runtime admission did not validate that persisted finding resolution state was consumable by the exact bound finalize policy, and the repair backstop could not canonically mint the missing finalize F01 attempt",
+    "ticket_or_crosswalk": "Add CL2 resolution-envelope/gate-carry, finalize-attempt recovery, Run Authority/Custody/WBC admission, runtime-rebind history, notification custody, and category-replay workstreams to README.md, NORTHSTAR.md, UNFINISHED_WORK.md, and the CL2 brief"
+  },
+  "owner": "Megaplan critique-custody/finalize contract; F01 attempt owner is megaplan.phase_wbc.finalize in plan-local .phase_wbc_attempts.sqlite3"
+}

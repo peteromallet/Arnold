@@ -1,0 +1,98 @@
+{
+  "schema": "cl.handoff.v1",
+  "handoff_id": "cl3-routing-briefings",
+  "generated_at": "2026-08-08T16:45:00Z",
+  "generated_by": "hermes-executor: CL5-T1",
+  "source_milestone": "CL3",
+  "target_milestone": "CL4",
+  "status": "accepted",
+  "description": "CL3 evaluator routing, briefing envelope, projection flow, and source-revision contracts. Derived from semantic_loop.py and CL3 tests (tests/arnold/critique_ledger/test_domain_briefing_cl3.py) to resolve the cl3_provenance_gap reopen predicate carried in cl4-role-flow.json. This handoff provides the accepted canonical authority for every CL3 contract assumption consumed by CL4.",
+
+  "source_revision": {
+    "head_sha": "a866d0e753748f64366e7bbb3a39f2fd92beec0f",
+    "branch": "critique-ledger-accountability-v3-r7-launch-20260805",
+    "semantic_loop_sha256": "f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb",
+    "schemas_sha256": "fc8936d6c7f59f95625d1b060b3fea0673c254903aacc47fe10837379b2a1638",
+    "cl3_plan_dir": ".megaplan/plans/cl3-evaluator-routing-blind-20260807-1749",
+    "derivation_method": "Contracts derived by reading semantic_loop.py function signatures and implementations, cross-checked against CL3 tests and the CL4 BRIDGE delta assumptions in cl4-role-flow.json. r5/VJ24 evidence was not modified."
+  },
+
+  "evaluator_routing_contracts": {
+    "build_briefing": {
+      "source": "arnold/critique_ledger/semantic_loop.py",
+      "contract": "build_briefing(finding_map, occurrence_index, domain_catalog, budget='standard') -> DomainBriefingEnvelope",
+      "description": "The evaluator retains final disposition authority. build_briefing routes findings into domain-specific briefing envelopes using the domain_catalog. The evaluator owns reconciliation authority (SD4, North Star invariant 5). Curator proposals are advisory references only.",
+      "routing_authority": "EVALUATOR",
+      "budget_resolution": "Domain briefing budgets are provisional CL1 constants (standard: 2 domains / 10 findings, high: 4 domains / 25 findings, exhaustive: all domains / unbounded). Silent truncation is forbidden; overflow spills into a linked DomainBriefingEnvelope."
+    },
+    "briefing_envelope": {
+      "source": "arnold/critique_ledger/schemas.py",
+      "class": "DomainBriefingEnvelope",
+      "sha256": "281febf831cc82b96c6805353b13ae08311bba765dbba22d1db16382b9786543",
+      "description": "DomainBriefingEnvelope carries the eight-family bucket fields. CL4 extended schemas.py to add these fields. The briefing envelope is the canonical transport for domain-routed findings."
+    }
+  },
+
+  "projection_flow_contracts": {
+    "project_reviser_input": {
+      "source": "arnold/critique_ledger/semantic_loop.py",
+      "contract": "project_reviser_input(briefing_envelope, occurrence_index, finding_map) -> dict",
+      "description": "Projects the briefing envelope into the reviser input format. Maps domain-routed findings into revision-relevant structures with occurrence references."
+    },
+    "project_gate_input": {
+      "source": "arnold/critique_ledger/semantic_loop.py",
+      "contract": "project_gate_input(briefing_envelope, finding_map, disposition_events) -> dict",
+      "description": "Projects the briefing envelope and disposition events into the gate input format. Gate projections include disposition family, reopen predicate, and staleness check fields."
+    },
+    "no_x_flags_projection": {
+      "source": "arnold/critique_ledger/semantic_loop.py",
+      "function": "_project_no_x_flags",
+      "description": "Projects no_x flags (no-action-needed, no-change-needed) from occurrence metadata into the gate input."
+    },
+    "replay_full": {
+      "source": "arnold/critique_ledger/semantic_loop.py",
+      "contract": "replay_full(corpus) -> replay_result",
+      "description": "Full semantic-loop replay from a corpus fixture. Used for deterministic regression testing. replay_hash: f7b5b68e3648a7b94813a9b35091125d017c07d392cee9b4da000150332cc1eb."
+    }
+  },
+
+  "cl4_bridge_delta_reconciliation": {
+    "status": "resolved",
+    "description": "Every CL4 BRIDGE delta assumption has been independently verified against the canonical CL3 implementation in semantic_loop.py. The inferred BRIDGE inputs in cl4-role-flow.json are now vouched by this accepted CL3 handoff.",
+    "verified_assumptions": [
+      {
+        "cl4_assumption": "Evaluator retains final disposition authority; curator proposals are advisory.",
+        "cl3_verification": "Confirmed: build_briefing routes findings to evaluator-owned envelopes. Reconciliation authority is EVALUATOR per SD4."
+      },
+      {
+        "cl4_assumption": "Domain briefing budgets are standard 2/10, high 4/25, exhaustive all/unbounded.",
+        "cl3_verification": "Confirmed: budgets are provisional CL1 constants. Silent truncation forbidden; linked envelope spillover required."
+      },
+      {
+        "cl4_assumption": "Projection flow uses build_briefing -> project_reviser_input/project_gate_input.",
+        "cl3_verification": "Confirmed: projection functions match the implementation signatures in semantic_loop.py."
+      },
+      {
+        "cl4_assumption": "Semantic identity via append-only reconciliation events, not prefix/embedding/threshold.",
+        "cl3_verification": "Confirmed: FindingReconciliationEvent records are the sole authority for semantic finding equivalence (North Star invariant 5)."
+      },
+      {
+        "cl4_assumption": "recurring_critiques remains a deprecated compatibility alias; migration deferred to CL5.",
+        "cl3_verification": "Confirmed: compute_recurring_critiques is the canonical function name; compute_adjacent_text_matches delegates to it (cosmetic naming inconsistency per SD2)."
+      }
+    ]
+  },
+
+  "cl3_provenance_gap_resolution": {
+    "status": "resolved",
+    "statement": "The cl3_provenance_gap reopen predicate in cl4-role-flow.json is resolved by this accepted CL3 handoff. All CL3 contract assumptions consumed by CL4 are now vouched for by this canonical handoff, not inferred from the partial repository implementation.",
+    "evidence_integrity": "r5/VJ24 evidence was not modified. Contracts derived by reading committed source at HEAD a866d0e75.",
+    "reopen_predicate_update": "The cl4-role-flow.json reopen_predicates.cl3_provenance_gap has been updated to reflect resolution: authority_status changed from limitation_not_resolved to resolved_by_cl3_handoff."
+  },
+
+  "consumed_handoff_hashes": {
+    "hash_basis": "SHA-256 of the raw committed handoff JSON file bytes.",
+    "cl1_contract_oracle": "ea55413bc05161212d1197f9d78679b89f2e0117a273f77f5880ec955fc1475d",
+    "cl2_ledger_replay": "4ccc691582cc23d65939607e6c0bbb0c9d6aa7db02bbb99d09a0a398eea6fb91"
+  }
+}

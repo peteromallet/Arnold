@@ -8,7 +8,7 @@ title: Critique Ledger v3 fresh child on the attested cloud runtime
 # North Star
 
 Run one fresh Critique Ledger v3 child on cloud from the exact editable
-runtime that the stopped r5 run actually imported (`c116f38cc83de11a1a508eff6153205504d1ba5a`), then advance through CL2–CL5 with the canonical Run Authority, Custody, and WBC boundaries.
+runtime that the stopped r5 run actually imported (`d5848010695e28ddb9d9cbee8675d7ebe725caae`), then advance through CL2–CL5 with the canonical Run Authority, Custody, and WBC boundaries.
 
 The r5/VJ24 occurrence remains immutable evidence. It is not resumed, edited,
 or used to authorize a provider effect. Any continuation is a new run/session,

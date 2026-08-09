@@ -13,7 +13,12 @@ from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 from arnold_pipelines.megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from arnold_pipelines.megaplan.orchestration.gate_checks import build_gate_artifact, build_orchestrator_guidance
-from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals, compute_plan_delta_percent, compute_recurring_critiques
+from arnold_pipelines.megaplan.orchestration.gate_signals import (
+    build_gate_signals,
+    compute_adjacent_text_matches,
+    compute_plan_delta_percent,
+    compute_semantic_recurrence,
+)
 from arnold_pipelines.megaplan.orchestration.critique_status import (
     annotate_unverifiable_checks,
     build_unverifiable_warnings,
@@ -1273,8 +1278,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         )
         significant = len([flag for flag in registry["flags"] if flag.get("severity") == "significant" and flag["status"] in FLAG_BLOCKING_STATUSES])
         _append_to_meta(state, "significant_counts", significant)
-        recurring = compute_recurring_critiques(plan_dir, iteration)
-        _append_to_meta(state, "recurring_critiques", recurring)
+        adjacent_text_matches = compute_adjacent_text_matches(plan_dir, iteration)
+        semantic_recurrence = compute_semantic_recurrence(plan_dir, iteration)
+        # CL4 (Plan Step 8) / CL5 (Plan Step 7b): write only the canonical
+        # runtime metadata keys. The deprecated ``recurring_critiques``
+        # transition alias was retired in CL5 Step 7b.
+        _append_to_meta(state, "adjacent_text_matches", adjacent_text_matches)
+        _append_to_meta(state, "semantic_recurrence", semantic_recurrence)
         state["current_state"] = STATE_CRITIQUED
         skip_gate = not workflow_includes_step(robustness, "gate")
         if skip_gate:

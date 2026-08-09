@@ -1,0 +1,496 @@
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=codex:gpt-5.6-sol:high shadows the profile default execute=hermes:zhipu:glm-5.2, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+[chain] synced last_state for cl2-wbc-backed-ledger-20260805-2140: blocked -> finalized
+[chain] milestone cl2-ledger-replay starting
+[chain] resuming existing plan cl2-wbc-backed-ledger-20260805-2140 for cl2-ledger-replay
+[auto cl2-wbc-backed-ledger-20260805-2140] iter 1 state=finalized next=execute valid_next=['execute'] legacy_next=execute
+[auto cl2-wbc-backed-ledger-20260805-2140] running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan cl2-wbc-backed-ledger-20260805-2140
+[megaplan] response enforcement phase=execute mode=local_strict_json reason=dynamic_or_open_object@$
+[megaplan] No canonical pricing for Codex model 'gpt-5.6-sol'; step cost is explicitly unpriced (numeric compatibility value $0.00)
+[megaplan] Fresh codex execute requested; invalidating prior codex_executor_419255f2 session 019fd7e4-b3d5-7fd0-aa43-9d412f825107
+[megaplan] response enforcement phase=execute mode=local_strict_json reason=dynamic_or_open_object@$
+[megaplan] No canonical pricing for Codex model 'gpt-5.6-sol'; step cost is explicitly unpriced (numeric compatibility value $0.00)
+[auto cl2-wbc-backed-ledger-20260805-2140] phase 'execute' exited with internal_error: {"success": false, "error": "deferred_validation_result_missing", "message": "deferred validation job VJ2 cannot be revalidated: task_result_blocked_by_post_merge_policy", "details": {"job_id": "VJ2", "task_id": "T1", "validation_job_kind": "narrow_recheck", "reason": "task_result_blocked_by_post_merge_policy", "task_status": "blocked"}}
+[auto cl2-wbc-backed-ledger-20260805-2140] execute failed — escalate-up streak 1/2
+[auto cl2-wbc-backed-ledger-20260805-2140] iter 2 state=finalized next=execute valid_next=['execute'] legacy_next=execute
+[auto cl2-wbc-backed-ledger-20260805-2140] running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan cl2-wbc-backed-ledger-20260805-2140
+[auto cl2-wbc-backed-ledger-20260805-2140] execute pre-dispatch validation gate failed 1 time(s) without launching a worker: validation job VJ2 exited 127; expected one of [0] — halting without model escalation
+[chain] plan cl2-wbc-backed-ledger-20260805-2140 ended blocked: execute pre-dispatch validation gate failed 1 time(s) without launching a worker: validation job VJ2 exited 127; expected one of [0]
+{
+  "status": "stopped",
+  "reason": "milestone cl2-ledger-replay ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 0,
+    "current_plan_name": "cl2-wbc-backed-ledger-20260805-2140",
+    "current_milestone_base_sha": null,
+    "target_base_ref": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+    "last_state": "blocked",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [],
+    "branch_head": null,
+    "pr_head": null,
+    "last_pushed_commit": null,
+    "dirty_flag": false,
+    "sync_state": null,
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_binding": {
+        "schema": "arnold.megaplan.chain_execution_binding.v1",
+        "bound_at": "2026-08-05T21:40:53Z",
+        "launched_identity": {
+          "schema": "arnold.megaplan.chain_execution_binding.v1",
+          "spec_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml",
+          "chain_spec_sha256": "da4b317822a3d2e9c4c5944dd832edbff0f4c01c413a8d32a6b2b5098d21f0d1",
+          "milestone_sequence": [
+            {
+              "index": 0,
+              "label": "cl2-ledger-replay",
+              "idea": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md"
+            },
+            {
+              "index": 1,
+              "label": "cl3-routing-briefings",
+              "idea": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl3-evaluator-routing-and-briefings.md"
+            },
+            {
+              "index": 2,
+              "label": "cl4-reconcile-role-flow",
+              "idea": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl4-reconciliation-reviser-gate.md"
+            },
+            {
+              "index": 3,
+              "label": "cl5-cutover-retirement",
+              "idea": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl5-big-bang-cutover-and-retirement.md"
+            }
+          ],
+          "assets": [
+            {
+              "kind": "north_star",
+              "declared_path": "NORTHSTAR.md",
+              "resolved_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/NORTHSTAR.md",
+              "sha256": "03e73588db9512d23e66968ff0186d3068fb95a45cdcd1bb91388236b6f550c3",
+              "exists": true,
+              "semantic_sha256": "183fe464ae2c60c05708bbe6bc7cb6ade59b448c202168954af117b691436d02"
+            },
+            {
+              "kind": "milestone_brief:0",
+              "declared_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+              "resolved_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+              "sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+              "exists": true,
+              "semantic_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd"
+            },
+            {
+              "kind": "milestone_brief:1",
+              "declared_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl3-evaluator-routing-and-briefings.md",
+              "resolved_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl3-evaluator-routing-and-briefings.md",
+              "sha256": "a48b4860c23254e54ba1abcb4c1afd7e2d3f9b42cf2bd143a7901509d0ad88e0",
+              "exists": true,
+              "semantic_sha256": "a48b4860c23254e54ba1abcb4c1afd7e2d3f9b42cf2bd143a7901509d0ad88e0"
+            },
+            {
+              "kind": "milestone_brief:2",
+              "declared_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl4-reconciliation-reviser-gate.md",
+              "resolved_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl4-reconciliation-reviser-gate.md",
+              "sha256": "9c6ea2f74113686852c9b5e4a3c051b7440c241a5798ecd9640f08d861564f6a",
+              "exists": true,
+              "semantic_sha256": "9c6ea2f74113686852c9b5e4a3c051b7440c241a5798ecd9640f08d861564f6a"
+            },
+            {
+              "kind": "milestone_brief:3",
+              "declared_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl5-big-bang-cutover-and-retirement.md",
+              "resolved_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl5-big-bang-cutover-and-retirement.md",
+              "sha256": "90c92de6e8368201a24733436f4c9bd441663d4842f54e91f3d96fbf4938e1a0",
+              "exists": true,
+              "semantic_sha256": "90c92de6e8368201a24733436f4c9bd441663d4842f54e91f3d96fbf4938e1a0"
+            }
+          ],
+          "intended_initiative_revision": "df2086c11704627f4093b302038bf692c9347a6b",
+          "initiative_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805",
+          "bundle_sha256": "c628b6b07d92a6f9d8d9df5e51c817b612dc0c81721715b62b5046d9eaa56bdf",
+          "runtime": {
+            "import_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+            "source_revision": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+            "editable_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+            "editable_revision": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+            "direct_url": {
+              "dir_info": {
+                "editable": true
+              },
+              "url": "file:///workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+            },
+            "pth": [
+              {
+                "path": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth",
+                "sha256": "a2e6bee4907592da90ed9ed56d2e1bfa8dfabf6b9c5cd8b9b5f30d1194eae9ff",
+                "entries": [
+                  "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+                  "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+                  "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+                ],
+                "readable": true
+              }
+            ],
+            "imports": {
+              "arnold": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold/__init__.py",
+              "arnold_pipelines": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/__init__.py",
+              "megaplan": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/__init__.py"
+            },
+            "content_sha256": "e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6"
+          },
+          "revision_verification": {
+            "ok": true,
+            "revision": "df2086c11704627f4093b302038bf692c9347a6b",
+            "initiative_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805",
+            "checks": [
+              {
+                "kind": "chain_spec",
+                "revision_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml",
+                "expected_sha256": "e5e4a789dc4472c22ce72fcb20b029c6fb661bea1c9f7a2227ea637ea6aca43c",
+                "active_sha256": "e5e4a789dc4472c22ce72fcb20b029c6fb661bea1c9f7a2227ea637ea6aca43c",
+                "matches": true
+              },
+              {
+                "kind": "north_star",
+                "revision_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/NORTHSTAR.md",
+                "expected_sha256": "03e73588db9512d23e66968ff0186d3068fb95a45cdcd1bb91388236b6f550c3",
+                "active_sha256": "03e73588db9512d23e66968ff0186d3068fb95a45cdcd1bb91388236b6f550c3",
+                "matches": true
+              },
+              {
+                "kind": "milestone_brief:0",
+                "revision_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl2-ledger-persistence-and-replay.md",
+                "expected_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+                "active_sha256": "374d6be3ab59360cef502783aa24660530e26948abc7949974cf375f544827cd",
+                "matches": true
+              },
+              {
+                "kind": "milestone_brief:1",
+                "revision_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl3-evaluator-routing-and-briefings.md",
+                "expected_sha256": "a48b4860c23254e54ba1abcb4c1afd7e2d3f9b42cf2bd143a7901509d0ad88e0",
+                "active_sha256": "a48b4860c23254e54ba1abcb4c1afd7e2d3f9b42cf2bd143a7901509d0ad88e0",
+                "matches": true
+              },
+              {
+                "kind": "milestone_brief:2",
+                "revision_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl4-reconciliation-reviser-gate.md",
+                "expected_sha256": "9c6ea2f74113686852c9b5e4a3c051b7440c241a5798ecd9640f08d861564f6a",
+                "active_sha256": "9c6ea2f74113686852c9b5e4a3c051b7440c241a5798ecd9640f08d861564f6a",
+                "matches": true
+              },
+              {
+                "kind": "milestone_brief:3",
+                "revision_path": ".megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/briefs/cl5-big-bang-cutover-and-retirement.md",
+                "expected_sha256": "90c92de6e8368201a24733436f4c9bd441663d4842f54e91f3d96fbf4938e1a0",
+                "active_sha256": "90c92de6e8368201a24733436f4c9bd441663d4842f54e91f3d96fbf4938e1a0",
+                "matches": true
+              }
+            ],
+            "errors": []
+          },
+          "ready": true,
+          "errors": []
+        },
+        "runtime_binding": {
+          "schema": "arnold.megaplan.chain_runtime_binding.v1",
+          "bound_at": "2026-08-05T21:40:53Z",
+          "current_identity": {
+            "import_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+            "source_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52",
+            "editable_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+            "editable_revision": "d12bcdba6a951e1b93827b9db40a4c6a6e3a7b52",
+            "direct_url": {
+              "dir_info": {
+                "editable": true
+              },
+              "url": "file:///workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+            },
+            "pth": [
+              {
+                "entries": [
+                  "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+                  "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+                  "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805"
+                ],
+                "path": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth",
+                "readable": true,
+                "sha256": "a2e6bee4907592da90ed9ed56d2e1bfa8dfabf6b9c5cd8b9b5f30d1194eae9ff"
+              }
+            ],
+            "imports": {
+              "arnold": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold/__init__.py",
+              "arnold_pipelines": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/__init__.py",
+              "megaplan": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/__init__.py"
+            },
+            "content_sha256": "fd21e55a007d31bcf53dd57ed7049dc32814941a158101fff1d556d82e829ca3"
+          },
+          "rebind_events": [
+            {
+              "schema": "arnold.megaplan.chain_runtime_rebind.v1",
+              "rebound_at": "2026-08-06T14:00:39Z",
+              "actor": "arnold-recovery",
+              "reason": "occurrence-v4-14834310-critique-custody-fix",
+              "direction": "cutover",
+              "from_runtime_sha256": "e8b12504130bd283333891ffd5e14f126bb5cd6558892153b4b533a2417fe5e6",
+              "to_runtime_sha256": "a99e74e6c6f6a14c556b42deb9ab92e8f15538c52bf7e34e286c34d4a1df21de",
+              "current_milestone_index": 0,
+              "current_milestone": "cl2-ledger-replay",
+              "current_plan": "cl2-wbc-backed-ledger-20260805-2140",
+              "content_sha256": "4a4c735b14cb23f38e43b926718ef08d6f2c83ecf98516b2088bcb36d820156c"
+            },
+            {
+              "schema": "arnold.megaplan.chain_runtime_rebind.v1",
+              "rebound_at": "2026-08-06T16:00:55Z",
+              "actor": "arnold-recovery",
+              "reason": "v6-fixer-launcher-import-precedence-and-completion-loop-repair",
+              "direction": "cutover",
+              "from_runtime_sha256": "a99e74e6c6f6a14c556b42deb9ab92e8f15538c52bf7e34e286c34d4a1df21de",
+              "to_runtime_sha256": "2d1f0623cd6b58021ba2d85303ce471de9afbc4032ffbfa3f3021514b3512835",
+              "current_milestone_index": 0,
+              "current_milestone": "cl2-ledger-replay",
+              "current_plan": "cl2-wbc-backed-ledger-20260805-2140",
+              "content_sha256": "ebdf3493c74965d995d0ab4d557937da62dca8f0b05cb6eecafab3ec121f62fb"
+            },
+            {
+              "schema": "arnold.megaplan.chain_runtime_rebind.v1",
+              "rebound_at": "2026-08-06T16:15:13Z",
+              "actor": "arnold-recovery",
+              "reason": "occurrence-f3b952be-phase-budget-seeding",
+              "direction": "cutover",
+              "from_runtime_sha256": "2d1f0623cd6b58021ba2d85303ce471de9afbc4032ffbfa3f3021514b3512835",
+              "to_runtime_sha256": "fd21e55a007d31bcf53dd57ed7049dc32814941a158101fff1d556d82e829ca3",
+              "current_milestone_index": 0,
+              "current_milestone": "cl2-ledger-replay",
+              "current_plan": "cl2-wbc-backed-ledger-20260805-2140",
+              "content_sha256": "7988d09d4234746004af09d8c2cfe560a8fb38f78b04038d39fcb09bdb616c0c"
+            }
+          ],
+          "last_rebound_at": "2026-08-06T16:15:13Z"
+        }
+      },
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+        "target_root": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+        "work_dir": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold",
+        "engine_root": "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805",
+        "target_head": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+        "target_base": "d5848010695e28ddb9d9cbee8675d7ebe725caae",
+        "target_base_ref": "fix/r7-fresh-child-launch-20260805",
+        "target_fallback_reason": null
+      },
+      "chain_spec_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/initiatives/critique-ledger-accountability-v3-r7-20260805/chain.yaml",
+      "chain_spec_sha256": "da4b317822a3d2e9c4c5944dd832edbff0f4c01c413a8d32a6b2b5098d21f0d1",
+      "_m7_projection_writer": true,
+      "_m7_projection_id": "chain-state",
+      "_m7_projection_first_seen_at": "2026-08-05T21:40:54Z",
+      "ground_truth_reconciliation": {
+        "reconciled_at": "2026-08-06T16:25:11Z",
+        "plan": "cl2-wbc-backed-ledger-20260805-2140",
+        "current_state": "finalized",
+        "latest_failure": null,
+        "last_gate": {
+          "recommendation": "PROCEED",
+          "rationale": "After 5 iterations, the plan has resolved 58 flags and driven the weighted score from 20.5 \u2192 10.0. The 10 remaining open flags are all minor/significant concerns \u2014 none are correctness defects that would cause the plan to fail at execution. The major architectural issues (schema-version filter-and-tag, tree-hash chicken-and-egg, ReconciliationResult naming collision, mixed-attempt authority_scope, UNAVAILABLE encoding correction, sequence-gap detection via query_gaps vs validate_ledger_event_ordering, and the baseline-resolution gate) have all been resolved across iterations v2\u2013v5. The open flags fall into four categories: (1) orphaned redaction validator \u2014 exists, tested, but not wired into write path; the success criterion only requires creation, not wiring; (2) legacy_import.py module sizing \u2014 a 'should' criterion (400-line cap) not a 'must', and the plan author's position that 11 substeps are cohesive under one class is defensible; (3) minor notation/declaration issues \u2014 empty-parens prose for validate_retention_payload_policy and missing explicit CumulativeProjection dataclass declaration, both resolved by competent executor inference; (4) brief tension between 'preserves all legacy evidence' and 'rejects unsupported target versions' \u2014 handled by fixture curation (the test fixture excludes unsupported-target records). None of these prevent the plan from producing correct, testable CL2 output. Further iteration on these minor concerns would be churn. The plan is structurally sound, the execution order is clear, and all must success criteria are specified with concrete test requirements.",
+          "signals_assessment": "Score trajectory: 20.5 \u2192 15.25 \u2192 15.0 \u2192 12.5 \u2192 10.0 across 5 iterations. Plan delta 13.1% in v5. 58 flags resolved, 10 open (all significant severity, none correctness-blocking). No addressed-unverified flags remain. One recurring critique (orphaned redaction validator) persisted across v4\u2013v5 but is a scope/wiring concern, not a correctness defect. Preflight confirms project_dir exists, is writable, success criteria present, and Claude/Codex available. Robustness level: thorough. The decreasing score and 58 resolved flags indicate the plan has converged; remaining open flags are at the polish/quality boundary where further iteration yields diminishing returns.",
+          "warnings": [
+            "Iteration 5: high iteration count.",
+            "Step 0 baseline-resolution gate will halt CL2 if c116f38cc83 is absent and unfetchable. The executor must be prepared for human escalation per the plan's three permissible resolutions.",
+            "validate_redaction_policy is created and tested but not wired into any CL2 write path \u2014 treat as standalone utility until CL3 integration.",
+            "legacy_import.py may exceed 400 lines given 10+ responsibilities; the 'should' criterion is at risk. Accept if the module stays cohesive under one class; split into legacy_normalize.py if it crosses the bound.",
+            "CumulativeProjection dataclass shape must be inferred from prose \u2014 executor should declare it explicitly before downstream consumption.",
+            "Step 10.3 test must construct a RetentionPayloadPolicy() object (not call validate_retention_payload_policy() with no args)."
+          ],
+          "settled_decisions": [
+            {
+              "id": "SD1",
+              "decision": "CL1 domain objects ride as payload content on EXTERNAL_EFFECT_OUTCOME events with cl2_kind discriminator, not as lifecycle event types",
+              "rationale": "The store's AttemptEventType precedence rules (RECONCILIATION requires PERSISTENCE_FAILED, COMPLETED is terminal with exactly-one-terminal guard) prevent one-to-one mapping. One attempt stream per critic execution: STARTED \u2192 INTENT \u2192 N\u00d7OUTCOME \u2192 COMPLETED."
+            },
+            {
+              "id": "SD2",
+              "decision": "Legacy r5 records use filter-and-tag model \u2014 never upgraded to cl.schema.v1",
+              "rationale": "North Star immutability forbids version rewriting. Legacy records persisted with original schema_version, tagged cl2_kind=legacy_historical + metadata.derived_from_legacy=true, excluded from replay by 3-condition conjunctive filter (exclude-then-reconstruct order)."
+            },
+            {
+              "id": "SD3",
+              "decision": "CL2 proceeds as BRIDGE with accepted_for_cl2=false bypassing verify_cl2_admission",
+              "rationale": "Store consumes no AcceptedCL1Binding; CL2 output carries no positive authority. Deviation is gate-visible in plan assumptions and CL3 handoff gate_status field."
+            },
+            {
+              "id": "SD4",
+              "decision": "Restart reconciliation uses two distinct store APIs: validate_ledger_event_ordering for ordering/precedence violations, store.query_gaps for sequence gaps",
+              "rationale": "validate_ledger_event_ordering does NOT detect non-contiguous gaps (confirmed by module's Known Limitation docstring at execution_attempt_ledger.py:46-65). Two distinct LedgerReconciliationResult statuses (ordering_violation vs sequence_gap) let consumers distinguish them."
+            },
+            {
+              "id": "SD5",
+              "decision": "Authority tagging is per-contribution, not per-attempt",
+              "rationale": "An attempt stream may contain BOTH v1 and legacy_historical contributions under the same attempt_id. Each contribution carries its own authority_scope. Per-attempt rollup attempt_authority_summary records mixed_authoritative when both types exist."
+            },
+            {
+              "id": "SD6",
+              "decision": "Committed handoff records ONLY baseline commit+tree hashes; delivery commit+tree hashes captured in gitignored sidecar + git note",
+              "rationale": "A commit cannot contain its own hash, and a tree cannot contain its own hash \u2014 both are post-commit values. Baseline hashes are immutable and known before CL2 work. Delivery hashes are post-commit and belong in untracked channels."
+            }
+          ],
+          "flag_resolutions": [
+            {
+              "flag_id": "CF-7139E1A8BD1BB75AA9AF",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Step 10.3 empty-parens notation for validate_retention_payload_policy() is a prose imprecision \u2014 the function signature requires a positional policy arg. The defaults (RetentionPayloadPolicy() with secret_exclusion_enforced=True) make the common case work. A competent executor will construct the policy object. The test intent is clear; this is an executor-attention issue, not a plan defect."
+            },
+            {
+              "flag_id": "CF-CCF03AAFF3C69AF4DF35",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "validate_redaction_policy is created and tested in isolation (Step 10.1\u201310.2) but not wired into any CL2 persistence path. The success criterion only requires creation ('validate_redaction_policy is created in arnold/critique_ledger/redaction.py'), not wiring. The validator is a standalone utility available for CL3 integration. The recurring-critique concern is noted; if downstream consumers need write-path enforcement, CL3 should add the wiring. The gate accepts this as a known scope boundary."
+            },
+            {
+              "flag_id": "CF-8F19D157FEE360DC5050",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "legacy_import.py has 10+ responsibilities (bypass persist_occurrence, normalize 10-field and 6-field keys, preserve schema_version, stamp derived_from_legacy, stamp UNAVAILABLE, route IndependentChildDisposition, derive SHA-256 IDs, reject unsupported target_schema, produce ImportReport, idempotency). The 400-line cap is a 'should' criterion, not 'must'. All 10 responsibilities are cohesive under one OneTimeImporter class + ImportReport dataclass. If the module exceeds 400 lines at implementation, the executor can split along a natural seam (legacy_import.py coordinator + legacy_normalize.py). The gate does not require a preemptive split."
+            },
+            {
+              "flag_id": "CF-AD337A56FC2E7871AEFE",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Same concern as CF-8F19D157 \u2014 Step 5 OneTimeImporter sizing. The 11 substeps are cohesive under one class (legacy import). The 400-line 'should' criterion is at risk but not violated until implementation. The plan author's position that this is a single responsibility (legacy import) is defensible. Accept the risk with the understanding that the executor may need to split if the bound is exceeded."
+            },
+            {
+              "flag_id": "CF-067C57516BBF5360167F",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Same concern as CF-CCF03AAFF3 \u2014 orphaned redaction validator scope. The validator is correct and well-specified; its lack of write-path integration is a scope boundary, not a defect. CL3 can wire it into persist_occurrence if enforcement is needed. Document this as a known standalone utility in the CL3 handoff unresolved_limits."
+            },
+            {
+              "flag_id": "CF-FAD006D21BDD69245AC5",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "CumulativeProjection is a new type introduced by Step 4.5 but not declared with a full @dataclass field schema (unlike LedgerReconciliationResult in Step 3). No naming collision exists, and the prose in Steps 4.5/4.7 specifies enough detail (per-contribution authority_scope, per-attempt rollup attempt_authority_summary with mixed_authoritative/authoritative/non_authoritative/empty) for a competent executor to derive the shape. The executor should declare it explicitly during implementation. Lower severity than the LedgerReconciliationResult collision that was correctly resolved in v5."
+            },
+            {
+              "flag_id": "CF-F207558B83EF940E0F33",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Same concern as CF-CCF03AAFF3 and CF-067C57516BBF \u2014 orphaned redaction validator missing glue code. The validator is created (Step 10.1) and tested (Step 10.2); the success criterion is satisfied. No plan step requires write-path wiring. Accept as a known standalone utility available for CL3 integration."
+            },
+            {
+              "flag_id": "CF-0A5AFD34FA516EB00CB5",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Same concern as CF-7139E1A8 \u2014 empty-parens notation for validate_retention_payload_policy(). The function requires a positional RetentionPayloadPolicy arg. The test fixture can construct RetentionPayloadPolicy() with defaults (secret_exclusion_enforced=True) and pass it. This is a prose notation issue; the intent is clear. Competent executor will handle."
+            },
+            {
+              "flag_id": "CF-225D7C78F266D8FD16AC",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Same concern as CF-8F19D157 and CF-AD337A56 \u2014 legacy_import.py responsibility count vs 400-line 'should' criterion. The 10 responsibilities are cohesive. Accept the risk with the split-as-needed approach during implementation."
+            },
+            {
+              "flag_id": "CF-671323AC99A1FF9A93A6",
+              "action": "accept_tradeoff",
+              "evidence": "",
+              "rationale": "Brief tension between 'preserves all available legacy evidence' and 'rejects unsupported target versions' operates on separate fields (schema_version vs target_schema). A record with both a legacy schema_version and an unsupported target_schema would be rejected by Step 5.9. The test fixture (Step 11.1) curates records to exclude unsupported-target records, so the dependency is satisfied. In production, such records are legitimately excluded \u2014 a record with an unsupported target_schema cannot be safely imported. The tension is real but the resolution (target_schema check takes precedence, documented as a known limitation) is defensible. Recommend the CL3 handoff document this interaction explicitly."
+            }
+          ],
+          "accepted_tradeoffs": [
+            {
+              "flag_id": "CF-CCF03AAFF3C69AF4DF35",
+              "concern": "validate_redaction_policy validator created but not wired into CL2 write path",
+              "subsystem": "arnold/critique_ledger/redaction.py",
+              "rationale": "Validator is a standalone utility. CL2 success criterion requires creation and testing, not wiring. CL3 should integrate it into the write path if enforcement is needed. Document in CL3 handoff unresolved_limits."
+            },
+            {
+              "flag_id": "CF-8F19D157FEE360DC5050",
+              "concern": "legacy_import.py may exceed 400-line bound with 10+ responsibilities",
+              "subsystem": "arnold/critique_ledger/legacy_import.py",
+              "rationale": "400-line cap is a 'should' criterion. All responsibilities are cohesive under OneTimeImporter class. Split into legacy_normalize.py if the bound is exceeded at implementation."
+            },
+            {
+              "flag_id": "CF-671323AC99A1FF9A93A6",
+              "concern": "Brief tension: 'preserves all legacy evidence' vs 'rejects unsupported target versions' on same record",
+              "subsystem": "arnold/critique_ledger/legacy_import.py",
+              "rationale": "Records with both legacy schema_version and unsupported target_schema are legitimately rejected. The 'preserves all' criterion applies to records without unsupported target_schema. Document the interaction in CL3 handoff."
+            }
+          ],
+          "north_star_actions": [],
+          "tiebreaker_question": "",
+          "tiebreaker_flag_ids": [],
+          "tiebreaker_fuzzy_group_id": "",
+          "reprompted": false,
+          "passed": true,
+          "preflight_results": {
+            "project_dir_exists": true,
+            "project_dir_writable": true,
+            "success_criteria_present": true,
+            "claude_available": true,
+            "codex_available": true
+          },
+          "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (step 10.1 creates validate_redaction_policy in arnold/critique_ledger/redaction.py, but the plan does not wire it into any cl2 persistence path. no caller invokes the validator during persist_occurrence, persist_reconciliation, or persist_disposition. the validator is tested in isolation (step 10.2) but adds no active enforcement in the cl2 write path. a future executor or consumer might assume redaction policy is enforced on persisted envelopes when it is not. the validator is effectively orphaned glue code. either wire it into the persistence path or document explicitly that it is a standalone utility with no cl2 write-path integration.); the loop likely can't fix these, so judge if they are real blockers."
+        },
+        "active_step": null,
+        "pr_number": null,
+        "pr_state": null
+      },
+      "fresh_child_admissions": {
+        "cl2-ledger-replay": {
+          "schema": "arnold.megaplan.fresh_child_launch_receipt.v1",
+          "receipt_path": "/workspace/critique-ledger-accountability-v3-r7-launch-20260805/Arnold/.megaplan/plans/cl2-wbc-backed-ledger-20260805-2140/fresh_child_admission.json",
+          "receipt_digest": "810dae5240ff6df6be7c2627c081490076f8831b95e99fad4869a3972fb29126",
+          "request_digest": "8ef0d95eb34a7a55563cfeb5fd92a066bc8ae386a54ef3bea6d749d546906c74",
+          "run_id": "critique-ledger-accountability-v3-r7-launch-20260805:child:cl2-wbc-backed-ledger-20260805-2140",
+          "run_revision": "milestone-0:cl2-wbc-backed-ledger-20260805-2140",
+          "plan_artifact_digest": "27cf8ba6cd8b744d5f339c83266e2d010da53defcb9096136b1163417a07be8f",
+          "runtime_binding_digest": "bffe1efd7b2f020177d34924155885e6476d2be2740b72cf1efcd04dac3201c2",
+          "occurrence_digest": "sha256:f3b952beb7881acc80f5efc98b1f21b64a911cc6d17dd87b220e1d336b4e55c5",
+          "wbc_attempt_id": "critique-ledger-accountability-v3-r7-launch-20260805:child:cl2-wbc-backed-ledger-20260805-2140:attempt:1",
+          "glek": "glek:cf80b5736a31cfe40c87e8227f55d6d27ba1e42665c0be97feb02577705e61fc",
+          "authority_grant_id": "grant:fresh-child:8ef0d95eb34a7a55563cfeb5",
+          "custody_lease_id": "lease:arnold.megaplan.fresh_child_admission.v1:8ef0d95eb34a7a55563cfeb5fd92a066bc8ae386a54ef3bea6d749d546906c74"
+        }
+      },
+      "resident_delegation": {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "applicability": "not_applicable",
+        "transport": "non_discord",
+        "source_kind": "codex_operator_request"
+      }
+    },
+    "milestone_boundary_evidence": {
+      "cl2-ledger-replay": {
+        "milestone_label": "cl2-ledger-replay",
+        "milestone_index": 0,
+        "plan_name": "cl2-wbc-backed-ledger-20260805-2140",
+        "contract_id": "chain.milestone.start.1",
+        "contract_boundary_id": "chain_milestone_start",
+        "tip_ref": "d5848010695e28ddb9d9cbee8675d7ebe725caae"
+      }
+    },
+    "candidate_invalidation": {}
+  },
+  "events": [
+    {
+      "msg": "milestone cl2-ledger-replay starting"
+    },
+    {
+      "msg": "resuming existing plan cl2-wbc-backed-ledger-20260805-2140 for cl2-ledger-replay"
+    }
+  ],
+  "base_branch": "fix/r7-fresh-child-launch-20260805"
+}

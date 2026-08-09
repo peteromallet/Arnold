@@ -41,7 +41,12 @@ def _render_differential_section(
     verified = [f for f in flags if f.get("status") == "verified"]
     signals = gate_signals.get("signals", {})
     unresolved = signals.get("unresolved_flags", [])
-    recurring = signals.get("recurring_critiques", [])
+    # CL5 (Plan Step 7a): read the canonical ``adjacent_text_matches`` list with
+    # ``recurring_critiques`` as the transition fallback.  The deprecated alias
+    # is retained until Step 7b confirms zero remaining consumers.
+    recurring = list(signals.get("adjacent_text_matches", []))
+    if not recurring:
+        recurring = list(signals.get("recurring_critiques", []))
     trajectory = signals.get("loop_summary", "")
     plan_delta = signals.get("plan_delta_from_previous")
     delta_str = f"{plan_delta:.1f}%" if plan_delta is not None else "n/a"
@@ -456,6 +461,31 @@ def _critique_evaluator_prompt(
           Flag Resolution Verification section is absent. `lens` must be
           exactly one catalog lens id; combined lens strings such as
           `correctness/all_locations` are invalid.
+        - `domain_selections`: list of {{domain, why}} objects for the
+          domains you are routing critics into; `domain_skips`: list of
+          {{domain, why}} objects for domains deliberately excluded. Each
+          domain must appear in exactly one of the two lists and every
+          entry must carry a concrete `why`.
+        - `critique_mode`: "BLIND" or "HISTORY_AWARE" — the routing mode
+          the critic dispatch must assume for this verdict.
+        - `budgets`: object of integer caps {{max_tokens,
+          max_latency_seconds, max_findings}} expressing the budget
+          envelope you designed against; all values are non-negative
+          integers.
+        - `selection_reasons`: list of {{target, reason}} objects
+          justifying every selection and skip decision with a concrete,
+          plan-grounded reason.
+        - `input_set_hashes`: list of the sha256 input-set hashes you
+          considered (mirror the ledger manifest's input-set accounting).
+        - `expected_revision` and `expected_briefing_hash`: when the ledger
+          supplies the prior revision id and the briefing hash, echo them
+          verbatim so the validator can confirm provenance.
+
+        The generated output template ({output_path}) is the structural
+        source of truth for the JSON shape. Populate every routing, budget,
+        reason, and input-set field above that your verdict depends on;
+        omitting one that your verdict actually relies on will fail
+        validation.
 
         Remember: prefer the smallest selected set that still covers the real
         risk.  Skipping requires a justification.  When you skip, explain *why

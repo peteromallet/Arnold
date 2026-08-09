@@ -502,6 +502,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
             "weighted_scores": [],
             "plan_deltas": [],
             "recurring_critiques": [],
+            "adjacent_text_matches": [],
+            "semantic_recurrence": [],
             "total_cost_usd": 0.0,
             "overrides": [],
             "notes": [],

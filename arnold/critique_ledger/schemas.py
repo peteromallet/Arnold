@@ -57,6 +57,12 @@ class Relationship(str, Enum):
     REOPEN = "REOPEN"
     BLOCKS = "BLOCKS"
     BLOCKED_BY = "BLOCKED_BY"
+    # CL4 additions: explicit reconciliation semantics. These are pure
+    # additive members; no existing serialized value changes.
+    MERGE = "MERGE"
+    NEW = "NEW"
+    UNRELATED = "UNRELATED"
+    UNCERTAIN = "UNCERTAIN"
 
 
 class Authority(str, Enum):
@@ -87,6 +93,13 @@ class DispositionFamily(str, Enum):
     ACCEPTED_RISK = "accepted-risk"
     UNKNOWN = "unknown"
     RESOLVED = "resolved"
+    # CL4 additions. RESOLVED_VERIFIED supersedes the deprecated RESOLVED;
+    # ADDRESSED_PENDING_VERIFICATION is a gate-blocking pending state.
+    # The legacy RESOLVED value is preserved verbatim for stored
+    # dispositions and existing handoffs; it is normalized at the
+    # semantic_loop validation/projection layer, never aliased here.
+    RESOLVED_VERIFIED = "resolved-verified"
+    ADDRESSED_PENDING_VERIFICATION = "addressed-pending-verification"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -419,6 +432,11 @@ class FindingDispositionEvent:
     is_reopen: bool = False
     reopen_predicate: Optional[str] = None
     evidence_refs: tuple[str, ...] = ()
+    # CL4 additions: structured evidence limits and outstanding questions
+    # for pending-verification and verified resolutions. Default empty so
+    # existing dispositions round-trip unchanged.
+    evidence_limits: list[str] = field(default_factory=list)
+    remaining_questions: list[str] = field(default_factory=list)
     authority: str = Authority.EVALUATOR.value
     timestamp_utc: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -438,6 +456,8 @@ class FindingDispositionEvent:
             "is_reopen": self.is_reopen,
             "reopen_predicate": self.reopen_predicate,
             "evidence_refs": list(self.evidence_refs),
+            "evidence_limits": list(self.evidence_limits),
+            "remaining_questions": list(self.remaining_questions),
             "authority": self.authority,
             "timestamp_utc": self.timestamp_utc,
             "metadata": dict(self.metadata),
@@ -458,7 +478,8 @@ class FindingDispositionEvent:
             "schema_version", "disposition_id", "semantic_finding_id",
             "family", "reason_subcode", "severity", "action_taken",
             "action_description", "accountable_scope", "is_reopen",
-            "reopen_predicate", "evidence_refs", "authority",
+            "reopen_predicate", "evidence_refs", "evidence_limits",
+            "remaining_questions", "authority",
             "timestamp_utc", "metadata",
         }
         extra = {}
@@ -481,6 +502,8 @@ class FindingDispositionEvent:
             is_reopen=data.get("is_reopen", False),
             reopen_predicate=data.get("reopen_predicate"),
             evidence_refs=tuple(data.get("evidence_refs", ())),
+            evidence_limits=list(data.get("evidence_limits", [])),
+            remaining_questions=list(data.get("remaining_questions", [])),
             authority=data.get("authority", Authority.EVALUATOR.value),
             timestamp_utc=data.get("timestamp_utc", ""),
             metadata=dict(data.get("metadata", {})),
@@ -523,8 +546,26 @@ class DomainBriefingEnvelope:
     blocked_findings: tuple[str, ...] = ()
     accepted_risk_findings: tuple[str, ...] = ()
     unknown_findings: tuple[str, ...] = ()
+    resolved_findings: tuple[str, ...] = ()
+    duplicate_findings: tuple[str, ...] = ()
+    acted_on_findings: tuple[str, ...] = ()
+    ignored_findings: tuple[str, ...] = ()
+    deferred_findings: tuple[str, ...] = ()
     cross_domain_refs: tuple[str, ...] = ()
     spillover_findings: tuple[str, ...] = ()
+    prior_instructions: tuple[str, ...] = ()
+    revision_actions: tuple[str, ...] = ()
+    conclusions: tuple[str, ...] = ()
+    questions: tuple[str, ...] = ()
+    reopen_conditions: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    evidence_unavailable: tuple[str, ...] = ()
+    split_parent_refs: tuple[tuple[str, str], ...] = ()
+    stale_flag: bool = False
+    rebuild_trigger: Optional[str] = None
+    input_set_hash: str = ""
+    included_reasons: dict[str, str] = field(default_factory=dict)
+    excluded_reasons: dict[str, str] = field(default_factory=dict)
     no_additional_findings: bool = False
     no_open_blocking_findings: bool = False
     no_known_findings: bool = False
@@ -578,6 +619,26 @@ class DomainBriefingEnvelope:
             "unknown_findings": list(self.unknown_findings),
             "cross_domain_refs": list(self.cross_domain_refs),
             "spillover_findings": list(self.spillover_findings),
+            "resolved_findings": list(self.resolved_findings),
+            "duplicate_findings": list(self.duplicate_findings),
+            "acted_on_findings": list(self.acted_on_findings),
+            "ignored_findings": list(self.ignored_findings),
+            "deferred_findings": list(self.deferred_findings),
+            "prior_instructions": list(self.prior_instructions),
+            "revision_actions": list(self.revision_actions),
+            "conclusions": list(self.conclusions),
+            "questions": list(self.questions),
+            "reopen_conditions": list(self.reopen_conditions),
+            "evidence_refs": list(self.evidence_refs),
+            "evidence_unavailable": list(self.evidence_unavailable),
+            "split_parent_refs": [
+                [parent, rel] for parent, rel in self.split_parent_refs
+            ],
+            "stale_flag": self.stale_flag,
+            "rebuild_trigger": self.rebuild_trigger,
+            "input_set_hash": self.input_set_hash,
+            "included_reasons": dict(self.included_reasons),
+            "excluded_reasons": dict(self.excluded_reasons),
             "no_additional_findings": self.no_additional_findings,
             "no_open_blocking_findings": self.no_open_blocking_findings,
             "no_known_findings": self.no_known_findings,
@@ -603,7 +664,14 @@ class DomainBriefingEnvelope:
             "schema_version", "briefing_id", "revision_manifest_hash",
             "budget_level", "domains", "findings", "open_findings",
             "blocked_findings", "accepted_risk_findings", "unknown_findings",
+            "resolved_findings", "duplicate_findings", "acted_on_findings",
+            "ignored_findings", "deferred_findings",
             "cross_domain_refs", "spillover_findings",
+            "prior_instructions", "revision_actions", "conclusions",
+            "questions", "reopen_conditions", "evidence_refs",
+            "evidence_unavailable", "split_parent_refs", "stale_flag",
+            "rebuild_trigger", "input_set_hash", "included_reasons",
+            "excluded_reasons",
             "no_additional_findings", "no_open_blocking_findings",
             "no_known_findings", "no_adjacent_text_match",
             "is_truncated", "truncation_warning", "timestamp_utc", "metadata",
@@ -626,8 +694,28 @@ class DomainBriefingEnvelope:
             blocked_findings=tuple(data.get("blocked_findings", ())),
             accepted_risk_findings=tuple(data.get("accepted_risk_findings", ())),
             unknown_findings=tuple(data.get("unknown_findings", ())),
+            resolved_findings=tuple(data.get("resolved_findings", ())),
+            duplicate_findings=tuple(data.get("duplicate_findings", ())),
+            acted_on_findings=tuple(data.get("acted_on_findings", ())),
+            ignored_findings=tuple(data.get("ignored_findings", ())),
+            deferred_findings=tuple(data.get("deferred_findings", ())),
             cross_domain_refs=tuple(data.get("cross_domain_refs", ())),
             spillover_findings=tuple(data.get("spillover_findings", ())),
+            prior_instructions=tuple(data.get("prior_instructions", ())),
+            revision_actions=tuple(data.get("revision_actions", ())),
+            conclusions=tuple(data.get("conclusions", ())),
+            questions=tuple(data.get("questions", ())),
+            reopen_conditions=tuple(data.get("reopen_conditions", ())),
+            evidence_refs=tuple(data.get("evidence_refs", ())),
+            evidence_unavailable=tuple(data.get("evidence_unavailable", ())),
+            split_parent_refs=tuple(
+                tuple(pair) for pair in data.get("split_parent_refs", ())
+            ),
+            stale_flag=data.get("stale_flag", False),
+            rebuild_trigger=data.get("rebuild_trigger"),
+            input_set_hash=data.get("input_set_hash", ""),
+            included_reasons=dict(data.get("included_reasons", {})),
+            excluded_reasons=dict(data.get("excluded_reasons", {})),
             no_additional_findings=data.get("no_additional_findings", False),
             no_open_blocking_findings=data.get("no_open_blocking_findings", False),
             no_known_findings=data.get("no_known_findings", False),

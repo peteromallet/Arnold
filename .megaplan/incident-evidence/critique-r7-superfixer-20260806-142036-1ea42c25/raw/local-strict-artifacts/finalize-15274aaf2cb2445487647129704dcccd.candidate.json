@@ -1,0 +1,1827 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "T0",
+      "objective": "Enforce the North Star source-identity admission gate before any CL2 write",
+      "description": "Check for baseline c116f38cc83de11a1a508eff6153205504d1ba5a locally, fetch configured remotes only if absent, then require a clean worktree and HEAD equality. Record the baseline commit and tree in executor evidence. Halt without edits if any condition fails, naming the permitted resolution path instead of substituting d5848010.",
+      "estimated_minutes": 6,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [],
+        "max_seconds": 0,
+        "max_runs": 0
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "audit",
+      "complexity": 5,
+      "complexity_justification": "This is a read-only but load-bearing provenance gate: an incorrect pass would authorize all later CL2 work from the wrong runtime identity. The checks are mechanically narrow, keeping it at tier 5."
+    },
+    {
+      "id": "T1",
+      "objective": "Implement typed CL1-to-ledger outcome persistence through the existing SQLite store",
+      "description": "Create LedgerEventMapper, LedgerPersistenceService, and round-trip tests for occurrence, reconciliation, and disposition payloads on EXTERNAL_EFFECT_OUTCOME. Use only public store APIs, require prior INTENT through existing lifecycle precedence, validate v1 objects via from_dict(to_dict()), and prove byte equivalence plus idempotency rejection.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T0"
+      ],
+      "dependency_reasons": {
+        "T0": {
+          "kind": "consumes_output",
+          "reason": "CL2 files may only be created after the baseline identity gate passes.",
+          "required_output": "Verified clean HEAD at c116f38cc83de11a1a508eff6153205504d1ba5a and its baseline tree hash."
+        }
+      },
+      "routing_group": "persistence_service",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/persistence_service.py",
+          "tests/arnold/critique_ledger/test_persistence_service.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_persistence_service.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 8,
+      "complexity_justification": "This defines a new adapter across the CL1 schema and the store lifecycle state machine; confusing domain reconciliation with lifecycle RECONCILIATION could silently violate precedence. The bounded two-file implementation still has major contract risk, so tier 8 is warranted."
+    },
+    {
+      "id": "T2",
+      "objective": "Implement durable attempt start and exactly-once terminal completion",
+      "description": "Extend LedgerPersistenceService with start_attempt and complete_attempt. Reserve before STARTED, return AttemptReservation, reject already-terminal attempts, append COMPLETED or FAILED through public methods, and extend the lifecycle tests through reserve, start, intent, outcome, and terminal guards.",
+      "estimated_minutes": 12,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "The lifecycle methods extend the service and event mapper created by T1.",
+          "required_output": "Working LedgerPersistenceService, mapper, and persistence tests."
+        }
+      },
+      "routing_group": "persistence_service",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/persistence_service.py",
+          "tests/arnold/critique_ledger/test_persistence_service.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_persistence_service.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 7,
+      "complexity_justification": "This changes attempt state-machine transitions and the reserve-before-dispatch durability contract in a shared service. A subtle sequencing error can pass serialization tests while violating recovery guarantees, placing it at tier 7."
+    },
+    {
+      "id": "T3",
+      "objective": "Implement typed restart reconciliation for incomplete, invalid, and gapped streams",
+      "description": "Declare the new frozen LedgerReconciliationResult and implement reconcile_on_restart. Use validate_ledger_event_ordering for ordering and precedence issues, query_gaps for non-contiguous sequences, format inclusive gap_start through exclusive gap_end correctly, and emit deterministic snapshots containing reservation state and serialized events. Add all five restart scenarios.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T2"
+      ],
+      "dependency_reasons": {
+        "T2": {
+          "kind": "consumes_output",
+          "reason": "Restart scenarios consume the reservation, start, and terminal lifecycle implemented by T2.",
+          "required_output": "Durable start and completion APIs with lifecycle tests."
+        }
+      },
+      "routing_group": "persistence_service",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/persistence_service.py",
+          "tests/arnold/critique_ledger/test_persistence_service.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_persistence_service.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 8,
+      "complexity_justification": "The task separates two easily-confused integrity APIs and defines a new recovery result contract without colliding with two existing names. Direct-SQL corruption fixtures and gap-bound semantics make this a tier-8 data-integrity change."
+    },
+    {
+      "id": "T4",
+      "objective": "Implement deterministic replay with exclude-before-reconstruct legacy filtering",
+      "description": "Create ProjectionBuilder.replay and ProjectionResult. Read ledger events, admit only v1 occurrence/reconciliation/disposition outcomes whose metadata is not legacy-derived, classify exclusions as legacy_derived or schema_version_mismatch before any from_dict call, reconstruct typed inputs, call replay_full read-only, and prove stable manifest and briefing hashes plus full legacy-context reads.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "Projection replay consumes the payload discriminator and ledger event shape established by T1.",
+          "required_output": "Persisted CL2 OUTCOME payload contract and test helpers."
+        }
+      },
+      "routing_group": "projections",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 8,
+      "complexity_justification": "This is the principal authority boundary: reconstructing before filtering or weakening one conjunct can admit immutable r5 evidence into v1 replay. Deterministic semantic-loop projection across multiple domain types warrants tier 8."
+    },
+    {
+      "id": "T5",
+      "objective": "Implement cumulative projections with per-contribution authority semantics",
+      "description": "Declare explicit CumulativeProjection and contribution shapes, add build_cumulative, verify_byte_equivalence, and read_legacy_context behavior. Tag authority per OUTCOME contribution and compute authoritative, non_authoritative, mixed_authoritative, or empty rollups, including a mixed v1-plus-legacy attempt test.",
+      "estimated_minutes": 13,
+      "depends_on": [
+        "T4"
+      ],
+      "dependency_reasons": {
+        "T4": {
+          "kind": "consumes_output",
+          "reason": "Cumulative authority summaries must reuse T4's exact replay partition and exclusion diagnostics.",
+          "required_output": "ProjectionBuilder replay filter, ProjectionResult, and deterministic hashes."
+        }
+      },
+      "routing_group": "projections",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/projections.py",
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_projections.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 7,
+      "complexity_justification": "Mixed-attempt authority is subtle because cl2_kind is per event while rollups are per attempt; an attempt-level shortcut would mislabel contributions. The explicit public data shapes and aggregation risk place this at tier 7."
+    },
+    {
+      "id": "T6",
+      "objective": "Implement legacy normalization and stable epoch-scoped record identity",
+      "description": "Create OneTimeImporter support types and pure helpers for canonical JSON hashing, epoch-prefixed IDs, 10-field repair key normalization, 6-field custody target normalization, original schema-version preservation, and target_schema admissibility. Add focused normalization and two-epoch identity tests.",
+      "estimated_minutes": 13,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "Legacy helpers target the exact OUTCOME envelope payload contract defined by T1.",
+          "required_output": "CL2 ledger payload discriminator and event construction conventions."
+        }
+      },
+      "routing_group": "legacy_import",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/legacy_import.py",
+          "tests/arnold/critique_ledger/test_legacy_import.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_legacy_import.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "The helpers combine heterogeneous legacy shapes and stable identity rules but remain pure and localized to one new module. The compatibility surface is meaningful without yet crossing the write boundary, so tier 6 fits."
+    },
+    {
+      "id": "T7",
+      "objective": "Implement non-authoritative one-time legacy publication without schema upgrade",
+      "description": "Implement import_ndjson and ImportReport using direct store append rather than persist_occurrence or from_dict. Route records as IndependentChildDisposition, preserve original schema_version, stamp cl2_kind=legacy_historical and metadata.derived_from_legacy, label missing evidence UNAVAILABLE with legacy_import, and reject unsupported target_schema without partial ledger state.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T6"
+      ],
+      "dependency_reasons": {
+        "T6": {
+          "kind": "consumes_output",
+          "reason": "Publication consumes T6's normalizers, stable identity, and target-schema decision.",
+          "required_output": "Tested legacy normalization and epoch-scoped identity helpers."
+        }
+      },
+      "routing_group": "legacy_import",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/legacy_import.py",
+          "tests/arnold/critique_ledger/test_legacy_import.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_legacy_import.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 8,
+      "complexity_justification": "This intentionally bypasses the v1 constructor while preserving immutable raw evidence, making marker completeness the operative authority defense. Partial-publish and provenance failures are data-integrity defects, so tier 8 is appropriate."
+    },
+    {
+      "id": "T8",
+      "objective": "Complete legacy import idempotency and multi-epoch behavior",
+      "description": "Extend importer behavior and tests so a repeated file import adds zero events, the same canonical record in two epochs remains distinct, duplicate outcomes are reported accurately, and missing-evidence labels remain stable. Keep the source module below 400 lines by extracting only if the bound is crossed.",
+      "estimated_minutes": 10,
+      "depends_on": [
+        "T7"
+      ],
+      "dependency_reasons": {
+        "T7": {
+          "kind": "consumes_output",
+          "reason": "Idempotency exercises the direct publication and ImportReport implemented by T7.",
+          "required_output": "Working OneTimeImporter import_ndjson path and report contract."
+        }
+      },
+      "routing_group": "legacy_import",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/legacy_import.py",
+          "tests/arnold/critique_ledger/test_legacy_import.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_legacy_import.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "Stable dedup across epochs touches idempotency semantics and reporting but is constrained to an existing importer and one unit suite. Tier 6 reflects the non-trivial identity edge cases without overstating the scale."
+    },
+    {
+      "id": "T9",
+      "objective": "Implement governed freshness vectors for available, unavailable, and tombstoned evidence",
+      "description": "Create FreshnessVector and FreshnessTracker, compute staleness from observed timestamps and evidence availability, implement required_for_briefing_unavailable, and ensure tombstones express absence without authority. Add unit coverage for available, unavailable, tombstoned, and unknown projection behavior.",
+      "estimated_minutes": 13,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "Freshness reads the CL2 OUTCOME envelope representation established by T1.",
+          "required_output": "Stable ledger event payload contract and store access pattern."
+        }
+      },
+      "routing_group": "freshness",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/freshness.py",
+          "tests/arnold/critique_ledger/test_freshness.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_freshness.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "Freshness encodes governance semantics where an incorrect tombstone interpretation could confer authority, but the implementation is isolated to one reader and test file. That combination supports tier 6."
+    },
+    {
+      "id": "T10",
+      "objective": "Author atomic concurrency and crash-recovery fixtures against the SQLite store",
+      "description": "Create focused fixtures using two independent WAL connections racing on one idempotency key, an exception inside an append transaction, a reservation-before-START restart, and direct-SQL sequences 1,2,4. Prove rollback, single append, ordering-validator non-detection, query_gaps detection, and sequence_gap reconciliation.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T3"
+      ],
+      "dependency_reasons": {
+        "T3": {
+          "kind": "consumes_output",
+          "reason": "Crash recovery assertions consume LedgerReconciliationResult and reconcile_on_restart from T3.",
+          "required_output": "Typed restart reconciliation with distinct ordering_violation and sequence_gap statuses."
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_concurrent_crash_fixtures.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_concurrent_crash_fixtures.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 8,
+      "complexity_justification": "Concurrency and crash atomicity are inherently timing- and transaction-sensitive, and the proof must distinguish two integrity detectors under injected corruption. A false-positive test would mask ledger duplication or partial state, warranting tier 8."
+    },
+    {
+      "id": "T11",
+      "objective": "Author the multi-schema current-source rejection fixture",
+      "description": "Create the m6-corpus end-to-end test that validates ParseStatus and EvidenceAvailability coverage, attempts occurrence persistence mechanism-agnostically, proves zero cl2_kind=occurrence writes, and rejects a synthetic cl.schema.v99-future target without any half-written event or incomplete revision.",
+      "estimated_minutes": 13,
+      "depends_on": [
+        "T1"
+      ],
+      "dependency_reasons": {
+        "T1": {
+          "kind": "consumes_output",
+          "reason": "The corpus fixture directly exercises persist_occurrence and its no-partial-publish contract.",
+          "required_output": "LedgerPersistenceService v1 validation and persisted-event readback."
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_current_source_import.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_current_source_import.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 6,
+      "complexity_justification": "The fixture spans heterogeneous record shapes and must assert outcomes without overfitting exception sites, but it is confined to one test file and existing APIs. Tier 6 captures the broad data reasoning."
+    },
+    {
+      "id": "T12",
+      "objective": "Create and test the standalone CL2 redaction-policy validator",
+      "description": "Add validate_redaction_policy for DEFAULT_ON and ALWAYS, with raw hashes forbidden under ALWAYS, and test both dual-hash arrangements. Test forbidden secret keys by calling validate_retention_payload_policy with an explicit RetentionPayloadPolicy() instance. Do not imply the utility is wired into persistence.",
+      "estimated_minutes": 10,
+      "depends_on": [
+        "T0"
+      ],
+      "dependency_reasons": {
+        "T0": {
+          "kind": "consumes_output",
+          "reason": "Even independent CL2 utility creation is forbidden until the source-identity gate passes.",
+          "required_output": "Verified clean baseline checkout."
+        }
+      },
+      "routing_group": "redaction",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/redaction.py",
+          "tests/arnold/critique_ledger/test_redacted_fixture.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_redacted_fixture.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 4,
+      "complexity_justification": "This adds a small policy interface at a privacy boundary, so the contract floor applies even though the implementation is localized. Explicitly preserving its standalone scope keeps the task at tier 4."
+    },
+    {
+      "id": "T13",
+      "objective": "Author the curated r5 evidence-preservation fixture and audit assertions",
+      "description": "Add about 50 NDJSON records covering two epochs, legacy key forms, and missing evidence, plus the one-time-import fixture test. Prove stable IDs, independent-child routing, exhaustive legacy markers, enum-backed unavailable labels, no-op re-import, full read_legacy_context records, and replay exclusion.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T5",
+        "T8"
+      ],
+      "dependency_reasons": {
+        "T5": {
+          "kind": "consumes_output",
+          "reason": "The fixture verifies legacy context reads, replay exclusion, and authority contribution shapes.",
+          "required_output": "ProjectionBuilder legacy audit and cumulative authority APIs."
+        },
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "The fixture verifies the completed importer including re-import and multi-epoch behavior.",
+          "required_output": "Idempotent OneTimeImporter with stable report semantics."
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "tests/fixtures/critique_ledger/r5_sample_events.ndjson",
+          "tests/arnold/critique_ledger/test_one_time_import_fixture.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_one_time_import_fixture.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 7,
+      "complexity_justification": "The task creates a moderately sized compatibility corpus and proves several linked provenance invariants end to end. Missing a record class could leave an authority leak untested, justifying tier 7."
+    },
+    {
+      "id": "T14",
+      "objective": "Author the freshness and tombstone governance fixture",
+      "description": "Create the focused freshness fixture test with available, unavailable, and tombstoned ledger evidence. Assert correct staleness vectors, unknown projection behavior, and that no marker, state JSON, PID, or model prose is treated as authorization.",
+      "estimated_minutes": 9,
+      "depends_on": [
+        "T9"
+      ],
+      "dependency_reasons": {
+        "T9": {
+          "kind": "consumes_output",
+          "reason": "The fixture is an end-to-end proof of FreshnessTracker semantics from T9.",
+          "required_output": "FreshnessVector and FreshnessTracker public APIs."
+        }
+      },
+      "routing_group": "freshness",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_freshness_fixture.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_freshness_fixture.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 5,
+      "complexity_justification": "This is a single-file governance fixture over an already implemented reader, but it must positively reject several false authority sources. The contained scale and meaningful semantic consequence place it at tier 5."
+    },
+    {
+      "id": "T15",
+      "objective": "Declare the canonical CL2 package boundary and prove local replay isolation",
+      "description": "Update the package documentation and exports to distinguish side-effecting LedgerPersistenceService from pure replay/projection APIs, declare it the sole CL2 ledger writer, and state the redaction validator is standalone. Add spies proving replay cannot mutate plan, gate, lifecycle, or queue state.",
+      "estimated_minutes": 13,
+      "depends_on": [
+        "T3",
+        "T5",
+        "T8",
+        "T9"
+      ],
+      "dependency_reasons": {
+        "T3": {
+          "kind": "consumes_output",
+          "reason": "The canonical package surface must expose the completed persistence and reconciliation contract.",
+          "required_output": "Final LedgerPersistenceService API."
+        },
+        "T5": {
+          "kind": "consumes_output",
+          "reason": "The package boundary and isolation tests consume the completed projection APIs.",
+          "required_output": "ProjectionBuilder and cumulative projection types."
+        },
+        "T8": {
+          "kind": "consumes_output",
+          "reason": "The package boundary must describe the finalized OneTimeImporter path.",
+          "required_output": "Completed idempotent legacy importer."
+        },
+        "T9": {
+          "kind": "consumes_output",
+          "reason": "The package exports and boundary description include FreshnessTracker.",
+          "required_output": "Completed freshness API."
+        }
+      },
+      "routing_group": "isolation",
+      "write_set": {
+        "paths": [
+          "arnold/critique_ledger/__init__.py",
+          "tests/arnold/critique_ledger/test_readonly_isolation.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_readonly_isolation.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "code",
+      "complexity": 6,
+      "complexity_justification": "This reconciles an existing package-level purity promise with a new side-effecting writer and verifies four local mutation surfaces. The cross-API boundary is meaningful but limited to package exports and one test file, fitting tier 6."
+    },
+    {
+      "id": "T16",
+      "objective": "Prove external replay isolation and legacy authority neutrality",
+      "description": "Extend isolation tests with spies for Git/provider, delivery, and external effects, then assert legacy context markers, replay exclusion, non-authoritative cumulative contributions, mixed-attempt rollups, and the UNAVAILABLE labeling convention including absent briefing and reopen flags.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T15"
+      ],
+      "dependency_reasons": {
+        "T15": {
+          "kind": "write_conflict",
+          "reason": "This task extends the same isolation test file after the local-state partition and reuses its package boundary fixtures.",
+          "required_output": "Canonical package exports and local replay isolation test partition."
+        }
+      },
+      "routing_group": "isolation",
+      "write_set": {
+        "paths": [
+          "tests/arnold/critique_ledger/test_readonly_isolation.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/arnold/critique_ledger/test_readonly_isolation.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "test",
+      "complexity": 7,
+      "complexity_justification": "This is the positive proof that the BRIDGE emits no authority while also covering external side effects and mixed-attempt aggregation. A weak assertion could silently authorize r5 evidence, so tier 7 is justified."
+    },
+    {
+      "id": "T17",
+      "objective": "Write the complete CL2-to-CL3 handoff and delivery-sidecar ignore rule",
+      "description": "Create the handoff JSON with every approved field: schemas, backend APIs, disambiguated result type, import and replay rules, fixtures, freshness, fault results, accepted_for_cl2=false BRIDGE status and five blockers, backup and restore prerequisites, baseline-only source identity, authority boundary, and unresolved limits. Add the delivery sidecar path to .gitignore.",
+      "estimated_minutes": 15,
+      "depends_on": [
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T16"
+      ],
+      "dependency_reasons": {
+        "T10": {
+          "kind": "consumes_output",
+          "reason": "The handoff fault_results must report actual concurrency and crash fixture outcomes.",
+          "required_output": "Atomicity and recovery fixture results."
+        },
+        "T11": {
+          "kind": "consumes_output",
+          "reason": "The fixture index and schema-gate narrative require the current-source corpus test.",
+          "required_output": "Multi-schema rejection fixture and its result."
+        },
+        "T12": {
+          "kind": "consumes_output",
+          "reason": "The API surface and unresolved limits must accurately describe the standalone redaction validator.",
+          "required_output": "Tested validate_redaction_policy utility."
+        },
+        "T13": {
+          "kind": "consumes_output",
+          "reason": "The import map and fixture index require the curated r5 evidence fixture.",
+          "required_output": "Evidence-preservation fixture and audit assertions."
+        },
+        "T14": {
+          "kind": "consumes_output",
+          "reason": "The freshness rules and fixture index require governed tombstone results.",
+          "required_output": "Freshness governance fixture."
+        },
+        "T16": {
+          "kind": "consumes_output",
+          "reason": "The gate and authority sections must reflect proven read-only and non-authoritative behavior.",
+          "required_output": "External isolation and authority-neutrality proof."
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "docs/critique-ledger/handoffs/cl2-ledger-replay.json",
+          ".gitignore"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [],
+        "max_seconds": 0,
+        "max_runs": 0
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "docs",
+      "complexity": 6,
+      "complexity_justification": "The handoff is a broad but structured contract consumed by CL3 and must accurately record numerous provenance and governance limits. It writes only two files, but omission or positive-authority wording has non-local consequences, supporting tier 6."
+    },
+    {
+      "id": "T18",
+      "objective": "Finalize CL2 with one delivery commit and post-commit identity attestations",
+      "description": "Stage only CL2-owned files, verify scope, commit with the approved message, require the baseline to be an ancestor of HEAD, capture delivery commit and tree hashes only in the gitignored sidecar and a git note, and require an empty porcelain status. Halt on ancestry failure, note conflict, or any stray file.",
+      "estimated_minutes": 10,
+      "depends_on": [
+        "T17"
+      ],
+      "dependency_reasons": {
+        "T17": {
+          "kind": "consumes_output",
+          "reason": "Finalization commits the complete handoff and ignore rule produced by T17.",
+          "required_output": "Committed-content-ready CL2 implementation, tests, handoff JSON, and sidecar ignore entry."
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "docs/critique-ledger/handoffs/.cl2_delivery_commit.txt"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [],
+        "max_seconds": 0,
+        "max_runs": 0
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      },
+      "status": "pending",
+      "executor_notes": "",
+      "reviewer_verdict": "",
+      "kind": "docs",
+      "complexity": 6,
+      "complexity_justification": "This is a narrow release operation but affects Git history and provenance attestations; writing either delivery hash into the committed handoff would recreate a self-reference defect. The irreversible coordination consequence raises it to tier 6."
+    }
+  ],
+  "validation_jobs": [],
+  "critique_resolution_coverage": [
+    {
+      "finding_id": "CF-DFF471A673845C9E341B",
+      "task_ids": [
+        "T17"
+      ],
+      "resolution_evidence": "T17 requires a concrete backup_restore_prerequisites section covering WAL snapshot, checkpoint integrity, restore, and replay validation."
+    },
+    {
+      "finding_id": "CF-E8E97D8B98CCFAC61085",
+      "task_ids": [
+        "T0",
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T0 preserves the exact baseline gate and halt behavior; T17 records only verified baseline hashes; T18 checks ancestry and clean final state without silently re-pinning the North Star."
+    },
+    {
+      "finding_id": "CF-1E7444307FAF171918C4",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13",
+        "T16"
+      ],
+      "resolution_evidence": "T7 stamps every raw legacy payload with original version, legacy_historical, and nested derived_from_legacy; T4 excludes before reconstruction; T13 and T16 positively prove the markers, audit access, and authority exclusion."
+    },
+    {
+      "finding_id": "CF-3930EFC67F107E4A3248",
+      "task_ids": [
+        "T4"
+      ],
+      "resolution_evidence": "T4 explicitly filters missing, None, and non-v1 schema versions before any from_dict call and records reasoned replay_excluded diagnostics."
+    },
+    {
+      "finding_id": "CF-B3C7993958825DEF96C9",
+      "task_ids": [
+        "T15",
+        "T16"
+      ],
+      "resolution_evidence": "The formerly oversized isolation step remains split into local-state T15 and external-effect/authority T16 worker turns."
+    },
+    {
+      "finding_id": "CF-0B506E1EDCD92E90C192",
+      "task_ids": [
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T16 proves the BRIDGE is authority-neutral; T17 records accepted_for_cl2=false, all five blockers, the verify_cl2_admission bypass, and CL3's gate-resolution prerequisite."
+    },
+    {
+      "finding_id": "CF-B9B661EA07A339D23A49",
+      "task_ids": [
+        "T11"
+      ],
+      "resolution_evidence": "T11 asserts rejection outcomes across heterogeneous corpus shapes and then inspects the ledger for zero partial events or incomplete revisions rather than pinning one exception site."
+    },
+    {
+      "finding_id": "CF-3E58504DC5D4F5C6C3F4",
+      "task_ids": [
+        "T3"
+      ],
+      "resolution_evidence": "T3 maps validate_ledger_event_ordering list[str] directly to ordering issues and formats query_gaps GapEntry values separately under sequence_gap."
+    },
+    {
+      "finding_id": "CF-26E5C07DCCA5CA4AE7F3",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13",
+        "T16"
+      ],
+      "resolution_evidence": "T7 stamps every raw legacy payload with original version, legacy_historical, and nested derived_from_legacy; T4 excludes before reconstruction; T13 and T16 positively prove the markers, audit access, and authority exclusion."
+    },
+    {
+      "finding_id": "CF-EB2EDB0690CC2BE0388F",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-DD3EFCBA70DDD7DEF1C3",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13"
+      ],
+      "resolution_evidence": "T7 places derived_from_legacy only in the raw envelope metadata dictionary; T4 reads that nested path; T13 proves serialized marker durability and full audit retrieval."
+    },
+    {
+      "finding_id": "CF-372A956A9B019B9DBDEB",
+      "task_ids": [
+        "T17"
+      ],
+      "resolution_evidence": "T17 requires a concrete backup_restore_prerequisites section covering WAL snapshot, checkpoint integrity, restore, and replay validation."
+    },
+    {
+      "finding_id": "CF-064FBEE041E897F9A2F8",
+      "task_ids": [
+        "T0",
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T0 preserves the exact baseline gate and halt behavior; T17 records only verified baseline hashes; T18 checks ancestry and clean final state without silently re-pinning the North Star."
+    },
+    {
+      "finding_id": "CF-9FBA94F91CC3A68BCD99",
+      "task_ids": [
+        "T4",
+        "T13"
+      ],
+      "resolution_evidence": "T4 returns full legacy LedgerEvent records separately from informational replay exclusions, and T13 verifies both queryability and exclusion."
+    },
+    {
+      "finding_id": "CF-6D5608CE301B445465C3",
+      "task_ids": [
+        "T1"
+      ],
+      "resolution_evidence": "T1 preserves the settled lifecycle model: all three CL1 domain records ride on EXTERNAL_EFFECT_OUTCOME payloads rather than lifecycle RECONCILIATION or terminal types."
+    },
+    {
+      "finding_id": "CF-770D502B096909AC9E55",
+      "task_ids": [
+        "T5",
+        "T16"
+      ],
+      "resolution_evidence": "T5 implements per-contribution scopes and rollups; T16 proves legacy context, replay exclusion, cumulative non-authority, and mixed-attempt behavior."
+    },
+    {
+      "finding_id": "CF-F827FACBCE479C0F889A",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13",
+        "T16"
+      ],
+      "resolution_evidence": "T7 stamps every raw legacy payload with original version, legacy_historical, and nested derived_from_legacy; T4 excludes before reconstruction; T13 and T16 positively prove the markers, audit access, and authority exclusion."
+    },
+    {
+      "finding_id": "CF-5A9F4C56E309DA8308EA",
+      "task_ids": [
+        "T15",
+        "T16"
+      ],
+      "resolution_evidence": "The formerly oversized isolation step remains split into local-state T15 and external-effect/authority T16 worker turns."
+    },
+    {
+      "finding_id": "CF-B67C1E37D72114DDCF70",
+      "task_ids": [
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T16 proves the BRIDGE is authority-neutral; T17 records accepted_for_cl2=false, all five blockers, the verify_cl2_admission bypass, and CL3's gate-resolution prerequisite."
+    },
+    {
+      "finding_id": "CF-BDA43F66DCAC8A479237",
+      "task_ids": [
+        "T4"
+      ],
+      "resolution_evidence": "T4 explicitly filters missing, None, and non-v1 schema versions before any from_dict call and records reasoned replay_excluded diagnostics."
+    },
+    {
+      "finding_id": "CF-C48B1C6EF0C03EBCA731",
+      "task_ids": [
+        "T3"
+      ],
+      "resolution_evidence": "T3 maps validate_ledger_event_ordering list[str] directly to ordering issues and formats query_gaps GapEntry values separately under sequence_gap."
+    },
+    {
+      "finding_id": "CF-4DF98AF7C3A2D1E136DB",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13",
+        "T16"
+      ],
+      "resolution_evidence": "T7 stamps every raw legacy payload with original version, legacy_historical, and nested derived_from_legacy; T4 excludes before reconstruction; T13 and T16 positively prove the markers, audit access, and authority exclusion."
+    },
+    {
+      "finding_id": "CF-2DC216C8B0CFF72E246B",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13"
+      ],
+      "resolution_evidence": "T7 places derived_from_legacy only in the raw envelope metadata dictionary; T4 reads that nested path; T13 proves serialized marker durability and full audit retrieval."
+    },
+    {
+      "finding_id": "CF-6E5EE09A6ABD393A6566",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-E845806E24670F0C7998",
+      "task_ids": [
+        "T6",
+        "T7"
+      ],
+      "resolution_evidence": "T6 preserves raw legacy schema values and T7 bypasses both persist_occurrence and CritiqueOccurrenceEnvelope.from_dict when publishing tagged historical payload dictionaries."
+    },
+    {
+      "finding_id": "CF-C17AF58980753A5F96E5",
+      "task_ids": [
+        "T0",
+        "T18"
+      ],
+      "resolution_evidence": "T0 enforces pre-write HEAD equality while T18 correctly uses post-commit ancestor reachability, preserving the distinct bookend checks."
+    },
+    {
+      "finding_id": "CF-DFF4140A2181F8D8EE05",
+      "task_ids": [
+        "T11"
+      ],
+      "resolution_evidence": "T11 asserts rejection outcomes across heterogeneous corpus shapes and then inspects the ledger for zero partial events or incomplete revisions rather than pinning one exception site."
+    },
+    {
+      "finding_id": "CF-D772E1DE51733F796B99",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13"
+      ],
+      "resolution_evidence": "T7 places derived_from_legacy only in the raw envelope metadata dictionary; T4 reads that nested path; T13 proves serialized marker durability and full audit retrieval."
+    },
+    {
+      "finding_id": "CF-736F3B568AF8496BE503",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 creates the missing validator against the existing RedactionMode enum and exercises DEFAULT_ON and ALWAYS hash interplay."
+    },
+    {
+      "finding_id": "CF-42B419AA50CE0B0DC2AC",
+      "task_ids": [
+        "T6",
+        "T7"
+      ],
+      "resolution_evidence": "T6 preserves raw legacy schema values and T7 bypasses both persist_occurrence and CritiqueOccurrenceEnvelope.from_dict when publishing tagged historical payload dictionaries."
+    },
+    {
+      "finding_id": "CF-242780A6E1E09F0AA9F7",
+      "task_ids": [
+        "T0",
+        "T18"
+      ],
+      "resolution_evidence": "T0 enforces pre-write HEAD equality while T18 correctly uses post-commit ancestor reachability, preserving the distinct bookend checks."
+    },
+    {
+      "finding_id": "CF-C8B50A69103268ABEBF4",
+      "task_ids": [
+        "T11"
+      ],
+      "resolution_evidence": "T11 asserts rejection outcomes across heterogeneous corpus shapes and then inspects the ledger for zero partial events or incomplete revisions rather than pinning one exception site."
+    },
+    {
+      "finding_id": "CF-9F866C49A8E6DC6712D8",
+      "task_ids": [
+        "T4",
+        "T7",
+        "T13"
+      ],
+      "resolution_evidence": "T7 places derived_from_legacy only in the raw envelope metadata dictionary; T4 reads that nested path; T13 proves serialized marker durability and full audit retrieval."
+    },
+    {
+      "finding_id": "CF-D5C676619C56561E60CD",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 creates the missing validator against the existing RedactionMode enum and exercises DEFAULT_ON and ALWAYS hash interplay."
+    },
+    {
+      "finding_id": "CF-CB52FA725F92B1376C9E",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-67AD7B13A591D086B01A",
+      "task_ids": [
+        "T6",
+        "T7"
+      ],
+      "resolution_evidence": "T6 preserves raw legacy schema values and T7 bypasses both persist_occurrence and CritiqueOccurrenceEnvelope.from_dict when publishing tagged historical payload dictionaries."
+    },
+    {
+      "finding_id": "CF-9CBADF23ABFDEED34577",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-00D5682C25C25CF8F104",
+      "task_ids": [
+        "T0",
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T0 preserves the exact baseline gate and halt behavior; T17 records only verified baseline hashes; T18 checks ancestry and clean final state without silently re-pinning the North Star."
+    },
+    {
+      "finding_id": "CF-03F4816CDDC7B70786EE",
+      "task_ids": [
+        "T3"
+      ],
+      "resolution_evidence": "T3 maps validate_ledger_event_ordering list[str] directly to ordering issues and formats query_gaps GapEntry values separately under sequence_gap."
+    },
+    {
+      "finding_id": "CF-8E9A737FD392F8D9733E",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-34E64995C9BAB04802E0",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-85746C1A6EB5CCA9FC88",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-7D682306DA3EAFD12025",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-212F2FDD76B2B10A7D94",
+      "task_ids": [
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T17 forbids delivery hashes in the committed handoff and ignores the sidecar; T18 captures both post-commit hashes only in the ignored sidecar and git note, eliminating commit/tree self-reference."
+    },
+    {
+      "finding_id": "CF-6428D607B2AEDAD33352",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-1508FE177D9A7419BEE4",
+      "task_ids": [
+        "T0",
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T0 preserves the exact baseline gate and halt behavior; T17 records only verified baseline hashes; T18 checks ancestry and clean final state without silently re-pinning the North Star."
+    },
+    {
+      "finding_id": "CF-22BEE8D275C9124B656C",
+      "task_ids": [
+        "T3",
+        "T10"
+      ],
+      "resolution_evidence": "T3 implements distinct detectors and T10 injects sequences 1,2,4 through store.conn, proving the ordering validator stays empty while query_gaps and restart reconciliation detect the gap."
+    },
+    {
+      "finding_id": "CF-675C9E805B514E5BB0E5",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-EC3ED90D47E6F3C2E1CC",
+      "task_ids": [
+        "T3"
+      ],
+      "resolution_evidence": "T3 maps validate_ledger_event_ordering list[str] directly to ordering issues and formats query_gaps GapEntry values separately under sequence_gap."
+    },
+    {
+      "finding_id": "CF-AB09F671A2AAE007AEFE",
+      "task_ids": [
+        "T16"
+      ],
+      "resolution_evidence": "T16 positively asserts UNAVAILABLE and legacy_import while required_for_briefing and reopen_condition remain absent, then proves legacy_derived replay exclusion."
+    },
+    {
+      "finding_id": "CF-7E236C887209D98BC1C5",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-7DD48BD4DE942F1F2FE7",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T16",
+        "T17"
+      ],
+      "resolution_evidence": "T7 uses enum-backed UNAVAILABLE plus legacy_import without required_for_briefing or reopen semantics; T13/T16 prove exclusion is operative; T17 documents that the encoding is only a label."
+    },
+    {
+      "finding_id": "CF-2296C52639B3FAB99DDE",
+      "task_ids": [
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T17 forbids delivery hashes in the committed handoff and ignores the sidecar; T18 captures both post-commit hashes only in the ignored sidecar and git note, eliminating commit/tree self-reference."
+    },
+    {
+      "finding_id": "CF-50DE2C635628FEB39408",
+      "task_ids": [
+        "T3",
+        "T17"
+      ],
+      "resolution_evidence": "T3 declares the new LedgerReconciliationResult once with the approved fields; T17 documents its disambiguation from both untouched existing ReconciliationResult classes."
+    },
+    {
+      "finding_id": "CF-1FCF459A8E69406E0E7C",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 calls validate_retention_payload_policy with an explicit RetentionPayloadPolicy() object and forbidden-key payload, resolving the empty-parentheses ambiguity."
+    },
+    {
+      "finding_id": "CF-F716F109D349F3A6A06A",
+      "task_ids": [
+        "T5",
+        "T16"
+      ],
+      "resolution_evidence": "T5 declares per-contribution authority and four-valued attempt rollups, while T16 covers mixed v1 and legacy outcomes under one attempt."
+    },
+    {
+      "finding_id": "CF-AE2339DAF5682E32A4B7",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-193D9D268150F007F965",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-7B50AD8E94E4FF7121A4",
+      "task_ids": [
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T17 forbids delivery hashes in the committed handoff and ignores the sidecar; T18 captures both post-commit hashes only in the ignored sidecar and git note, eliminating commit/tree self-reference."
+    },
+    {
+      "finding_id": "CF-73F5DFE22D3FE504ED57",
+      "task_ids": [
+        "T3",
+        "T10"
+      ],
+      "resolution_evidence": "T3 implements distinct detectors and T10 injects sequences 1,2,4 through store.conn, proving the ordering validator stays empty while query_gaps and restart reconciliation detect the gap."
+    },
+    {
+      "finding_id": "CF-61A4C1E42660528CD81F",
+      "task_ids": [
+        "T3",
+        "T17"
+      ],
+      "resolution_evidence": "T3 declares the new LedgerReconciliationResult once with the approved fields; T17 documents its disambiguation from both untouched existing ReconciliationResult classes."
+    },
+    {
+      "finding_id": "CF-CEEB614F10D3B453EC95",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-8B5446BA23621CDE341A",
+      "task_ids": [
+        "T5",
+        "T16"
+      ],
+      "resolution_evidence": "T5 declares per-contribution authority and four-valued attempt rollups, while T16 covers mixed v1 and legacy outcomes under one attempt."
+    },
+    {
+      "finding_id": "CF-78AFBEB4605C68B87270",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-1632D304A73812CB2264",
+      "task_ids": [
+        "T17",
+        "T18"
+      ],
+      "resolution_evidence": "T17 forbids delivery hashes in the committed handoff and ignores the sidecar; T18 captures both post-commit hashes only in the ignored sidecar and git note, eliminating commit/tree self-reference."
+    },
+    {
+      "finding_id": "CF-F11C4DBA299C2B1E8896",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 calls validate_retention_payload_policy with an explicit RetentionPayloadPolicy() object and forbidden-key payload, resolving the empty-parentheses ambiguity."
+    },
+    {
+      "finding_id": "CF-60C893FD8E65C17D0B76",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-6F09DFE09F097AC3A375",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-E906C41286ED40603CD8",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-D680DEDE4A191E731BE2",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-F62CAF595E8E99FAEEBA",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-2A5334022DEF5D784B98",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-40B62FD4D5A1535896FC",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 calls validate_retention_payload_policy with an explicit RetentionPayloadPolicy() object and forbidden-key payload, resolving the empty-parentheses ambiguity."
+    },
+    {
+      "finding_id": "CF-B4DBA8B97D04E5A1B0CD",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-959D0F0CBC20BFFFF206",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-3461447A506B0B753353",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-D1E6EF4F824765E096F9",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-BF78E2239B3452737C76",
+      "task_ids": [
+        "T5",
+        "T16"
+      ],
+      "resolution_evidence": "T5 declares per-contribution authority and four-valued attempt rollups, while T16 covers mixed v1 and legacy outcomes under one attempt."
+    },
+    {
+      "finding_id": "CF-44907818405808599C2C",
+      "task_ids": [
+        "T3",
+        "T10"
+      ],
+      "resolution_evidence": "T3 and T10 use GapEntry's inclusive gap_start and exclusive gap_end semantics, formatting missing bounds as gap_start through gap_end-1."
+    },
+    {
+      "finding_id": "CF-21A0DD866F40BD5F6FFF",
+      "task_ids": [
+        "T15"
+      ],
+      "resolution_evidence": "T15 updates the package contract to distinguish pure replay/projection readers from the side-effecting sole ledger writer, resolving the existing purity-docstring tension."
+    },
+    {
+      "finding_id": "CF-D6022D35DB85C0245F01",
+      "task_ids": [
+        "T3",
+        "T17"
+      ],
+      "resolution_evidence": "T3 pins event_snapshot to deterministic reservation state plus serialized events, and T17 publishes that result contract for CL3."
+    },
+    {
+      "finding_id": "CF-7139E1A8BD1BB75AA9AF",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 calls validate_retention_payload_policy with an explicit RetentionPayloadPolicy() object and forbidden-key payload, resolving the empty-parentheses ambiguity."
+    },
+    {
+      "finding_id": "CF-CCF03AAFF3C69AF4DF35",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-8F19D157FEE360DC5050",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-AD337A56FC2E7871AEFE",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-067C57516BBF5360167F",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-FAD006D21BDD69245AC5",
+      "task_ids": [
+        "T5",
+        "T17"
+      ],
+      "resolution_evidence": "T5 explicitly declares CumulativeProjection and contribution shapes before downstream use; T17 lists them in the API surface."
+    },
+    {
+      "finding_id": "CF-F207558B83EF940E0F33",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-0A5AFD34FA516EB00CB5",
+      "task_ids": [
+        "T12"
+      ],
+      "resolution_evidence": "T12 calls validate_retention_payload_policy with an explicit RetentionPayloadPolicy() object and forbidden-key payload, resolving the empty-parentheses ambiguity."
+    },
+    {
+      "finding_id": "CF-225D7C78F266D8FD16AC",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-DB8A35136CCF203D1617",
+      "task_ids": [
+        "T3",
+        "T10"
+      ],
+      "resolution_evidence": "T3 and T10 use GapEntry's inclusive gap_start and exclusive gap_end semantics, formatting missing bounds as gap_start through gap_end-1."
+    },
+    {
+      "finding_id": "CF-2F7452A4B53AF5CCD927",
+      "task_ids": [
+        "T12",
+        "T15",
+        "T17"
+      ],
+      "resolution_evidence": "T12 implements and tests the validator only as approved; T15 states it is not wired into CL2 persistence; T17 carries that standalone-utility limitation into CL3."
+    },
+    {
+      "finding_id": "CF-B6A859B3852A60A78477",
+      "task_ids": [
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "resolution_evidence": "Legacy import work is decomposed into normalization, publication, and idempotency turns while retaining one cohesive module and an explicit under-400-line check with extraction only if needed."
+    },
+    {
+      "finding_id": "CF-ECDF46DB2719D32D2168",
+      "task_ids": [
+        "T15"
+      ],
+      "resolution_evidence": "T15 updates the package contract to distinguish pure replay/projection readers from the side-effecting sole ledger writer, resolving the existing purity-docstring tension."
+    },
+    {
+      "finding_id": "CF-671323AC99A1FF9A93A6",
+      "task_ids": [
+        "T7",
+        "T13",
+        "T17"
+      ],
+      "resolution_evidence": "T7 gives unsupported target_schema rejection precedence with no partial write, T13 curates preservable evidence, and T17 documents that unsupported-target records are the exception to preservation."
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC0",
+      "task_id": "T0",
+      "question": "Did the executor prove baseline presence, exact HEAD equality, and a clean worktree before any edit, or halt without substituting another commit?",
+      "verdict": ""
+    },
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Do all three CL1 domain types round-trip byte-equivalently on OUTCOME payloads while OUTCOME-before-INTENT and duplicate idempotency keys are rejected?",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Is reserve_attempt durably called before STARTED, and do terminal and already-completed guards prevent a second completion?",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Are ordering violations and sequence gaps reported with distinct LedgerReconciliationResult statuses and correctly bounded deterministic snapshots?",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Does replay exclude legacy, missing-version, and non-v1 payloads before construction while producing stable manifest and briefing hashes?",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does a mixed attempt retain authoritative v1 and non-authoritative legacy contribution scopes with mixed_authoritative rollup?",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Are both legacy key shapes normalized deterministically and are identical records in different epochs assigned distinct stable IDs?",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Does every published legacy record preserve its source version and carry both non-authority markers without passing through a v1 constructor or leaving partial writes?",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Does a second import add zero events while report counts and multi-epoch generations remain stable?",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Do unavailable and tombstoned evidence become stale or unknown without ever becoming an authority signal?",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Do two connections yield exactly one append, and does injected sequence 3 absence evade ordering validation but trigger query_gaps and restart reconciliation?",
+      "verdict": ""
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "question": "Does the heterogeneous corpus produce zero occurrence writes and leave no incomplete ledger state after every rejection path?",
+      "verdict": ""
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "question": "Are redaction modes and secret exclusion tested with the real RetentionPayloadPolicy signature without implying persistence enforcement?",
+      "verdict": ""
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "question": "Does the curated fixture cover both epochs, both legacy keys, missing evidence, idempotency, full legacy reads, and replay exclusion?",
+      "verdict": ""
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "question": "Do the freshness fixture assertions rule out every listed false authority source while preserving unknown evidence semantics?",
+      "verdict": ""
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "question": "Does the package contract clearly partition its writer from pure readers, and do all four local-state spies remain untouched by replay?",
+      "verdict": ""
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "question": "Are all external spies untouched and are legacy-only plus mixed-attempt cumulative authority assertions positive and exhaustive?",
+      "verdict": ""
+    },
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "question": "Does the handoff contain every required section, all five blockers, baseline hashes only, and explicit unresolved limits including standalone redaction and target-schema precedence?",
+      "verdict": ""
+    },
+    {
+      "id": "SC18",
+      "task_id": "T18",
+      "question": "Is the baseline an ancestor, the delivery commit and tree recorded only in ignored/note channels, and git status porcelain empty after finalization?",
+      "verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Hard anchor gate: c116f38cc83de11a1a508eff6153205504d1ba5a is present locally, but this finalize workspace was observed at HEAD d5848010695e28ddb9d9cbee8675d7ebe725caae with harness-owned untracked files. Execution must use a clean re-bound baseline checkout or T0 must halt; never clean, reset, or re-pin silently.",
+    "If the baseline becomes absent after remote fetch, halt and name all three approved resolutions: obtain c116f38cc83 from the canonical remote; have the North Star reviewed to re-pin to an existing commit; explicitly waive the single-commit/tree-identity rule through documented North Star review.",
+    "Do not invoke the megaplan CLI, activate its skill, start nested plans, or recurse into another harness.",
+    "Do not modify arnold/workflow/attempt_ledger_store.py or either existing ReconciliationResult definition; CL2 is layered above the store and declares LedgerReconciliationResult separately.",
+    "Lifecycle types are not CL1 domain types: occurrence, finding reconciliation, disposition, and legacy historical data all ride on EXTERNAL_EFFECT_OUTCOME after INTENT; COMPLETED and FAILED remain terminal.",
+    "Replay's three conditions are conjunctive and evaluated before from_dict: eligible cl2_kind, exact cl.schema.v1, and metadata.derived_from_legacy is not true. Missing or None versions are schema_version_mismatch exclusions.",
+    "Legacy import must bypass persist_occurrence and CritiqueOccurrenceEnvelope.from_dict, preserve original schema_version byte-for-byte, and stamp raw envelope metadata plus cl2_kind on every imported record.",
+    "Unsupported target_schema takes precedence over preservation and must leave no partial publish; document this accepted tension in the CL3 handoff.",
+    "UNAVAILABLE plus unavailable_reason=legacy_import is only a labeling convention. Do not set required_for_briefing or reopen_condition, and do not claim either semantic_loop failure mode is the guard; legacy_historical filtering is the sole operative defense.",
+    "Authority scope is per contribution, not per attempt. The rollup must explicitly support mixed_authoritative, authoritative, non_authoritative, and empty.",
+    "query_gaps uses inclusive gap_start and exclusive gap_end. Format a missing interval as gap_start through gap_end-1; validate_ledger_event_ordering intentionally does not detect non-contiguous gaps.",
+    "Direct-SQL corruption is test-fixture-only because public append APIs generate contiguous sequences; production writes must use public store methods.",
+    "Concurrent append proof requires two independent SQLite connections to one WAL file, not a shared connection hidden behind one lock.",
+    "The redaction validator is intentionally standalone in CL2 and is not write-path enforcement. Package docs and the handoff must say so; secret tests must pass RetentionPayloadPolicy() explicitly.",
+    "Keep each new CL2 source module under 400 lines. Legacy import is already split across three worker tasks; extract a narrow helper module only if the concrete implementation would cross the bound.",
+    "Update critique_ledger package documentation so purity applies to replay/projection readers while LedgerPersistenceService is clearly the sole side-effecting CL2 ledger writer.",
+    "accepted_for_cl2 remains false with five governance blockers. The BRIDGE bypass is allowed only because no AcceptedCL1Binding is consumed and all CL2 outputs are proven authority-neutral; CL3 must resolve the gate before authority use.",
+    "Replay isolation must cover plan, gate, lifecycle, queue, Git/provider, delivery, and external-effect surfaces with zero mutations, API calls, commits, notifications, or enqueues.",
+    "The current-source corpus is heterogeneous and may fail before schema validation because some rows are not occurrence-shaped; assert the zero-publish outcome rather than a single exception mechanism.",
+    "The committed handoff contains baseline commit and tree only. Delivery commit and tree are post-commit values stored only in the gitignored sidecar and git note.",
+    "The sidecar and note must not dirty the worktree. Finalization fails on any stray file or if the baseline is not an ancestor of the delivery commit.",
+    "Full source-identity enforcement at direct execute, batch execute, and live cutover remains CL3-CL5 scope; background reconciliation, OS-process concurrency, and live cutover also remain deferred.",
+    "The harness owns integration and full-suite validation. Worker tasks run only their declared narrow selectors with at most one diagnostic rerun."
+  ],
+  "meta_commentary": "Execute T0 as an uncompromising admission gate. The observed finalize checkout does not itself satisfy the baseline equality or cleanliness rule, so the execution environment must be safely rebound without deleting harness state; otherwise stop and escalate the anchor conflict. The DAG intentionally permits independent projection, redaction, corpus, and freshness work only after T0 while serializing overlapping source/test files through real consume or write-conflict edges. Preserve the approved BRIDGE exactly: legacy evidence is immutable, queryable, and non-authoritative; no CL2 result authorizes provider effects. Use apply_patch for edits, public SQLite store APIs for production writes, direct SQL only in corruption fixtures, and leave authoritative integration/full-suite validation to the harness.",
+  "user_actions": []
+}
