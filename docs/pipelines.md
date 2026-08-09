@@ -117,8 +117,13 @@ labels as type-level policy, and no Megaplan phase lists as platform constants.
 ### CLI invocation
 
 ```bash
-arnold run megaplan <brief>
-arnold pipelines list          # shows 'megaplan' among discovered plugins
+# NOTE: the legacy `arnold run megaplan <brief>` / `arnold pipelines list` forms
+# are obsolete — `run` is not an `arnold` verb and `pipelines` is not an `arnold` command.
+# Megaplan is driven by its own CLI:
+python -m arnold_pipelines.megaplan init <brief>   # plan and run a brief
+# The workflow runtime runs the compiled megaplan pipeline as:
+arnold workflow run --module arnold_pipelines.megaplan.pipeline:build_pipeline
+# Pipeline discovery/inspection is via the megaplan `pipelines` command (new|check|doctor).
 ```
 
 ## Built-in pipelines
