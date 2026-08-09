@@ -201,6 +201,27 @@ def test_push_base_to_origin_redacts_token_bearing_url(
     # The success path returns no raw command list; command_text is redacted.
 
 
+def test_push_base_to_origin_redacts_ssh_userinfo_scheme_agnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ssh://user:secret@host URLs are redacted too (finding #5 delta)."""
+    ssh_url = "ssh://deploy:supersecret@github.com:2222/acme/arnold.git"
+    runner = _runner_for(tmp_path / "repo")
+    monkeypatch.setattr(github_sync.subprocess, "run", runner)
+
+    result = push_base_to_origin(
+        repo_root=tmp_path / "repo",
+        origin_url=ssh_url,
+        branch=_BRANCH,
+        commit_message="sync base to origin",
+    )
+
+    assert "supersecret" not in json.dumps(result)
+    assert "deploy:" not in result["origin_url"]
+    assert "***@" in result["origin_url"]
+    assert "***@" in result["command_text"]
+
+
 def test_push_base_to_origin_redacts_stderr_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

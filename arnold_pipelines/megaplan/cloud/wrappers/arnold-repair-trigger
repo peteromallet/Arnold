@@ -235,6 +235,21 @@ def _enforce_manifest_authority() -> None:
         print(f"manifest_invalid: {reason}", file=sys.stderr)
         raise SystemExit(78) from exc
 
+def _manifest_epic() -> dict | None:
+    """Return the bootstrapped manifest's ``epic`` section, or None when absent."""
+
+    try:
+        manifest = _bootstrap_runtime_manifest()
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        print(f"manifest_invalid: {reason}", file=sys.stderr)
+        raise SystemExit(78) from exc
+    if manifest is None:
+        return None
+    epic = getattr(manifest, "epic", None)
+    return epic if isinstance(epic, dict) else None
+
+
 def _manifest_repair_bin() -> str | None:
     epic = _manifest_epic()
     if epic is None:

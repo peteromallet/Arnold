@@ -76,7 +76,7 @@ _REDACTED_REMOTE = "<redacted>"
 # Credential patterns in remote git output/URLs.  Unconditional redaction —
 # never env-gated — so a token-bearing push URL or stderr line can never be
 # echoed by a caller (review finding #5).
-_REMOTE_URL_USERINFO_RE = re.compile(r"(https?://)([^/@\s]+)@", re.IGNORECASE)
+_REMOTE_URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)([^/@\s]+)@", re.IGNORECASE)
 _REMOTE_CRED_ASSIGN_RE = re.compile(
     r"(?P<name>\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|API[_-]?KEY)[A-Z0-9_]*\b)"
     r"\s*=\s*(?P<value>[^\s'\"]+)",
@@ -91,8 +91,9 @@ _REMOTE_CRED_TOKEN_RE = re.compile(
 def _redact_remote_output(text: str) -> str:
     """Mask credential-bearing content from remote git output.
 
-    Covers ``https://user:TOKEN@host`` URL userinfo (masked to
-    ``https://***@host``), ``NAME=value`` assignments whose name is key-like
+    Covers scheme-agnostic URL userinfo (``https://user:TOKEN@host`` and
+    ``ssh://user:secret@host`` masked to ``scheme://***@host``), ``NAME=value``
+    assignments whose name is key-like
     (KEY/TOKEN/SECRET/PASSWORD/api[_-]?key), ``Bearer <token>`` headers, and
     well-known token prefixes (``sk-``, ``ghp_``).  The returned text never
     contains the raw credential.

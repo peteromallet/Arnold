@@ -41,6 +41,24 @@ def _run_dry_run(tmp_path: Path, *extra_args: str, skip_self_copy: bool = True) 
     )
 
 
+def _approval_evidence(tmp_path: Path) -> Path:
+    """Write a schema-bound replay-approval record (matches approve_replay)."""
+
+    evidence = tmp_path / "replay-approval.json"
+    evidence.write_text(
+        "{\n"
+        '  "schema_version": 1,\n'
+        '  "approved": true,\n'
+        '  "generated_at_utc": "2026-08-09T00:00:00+00:00",\n'
+        '  "thresholds": {"unsafe_mutation_rate": 0.0},\n'
+        '  "aggregate": {"unsafe_mutation_rate": 0.0},\n'
+        '  "per_metric": {"unsafe_mutation_rate": {"observed": 0.0, "ok": true}}\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    return evidence
+
+
 def test_usage_text_documents_mode_and_dry_run() -> None:
     text = _script_text()
     assert "--mode=reactive|proactive" in text
@@ -82,8 +100,7 @@ def test_default_mode_is_reactive(tmp_path: Path) -> None:
 
 def test_proactive_dry_run_works_with_self_copy_snapshot(tmp_path: Path) -> None:
     """The immutable-snapshot self-copy path must also reach the dry-run exit."""
-    evidence = tmp_path / "replay-approval.json"
-    evidence.write_text('{"approved": true}', encoding="utf-8")
+    evidence = _approval_evidence(tmp_path)
     env = {
         **os.environ,
         "TMPDIR": str(tmp_path),
@@ -114,8 +131,7 @@ def test_select_mode_models_maps_proactive_to_flash(tmp_path: Path) -> None:
     assert blocked.returncode == 69
     assert "model_policy" in blocked.stderr or "gated" in blocked.stderr
     # Proactive WITH replay approval evidence projects the Flash model set.
-    evidence = tmp_path / "replay-approval.json"
-    evidence.write_text('{"approved": true}', encoding="utf-8")
+    evidence = _approval_evidence(tmp_path)
     env = {
         **os.environ,
         "TMPDIR": str(tmp_path),
@@ -170,8 +186,7 @@ def test_reactive_dry_run_warns_on_hot_env_model_overrides(tmp_path: Path) -> No
 def test_proactive_dry_run_fails_closed_on_hot_env_model_overrides(
     tmp_path: Path,
 ) -> None:
-    evidence = tmp_path / "replay-approval.json"
-    evidence.write_text('{"approved": true}', encoding="utf-8")
+    evidence = _approval_evidence(tmp_path)
     env = {
         **os.environ,
         "TMPDIR": str(tmp_path),
