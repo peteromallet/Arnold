@@ -90,6 +90,8 @@ S6_OVERRIDE_RESUME_CLARIFY_ROW_ID = "s6.override.resume_clarify.1"
 S6_OVERRIDE_ADOPT_EXECUTION_ROW_ID = "s6.override.adopt_execution.1"
 S6_OVERRIDE_SUSPENSION_ROW_ID = "s6.override.suspension.1"
 S6_OVERRIDE_HUMAN_GATE_ROW_ID = "s6.override.human_gate.1"
+S6_OVERRIDE_CUTOVER_ROW_ID = "s6.override.cutover.1"
+S6_OVERRIDE_RECONCILE_PLAN_LEDGER_ROW_ID = "s6.override.reconcile_plan_ledger.1"
 
 # ── Chain milestone stable row ID namespace ─────────────────────────────
 
@@ -1461,6 +1463,63 @@ override_human_gate_authority = BoundaryContract(
     },
 )
 
+override_cutover_authority = BoundaryContract(
+    boundary_id="override_cutover_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_CUTOVER_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override cutover authority: the legacy-to-canonical cutover "
+            "requires COMBINED authority (human-gate operator approval AND "
+            "lifecycle mutation authority via repair_queue) before any "
+            "cutover orchestration runs."
+        ),
+        "authority_transition": "cutover",
+        "authority_scope": "override.cutover",
+        "route_signal": "cutover",
+        "target_ref": "cutover",
+        "required_evidence_refs": ("state.json",),
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+    },
+)
+
+override_reconcile_plan_ledger_authority = BoundaryContract(
+    boundary_id="override_reconcile_plan_ledger_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_RECONCILE_PLAN_LEDGER_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override reconcile-plan-ledger authority: append-only ledger "
+            "repair for a drifted plan version preserves the original "
+            "attestation and records the replacement hash + cause + repair "
+            "ref under an audited authority record."
+        ),
+        "authority_transition": "reconcile-plan-ledger",
+        "authority_scope": "override.reconcile_plan_ledger",
+        "route_signal": "reconcile_plan_ledger",
+        "target_ref": "plan",
+        "required_evidence_refs": ("state.json",),
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+    },
+)
+
+
 # ── Chain milestone boundary contracts ──────────────────────────────────
 
 chain_milestone_start = BoundaryContract(
@@ -1929,6 +1988,8 @@ BOUNDARY_CONTRACTS: tuple[BoundaryContract, ...] = (
     override_adopt_execution_authority,
     override_suspension_authority,
     override_human_gate_authority,
+    override_cutover_authority,
+    override_reconcile_plan_ledger_authority,
     chain_milestone_start,
     chain_milestone_completion,
     chain_complete,
@@ -1954,18 +2015,20 @@ OVERRIDE_AUTHORITY_CONTRACTS: tuple[BoundaryContract, ...] = (
     override_adopt_execution_authority,
     override_suspension_authority,
     override_human_gate_authority,
+    override_cutover_authority,
+    override_reconcile_plan_ledger_authority,
 )
 
 BOUNDARY_CONTRACTS_BY_ID: dict[str, BoundaryContract] = {
     c.boundary_id: c for c in BOUNDARY_CONTRACTS
 }
 
-# Ensure the registry has exactly forty-nine entries with no duplicates.
-assert len(BOUNDARY_CONTRACTS) == 49, (
-    f"BOUNDARY_CONTRACTS must have exactly 49 entries, got {len(BOUNDARY_CONTRACTS)}"
+# Ensure the registry has exactly fifty-one entries with no duplicates.
+assert len(BOUNDARY_CONTRACTS) == 51, (
+    f"BOUNDARY_CONTRACTS must have exactly 51 entries, got {len(BOUNDARY_CONTRACTS)}"
 )
-assert len(BOUNDARY_CONTRACTS_BY_ID) == 49, (
-    "BOUNDARY_CONTRACTS_BY_ID must have exactly 49 entries "
+assert len(BOUNDARY_CONTRACTS_BY_ID) == 51, (
+    "BOUNDARY_CONTRACTS_BY_ID must have exactly 51 entries "
     "(duplicate boundary_id detected)"
 )
 

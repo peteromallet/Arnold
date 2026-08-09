@@ -98,8 +98,10 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     ordinary_repair_completion,
     override_abort_authority,
     override_adopt_execution_authority,
+    override_cutover_authority,
     override_force_proceed_authority,
     override_human_gate_authority,
+    override_reconcile_plan_ledger_authority,
     override_recover_blocked_authority,
     override_replan_authority,
     override_resume_clarify_authority,
@@ -145,7 +147,7 @@ def _load_generated_fixture_json(boundary_id: str, filename: str) -> dict[str, o
 
 def test_registry_defines_exactly_forty_nine_contracts() -> None:
     """The registry must contain the 35 legacy + S6 contracts plus 14 new chain/PR/repair/auditor/custody contracts."""
-    assert len(BOUNDARY_CONTRACTS) == 49
+    assert len(BOUNDARY_CONTRACTS) == 51
 
 
 def test_registry_by_id_has_no_duplicates() -> None:
@@ -197,6 +199,8 @@ def test_named_contracts_are_in_registry() -> None:
         override_adopt_execution_authority.boundary_id,
         override_suspension_authority.boundary_id,
         override_human_gate_authority.boundary_id,
+        override_cutover_authority.boundary_id,
+        override_reconcile_plan_ledger_authority.boundary_id,
         chain_milestone_start.boundary_id,
         chain_milestone_completion.boundary_id,
         chain_complete.boundary_id,
@@ -999,7 +1003,7 @@ def test_generated_boundary_fixtures_preserve_negative_case_surfaces() -> None:
 
 def test_s6_override_authority_contracts_capture_scope_and_evidence_contracts() -> None:
     """S6 override authority contracts must stay authority-only and specify durable evidence."""
-    assert len(OVERRIDE_AUTHORITY_CONTRACTS) == 8
+    assert len(OVERRIDE_AUTHORITY_CONTRACTS) == 10
 
     expected = {
         "override_abort_authority": ("abort", "override.abort", ("state.json",)),
@@ -1033,6 +1037,16 @@ def test_s6_override_authority_contracts_capture_scope_and_evidence_contracts() 
             "human-gate",
             "override.human_gate",
             ("state.json", "approval_record.json"),
+        ),
+        "override_cutover_authority": (
+            "cutover",
+            "override.cutover",
+            ("state.json",),
+        ),
+        "override_reconcile_plan_ledger_authority": (
+            "reconcile-plan-ledger",
+            "override.reconcile_plan_ledger",
+            ("state.json",),
         ),
     }
 

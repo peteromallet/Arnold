@@ -193,7 +193,9 @@ def test_s6_override_matrix_distinguishes_routing_and_effect_only_actions() -> N
     assert set(routing_entries) == {
         "abort",
         "adopt-execution",
+        "cutover",
         "force-proceed",
+        "reconcile-plan-ledger",
         "recover-blocked",
         "replan",
         "resume-clarify",
@@ -240,13 +242,19 @@ def test_s6_override_gap_table_is_explicit_in_current_native_surface() -> None:
         if signal not in policy_surface
     }
 
-    assert typed_surface == {"abort", "force_proceed", "replan"}
-    assert workflow_surface == {"abort", "force_proceed", "replan"}
-    assert policy_surface == {"adopt_execution", "recover_blocked", "resume_clarify"}
+    assert typed_surface == {"abort", "cutover", "force_proceed", "replan"}
+    assert workflow_surface == {"abort", "cutover", "force_proceed", "replan"}
+    assert policy_surface == {
+        "adopt_execution",
+        "reconcile_plan_ledger",
+        "recover_blocked",
+        "resume_clarify",
+    }
     assert missing_typed_actions == set()
     assert missing_policy_actions == set()
     assert set(policy_signal_to_action.values()) == {
         "adopt-execution",
+        "reconcile-plan-ledger",
         "recover-blocked",
         "resume-clarify",
     }
@@ -276,6 +284,14 @@ def test_s6_override_outcome_targets_are_declared_in_canonical_source() -> None:
             "reentry_target_ref": "critique",
             "description": (
                 "Re-enter the planning loop by routing through revise and back to the critique reentry."
+            ),
+        },
+        "cutover": {
+            "route_signal": "cutover",
+            "target_ref": "cutover",
+            "declared_target_ref": "cutover",
+            "description": (
+                "Execute the legacy-to-canonical cutover (combined run_authority + maintenance authority)."
             ),
         },
     }
@@ -443,8 +459,10 @@ def test_s6_override_and_human_gate_transitions_have_authority_contracts() -> No
 
     assert set(authority_contracts) == {
         "abort",
+        "cutover",
         "force-proceed",
         "replan",
+        "reconcile-plan-ledger",
         "recover-blocked",
         "resume-clarify",
         "adopt-execution",
