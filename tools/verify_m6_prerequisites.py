@@ -86,7 +86,7 @@ WBC_MERGE_EVIDENCE = (
 #   Weakening approved under CL5-T6_impl. The discriminative-power test
 #   (tests/tools/test_wbc_file_hash_rebind.py) verifies that the rebind
 #   discriminates between accepted and tampered file hashes.
-WBC_INTEGRATION_COMMIT = "65b93723a1d5eb956b47971f0d5674afa7f880ca"
+WBC_INTEGRATION_COMMIT = "cebb1ef6e2345ff274f3666a37e55c0a4e6849f9"
 
 # Activation receipt evidence (post-consolidation, outside repo)
 ACTIVATION_EVIDENCE_PATH = Path(
