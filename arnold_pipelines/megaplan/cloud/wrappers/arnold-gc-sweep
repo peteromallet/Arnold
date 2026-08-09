@@ -17,8 +17,12 @@
 #   Scans <manifest-dir>/*.json. For every CLOSED manifest whose runtime_root
 #   still exists it verifies:
 #     (a) origin-resolvable — local HEAD == origin/<epic branch> HEAD
-#     (b) restore-proven   — --restore-proven flag OR a restore-proven.txt
-#                            marker file in the manifest dir
+#     (b) schedule-store    — the tree's slug/sha must NOT be referenced by
+#                             any schedule store (probe-4 trees are
+#                             load-bearing for scheduled work and must never
+#                             be swept; see ARNOLD_SCHEDULE_STORE below)
+#     (c) restore-proven    — --restore-proven flag OR a restore-proven.txt
+#                             marker file in the manifest dir
 #   and only then runs `git worktree remove --force` + archives the manifest to
 #   <manifest-dir>/archived/. Anything else is SKIPped with the reason printed.
 #
@@ -33,6 +37,7 @@
 #   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
 #   ARNOLD_BASE_REPO            repo that owns the worktrees          (default: $ARNOLD_BASE_DIR/arnold)
 #   ARNOLD_ORIGIN_URL           origin URL/remote used to resolve     (default: origin)
+#   ARNOLD_SCHEDULE_STORE       schedule store dir to reconcile        (default: /workspace/arnold/.megaplan/resident/scheduled_jobs + /workspace/.megaplan/ops/schedules)
 #
 set -euo pipefail
 
@@ -65,6 +70,31 @@ BASE_REPO="${ARNOLD_BASE_REPO:-$BASE_DIR/arnold}"
 REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
 ARCHIVE_DIR="$MANIFEST_DIR/archived"
 mkdir -p "$ARCHIVE_DIR"
+
+# Schedule store reconciliation (design rule 6 / Phase 5): probe-4 trees are
+# referenced by the schedule store and must NEVER be swept. Default stores are
+# the resident scheduled-jobs dir and the ops schedules dir; ARNOLD_SCHEDULE_STORE
+# overrides with a single dir (tests redirect the sandbox with it).
+if [[ -n "${ARNOLD_SCHEDULE_STORE:-}" ]]; then
+  SCHEDULE_STORES=("$ARNOLD_SCHEDULE_STORE")
+else
+  SCHEDULE_STORES=("/workspace/arnold/.megaplan/resident/scheduled_jobs" "/workspace/.megaplan/ops/schedules")
+fi
+
+_schedule_store_references() {
+  # $1 = slug, $2 = sha. Returns 0 (and sets SCHEDULE_STORE_HIT) when any
+  # configured store references either; 1 otherwise. A missing store dir is
+  # not a reference.
+  local slug="$1" sha="$2" store
+  for store in "${SCHEDULE_STORES[@]}"; do
+    [[ -d "$store" ]] || continue
+    if grep -rIq -- "$slug" "$store" 2>/dev/null || grep -rIq -- "$sha" "$store" 2>/dev/null; then
+      SCHEDULE_STORE_HIT="$store"
+      return 0
+    fi
+  done
+  return 1
+}
 
 _json_get() {
   python3 -c '
@@ -119,15 +149,27 @@ for mf in "$MANIFEST_DIR"/*.json; do
     continue
   fi
 
-  # (b) restore-proven: deletion is gated on the restore proof, NOT on
+  # (b) schedule-store reconciliation: a CLOSED + origin-resolvable tree may
+  #     STILL be load-bearing for scheduled work — probe-4 trees must never be
+  #     swept. A reference to the tree's slug or sha in any schedule store is
+  #     a hard SKIP (checked for real and in dry-run alike).
+  SCHEDULE_STORE_HIT=""
+  SCHEDULE_REFERENCED=0
+  if _schedule_store_references "$SLUG" "$LOCAL_HEAD"; then
+    SCHEDULE_REFERENCED=1
+  fi
+
+  # (c) restore-proven: deletion is gated on the restore proof, NOT on
   #     origin==local (design rule 6 / Phase 5).
   RESTORE_OK=0
   if [[ "$RESTORE_PROVEN" == "1" || -f "$MANIFEST_DIR/restore-proven.txt" ]]; then
     RESTORE_OK=1
   fi
   if [[ "$DRY" == "1" ]]; then
-    if [[ "$RESTORE_OK" == "1" ]]; then
-      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable, restore-proven); manifest would archive to '$ARCHIVE_DIR'"
+    if [[ "$SCHEDULE_REFERENCED" == "1" ]]; then
+      echo "gc-sweep: WOULD-SKIP '$SLUG' — schedule-store-referenced (store '$SCHEDULE_STORE_HIT' references slug/sha); probe-4 trees must never be swept"
+    elif [[ "$RESTORE_OK" == "1" ]]; then
+      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable, restore-proven, schedule-store-clear); manifest would archive to '$ARCHIVE_DIR'"
     else
       echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable; restore-proven STILL REQUIRED before actual deletion — pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR')"
     fi
@@ -137,6 +179,11 @@ for mf in "$MANIFEST_DIR"/*.json; do
     echo "gc-sweep: SKIP '$SLUG' — not restore-proven: pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR' (a clean-room restore of the tree's runtime must be proven before deletion)"
     continue
   fi
+  if [[ "$SCHEDULE_REFERENCED" == "1" ]]; then
+    echo "gc-sweep: SKIP '$SLUG' — schedule-store-referenced (store '$SCHEDULE_STORE_HIT' references slug/sha); probe-4 trees must never be swept"
+    continue
+  fi
+
 
   # Sweep: registered-worktree removal only — never rm -rf a tree blindly.
   if git -C "$BASE_REPO" worktree remove --force "$ROOT" 2>/dev/null; then

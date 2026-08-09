@@ -183,8 +183,51 @@ if isinstance(value, str) and value:
 PY
 }
 
+# Fail-closed manifest authority (design §6): when ARNOLD_RUNTIME_MANIFEST is
+# set OR the default bootstrap path exists, the manifest MUST load and
+# validate.  A present-but-invalid manifest (corrupt / schema-mismatch /
+# unreadable) exits non-zero with a typed ``manifest_invalid`` error BEFORE
+# any dispatch or fallback.  Only a genuinely ABSENT manifest (no env, no
+# file at the bootstrap path) keeps the env -> with_name fallback — today's
+# box state, documented as bootstrap-only backward compat.
+enforce_runtime_manifest_authority() {
+  local env_set=0
+  [[ -n "${ARNOLD_RUNTIME_MANIFEST:-}" ]] && env_set=1
+  if [[ "$env_set" == "0" && ! -e "$RUNTIME_MANIFEST_PATH" ]]; then
+    return 0
+  fi
+  local invalid=""
+  invalid="$(python3 - "$RUNTIME_MANIFEST_PATH" <<'PY' 2>&1 || true
+import pathlib
+import sys
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
+    bootstrap_manifest(pathlib.Path(sys.argv[1]))
+except Exception as exc:
+    print(f"manifest_invalid: {exc}", file=sys.stderr)
+    sys.exit(78)
+PY
+)"
+  if [[ -n "$invalid" ]]; then
+    printf '%s\n' "$invalid" >&2
+    exit 78
+  fi
+}
+enforce_runtime_manifest_authority
+
 MANIFEST_REPAIR_BIN="$(runtime_manifest_field epic.repair_bin)"
 MANIFEST_RUNTIME_ROOT="$(runtime_manifest_field epic.runtime_root)"
+# Dispatch runtime source: when the manifest supplies BOTH epic.repair_bin
+# and epic.runtime_root, the repair-loop child executes AND imports its code
+# from the SAME runtime (the manifest runtime_root), so the selected
+# executable and PYTHONPATH/ARNOLD_REPAIR_RUNTIME_SRC never diverge (review
+# finding #3).  Without a manifest pair the legacy fallback is preserved —
+# the absent-manifest bootstrap state keeps
+# ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" (today's box behavior).
+REPAIR_DISPATCH_RUNTIME_SRC="$SRC_DIR"
+if [[ -n "$MANIFEST_REPAIR_BIN" && -n "$MANIFEST_RUNTIME_ROOT" ]]; then
+  REPAIR_DISPATCH_RUNTIME_SRC="$MANIFEST_RUNTIME_ROOT"
+fi
 PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
 if [[ -n "$MANIFEST_REPAIR_BIN" && -x "$MANIFEST_REPAIR_BIN" ]]; then
@@ -5198,7 +5241,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --reasoning-effort bounded
     --route-class watchdog_authorized_l1
     --backend repair-loop
-    --command-display "arnold-repair-loop $session"
+    --command-display "arnold-repair-loop --mode=reactive $session"
     --description "${ARNOLD_REPAIR_LAUNCH_DESCRIPTION:-Investigate then repair watchdog blocker for $session at ${PLAN_STATUS_PLAN_NAME:-current target}/${PLAN_STATUS_FAILURE_PHASE:-current stage}}"
     --origin-kind watchdog_repair
     --origin-id "$managed_identity"
@@ -5218,7 +5261,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --link "repair_goal_path=$inherited_goal_path"
     --link "repair_checkpoint_digest=$inherited_checkpoint_digest"
     --
-    "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
+    "$PRIMARY_REPAIR_BIN" --mode=reactive "$session" "$workspace" "$remote_spec"
   )
   # Step 55: the Kimi/repair-loop child launch may NEVER become accepted repair
   # outside canonical simple_fixer delegation.  Classify the launch; if a
@@ -5236,7 +5279,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
   fi
   if command -v setsid >/dev/null 2>&1; then
     PYTHONSAFEPATH=1 \
-    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    PYTHONPATH="$WRAPPER_REPO_ROOT:${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
@@ -5244,7 +5287,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
     ARNOLD_REPAIR_SESSION="$session" \
     ARNOLD_REPAIR_RUN_KIND="$repair_run_kind" \
-    ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" \
+    ARNOLD_REPAIR_RUNTIME_SRC="$REPAIR_DISPATCH_RUNTIME_SRC" \
     ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
     ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
     ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
@@ -5252,7 +5295,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
       >> "$LOG" 2>&1 < /dev/null &
   else
     PYTHONSAFEPATH=1 \
-    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    PYTHONPATH="$WRAPPER_REPO_ROOT:${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
@@ -5260,7 +5303,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
     ARNOLD_REPAIR_SESSION="$session" \
     ARNOLD_REPAIR_RUN_KIND="$repair_run_kind" \
-    ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" \
+    ARNOLD_REPAIR_RUNTIME_SRC="$REPAIR_DISPATCH_RUNTIME_SRC" \
     ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
     ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
     ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
