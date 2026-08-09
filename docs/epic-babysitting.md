@@ -121,3 +121,4 @@ identities (runtime/request/grant/claim/WBC).
 The epic is durably running when the **canonical chain state shows the milestone
 advanced** (index > 0) with matching identities and exactly one terminal
 notification — not when a fixer exits, a commit lands, or a PID is alive.
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

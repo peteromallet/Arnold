@@ -615,3 +615,4 @@ Keep `recovery/box-cleanup-20260807` until all mandatory box work has landed on 
 - **Secrets leak through recovery artifacts:** schedule/env/state archives stay encrypted or mode `0600`; never push them to origin.
 
 The non-negotiable stop condition is simple: if a candidate cannot be restored from origin plus a tested bundle, or its liveness/dependency status is not zero, it is not deleted.
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).

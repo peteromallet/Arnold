@@ -203,3 +203,4 @@ Full evidence per probe: see `probe_records.py` (canonical) or the render in thi
 | `base/editable-install` branch | seeded @ `49af598c0b` from build branch, pushed to origin | pushed |
 
 **Not landed (by operator direction, no box deployment):** the r7 runner, the lifecycle wrappers, and the manifest resolver are verified candidates in the worktree only. The box continues to run its drifted pre-session state (timer failing on stale pin, ad-hoc 120s loop, two fixer flows). Promotion = the operator's generation switch, gated on the box's live repair loop standing down.
+> **Authority status: non-authoritative.** This document is historical/design record, not a live-authority operator surface (T44 zero-authority migration).
