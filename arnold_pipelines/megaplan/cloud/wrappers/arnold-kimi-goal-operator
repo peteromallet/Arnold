@@ -40,6 +40,12 @@ if [[ -n "$_MANIFEST_EPIC_BRANCH" ]]; then
 else
   SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"
 fi
+# Fail-closed manifest authority (codex review fix #3): a present manifest
+# without an epic branch must not silently fall back to the shared branch.
+if [[ -f "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" && -z "$_MANIFEST_EPIC_BRANCH" ]]; then
+  echo "arnold-kimi-goal-operator: runtime manifest present without epic.branch; failing closed" >&2
+  exit 78
+fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
