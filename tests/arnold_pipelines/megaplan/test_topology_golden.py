@@ -23,7 +23,7 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
-LOCKED_MANIFEST_HASH = "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96"
+LOCKED_MANIFEST_HASH = "sha256:66601a2dc45b11bb0b7ee7b6e971cdc0c1b6cfc53beb722ff46413b0cc530480"
 LOCKED_TOPOLOGY_HASH = "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260"
 
 
@@ -456,14 +456,15 @@ class TestM6StructuralPolicyAttachments:
         manifest = build_and_compile_pipeline()
         override_node = next(node for node in manifest.nodes if node.id == "override")
 
-        # Topology overlays must exist for all 11 override actions
+        # Topology overlays must exist for all 13 override actions
         overlays = override_node.policy.topology_overlays or []
         overlay_ids = {o.overlay_id for o in overlays}
         expected_overlay_ids = {
             "override:abort", "override:add-note", "override:adopt-execution",
-            "override:force-proceed", "override:recover-blocked", "override:replan",
-            "override:resume-clarify", "override:set-model", "override:set-profile",
-            "override:set-robustness", "override:set-vendor",
+            "override:cutover", "override:force-proceed",
+            "override:reconcile-plan-ledger", "override:recover-blocked",
+            "override:replan", "override:resume-clarify", "override:set-model",
+            "override:set-profile", "override:set-robustness", "override:set-vendor",
         }
         assert overlay_ids == expected_overlay_ids
 
@@ -545,7 +546,7 @@ class TestM6StructuralPolicyAttachments:
         # Override: verify topology overlays match OVERRIDE_POLICY
         override_node = nodes_by_id["override"]
         overlays = override_node.policy.topology_overlays or []
-        assert len(overlays) == 11  # all 11 override actions
+        assert len(overlays) == 13  # all 13 override actions
 
     def test_override_matrix_aligns_with_manifest_topology_overlays(self) -> None:
         """Override matrix classification must agree with manifest topology overlays."""
@@ -579,8 +580,8 @@ class TestM6StructuralPolicyAttachments:
             f"Matrix config actions {set(ADDITIVE_CONFIG_ACTIONS)} != manifest {config_overlay_actions}"
         )
         # All 11 keys must be covered by manifest overlays
-        assert len(OVERRIDE_ACTION_MATRIX) == 11
-        assert len(overlays) == 11
+        assert len(OVERRIDE_ACTION_MATRIX) == 13
+        assert len(overlays) == 13
 
 
 class TestAmendmentEnforcement:

@@ -1,5 +1,5 @@
 manifest_id: megaplan
-manifest_hash: sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96
+manifest_hash: sha256:66601a2dc45b11bb0b7ee7b6e971cdc0c1b6cfc53beb722ff46413b0cc530480
 topology_hash: sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260
 nodes:
 - prep
@@ -17,33 +17,33 @@ nodes:
 - halt
 - override
 capabilities:
-- megaplan:planning
 - human:gate
 - human:review
+- megaplan:planning
 gate_targets:
-- label: proceed
-  target: finalize
-- label: iterate
-  target: revise
-- label: tiebreaker
-  target: tiebreaker_researcher
-- label: escalate
-  target: override
 - label: abort
-  target: halt
-- label: suspend
   target: halt
 - label: blocked_preflight
   target: override
+- label: escalate
+  target: override
 - label: force_proceed
   target: finalize
-tiebreaker_targets:
 - label: iterate
   target: revise
 - label: proceed
   target: finalize
+- label: suspend
+  target: halt
+- label: tiebreaker
+  target: tiebreaker_researcher
+tiebreaker_targets:
 - label: escalate
   target: override
+- label: iterate
+  target: revise
+- label: proceed
+  target: finalize
 - label: replan
   target: revise
 review_targets: []

@@ -2221,7 +2221,8 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
         except CliError as exc:
             if _is_missing_pr_error(exc):
                 writer(
-                    f"[chain] PR #{pr_number} is absent according to gh; treating stale PR cursor as closed\n"
+                    "[chain] gh pr view reported missing PR; treating persisted PR "
+                    f"#{pr_number} as closed\n"
                 )
                 return "closed"
             if attempt >= _compat().GH_PR_STATE_ATTEMPTS or not _compat()._is_transient_gh_error(exc):
