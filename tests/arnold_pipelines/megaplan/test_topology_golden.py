@@ -23,7 +23,7 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
-LOCKED_MANIFEST_HASH = "sha256:66601a2dc45b11bb0b7ee7b6e971cdc0c1b6cfc53beb722ff46413b0cc530480"
+LOCKED_MANIFEST_HASH = "sha256:09255e89b8ec7f90612ccae382bf01b4ff39228c47f777c73f2d253042dcf362"
 LOCKED_TOPOLOGY_HASH = "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260"
 
 
