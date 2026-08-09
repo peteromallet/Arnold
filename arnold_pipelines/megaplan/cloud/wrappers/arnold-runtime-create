@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+#
+# arnold-runtime-create — per-epic runtime lifecycle: CREATE
+#
+# Provenance: fixer-unification design 2026-08-07, Phase 4
+#   design: docs/runtime-and-fixer-unification-design-20260807.md
+#     - §4 Phase 4 (per-epic runtimes light form) + §6 file-changes row 12
+#     - §2 design rule 2 (worktree, not clone — shared objects)
+#     - §2 design rule 3 (runtime-manifest.json is the post-bootstrap resolver)
+#     - §2 design rule 4 (push the epic branch to origin at creation; fail loudly)
+#   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
+#
+# Usage: arnold-runtime-create <slug> <base-ref>
+#
+#   1. git worktree add <base>/runtime-candidates/<slug> -b fixer/<slug>-<YYYYMMDD>
+#      off <base-ref> HEAD (shared objects — same pattern the orchestrator used)
+#   2. git push origin fixer/<slug>-<YYYYMMDD> at creation — FAILS LOUDLY on
+#      push failure (design rule 4: a box-only branch is a failure)
+#   3. write the epic runtime manifest (state=active) atomically via the
+#      runtime_manifest CLI, falling back to direct JSON when the CLI is absent
+#   4. print the manifest path + runtime_id
+#
+# Environment overrides (all optional; tests redirect the sandbox with these):
+#   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
+#   ARNOLD_BASE_REPO            git repo the worktree is created from (default: $ARNOLD_BASE_DIR/arnold)
+#   ARNOLD_ORIGIN_URL           push target — URL or remote name      (default: origin)
+#   ARNOLD_WORKSPACE_MARKERS    marker/lock state root                (default: $ARNOLD_BASE_DIR/markers)
+#   ARNOLD_RUNTIME_MANIFEST_DIR dir of per-epic runtime manifests     (default: $ARNOLD_WORKSPACE_MARKERS/runtime-manifests)
+#
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: arnold-runtime-create <slug> <base-ref>" >&2
+  exit 64
+fi
+
+SLUG="$1"
+BASE_REF="$2"
+
+BASE_DIR="${ARNOLD_BASE_DIR:-/workspace}"
+BASE_REPO="${ARNOLD_BASE_REPO:-$BASE_DIR/arnold}"
+MARKERS="${ARNOLD_WORKSPACE_MARKERS:-$BASE_DIR/markers}"
+MANIFEST_DIR="${ARNOLD_RUNTIME_MANIFEST_DIR:-$MARKERS/runtime-manifests}"
+REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
+
+CANDIDATES_DIR="$BASE_DIR/runtime-candidates"
+RUNTIME_DIR="$CANDIDATES_DIR/$SLUG"
+STAMP="$(date +%Y%m%d)"
+BRANCH="fixer/$SLUG-$STAMP"
+MANIFEST_PATH="$MANIFEST_DIR/$SLUG.json"
+
+# Guard: refuse if the slug dir already exists (exit 2).
+if [[ -e "$RUNTIME_DIR" ]]; then
+  echo "arnold-runtime-create: refusing: '$RUNTIME_DIR' already exists (slug '$SLUG' in use)" >&2
+  exit 2
+fi
+
+# Resolve the base ref off which the worktree is created.
+if ! BASE_HEAD="$(git -C "$BASE_REPO" rev-parse --verify "$BASE_REF^{commit}" 2>/dev/null)"; then
+  echo "arnold-runtime-create: base-ref '$BASE_REF' is not resolvable in '$BASE_REPO'" >&2
+  exit 1
+fi
+
+# (a) Worktree, not clone — shared objects off the base source repo.
+if git -C "$BASE_REPO" rev-parse --verify "refs/heads/$BRANCH" >/dev/null 2>&1; then
+  echo "arnold-runtime-create: refusing: branch '$BRANCH' already exists in '$BASE_REPO'" >&2
+  exit 2
+fi
+mkdir -p "$CANDIDATES_DIR"
+git -C "$BASE_REPO" worktree add -b "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD"
+
+# (b) Push at creation — FAIL LOUDLY (design rule 4). A box-only branch is a failure.
+if ! git -C "$RUNTIME_DIR" push "$REMOTE" "HEAD:refs/heads/$BRANCH"; then
+  echo "arnold-runtime-create: FAILED to push '$BRANCH' to '$REMOTE' — refusing to leave a box-only runtime. The worktree is left in place for diagnosis; it is NOT authoritative and must not be treated as live." >&2
+  exit 1
+fi
+
+# (c) Write the epic manifest atomically. Build the full payload first (the
+# complete mandatory field set per the runtime_manifest contract — schema "1"),
+# hand it to the authoritative writer (runtime_manifest CLI: `write <path>
+# --from <file>`) when available, else fall back to a direct atomic write.
+_json_get() {
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    if not isinstance(d, dict) or key not in d:
+        print("")
+        sys.exit(0)
+    d = d[key]
+if d is None:
+    print("")
+elif isinstance(d, (dict, list)):
+    print(json.dumps(d))
+else:
+    print(str(d))
+' "$1" "$2"
+}
+
+manifest_valid() {
+  [[ -s "$1" ]] && [[ "$(_json_get "$1" epic_id)" == "$2" ]] && [[ -n "$(_json_get "$1" runtime_id)" ]]
+}
+
+mkdir -p "$MANIFEST_DIR"
+MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX.json")"
+python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+
+path, slug, branch, runtime_root, head, base_ref, stamp = sys.argv[1:8]
+owner = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+manifest = {
+    "runtime_id": f"{slug}-{stamp}",
+    "schema": "1",
+    "generation": 1,
+    "epic_id": slug,
+    "state": "active",
+    "owner": owner,
+    "base": {"ref": base_ref, "commit": head, "editable_install_path": "", "venv_path": ""},
+    "epic": {
+        "branch": branch,
+        "worktree_path": runtime_root,
+        "venv_path": "",
+        "runtime_root": runtime_root,
+        "expected_head": head,
+        "repair_bin": "",
+        "deps_lockfile": "",
+    },
+    "indirection": {
+        "host_path": "",
+        "container_path": "",
+        "mount_table": [],
+        "execution_namespace": "",
+        "verified_head": None,
+        "last_verified_at": None,
+        "attestation": {"module_file": None, "module_digest": None, "mount_id": None},
+    },
+    "policy": {"policy_sha": "", "model_policy_sha": "", "sync_policy": {}},
+    "promotions": [],
+    "timestamps": {"created": now, "updated": now, "closed": None},
+    "gc_policy": {"closed_only": True, "restore_proven_required": True},
+    "commands": [],
+}
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+if python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest write \
+    "$MANIFEST_PATH" --from "$MANIFEST_TMP" >/dev/null 2>&1 \
+   && manifest_valid "$MANIFEST_PATH" "$SLUG"; then
+  : # authoritative writer validated and wrote the manifest
+else
+  echo "arnold-runtime-create: runtime_manifest CLI unavailable/failed; writing '$MANIFEST_PATH' directly (fallback)" >&2
+  python3 - "$MANIFEST_PATH" "$MANIFEST_TMP" <<'PY'
+import json, os, sys, tempfile
+
+path, src = sys.argv[1:3]
+with open(src, encoding="utf-8") as fh:
+    payload = json.load(fh)
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".runtime-manifest-", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PY
+fi
+rm -f "$MANIFEST_TMP"
+manifest_valid "$MANIFEST_PATH" "$SLUG" || {
+  echo "arnold-runtime-create: manifest write FAILED for '$MANIFEST_PATH'" >&2
+  exit 1
+}
+
+# (d) Report the manifest path + runtime_id.
+RUNTIME_ID="$(_json_get "$MANIFEST_PATH" runtime_id)"
+[[ -n "$RUNTIME_ID" ]] || RUNTIME_ID="$SLUG-$STAMP"
+echo "arnold-runtime-create: runtime '$SLUG' created (runtime_id=$RUNTIME_ID)"
+echo "  branch:   $BRANCH (pushed to $REMOTE)"
+echo "  runtime:  $RUNTIME_DIR"
+echo "  manifest: $MANIFEST_PATH"

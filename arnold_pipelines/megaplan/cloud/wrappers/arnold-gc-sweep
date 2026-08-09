@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# arnold-gc-sweep — per-epic runtime lifecycle: CLOSED-ONLY, RESTORE-PROVEN GC
+#
+# Provenance: fixer-unification design 2026-08-07, Phase 5
+#   design: docs/runtime-and-fixer-unification-design-20260807.md
+#     - §4 Phase 5 (safe GC + close protocol — the ONLY deletion phase) + §6 row 15
+#     - §2 design rule 6: GC on close; closed-only, schedule-store-reconciled,
+#       restore-proven. "origin==local" is NOT a deletion predicate — it does not
+#       cover untracked files, stashes, reflog-only objects, extra refs,
+#       container writable layers, or operational state. A delete only happens
+#       after a clean-room restore of the tree's *runtime* has been proven.
+#   briefing: docs/megaplan-fixer-briefing-20260807.md — "Push before live."
+#
+# Usage: arnold-gc-sweep [--dry-run] [--restore-proven] <manifest-dir>
+#
+#   Scans <manifest-dir>/*.json. For every CLOSED manifest whose runtime_root
+#   still exists it verifies:
+#     (a) origin-resolvable — local HEAD == origin/<epic branch> HEAD
+#     (b) restore-proven   — --restore-proven flag OR a restore-proven.txt
+#                            marker file in the manifest dir
+#   and only then runs `git worktree remove --force` + archives the manifest to
+#   <manifest-dir>/archived/. Anything else is SKIPped with the reason printed.
+#
+#   This sweep NEVER infers "stale": a runner death mid-epic leaves a tree
+#   neither-live-neither-closed. Such trees (and manifests in an unknown state)
+#   are listed as NEEDS-RECONCILE and are never deleted.
+#
+#   --dry-run previews what would be swept (closed + origin-resolvable) without
+#   deleting anything and still reports the restore-proven requirement.
+#
+# Environment overrides (all optional):
+#   ARNOLD_BASE_DIR             dir that contains runtime-candidates/ (default: /workspace)
+#   ARNOLD_BASE_REPO            repo that owns the worktrees          (default: $ARNOLD_BASE_DIR/arnold)
+#   ARNOLD_ORIGIN_URL           origin URL/remote used to resolve     (default: origin)
+#
+set -euo pipefail
+
+DRY=0
+RESTORE_PROVEN=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY=1 ;;
+    --restore-proven) RESTORE_PROVEN=1 ;;
+    *) POSITIONAL+=("$arg") ;;
+  esac
+done
+
+if [[ ${#POSITIONAL[@]} -ne 1 ]]; then
+  echo "usage: arnold-gc-sweep [--dry-run] [--restore-proven] <manifest-dir>" >&2
+  exit 64
+fi
+
+MANIFEST_DIR="${POSITIONAL[0]}"
+if [[ ! -d "$MANIFEST_DIR" ]]; then
+  # A missing manifest dir is itself a needs-reconcile signal (runner death
+  # mid-epic can leave trees with no manifest at all) — proceed, do not abort.
+  echo "gc-sweep: manifest dir '$MANIFEST_DIR' does not exist; created empty (trees without manifests are listed as NEEDS-RECONCILE, never deleted)" >&2
+  mkdir -p "$MANIFEST_DIR"
+fi
+
+BASE_DIR="${ARNOLD_BASE_DIR:-/workspace}"
+BASE_REPO="${ARNOLD_BASE_REPO:-$BASE_DIR/arnold}"
+REMOTE="${ARNOLD_ORIGIN_URL:-origin}"
+ARCHIVE_DIR="$MANIFEST_DIR/archived"
+mkdir -p "$ARCHIVE_DIR"
+
+_json_get() {
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    if not isinstance(d, dict) or key not in d:
+        print("")
+        sys.exit(0)
+    d = d[key]
+if d is None:
+    print("")
+elif isinstance(d, (dict, list)):
+    print(json.dumps(d))
+else:
+    print(str(d))
+' "$1" "$2"
+}
+
+for mf in "$MANIFEST_DIR"/*.json; do
+  [[ -f "$mf" ]] || continue
+  SLUG="$(_json_get "$mf" epic_id)"
+  STATE="$(_json_get "$mf" state)"
+  ROOT="$(_json_get "$mf" epic.runtime_root)"
+  BRANCH="$(_json_get "$mf" epic.branch)"
+
+  if [[ "$STATE" != "active" && "$STATE" != "closed" ]]; then
+    echo "gc-sweep: NEEDS-RECONCILE manifest '$mf' (state='${STATE:-<missing>}') — neither live nor closed; never deleted automatically"
+    continue
+  fi
+  if [[ -z "$ROOT" || ! -d "$ROOT" ]]; then
+    echo "gc-sweep: SKIP '$SLUG' — runtime_root '$ROOT' already gone (nothing to sweep)"
+    continue
+  fi
+  if [[ "$STATE" == "active" ]]; then
+    echo "gc-sweep: SKIP '$SLUG' — manifest state=active; an executing/editable runtime is never deleted (design rule 0/6)"
+    continue
+  fi
+
+  # Closed only: (a) origin-resolvable — a hard gate, enforced even in dry-run.
+  if ! LOCAL_HEAD="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"; then
+    echo "gc-sweep: SKIP '$SLUG' — '$ROOT' is not a git tree; needs-reconcile"
+    continue
+  fi
+  ORIGIN_HEAD="$(git -C "$ROOT" ls-remote "$REMOTE" "refs/heads/$BRANCH" 2>/dev/null | awk '{print $1}')"
+  if [[ -z "$ORIGIN_HEAD" ]]; then
+    echo "gc-sweep: SKIP '$SLUG' — origin-resolvable check FAILED: refs/heads/$BRANCH missing on '$REMOTE' (origin==local is NOT a deletion predicate; resolve origin first)"
+    continue
+  fi
+  if [[ "$LOCAL_HEAD" != "$ORIGIN_HEAD" ]]; then
+    echo "gc-sweep: SKIP '$SLUG' — origin-resolvable check FAILED: local $LOCAL_HEAD != origin $ORIGIN_HEAD for refs/heads/$BRANCH"
+    continue
+  fi
+
+  # (b) restore-proven: deletion is gated on the restore proof, NOT on
+  #     origin==local (design rule 6 / Phase 5).
+  RESTORE_OK=0
+  if [[ "$RESTORE_PROVEN" == "1" || -f "$MANIFEST_DIR/restore-proven.txt" ]]; then
+    RESTORE_OK=1
+  fi
+  if [[ "$DRY" == "1" ]]; then
+    if [[ "$RESTORE_OK" == "1" ]]; then
+      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable, restore-proven); manifest would archive to '$ARCHIVE_DIR'"
+    else
+      echo "gc-sweep: WOULD-SWEEP '$SLUG' — worktree '$ROOT' (closed, origin-resolvable; restore-proven STILL REQUIRED before actual deletion — pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR')"
+    fi
+    continue
+  fi
+  if [[ "$RESTORE_OK" != "1" ]]; then
+    echo "gc-sweep: SKIP '$SLUG' — not restore-proven: pass --restore-proven or drop restore-proven.txt in '$MANIFEST_DIR' (a clean-room restore of the tree's runtime must be proven before deletion)"
+    continue
+  fi
+
+  # Sweep: registered-worktree removal only — never rm -rf a tree blindly.
+  if git -C "$BASE_REPO" worktree remove --force "$ROOT" 2>/dev/null; then
+    : # worktree removed
+  else
+    echo "gc-sweep: SKIP '$SLUG' — 'git worktree remove --force' failed for '$ROOT' (not a registered worktree of '$BASE_REPO'?); needs-reconcile, not deleted"
+    continue
+  fi
+
+  # Epic venv that lives OUTSIDE the removed tree (per-epic venvs inside the
+  # tree die with it).
+  VENV="$(_json_get "$mf" epic.venv_path)"
+  if [[ -n "$VENV" && -e "$VENV" && "$VENV" != "$ROOT" && "$VENV" != "$ROOT/"* ]]; then
+    rm -rf "$VENV"
+    echo "gc-sweep: removed epic venv '$VENV'"
+  fi
+
+  mv "$mf" "$ARCHIVE_DIR/"
+  echo "gc-sweep: SWEPT '$SLUG' — worktree '$ROOT' removed; manifest archived to '$ARCHIVE_DIR/$(basename "$mf")'"
+done
+
+# Runner death mid-epic leaves a tree without a manifest: never delete, list it.
+if [[ -d "$BASE_DIR/runtime-candidates" ]]; then
+  for d in "$BASE_DIR"/runtime-candidates/*/; do
+    [[ -d "$d" ]] || continue
+    slug="$(basename "$d")"
+    if [[ ! -f "$MANIFEST_DIR/$slug.json" ]]; then
+      echo "gc-sweep: NEEDS-RECONCILE tree '$d' — no manifest for slug '$slug' (runner death mid-epic?); never deleted automatically"
+    fi
+  done
+fi
+
+echo "gc-sweep: done (--dry-run=$DRY --restore-proven=$RESTORE_PROVEN)"
