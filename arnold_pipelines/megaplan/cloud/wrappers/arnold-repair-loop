@@ -434,7 +434,16 @@ fi
 # shellcheck disable=SC1090
 . "$SUPERVISOR_RUNTIME_LIB"
 arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
-SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
+# Fixer-unification: the per-epic runtime manifest is the preferred push
+# target.  When it declares an epic branch, repair source fixes belong THERE
+# (arnold-promote is the only path that advances the base); the legacy
+# env/default chain applies only to manifest-less runtimes.
+MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"
+if [[ -n "$MANIFEST_EPIC_BRANCH" ]]; then
+  SYNC_BRANCH="$MANIFEST_EPIC_BRANCH"
+else
+  SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
+fi
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
@@ -713,16 +722,41 @@ prepare_repair_delivery_authority() {
   cat > "$shim_dir/git" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+want_push=0
 for arg in "$@"; do
-  if [[ "$arg" == "push" && "${ARNOLD_REPAIR_PUSH_AUTHORIZED:-0}" != "1" ]]; then
-    echo "git push refused: repair push authority is disabled" >&2
-    exit 77
+  if [[ "$arg" == "push" ]]; then
+    want_push=1
+    if [[ "${ARNOLD_REPAIR_PUSH_AUTHORIZED:-0}" != "1" ]]; then
+      echo "git push refused: repair push authority is disabled" >&2
+      exit 77
+    fi
   fi
   if [[ "$arg" == "commit" && "${ARNOLD_REPAIR_COMMIT_AUTHORIZED:-0}" != "1" ]]; then
     echo "git commit refused: repair commit authority is disabled" >&2
     exit 77
   fi
 done
+if [[ "$want_push" == "1" && -n "${ARNOLD_REPAIR_MANIFEST_BRANCH:-}" ]]; then
+  # Fixer-unification: with a per-epic runtime manifest, the repair agent may
+  # push ONLY the manifest-declared epic branch.  arnold-promote is the only
+  # path that advances the base; pushing the shared editable branch from a
+  # manifest-bound runtime is a fail-closed rejection.
+  target=""
+  for tok in "$@"; do
+    case "$tok" in
+      push|origin|--*) continue ;;
+      *:*) target="${tok##*:}" ;;
+      *) [[ -z "$target" ]] && target="$tok" ;;
+    esac
+  done
+  if [[ -z "$target" ]]; then
+    target="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  fi
+  if [[ -n "$target" && "$target" != "$ARNOLD_REPAIR_MANIFEST_BRANCH" ]]; then
+    echo "git push refused: manifest-declared epic branch is '$ARNOLD_REPAIR_MANIFEST_BRANCH', not '$target'" >&2
+    exit 77
+  fi
+fi
 exec "$ARNOLD_REPAIR_REAL_GIT" "$@"
 SH
   chmod 0755 "$shim_dir/git"
@@ -742,6 +776,7 @@ SH
   export ARNOLD_REPAIR_REAL_GH="$real_gh"
   export ARNOLD_REPAIR_COMMIT_AUTHORIZED="$([[ "$COMMIT_REPAIRS" == "1" ]] && printf 1 || printf 0)"
   export ARNOLD_REPAIR_PUSH_AUTHORIZED="$([[ "$COMMIT_REPAIRS" == "1" && "$PUSH_REPAIRS" == "1" ]] && printf 1 || printf 0)"
+  export ARNOLD_REPAIR_MANIFEST_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
   export ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH="$shim_dir"
 }
 

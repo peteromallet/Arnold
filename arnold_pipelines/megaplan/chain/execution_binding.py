@@ -109,7 +109,13 @@ def binding_policy(spec_path: Path) -> dict[str, Any]:
         "initiative_path": str(driver.get("initiative_path") or "").strip(),
         "execution_binding_assets": [item.strip() for item in binding_assets],
         "require_editable_runtime_match": bool(
-            driver.get("require_editable_runtime_match", False)
+            driver.get(
+                "require_editable_runtime_match",
+                # Cloud chain launches run inside the trusted container and
+                # must prove the executing runtime matches the launch pin;
+                # local dev keeps the explicit opt-in default.
+                os.environ.get("MEGAPLAN_TRUSTED_CONTAINER") == "1",
+            )
         ),
     }
 

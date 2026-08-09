@@ -233,3 +233,45 @@ arnold_supervisor_select_exact_fallback() {
   fi
   printf '%s\n' "$fallback_path"
 }
+
+# ── Per-epic runtime manifest resolution (fixer-unification design) ─────────
+# One runtime-manifest.json per runtime is the post-bootstrap runtime
+# resolver.  These helpers read a single dotted epic field and print it (or
+# nothing when absent), so wrappers prefer the manifest and keep their legacy
+# env/default fallback chain only for manifest-less runtimes.
+
+arnold_runtime_manifest_path() {
+  printf '%s' "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}"
+}
+
+arnold_runtime_manifest_epic_field() {
+  local field="${1:-}"
+  local manifest_path
+  field="${field#epic.}"
+  [[ -n "$field" ]] || return 0
+  manifest_path="$(arnold_runtime_manifest_path)"
+  [[ -f "$manifest_path" ]] || return 0
+  python3 - "$manifest_path" "$field" <<'PY'
+import json
+import pathlib
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+value = None
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
+
+    manifest = bootstrap_manifest(pathlib.Path(path))
+    epic = getattr(manifest, "epic", None)
+    value = epic.get(field) if isinstance(epic, dict) else None
+except Exception:
+    try:
+        payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        epic = payload.get("epic") if isinstance(payload, dict) else None
+        value = epic.get(field) if isinstance(epic, dict) else None
+    except Exception:
+        sys.exit(0)
+if isinstance(value, str) and value:
+    print(value)
+PY
+}
