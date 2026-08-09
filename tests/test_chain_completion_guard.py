@@ -251,6 +251,31 @@ def _write_chain_spec(root: Path) -> Path:
     return spec_path
 
 
+def _write_three_milestone_chain_spec(root: Path) -> Path:
+    idea = root / "idea.md"
+    idea.write_text("three milestones\n", encoding="utf-8")
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
+    spec_path = root / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {idea}\n"
+        "    branch: test/m1\n"
+        "  - label: m2\n"
+        f"    idea: {idea}\n"
+        "    branch: test/m2\n"
+        "  - label: m3\n"
+        f"    idea: {idea}\n"
+        "    branch: test/m3\n",
+        encoding="utf-8",
+    )
+    return spec_path
+
+
 def _write_base_branch_chain_spec(root: Path) -> Path:
     idea = root / "idea.md"
     idea.write_text("ship milestone on base\n", encoding="utf-8")
