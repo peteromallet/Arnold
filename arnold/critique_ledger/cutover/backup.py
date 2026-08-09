@@ -43,7 +43,7 @@ from arnold.critique_ledger.cutover.config import (
     validate_config,
 )
 from arnold.critique_ledger.cutover.quiesce import drain, quiesce
-from arnold.workflow.attempt_ledger_store import AttemptLedgerStore
+from arnold.adapters.ledger_store_adapter import AttemptLedgerStore
 
 #: Manifest schema identifier.
 BACKUP_MANIFEST_SCHEMA: str = "cl5.cutover-backup-manifest.v1"

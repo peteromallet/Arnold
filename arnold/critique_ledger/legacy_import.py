@@ -42,7 +42,7 @@ from arnold.critique_ledger.schemas import (
     ParseStatus,
     canonical_hash,
 )
-from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+from arnold.adapters.ledger_store_adapter import SqliteAttemptLedgerStore
 from arnold.workflow.execution_attempt_ledger import AttemptEventType
 from arnold_pipelines.megaplan.custody.contracts import (
     normalize_custody_target_key,

@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional, TypeVar
 from arnold.workflow.attempt_ledger_store import (
     AppendResult,
     AttemptLedgerError,
+    AttemptLedgerStore,
     AttemptReservation,
     GateStatus,
     MonotonicSequenceError,
@@ -86,6 +87,20 @@ def _is_transient_lock_error(exc: Exception) -> bool:
 
 
 # ── Typed errors ───────────────────────────────────────────────────────────
+
+
+# Re-export the store contract types at the adapter boundary so workflow
+# consumers (e.g. arnold.critique_ledger) import the store classes through
+# this module instead of reaching into the store implementation directly.
+__all__ = [
+    "AttemptLedgerStore",
+    "SqliteAttemptLedgerStore",
+    "LedgerStoreAdapter",
+    "AdapterError",
+    "AdapterClosedError",
+    "CrashReopenIntegrityError",
+    "MaxRetriesExceededError",
+]
 
 
 class AdapterError(Exception):

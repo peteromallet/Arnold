@@ -709,7 +709,7 @@ class TestCanonicalSourceIsSemanticAuthority:
                     <= {{step.id for step in pipeline.steps}}
                 ),
                 "rendered_policy": bool(manifest.policy and shell.native_program.description),
-                "override_matrix": len(override.OVERRIDE_ACTION_MATRIX) == 11,
+                "override_matrix": len(override.OVERRIDE_ACTION_MATRIX) == 13,
                 "execute_s4_parity": (
                     any(route["source"] == "execute" and route["target"] == "review" for route in shell.native_program.routing_topology["routes"])
                     and "execute_batches/batch_2/tasks_" in __import__("arnold_pipelines.megaplan._core", fromlist=["execute_batch_artifact_path"]).execute_batch_artifact_path(pathlib.Path("/plan"), 2, ["T3", "T2"]).as_posix()
