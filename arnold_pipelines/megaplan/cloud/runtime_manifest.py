@@ -331,6 +331,78 @@ def bootstrap_manifest(bootstrap_path: Path) -> RuntimeManifest:
     return load_manifest(target)
 
 
+# ── active-generation pointer ───────────────────────────────────────────────
+
+
+def active_manifest_path() -> Path:
+    """Stable path of the active-generation pointer.
+
+    The canonical bootstrap path is ``/workspace/.megaplan/runtime-manifest.json``;
+    env ``ARNOLD_RUNTIME_MANIFEST`` overrides it. The file AT this path IS the
+    active generation — it holds a full manifest JSON (not a sidecar pointer
+    file), so ``bootstrap_manifest(active_manifest_path())`` resolves it
+    directly. One active pointer, one authoritative writer (the wrapper that
+    performs the atomic switch: runtime-create at creation, promote on
+    advancement, close on closing).
+    """
+    env_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+    if env_path:
+        return Path(env_path).expanduser()
+    return Path("/workspace/.megaplan") / MANIFEST_FILENAME
+
+
+def _retain_previous_generation(pointer: Path, manifest: RuntimeManifest) -> None:
+    """Retain the pointer's current manifest before a generation switch.
+
+    Called with the pointer's exclusive flock already held. When *pointer*
+    holds a manifest of a strictly EARLIER generation than *manifest*, that
+    manifest is written to ``<pointer>.previous-<generation>.json`` (the
+    rollback record) BEFORE the pointer moves — a crash between the two writes
+    leaves the pointer on the old generation with a harmless duplicate
+    retention copy. An existing-but-invalid pointer is REFUSED (fail-closed)
+    rather than silently overwritten.
+    """
+    if not pointer.exists():
+        return
+    try:
+        previous = load_manifest(pointer)
+    except ManifestError as exc:
+        raise ManifestError(
+            f"active pointer {pointer} holds an invalid manifest; refusing to "
+            f"overwrite it (fail-closed): {exc}"
+        ) from exc
+    if previous.generation < manifest.generation:
+        retention = Path(str(pointer) + f".previous-{previous.generation}.json")
+        _atomic_write(retention, previous.to_dict())
+
+
+def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) -> Path:
+    """Atomically switch the active-generation pointer to *manifest*.
+
+    The pointer is the manifest file AT the stable bootstrap path (see
+    :func:`active_manifest_path`) — the file itself IS the active generation.
+    Under an exclusive flock on a sibling ``<name>.lock``: the previous
+    generation (when the pointer already holds an earlier one) is retained at
+    ``<path>.previous-<N>.json`` for rollback, then *manifest* is written to
+    *path* via atomic tmp+rename. Returns the pointer path.
+    """
+    pointer = Path(path) if path is not None else active_manifest_path()
+    pointer = pointer.expanduser().resolve(strict=False)
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = pointer.with_name(pointer.name + ".lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _retain_previous_generation(pointer, manifest)
+        _atomic_write(pointer, manifest.to_dict())
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+    return pointer
+
+
 # ── attestation ─────────────────────────────────────────────────────────────
 
 
@@ -452,6 +524,49 @@ def append_promotion(
     return _reconstruct(manifest, promotions=list(manifest.promotions) + [record])
 
 
+
+
+def _parse_promotion_record(arg: str) -> dict[str, Any]:
+    """Parse the ``append_promotion`` CLI *record* argument.
+
+    Accepted forms: inline JSON (``{"from_sha": …}``), ``@FILE`` (read the
+    record from FILE), or a bare path to an existing JSON file. Returns the
+    parsed record, which MUST be a JSON object.
+    """
+    if arg.startswith("@"):
+        source = Path(arg[1:])
+        try:
+            raw = source.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ManifestError(
+                f"cannot read promotion record file {source}: {exc}"
+            ) from exc
+    else:
+        candidate = Path(arg)
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+        except OSError:
+            raw = arg
+    try:
+        record = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ManifestError(f"promotion record is not valid JSON: {exc}") from exc
+    if not isinstance(record, dict):
+        raise ManifestError("promotion record must be a JSON object")
+    return record
+
+
+def _write_manifest_or_pointer(manifest: RuntimeManifest, path: Path) -> None:
+    """Write *manifest* to *path*, through the active pointer when *path* IS
+    the active-generation pointer (state transitions written to the pointer
+    keep the file AT the stable path the active generation); otherwise a
+    plain per-runtime manifest write."""
+    if Path(path).expanduser().resolve(strict=False) == active_manifest_path().expanduser().resolve(strict=False):
+        write_active_pointer(manifest, path)
+    else:
+        write_manifest(manifest, path)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -472,6 +587,32 @@ def main(argv: list[str] | None = None) -> int:
         "attest", help="attest the runtime named by the manifest at <path>"
     )
     attest_p.add_argument("path", type=Path)
+    set_p = sub.add_parser(
+        "set_state",
+        help="set <state> on the manifest at <path> and write it atomically",
+    )
+    set_p.add_argument("path", type=Path)
+    set_p.add_argument("state", choices=sorted(_VALID_STATES))
+    prom_p = sub.add_parser(
+        "append_promotion",
+        help="append a promotion record to the manifest at <path> and write it atomically",
+    )
+    prom_p.add_argument("path", type=Path)
+    prom_p.add_argument(
+        "record",
+        help="promotion record as inline JSON, or @FILE to read it from FILE",
+    )
+    adv_p = sub.add_parser(
+        "advance_generation",
+        help="advance the generation at <path> AND atomically switch the active-generation pointer",
+    )
+    adv_p.add_argument("path", type=Path)
+    adv_p.add_argument(
+        "new_commit", help="expected_head/verified_head of the new generation"
+    )
+    adv_p.add_argument(
+        "--reason", required=True, help="reason recorded in the rollback record"
+    )
     args = parser.parse_args(argv)
     try:
         if args.action == "write":
@@ -489,6 +630,32 @@ def main(argv: list[str] | None = None) -> int:
         elif args.action == "attest":
             manifest = load_manifest(args.path)
             print(json.dumps(attest_runtime(manifest), sort_keys=True, indent=2))
+        elif args.action == "set_state":
+            manifest = load_manifest(args.path)
+            updated = set_state(manifest, args.state)
+            _write_manifest_or_pointer(updated, args.path)
+            print(json.dumps(updated.to_dict(), sort_keys=True))
+        elif args.action == "append_promotion":
+            manifest = load_manifest(args.path)
+            record = _parse_promotion_record(args.record)
+            updated = append_promotion(manifest, record)
+            write_manifest(updated, args.path)
+            print(json.dumps(updated.to_dict(), sort_keys=True))
+        elif args.action == "advance_generation":
+            manifest = load_manifest(args.path)
+            advanced = advance_generation(manifest, args.new_commit, reason=args.reason)
+            pointer = active_manifest_path()
+            if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
+                # The caller passed the pointer itself — the switch IS the write.
+                write_active_pointer(advanced, pointer)
+            else:
+                # Pointer switch FIRST (atomic, retains the previous generation
+                # for rollback), then the per-slug manifest: a retry after a
+                # mid-write failure re-reads the pre-advance slug and lands on
+                # the same generation + commit (idempotent).
+                write_active_pointer(advanced, pointer)
+                write_manifest(advanced, args.path)
+            print(json.dumps(advanced.to_dict(), sort_keys=True))
     except ManifestError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

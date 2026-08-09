@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 from pathlib import Path
 from typing import Any
 
@@ -176,3 +177,75 @@ def test_push_base_to_origin_reports_non_git_repo(
 
     assert result["status"] == "error"
     assert result["reason"] == "not_a_git_repo"
+
+
+def test_push_base_to_origin_redacts_token_bearing_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential-bearing origin URL is NEVER returned raw (finding #5)."""
+    token_url = "https://git-user:ghp_1234567890abcdef@github.com/acme/arnold.git"
+    runner = _runner_for(tmp_path / "repo")
+    monkeypatch.setattr(github_sync.subprocess, "run", runner)
+
+    result = push_base_to_origin(
+        repo_root=tmp_path / "repo",
+        origin_url=token_url,
+        branch=_BRANCH,
+        commit_message="sync base to origin",
+    )
+
+    assert "ghp_1234567890abcdef" not in json.dumps(result)
+    assert "git-user:" not in result["origin_url"]
+    assert "ghp_1234567890abcdef" not in result["command_text"]
+    assert "***@" in result["command_text"]
+    # The success path returns no raw command list; command_text is redacted.
+
+
+def test_push_base_to_origin_redacts_ssh_userinfo_scheme_agnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ssh://user:secret@host URLs are redacted too (finding #5 delta)."""
+    ssh_url = "ssh://deploy:supersecret@github.com:2222/acme/arnold.git"
+    runner = _runner_for(tmp_path / "repo")
+    monkeypatch.setattr(github_sync.subprocess, "run", runner)
+
+    result = push_base_to_origin(
+        repo_root=tmp_path / "repo",
+        origin_url=ssh_url,
+        branch=_BRANCH,
+        commit_message="sync base to origin",
+    )
+
+    assert "supersecret" not in json.dumps(result)
+    assert "deploy:" not in result["origin_url"]
+    assert "***@" in result["origin_url"]
+    assert "***@" in result["command_text"]
+
+
+def test_push_base_to_origin_redacts_stderr_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    runner = _runner_for(
+        repo,
+        push_returncode=1,
+        push_stderr=(
+            "fatal: could not read Username for 'https://github.com': "
+            "terminal prompts disabled\nremote: HTTP Basic: access denied "
+            "KEY=sekrit123 Token=abc456Bearer sk-abcdefghijklmnopqrst\n"
+        ),
+    )
+    monkeypatch.setattr(github_sync.subprocess, "run", runner)
+
+    result = push_base_to_origin(
+        repo_root=repo,
+        origin_url=_ORIGIN_URL,
+        branch=_BRANCH,
+        commit_message="sync base to origin",
+    )
+
+    assert result["status"] == "rejected"
+    assert "sekrit123" not in result["stderr_tail"]
+    assert "abc456" not in result["stderr_tail"]
+    assert "sk-abcdefghijklmnopqrst" not in result["stderr_tail"]
+    assert "<redacted>" in result["stderr_tail"]

@@ -51,9 +51,10 @@ _SRC_VAR_NAMES = (
     "MEGAPLAN_META_ARNOLD_SRC",
 )
 
-# Key-like fragments: any variable/flag name containing one of these is secret,
-# and its value is masked as <redacted> everywhere.
-_KEYLIKE_FRAGMENT = r"(?:KEY|TOKEN|SECRET|PASSWORD|API)"
+# Key-like fragments: any variable/flag name containing one of these is secret
+# (or a model-routing override), and its value is masked as <redacted>
+# everywhere — even with include_values=True (review finding #5).
+_KEYLIKE_FRAGMENT = r"(?:KEY|TOKEN|SECRET|PASSWORD|API|MODEL)"
 
 _MOUNT_MATCH_RE = re.compile(r"arnold|runtime|workspace", re.IGNORECASE)
 
@@ -236,6 +237,14 @@ def _environ_entries(parts: tuple[bytes, ...], include_values: bool) -> tuple[st
         text = part.decode("utf-8", "replace")
         if not include_values:
             text = text.split("=", 1)[0]
+        else:
+            # include_values reveals values ONLY for non-key-like names;
+            # values assigned to key-like names (KEY/TOKEN/SECRET/PASSWORD/
+            # API/MODEL) are ALWAYS masked so raw credentials never land on
+            # the public RuntimeProcess record.
+            name, sep, value = text.partition("=")
+            if sep and re.search(_KEYLIKE_FRAGMENT, name, re.IGNORECASE):
+                text = f"{name}={REDACTED}"
         if text:
             entries.append(text)
     return tuple(sorted(entries))
@@ -538,7 +547,7 @@ def render_census_markdown(
         "# Runtime Census",
         "",
         "> Read-only snapshot. Environ values are never printed; values assigned "
-        "to key-like names (KEY/TOKEN/SECRET/PASSWORD/API) are masked.",
+        "to key-like names (KEY/TOKEN/SECRET/PASSWORD/API/MODEL) are masked.",
         "",
         f"## Processes ({len(processes)})",
         "",

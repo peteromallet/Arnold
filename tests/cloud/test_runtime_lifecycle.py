@@ -64,6 +64,7 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
     base_dir = tmp_path / "base"
     markers = tmp_path / "markers"
     manifest_dir = markers / "runtime-manifests"
+    schedule_store = tmp_path / "schedule-store"
     env = os.environ.copy()
     env.update(
         {
@@ -71,8 +72,10 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
             "ARNOLD_BASE_REPO": str(base_repo),
             "ARNOLD_WORKSPACE_MARKERS": str(markers),
             "ARNOLD_RUNTIME_MANIFEST_DIR": str(manifest_dir),
+            "ARNOLD_RUNTIME_MANIFEST": str(manifest_dir / "runtime-manifest.json"),
             "ARNOLD_ORIGIN_URL": str(origin),
             "ARNOLD_PROMOTION_JOURNAL": str(manifest_dir / "promotion-journal.jsonl"),
+            "ARNOLD_SCHEDULE_STORE": str(schedule_store),
             "PYTHONPATH": str(REPO_ROOT),
         }
     )
@@ -159,6 +162,31 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     assert m["base"]["ref"] == "base/editable-install"
     assert m["timestamps"]["created"]
     assert isinstance(m["promotions"], list)
+    # filled fields: venv, repair bin, deps lockfile (no empty runtime fields)
+    assert m["epic"]["venv_path"] == f"{worktree}/.venv"
+    assert m["base"]["venv_path"] == f"{worktree}/.venv"
+    assert (
+        m["epic"]["repair_bin"]
+        == f"{worktree}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    )
+    assert m["epic"]["deps_lockfile"] == f"{worktree}/pyproject.toml"
+    # policy SHAs computed from the canonical policy modules (best-effort)
+    assert m["policy"]["policy_sha"]
+    assert m["policy"]["model_policy_sha"]
+    # content attestation keys present (schema-required; probe may be empty)
+    assert set(m["indirection"]["attestation"]) >= {
+        "module_file",
+        "module_digest",
+        "mount_id",
+    }
+    # ACTIVE POINTER written + verified: the file AT the stable path IS the
+    # active generation and bootstraps to this epic (design rule 3)
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert pointer.exists()
+    p = json.loads(pointer.read_text())
+    assert p["epic_id"] == "epic-a"
+    assert p["state"] == "active"
+    assert p["generation"] == 1
     # guard: same slug refuses with exit 2
     again = sandbox["run"](CREATE, "epic-a", "base/editable-install")
     assert again.returncode == 2
@@ -201,13 +229,69 @@ def test_close_phase1_fails_on_open_lock_file(sandbox: dict[str, object]) -> Non
 
 
 def test_close_closes_clean_pushed_epic(sandbox: dict[str, object]) -> None:
-    sandbox["create"]("epic-clean")
+    worktree = sandbox["create"]("epic-clean")
     proc = sandbox["run"](CLOSE, "epic-clean", str(manifest_path(sandbox, "epic-clean")))
     assert proc.returncode == 0, proc.stderr
     m = read_manifest(sandbox, "epic-clean")
     assert m["state"] == "closed"
     assert m["timestamps"]["closed"]
-    assert "box-snapshot" in proc.stdout  # backstop-tag instruction printed, not run
+    # backstop tag EXECUTED: present locally AND on the origin (fail-loud push)
+    assert "box-snapshot" in proc.stdout
+    assert "pushed" in proc.stdout
+    local_tags = _git(worktree, "tag", "--list", "box-snapshot/epic-clean-*").stdout.strip()
+    assert local_tags
+    remote_tags = _git(
+        None, "ls-remote", str(sandbox["origin"]), "refs/tags/box-snapshot/epic-clean-*"
+    ).stdout.strip()
+    assert remote_tags
+    # the active pointer (held by this epic at creation) is closed too —
+    # bootstrappers observe state=closed at the stable path
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert json.loads(pointer.read_text())["state"] == "closed"
+
+
+def test_close_phase1_fails_on_live_pidfile(sandbox: dict[str, object]) -> None:
+    sandbox["create"]("epic-livepid")
+    pidfile = Path(sandbox["markers"]) / "epic-livepid.repair-loop.pid"
+    pidfile.write_text(str(os.getpid()))  # the pytest process is live
+    proc = sandbox["run"](
+        CLOSE, "epic-livepid", str(manifest_path(sandbox, "epic-livepid"))
+    )
+    assert proc.returncode != 0
+    assert "live" in proc.stderr.lower()
+    assert read_manifest(sandbox, "epic-livepid")["state"] == "active"
+
+
+def test_close_ignores_dead_pidfile(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-deadpid")
+    pidfile = Path(sandbox["markers"]) / "epic-deadpid.repair-loop.pid"
+    pidfile.write_text("2147483647\n")  # no such process (best-effort liveness)
+    proc = sandbox["run"](
+        CLOSE, "epic-deadpid", str(manifest_path(sandbox, "epic-deadpid"))
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert read_manifest(sandbox, "epic-deadpid")["state"] == "closed"
+
+
+def test_close_fails_loud_when_backstop_tag_push_fails(sandbox: dict[str, object]) -> None:
+    from datetime import datetime
+
+    worktree = sandbox["create"]("epic-tagfail")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "epic fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    # plant a CONFLICTING tag on origin: same name as the backstop, other sha
+    stamp = datetime.now().strftime("%Y%m%d")
+    tag = f"box-snapshot/epic-tagfail-{stamp}"
+    git(Path(sandbox["base_repo"]), "tag", tag, str(sandbox["seed_sha"]))
+    git(Path(sandbox["base_repo"]), "push", "origin", tag)
+    proc = sandbox["run"](
+        CLOSE, "epic-tagfail", str(manifest_path(sandbox, "epic-tagfail"))
+    )
+    assert proc.returncode != 0
+    assert "backstop" in proc.stderr.lower()
+    # close aborted: the epic is NOT closed without an origin-resolvable backstop
+    assert read_manifest(sandbox, "epic-tagfail")["state"] == "active"
 
 
 # ── arnold-gc-sweep ──────────────────────────────────────────────────────────
@@ -269,6 +353,35 @@ def test_gc_sweep_lists_manifestless_tree_as_needs_reconcile(
     assert proc.returncode == 0, proc.stderr
     assert "NEEDS-RECONCILE" in proc.stdout
     assert stray.is_dir()  # never deleted
+
+
+def test_gc_sweep_skips_schedule_store_referenced_closed_tree(
+    sandbox: dict[str, object],
+) -> None:
+    worktree = sandbox["create"]("epic-schedref")
+    close = sandbox["run"](
+        CLOSE, "epic-schedref", str(manifest_path(sandbox, "epic-schedref"))
+    )
+    assert close.returncode == 0, close.stderr
+    (Path(sandbox["manifest_dir"]) / "restore-proven.txt").write_text("proof\n")
+    # the schedule store references this tree (probe-4 trees must never be swept)
+    store = Path(str(sandbox["env"]["ARNOLD_SCHEDULE_STORE"]))
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "scheduled_jobs.json").write_text(
+        json.dumps({"epic": "epic-schedref", "ref": "some-sha"}), encoding="utf-8"
+    )
+    proc = sandbox["run"](
+        GC_SWEEP, "--restore-proven", str(sandbox["manifest_dir"])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "schedule-store-referenced" in proc.stdout
+    assert worktree.is_dir()
+    assert manifest_path(sandbox, "epic-schedref").exists()
+    # dry-run reports the same hard gate
+    dry = sandbox["run"](GC_SWEEP, "--dry-run", str(sandbox["manifest_dir"]))
+    assert dry.returncode == 0, dry.stderr
+    assert "WOULD-SKIP" in dry.stdout
+    assert "schedule-store-referenced" in dry.stdout
 
 
 # ── arnold-promote ───────────────────────────────────────────────────────────
@@ -367,3 +480,63 @@ def test_promote_cas_rejection_exits_3(sandbox: dict[str, object]) -> None:
     assert "rejected" in proc_b.stderr.lower() or "cas" in proc_b.stderr.lower()
     # base unchanged by the rejected push
     assert sandbox["origin_heads"]("base/editable-install") == competing
+
+
+def test_promote_without_canary_flag_keeps_pointer(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-canary")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    assert json.loads(pointer.read_text())["generation"] == 1
+
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-canary",
+        str(manifest_path(sandbox, "epic-canary")),
+    )
+    assert proc.returncode == 0, proc.stderr
+    # the canary gate is structural: steps printed, push journaled, pointer NOT
+    # advanced — a successful push is NOT a safe cutover (design rule 5)
+    assert "canary" in proc.stdout.lower()
+    assert "NOT a safe cutover" in proc.stdout
+    assert "NOT advanced" in proc.stdout
+    assert sandbox["origin_heads"]("base/editable-install") == head  # CAS push landed
+    pointer_after = json.loads(pointer.read_text())
+    assert pointer_after["generation"] == 1  # pointer unchanged
+    assert pointer_after["epic"]["expected_head"] != head
+    assert not list(pointer.parent.glob("runtime-manifest.json.previous-*"))
+
+
+def test_promote_with_canary_flag_advances_pointer(sandbox: dict[str, object]) -> None:
+    worktree = sandbox["create"]("epic-canary2")
+    branch = git(worktree, "branch", "--show-current")
+    head = epic_commit(worktree, "fix.txt", "fix\n", "durable fix")
+    git(worktree, "push", "origin", f"HEAD:refs/heads/{branch}")
+    pointer_path = str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"])
+
+    proc = sandbox["run"](
+        PROMOTE,
+        "--force-gate",
+        "epic-canary2",
+        str(manifest_path(sandbox, "epic-canary2")),
+        extra_env={"ARNOLD_PROMOTE_SKIP_CANARY": "1"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "advanced" in proc.stdout.lower()
+    pointer = json.loads(Path(pointer_path).read_text())
+    assert pointer["generation"] == 2
+    assert pointer["epic"]["expected_head"] == head
+    # previous generation retained for rollback
+    retention = Path(pointer_path + ".previous-1.json")
+    assert retention.exists()
+    previous = json.loads(retention.read_text())
+    assert previous["generation"] == 1
+    assert previous["epic"]["expected_head"] != head
+    # the per-slug manifest advanced with the rollback record
+    m = read_manifest(sandbox, "epic-canary2")
+    assert m["generation"] == 2
+    assert m["promotions"][-1]["previous_generation"] == 1
+    assert m["promotions"][-1]["previous_commit"] != head
+    assert m["promotions"][-1]["reason"]

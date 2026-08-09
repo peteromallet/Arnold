@@ -18,6 +18,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,6 +33,7 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     job_is_quarantined,
     reconcile_jobs,
 )
+from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json
 
 CHAIN_UUID = "chain-00000000-0000-0000-0000-000000000001"
 OTHER_CHAIN_UUID = "chain-00000000-0000-0000-0000-000000000002"
@@ -389,3 +392,148 @@ def test_reconcile_marks_ttl_expired_dirty_attempts_quarantined(
     assert records[0].state == "committing"
     assert job_is_quarantined(records[0])
     assert records[0].quarantine_reason == "ttl_expired"
+
+
+# ── Concurrency fences (flock-serialized read → decide → write) ────────────
+
+
+def test_concurrent_acquire_fresh_key_single_winner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Without the flock fence, two simultaneous acquirers of a fresh dedupe
+    # key both read previous=None and both write epoch 1 with different
+    # holder PIDs — the same-epoch split-brain the machine must prevent.
+    # With the fence, exactly one acquirer wins epoch 1; every other
+    # contender observes the winner's live record and is fenced to None.
+    # All contender PIDs count as live so a dead-pid takeover chain cannot
+    # muddy the single-winner assertion.
+    monkeypatch.setattr(repair_lock, "_default_is_pid_live", lambda _pid: True)
+    lock_dir = _lock_dir(tmp_path)
+    contender_count = 8
+    barrier = threading.Barrier(contender_count)
+    results: list[repair_lock.JobLockRecord | None] = [None] * contender_count
+    errors: list[BaseException] = []
+
+    def contender(index: int) -> None:
+        barrier.wait()
+        try:
+            results[index] = acquire_job_lock(
+                CHAIN_UUID,
+                FINGERPRINT,
+                lock_dir=lock_dir,
+                holder_pid=200_000 + index,
+                boot_id=BOOT_A,
+                ttl_seconds=3600,
+                now=T0,
+            )
+        except BaseException as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=contender, args=(index,))
+        for index in range(contender_count)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1
+    winner = winners[0]
+    assert winner.epoch == 1
+    assert winner.attempt == 1
+    assert winner.state == "running"
+
+    # The on-disk record is the single winner's, exactly once.
+    payload = json.loads(_record_file(tmp_path).read_text(encoding="utf-8"))
+    assert payload["epoch"] == 1
+    assert payload["holder_pid"] == winner.holder_pid
+    assert payload["holder_boot_id"] == BOOT_A
+
+
+def test_advance_rejected_when_on_disk_holder_identity_differs(
+    tmp_path: Path,
+) -> None:
+    record = _acquire(tmp_path, now=T0)
+    assert record is not None and record.epoch == 1
+
+    # Another holder re-wrote the same epoch with a different identity (e.g.
+    # an adopt/replay path).  The caller's record is no longer the holder, so
+    # the transition must be rejected despite the matching epoch.
+    foreign = replace(record, holder_pid=record.holder_pid + 1)
+    atomic_write_json(
+        _record_file(tmp_path),
+        repair_lock._record_to_payload(foreign),
+        include_resident_provenance=False,
+    )
+
+    assert (
+        advance_job_state(record, "committing", lock_dir=_lock_dir(tmp_path), now=T0)
+        is None
+    )
+    # Acknowledge is holder-fenced the same way: current record returned
+    # unchanged, no "done".
+    observed = acknowledge_job(record, lock_dir=_lock_dir(tmp_path), now=T0)
+    assert observed.epoch == 1
+    assert observed.state == "running"
+    assert observed.acknowledged_at is None
+
+
+def test_advance_rejected_when_past_ttl(tmp_path: Path) -> None:
+    record = _acquire(tmp_path, now=T0, ttl_seconds=3600)
+    assert record is not None and record.state == "running"
+    lock_dir = _lock_dir(tmp_path)
+
+    # A paused holder past TTL cannot advance — expiry is the reconciler's
+    # job (quarantine + epoch bump), never a resume into the same epoch.
+    assert (
+        advance_job_state(record, "committing", lock_dir=lock_dir, now=T0 + timedelta(hours=2))
+        is None
+    )
+
+    # Inside the TTL window the same holder can still advance...
+    committed = advance_job_state(
+        record, "committing", lock_dir=lock_dir, now=T0 + timedelta(minutes=30)
+    )
+    assert committed is not None and committed.state == "committing"
+    redriving = advance_job_state(
+        committed, "redriving", lock_dir=lock_dir, now=T0 + timedelta(minutes=30)
+    )
+    assert redriving is not None and redriving.state == "redriving"
+
+    # ...but past TTL even a redriving holder cannot acknowledge.
+    observed = acknowledge_job(redriving, lock_dir=lock_dir, now=T0 + timedelta(hours=2))
+    assert observed.state == "redriving"
+    assert observed.acknowledged_at is None
+
+
+def test_concurrent_advance_single_winner(tmp_path: Path) -> None:
+    record = _acquire(tmp_path, now=T0)
+    assert record is not None and record.state == "running"
+    lock_dir = _lock_dir(tmp_path)
+    barrier = threading.Barrier(2)
+    results: list[repair_lock.JobLockRecord | None] = [None, None]
+
+    def advancer(index: int) -> None:
+        barrier.wait()
+        results[index] = advance_job_state(
+            record, "committing", lock_dir=lock_dir, now=T0
+        )
+
+    threads = [
+        threading.Thread(target=advancer, args=(index,)) for index in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # Exactly one advancer wins running → committing; the loser re-reads the
+    # winner's state under the flock and is rejected with None.
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1
+    assert winners[0].state == "committing"
+    payload = json.loads(_record_file(tmp_path).read_text(encoding="utf-8"))
+    assert payload["state"] == "committing"

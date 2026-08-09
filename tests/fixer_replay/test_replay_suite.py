@@ -18,8 +18,12 @@ from tests.fixer_replay.replay_fixtures import (
     REPLAY_FIXTURES,
 )
 from tests.fixer_replay.replay_runner import (
+    DEFAULT_REPLAY_EVIDENCE_PATH,
+    FIXER_REPLAY_APPROVED_ENV,
+    FIXER_REPLAY_EVIDENCE_PATH_ENV,
     LIVE_REPLAY_ENV_FLAG,
     aggregate,
+    approve_replay,
     compare_topologies,
     passes_thresholds,
     require_live_replay,
@@ -359,3 +363,81 @@ def test_require_live_replay_skips_when_flag_unset(monkeypatch: pytest.MonkeyPat
 def test_require_live_replay_returns_when_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(LIVE_REPLAY_ENV_FLAG, "1")
     require_live_replay()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Approval evidence gate (contract with the fixer model-policy gate)
+# ---------------------------------------------------------------------------
+
+
+def test_approve_replay_sets_env_and_writes_evidence_on_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object,
+) -> None:
+    """A passing aggregate sets FIXER_REPLAY_APPROVED=1 and writes the
+    evidence file to $FIXER_REPLAY_EVIDENCE_PATH."""
+    import json
+
+    from pathlib import Path
+
+    evidence_file = Path(str(tmp_path)) / "replay-approval.json"
+    monkeypatch.setenv(FIXER_REPLAY_EVIDENCE_PATH_ENV, str(evidence_file))
+    monkeypatch.delenv(FIXER_REPLAY_APPROVED_ENV, raising=False)
+    monkeypatch.setenv(FIXER_REPLAY_APPROVED_ENV, "")
+
+    evidence = approve_replay(_all_clear_aggregate())
+
+    assert os.environ.get(FIXER_REPLAY_APPROVED_ENV) == "1"
+    assert evidence_file.is_file()
+    payload = json.loads(evidence_file.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["approved"] is True
+    assert payload["thresholds"] == NON_INFERIORITY_THRESHOLDS
+    assert payload["aggregate"]["durable_milestone_advancement"] == 1.0
+    assert payload["per_metric"]["unsafe_mutation_rate"]["ok"] is True
+    assert "generated_at_utc" in payload
+    assert evidence["approved"] is True
+
+
+def test_approve_replay_uses_default_path_when_no_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object,
+) -> None:
+    """Without an explicit path or env override the default evidence path is
+    used (patched here so the test never touches /workspace)."""
+    import json
+
+    from pathlib import Path
+
+    fallback = Path(str(tmp_path)) / "fallback" / "replay-approval.json"
+    monkeypatch.delenv(FIXER_REPLAY_EVIDENCE_PATH_ENV, raising=False)
+    monkeypatch.delenv(FIXER_REPLAY_APPROVED_ENV, raising=False)
+    monkeypatch.setattr(
+        "tests.fixer_replay.replay_runner.DEFAULT_REPLAY_EVIDENCE_PATH",
+        str(fallback),
+    )
+
+    approve_replay(_all_clear_aggregate())
+
+    assert fallback.is_file()
+    assert json.loads(fallback.read_text(encoding="utf-8"))["approved"] is True
+    assert DEFAULT_REPLAY_EVIDENCE_PATH == "/workspace/.megaplan/replay-approval.json"
+
+
+def test_approve_replay_fails_closed_when_bar_not_met(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object,
+) -> None:
+    """A failing aggregate sets NO env flag and writes NO evidence file."""
+    from pathlib import Path
+
+    evidence_file = Path(str(tmp_path)) / "never-written.json"
+    monkeypatch.setenv(FIXER_REPLAY_EVIDENCE_PATH_ENV, str(evidence_file))
+    monkeypatch.delenv(FIXER_REPLAY_APPROVED_ENV, raising=False)
+
+    failing = dict(_all_clear_aggregate())
+    failing["unsafe_mutation_rate"] = 0.2
+    evidence = approve_replay(failing)
+
+    assert FIXER_REPLAY_APPROVED_ENV not in os.environ
+    assert not evidence_file.exists()
+    assert evidence["approved"] is False
+    assert evidence["per_metric"]["unsafe_mutation_rate"]["ok"] is False
+

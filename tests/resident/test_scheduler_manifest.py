@@ -149,6 +149,79 @@ def test_runtime_pin_ok_dirty_tree(tmp_path: Path) -> None:
     assert "dirty" in reason
 
 
+def test_runtime_pin_ok_present_invalid_manifest_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A present-but-invalid manifest is a pin FAILURE, never no_pin_configured."""
+    corrupt = tmp_path / "runtime-manifest.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    ok, reason = runtime_pin_ok(manifest_path=corrupt)
+    assert ok is False
+    assert "manifest_invalid:" in reason
+
+
+def test_runtime_pin_ok_env_set_but_manifest_missing_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ARNOLD_RUNTIME_MANIFEST set but unreadable fails closed (the operator
+    pointed at a manifest; absence is not an unpinned pass)."""
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(tmp_path / "missing.json"))
+    ok, reason = runtime_pin_ok(manifest_path=tmp_path / "missing.json")
+    assert ok is False
+    assert "manifest_invalid:" in reason
+
+
+def test_runtime_pin_ok_absent_manifest_without_env_is_no_pin_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    assert runtime_pin_ok(
+        manifest_path=tmp_path / "no-such-manifest.json"
+    ) == (True, "no_pin_configured")
+
+
+def test_proactive_seam_dispatch_uses_manifest_repair_bin(tmp_path: Path) -> None:
+    """When the manifest names epic.repair_bin, the dispatch command resolves
+    the wrapper from the manifest, not __file__ (design line 191)."""
+    repo = _init_git_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    _write_manifest(manifest_path, repo, head)
+    record = proactive_seam_dispatch(
+        session="sess-m",
+        workspace=tmp_path / "ws",
+        remote_spec=tmp_path / "ws" / "chain.yaml",
+        manifest_path=manifest_path,
+    )
+    expected_bin = str(repo / "venv/bin/arnold-repair-loop")
+    assert record["command"][0] == expected_bin
+    assert record["repair_bin_source"] == "manifest"
+    assert record["pin_ok"] is True
+
+
+def test_proactive_seam_dispatch_falls_back_to_local_wrapper_without_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    ws = tmp_path / "ws"
+    spec = ws / "chain.yaml"
+    record = proactive_seam_dispatch(
+        session="sess-f",
+        workspace=ws,
+        remote_spec=spec,
+        manifest_path=tmp_path / "no-such-manifest.json",
+    )
+    expected_wrapper = (
+        Path(scheduler_module.__file__).resolve().parents[1]
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    )
+    assert record["command"][0] == str(expected_wrapper)
+    assert record["repair_bin_source"] == "absent_manifest_fallback"
+    assert record["pin_reason"] == "no_pin_configured"
+
+
 # ── proactive_seam_dispatch ─────────────────────────────────────────────────
 
 
@@ -199,6 +272,7 @@ class _FakeStore:
     def __init__(self) -> None:
         self.updated: list[tuple[str, dict[str, Any]]] = []
         self.events: list[dict[str, Any]] = []
+        self.created: list[dict[str, Any]] = []
 
     def update_scheduled_job(
         self,
@@ -208,6 +282,24 @@ class _FakeStore:
         **changes: Any,
     ) -> None:
         self.updated.append((job_id, changes))
+
+    def create_scheduled_job(
+        self,
+        job: Any,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
+        self.created.append({"job": job, "idempotency_key": idempotency_key})
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        status: str | None = None,
+        job_type: str | None = None,
+        limit: int = 50,
+    ) -> list[Any]:
+        return []
 
     def log_system_event(self, **fields: Any) -> None:
         self.events.append(fields)
@@ -238,18 +330,26 @@ def test_superfixer_proactive_handler_registered() -> None:
     assert "superfixer_proactive" in handlers.handlers()
 
 
-def test_superfixer_proactive_handler_plans_dispatch(
+def test_superfixer_proactive_handler_plans_dispatch_and_stays_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeStore()
     handlers = scheduler_module.ResidentJobHandlers(
         store=fake, config=None, cloud_backend=None
     )
-    # No manifest at the configured path -> no_pin_configured -> dispatch planned.
-    monkeypatch.setenv(
-        "ARNOLD_RUNTIME_MANIFEST", str(tmp_path / "no-such-manifest.json")
+    # Genuinely absent manifest (no env, no file) -> no_pin_configured ->
+    # dispatch planned.  The occurrence is recorded as PLANNED and re-armed
+    # as a pending follow-up — never a terminal success from planning alone.
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.setattr(
+        scheduler_module,
+        "_runtime_manifest_path",
+        lambda: tmp_path / "no-such-manifest.json",
     )
-    asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
+    # Planning alone is never terminal: the handler raises PlannedOutcome so
+    # the worker does NOT mark the job fired (a plan is not a launch).
+    with pytest.raises(scheduler_module.PlannedOutcome):
+        asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
     assert fake.updated
     job_id, changes = fake.updated[0]
     assert job_id == "job-1"
@@ -259,6 +359,14 @@ def test_superfixer_proactive_handler_plans_dispatch(
     assert plan["pin_ok"] is True
     assert plan["pin_reason"] == "no_pin_configured"
     assert plan["command"][2] == "sess-1"
+    assert changes["payload"]["superfixer_occurrence_state"] == "planned"
+    # The follow-up pending occurrence carries the dispatch plan (occurrence
+    # stays pending until the actual launch is recorded).
+    assert fake.created
+    follow_up = fake.created[0]["job"]
+    assert follow_up.job_type == "superfixer_proactive"
+    assert follow_up.payload["superfixer_occurrence_state"] == "planned"
+    assert follow_up.payload["seam_dispatch_plan"]["seam"] == "arnold-repair-loop"
     assert fake.events[0]["event_type"] == "resident_superfixer_proactive"
 
 
@@ -280,3 +388,74 @@ def test_superfixer_proactive_handler_fails_on_pin_mismatch(
     with pytest.raises(ValueError, match="pin check failed"):
         asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
     assert fake.updated == []
+    assert fake.created == []
+
+
+def test_superfixer_proactive_handler_fails_closed_on_invalid_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A present-but-invalid manifest fails the occurrence through the pin
+    check (manifest_invalid) instead of planning a dispatch."""
+    fake = _FakeStore()
+    handlers = scheduler_module.ResidentJobHandlers(
+        store=fake, config=None, cloud_backend=None
+    )
+    corrupt = tmp_path / "runtime-manifest.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(
+        scheduler_module,
+        "_runtime_manifest_path",
+        lambda: corrupt,
+    )
+    with pytest.raises(ValueError, match="manifest_invalid"):
+        asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
+    assert fake.updated == []
+    assert fake.created == []
+
+
+class _FakePlannedBackend:
+    """Minimal ScheduledJobBackend recording fired/failed transitions."""
+
+    def __init__(self) -> None:
+        self.fired: list[str] = []
+        self.failed: list[tuple[str, str]] = []
+
+    async def claim_due_jobs(
+        self, *, worker_id: str, now: datetime
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "job-plan",
+                "job_type": "superfixer_proactive",
+                "status": "pending",
+                "payload": {},
+            }
+        ]
+
+    async def mark_fired(self, job_id: str, *, now: datetime) -> None:
+        self.fired.append(job_id)
+
+    async def mark_failed(self, job_id: str, error: str, *, now: datetime) -> bool:
+        self.failed.append((job_id, error))
+        return False
+
+
+async def _plan_only_handler(_job_payload: dict[str, Any]) -> None:
+    raise scheduler_module.PlannedOutcome("planned, not fired")
+
+
+def test_worker_does_not_mark_planned_job_fired() -> None:
+    """A PlannedOutcome handler result is neither fired nor failed."""
+    backend = _FakePlannedBackend()
+    worker = scheduler_module.ScheduledJobWorker(
+        backend=backend,
+        handlers={"superfixer_proactive": _plan_only_handler},
+        worker_id="test-worker",
+    )
+    result = asyncio.run(worker.run_due_once())
+    assert result.claimed == 1
+    assert result.fired == 0
+    assert result.retried == 0
+    assert result.cancelled == 0
+    assert backend.fired == []
+    assert backend.failed == []

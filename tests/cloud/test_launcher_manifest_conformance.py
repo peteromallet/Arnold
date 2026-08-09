@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -87,6 +88,62 @@ def test_launcher_sources_parse() -> None:
         text=True,
     )
     assert py_compile.returncode == 0, f"py_compile arnold-repair-trigger failed:\n{py_compile.stderr}"
+
+
+def test_trigger_refuses_present_but_invalid_manifest(tmp_path: Path) -> None:
+    """A present-but-invalid manifest fails closed BEFORE any dispatch.
+
+    ``ARNOLD_RUNTIME_MANIFEST`` set means the manifest is THE resolver: a
+    corrupt manifest must exit non-zero with a typed ``manifest_invalid``
+    error, never fall back to env/with_name.
+    """
+    corrupt = tmp_path / "runtime-manifest.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    env = {
+        **os.environ,
+        "ARNOLD_RUNTIME_MANIFEST": str(corrupt),
+        "PYTHONPATH": str(REPO_ROOT)
+        + os.pathsep
+        + os.environ.get("PYTHONPATH", ""),
+    }
+    proc = subprocess.run(
+        [sys.executable, str(TRIGGER)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        timeout=60,
+    )
+    assert proc.returncode == 78
+    assert "manifest_invalid:" in proc.stderr
+
+
+def test_trigger_absent_manifest_keeps_env_and_with_name_fallback() -> None:
+    """Genuinely absent manifest (no env, no file) keeps the legacy fallback."""
+    text = TRIGGER.read_text(encoding="utf-8")
+    assert "ARNOLD_REPAIR_TRIGGER_REPAIR_BIN" in text
+    assert 'with_name("arnold-repair-loop")' in text
+    # The fail-closed gate is wired into main() before parsing args.
+    assert "_enforce_manifest_authority()" in text
+
+
+def test_watchdog_fail_closed_manifest_gate_and_reactive_dispatch() -> None:
+    """The watchdog validates the manifest when present and dispatches the
+    repair loop with an explicit --mode=reactive."""
+    text = WATCHDOG.read_text(encoding="utf-8")
+    # Gate: typed manifest_invalid refusal wired before field reads.
+    assert "enforce_runtime_manifest_authority" in text
+    assert "manifest_invalid:" in text
+    assert text.index("enforce_runtime_manifest_authority") < text.index(
+        "MANIFEST_REPAIR_BIN="
+    )
+    # Dispatch through the unified seam names the mode explicitly.
+    assert '--command-display "arnold-repair-loop --mode=reactive $session"' in text
+    assert '"$PRIMARY_REPAIR_BIN" --mode=reactive "$session" "$workspace" "$remote_spec"' in text
+    # Manifest runtime binding: PYTHONPATH/SRC_DIR follow the manifest runtime
+    # root so the selected executable and imported code share one runtime.
+    assert "REPAIR_DISPATCH_RUNTIME_SRC" in text
+    assert 'ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR"' in text
 
 
 def _fake_runtime_manifest(tmp_path: Path, module_digest: str) -> dict:

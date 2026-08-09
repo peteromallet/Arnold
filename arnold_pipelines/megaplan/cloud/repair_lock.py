@@ -38,6 +38,10 @@ import shlex
 import socket
 import subprocess
 import sys
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms (see _job_record_flock)
+    _fcntl = None  # type: ignore[assignment]
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -899,6 +903,61 @@ def _holder_stale_reason(
     return None
 
 
+@contextmanager
+def _job_record_flock(path: Path) -> Iterator[None]:
+    """Serialize one job-record read-modify-write with an advisory flock.
+
+    The sidecar is ``<record>.json.lock`` (``*.json`` scans never match it).
+    ``flock(LOCK_EX)`` blocks until the previous holder releases, so
+    concurrent acquirers/advancers serialize their read → decide → write
+    instead of racing; the payload still lands via the existing tmp+rename
+    atomic write.  The sidecar is intentionally never removed — unlinking a
+    lock file while another waiter blocks on the same inode lets a third
+    opener create a fresh inode and split the fence.
+
+    On hosts without ``fcntl`` (non-POSIX) this degrades to an O_EXCL
+    create: contention raises immediately instead of blocking — fail-closed,
+    but never silently skipped.
+    """
+
+    lock_path = Path(str(path) + ".lock")
+    if _fcntl is None:  # pragma: no cover - non-POSIX fallback
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            yield
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+        return
+    fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _record_past_ttl(record: JobLockRecord, *, now: datetime) -> bool:
+    """Return ``True`` when *record* is past its TTL at *now*.
+
+    A paused holder past TTL can never advance or acknowledge — expiry is
+    the reconciler's job (quarantine + epoch bump), never a resume.  An
+    unparseable ``updated_at`` is treated as expired (fail closed: a record
+    whose liveness cannot be verified must not be mutated).
+    """
+
+    updated_at = _parse_datetime(record.updated_at)
+    if updated_at is None:
+        return True
+    return (now - updated_at).total_seconds() > float(record.ttl_seconds)
+
+
 def acquire_job_lock(
     chain_uuid: str,
     failure_fingerprint: str,
@@ -950,62 +1009,66 @@ def acquire_job_lock(
     current_time = now if now is not None else datetime.now(timezone.utc)
     path = _job_record_path(lock_dir, chain_uuid, failure_fingerprint)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = load_json(path, default="__missing__")
-    previous = _record_from_payload(payload) if isinstance(payload, dict) else None
-    if previous is not None:
-        stale_reason = _holder_stale_reason(
-            previous, now=current_time, boot_id=boot_id
-        )
-        if stale_reason is None:
-            # A live holder owns the current (newer) epoch.  An older-epoch
-            # caller cannot act — exactly one mutator per dedupe key.
-            return None
-        if previous.state in _JOB_DIRTY_STATES:
-            quarantined = replace(
-                previous,
-                quarantine_reason=stale_reason,
-                updated_at=current_time.isoformat(),
-                last_error=(
-                    f"quarantined before re-acquire (epoch {previous.epoch} stale: "
-                    f"{stale_reason})"
-                ),
+    with _job_record_flock(path):
+        # Re-read under the exclusive flock: concurrent acquirers serialize
+        # here, so exactly one sees previous=None and writes epoch 1; every
+        # later acquirer observes the winner's record and is fenced.
+        payload = load_json(path, default="__missing__")
+        previous = _record_from_payload(payload) if isinstance(payload, dict) else None
+        if previous is not None:
+            stale_reason = _holder_stale_reason(
+                previous, now=current_time, boot_id=boot_id
             )
-            atomic_write_json(
-                path,
-                _record_to_payload(quarantined),
-                include_resident_provenance=False,
-            )
-        previous_epoch = previous.epoch
-        previous_attempt = previous.attempt
-    else:
-        previous_epoch = 0
-        previous_attempt = 0
+            if stale_reason is None:
+                # A live holder owns the current (newer) epoch.  An older-epoch
+                # caller cannot act — exactly one mutator per dedupe key.
+                return None
+            if previous.state in _JOB_DIRTY_STATES:
+                quarantined = replace(
+                    previous,
+                    quarantine_reason=stale_reason,
+                    updated_at=current_time.isoformat(),
+                    last_error=(
+                        f"quarantined before re-acquire (epoch {previous.epoch} stale: "
+                        f"{stale_reason})"
+                    ),
+                )
+                atomic_write_json(
+                    path,
+                    _record_to_payload(quarantined),
+                    include_resident_provenance=False,
+                )
+            previous_epoch = previous.epoch
+            previous_attempt = previous.attempt
+        else:
+            previous_epoch = 0
+            previous_attempt = 0
 
-    epoch = previous_epoch + 1
-    attempt = previous_attempt + 1
-    timestamp = current_time.isoformat()
-    record = JobLockRecord(
-        job_id=_job_id_for_epoch(chain_uuid, failure_fingerprint, epoch),
-        chain_uuid=chain_uuid,
-        failure_fingerprint=failure_fingerprint,
-        state="running",
-        epoch=epoch,
-        holder_pid=holder_pid,
-        holder_boot_id=boot_id,
-        attempt=attempt,
-        ttl_seconds=ttl_seconds,
-        created_at=timestamp,
-        updated_at=timestamp,
-        last_error="",
-        quarantine_reason=None,
-        acknowledged_at=None,
-    )
-    atomic_write_json(
-        path,
-        _record_to_payload(record),
-        include_resident_provenance=False,
-    )
-    return record
+        epoch = previous_epoch + 1
+        attempt = previous_attempt + 1
+        timestamp = current_time.isoformat()
+        record = JobLockRecord(
+            job_id=_job_id_for_epoch(chain_uuid, failure_fingerprint, epoch),
+            chain_uuid=chain_uuid,
+            failure_fingerprint=failure_fingerprint,
+            state="running",
+            epoch=epoch,
+            holder_pid=holder_pid,
+            holder_boot_id=boot_id,
+            attempt=attempt,
+            ttl_seconds=ttl_seconds,
+            created_at=timestamp,
+            updated_at=timestamp,
+            last_error="",
+            quarantine_reason=None,
+            acknowledged_at=None,
+        )
+        atomic_write_json(
+            path,
+            _record_to_payload(record),
+            include_resident_provenance=False,
+        )
+        return record
 
 
 def advance_job_state(
@@ -1025,32 +1088,51 @@ def advance_job_state(
     The transition is **fenced**: when the on-disk record carries an epoch
     newer than *record* (or the record was quarantined or removed), the
     caller is stale and ``None`` is returned — an older epoch can never
-    mutate state.
+    mutate state.  The fence also binds **holder identity**: the on-disk
+    ``holder_pid``/``holder_boot_id`` must equal *record*'s, and the record
+    must not be past its TTL — a paused holder past TTL cannot advance; the
+    reconciler owns expiry.
     """
 
     if now is not None and not isinstance(now, datetime):
         raise ValueError("now must be a datetime")
     current_time = now if now is not None else datetime.now(timezone.utc)
-    on_disk = _load_job_record(
-        lock_dir, record.chain_uuid, record.failure_fingerprint
-    )
-    if on_disk is None or on_disk.epoch != record.epoch:
-        return None
-    if on_disk.quarantine_reason is not None:
-        return None
-    if target not in _JOB_ADVANCE_TRANSITIONS.get(on_disk.state, frozenset()):
-        return None
-    updated = replace(
-        on_disk,
-        state=target,
-        updated_at=current_time.isoformat(),
-    )
-    atomic_write_json(
-        _job_record_path(lock_dir, record.chain_uuid, record.failure_fingerprint),
-        _record_to_payload(updated),
-        include_resident_provenance=False,
-    )
-    return updated
+    path = _job_record_path(lock_dir, record.chain_uuid, record.failure_fingerprint)
+    with _job_record_flock(path):
+        # Re-read under the exclusive flock: the read → decide → write is
+        # atomic, so two concurrent advancers of the same epoch cannot both
+        # win — the loser observes the winner's state change and is rejected.
+        on_disk = _load_job_record(
+            lock_dir, record.chain_uuid, record.failure_fingerprint
+        )
+        if on_disk is None or on_disk.epoch != record.epoch:
+            return None
+        if on_disk.quarantine_reason is not None:
+            return None
+        if (
+            on_disk.holder_pid != record.holder_pid
+            or on_disk.holder_boot_id != record.holder_boot_id
+        ):
+            # Holder-identity fence: a same-epoch record held by a different
+            # holder identity is not the caller's to advance.
+            return None
+        if _record_past_ttl(on_disk, now=current_time):
+            # A paused holder past TTL cannot resume — the reconciler owns
+            # expiry (quarantine + epoch bump), never a transition here.
+            return None
+        if target not in _JOB_ADVANCE_TRANSITIONS.get(on_disk.state, frozenset()):
+            return None
+        updated = replace(
+            on_disk,
+            state=target,
+            updated_at=current_time.isoformat(),
+        )
+        atomic_write_json(
+            path,
+            _record_to_payload(updated),
+            include_resident_provenance=False,
+        )
+        return updated
 
 
 def acknowledge_job(
@@ -1065,34 +1147,47 @@ def acknowledge_job(
     the record moves to ``done`` and :attr:`acknowledged_at` is stamped with
     the acknowledgment timestamp.  Acknowledgment is rejected — the current
     on-disk record is returned unchanged so the caller can observe why — when
-    the caller is fenced (newer epoch on disk), the job is quarantined, or the
-    record is not in ``redriving``.
+    the caller is fenced (newer epoch on disk), the job is quarantined, the
+    on-disk holder identity differs from *record*'s, the record is past its
+    TTL, or it is not in ``redriving``.
     """
 
     if now is not None and not isinstance(now, datetime):
         raise ValueError("now must be a datetime")
     current_time = now if now is not None else datetime.now(timezone.utc)
-    on_disk = _load_job_record(
-        lock_dir, record.chain_uuid, record.failure_fingerprint
-    )
-    if on_disk is None:
-        return record
-    if on_disk.epoch != record.epoch or on_disk.quarantine_reason is not None:
-        return on_disk
-    if on_disk.state != "redriving":
-        return on_disk
-    updated = replace(
-        on_disk,
-        state="done",
-        acknowledged_at=current_time.isoformat(),
-        updated_at=current_time.isoformat(),
-    )
-    atomic_write_json(
-        _job_record_path(lock_dir, record.chain_uuid, record.failure_fingerprint),
-        _record_to_payload(updated),
-        include_resident_provenance=False,
-    )
-    return updated
+    path = _job_record_path(lock_dir, record.chain_uuid, record.failure_fingerprint)
+    with _job_record_flock(path):
+        # Serialized read → decide → write; see _job_record_flock.
+        on_disk = _load_job_record(
+            lock_dir, record.chain_uuid, record.failure_fingerprint
+        )
+        if on_disk is None:
+            return record
+        if (
+            on_disk.epoch != record.epoch
+            or on_disk.quarantine_reason is not None
+            or on_disk.holder_pid != record.holder_pid
+            or on_disk.holder_boot_id != record.holder_boot_id
+            or _record_past_ttl(on_disk, now=current_time)
+        ):
+            # Fenced: newer epoch, quarantined, foreign holder identity, or
+            # past TTL — the caller cannot acknowledge; return the current
+            # record unchanged so the caller can observe why.
+            return on_disk
+        if on_disk.state != "redriving":
+            return on_disk
+        updated = replace(
+            on_disk,
+            state="done",
+            acknowledged_at=current_time.isoformat(),
+            updated_at=current_time.isoformat(),
+        )
+        atomic_write_json(
+            path,
+            _record_to_payload(updated),
+            include_resident_provenance=False,
+        )
+        return updated
 
 
 def reconcile_jobs(
@@ -1120,30 +1215,36 @@ def reconcile_jobs(
     if not lock_path.is_dir():
         return records
     for path in sorted(lock_path.glob("*.json")):
-        payload = load_json(path, default="__missing__")
-        record = _record_from_payload(payload) if isinstance(payload, dict) else None
-        if record is None:
-            # Corrupt/unreadable record — preserved for the operator, never
-            # re-run or blindly overwritten by reconciliation.
-            continue
-        if record.quarantine_reason is not None:
-            records.append(record)
-            continue
-        stale_reason = _holder_stale_reason(record, now=now, boot_id=boot_id)
-        if stale_reason is not None and record.state in _JOB_DIRTY_STATES:
-            quarantined = replace(
-                record,
-                quarantine_reason=stale_reason,
-                updated_at=now.isoformat(),
+        with _job_record_flock(path):
+            # Per-record exclusive flock: read → decide → write is atomic, so
+            # a concurrent acquirer/advancer cannot interleave between the
+            # load and the quarantine write on the same record.
+            payload = load_json(path, default="__missing__")
+            record = (
+                _record_from_payload(payload) if isinstance(payload, dict) else None
             )
-            atomic_write_json(
-                path,
-                _record_to_payload(quarantined),
-                include_resident_provenance=False,
-            )
-            records.append(quarantined)
-        else:
-            records.append(record)
+            if record is None:
+                # Corrupt/unreadable record — preserved for the operator, never
+                # re-run or blindly overwritten by reconciliation.
+                continue
+            if record.quarantine_reason is not None:
+                records.append(record)
+                continue
+            stale_reason = _holder_stale_reason(record, now=now, boot_id=boot_id)
+            if stale_reason is not None and record.state in _JOB_DIRTY_STATES:
+                quarantined = replace(
+                    record,
+                    quarantine_reason=stale_reason,
+                    updated_at=now.isoformat(),
+                )
+                atomic_write_json(
+                    path,
+                    _record_to_payload(quarantined),
+                    include_resident_provenance=False,
+                )
+                records.append(quarantined)
+            else:
+                records.append(record)
     return records
 
 

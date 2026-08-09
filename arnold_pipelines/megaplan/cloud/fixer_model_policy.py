@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Literal, Mapping, Sequence
 
 MODEL_POLICY_SHA_ALGORITHM = "sha256"
@@ -118,27 +119,106 @@ MODEL_POLICY_TABLE: tuple[PolicyRow, ...] = (
 
 
 def resolve_model_policy(
-    mode_rung: str, *, replay_approved: bool = False
+    mode_rung: str,
+    *,
+    replay_approved: bool = False,
+    replay_evidence_path: str | None = None,
 ) -> PolicyRow:
     """Resolve the policy row for *mode_rung*.
 
     Gated rows (DeepSeek Flash) fail closed: they raise PolicyError unless the
-    caller proves replay-suite approval via ``replay_approved=True``.  Unknown
+    caller proves replay-suite approval via ``replay_approved=True`` AND names
+    a readable evidence file in ``replay_evidence_path`` (the replay suite's
+    durable approval record — a bare flag alone is not evidence).  Unknown
     mode/rung values always raise PolicyError.
     """
     for row in MODEL_POLICY_TABLE:
         if row.mode_rung == mode_rung:
-            if row.status == "gated" and not replay_approved:
-                raise PolicyError(
-                    f"model policy row {mode_rung!r} is gated: "
-                    "DeepSeek Flash must pass the replay/evaluation suite "
-                    "(tests/fixer_replay/) before it becomes the default; "
-                    "pass replay_approved=True only with measured "
-                    "non-inferiority evidence"
+            if row.status == "gated":
+                _require_replay_evidence(
+                    mode_rung,
+                    replay_approved=replay_approved,
+                    replay_evidence_path=replay_evidence_path,
                 )
             return row
     known = ", ".join(row.mode_rung for row in MODEL_POLICY_TABLE)
     raise PolicyError(f"unknown fixer mode/rung {mode_rung!r}; known: {known}")
+
+
+def _require_replay_evidence(
+    mode_rung: str, *, replay_approved: bool, replay_evidence_path: str | None
+) -> None:
+    """Fail closed unless durable replay approval evidence is provable.
+
+    Gated rows require BOTH the ``replay_approved`` flag AND a schema-bound
+    evidence file written by ``tests/fixer_replay.replay_runner.approve_replay``:
+    a JSON record with ``schema_version == 1``, ``approved == true``, and a
+    ``per_metric`` map whose rows all report ``ok == true``.  The schema binding
+    is what makes the claim auditable -- an arbitrary readable file (e.g.
+    ``/etc/hosts``) is NOT evidence.  A missing, unreadable, malformed, or
+    non-approving file is a PolicyError, never a silent pass.
+    """
+    if not replay_approved:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: "
+            "DeepSeek Flash must pass the replay/evaluation suite "
+            "(tests/fixer_replay/) before it becomes the default; "
+            "replay approval is read from durable evidence, not assumed"
+        )
+    if not replay_evidence_path:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated and replay_approved=True "
+            "was passed without replay_evidence_path: the replay suite's "
+            "durable approval record must be named, not just asserted"
+        )
+    import json as _json
+
+    evidence_path = Path(replay_evidence_path)
+    try:
+        raw = evidence_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: replay approval "
+            f"evidence file is unreadable at {replay_evidence_path}: {exc}"
+        ) from exc
+    try:
+        record = _json.loads(raw)
+    except ValueError as exc:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: replay approval "
+            f"evidence at {replay_evidence_path} is not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(record, dict):
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: replay approval "
+            f"evidence at {replay_evidence_path} is not a JSON object"
+        )
+    if record.get("schema_version") != 1:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: replay approval "
+            f"evidence at {replay_evidence_path} has schema_version "
+            f"{record.get('schema_version')!r}, expected 1"
+        )
+    if record.get("approved") is not True:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: replay approval "
+            f"evidence at {replay_evidence_path} does not approve "
+            f"(approved={record.get('approved')!r})"
+        )
+    per_metric = record.get("per_metric")
+    if not isinstance(per_metric, dict) or not per_metric:
+        raise PolicyError(
+            f"model policy row {mode_rung!r} is gated: replay approval "
+            f"evidence at {replay_evidence_path} lacks a non-empty per_metric map"
+        )
+    for metric, outcome in per_metric.items():
+        ok = outcome.get("ok") if isinstance(outcome, dict) else None
+        if ok is not True:
+            raise PolicyError(
+                f"model policy row {mode_rung!r} is gated: replay approval "
+                f"evidence at {replay_evidence_path} has non-passing metric "
+                f"{metric!r} (ok={ok!r})"
+            )
 
 
 def validate_hot_env_credentials_only(env: Mapping[str, str]) -> list[str]:
