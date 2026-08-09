@@ -192,6 +192,101 @@ def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
     assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
 
 
+def test_fixer_wrappers_prefer_manifest_epic_branch_push_target() -> None:
+    """The per-epic runtime manifest decides the fixer's push target.
+
+    When the manifest declares epic.branch, every fixer wrapper resolves
+    SYNC_BRANCH from it before any env/default fallback, so repair agents
+    commit and push to the epic's own branch, not the shared editable branch.
+    """
+    repair_loop = _repair_wrapper()
+    assert 'MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field branch)"' in repair_loop
+    assert 'SYNC_BRANCH="$MANIFEST_EPIC_BRANCH"' in repair_loop
+    assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"' in repair_loop
+    for wrapper_name in ("arnold-kimi-goal-operator", "arnold-meta-repair-loop"):
+        text = _wrapper(wrapper_name)
+        assert 'SYNC_BRANCH="$_MANIFEST_EPIC_BRANCH"' in text
+        assert "runtime-manifest.json" in text
+
+
+def test_supervisor_runtime_lib_exposes_manifest_epic_field_helper() -> None:
+    text = _wrapper("arnold-supervisor-runtime-lib")
+    assert "arnold_runtime_manifest_path()" in text
+    assert "arnold_runtime_manifest_epic_field()" in text
+    assert "${ARNOLD_RUNTIME_MANIFEST:-/workspace/.megaplan/runtime-manifest.json}" in text
+
+
+def test_repair_delivery_shim_refuses_non_manifest_push_target(tmp_path: Path) -> None:
+    """The delivery shim fails closed on pushes outside the manifest branch."""
+    text = _repair_wrapper()
+    assert 'export ARNOLD_REPAIR_MANIFEST_BRANCH="${MANIFEST_EPIC_BRANCH:-}"' in text
+
+    marker = "cat > \"$shim_dir/git\" <<'SH'\n"
+    start = text.index(marker) + len(marker)
+    end = text.index("\nSH\n", start)
+    shim = text[start:end]
+
+    shim_path = tmp_path / "git"
+    shim_path.write_text(shim, encoding="utf-8")
+    shim_path.chmod(0o755)
+
+    fake_git = tmp_path / "real-git"
+    fake_git.write_text("#!/usr/bin/env bash\necho FAKE-GIT \"$@\"\nexit 0\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+
+    env = {
+        "ARNOLD_REPAIR_REAL_GIT": str(fake_git),
+        "ARNOLD_REPAIR_COMMIT_AUTHORIZED": "1",
+        "ARNOLD_REPAIR_PUSH_AUTHORIZED": "1",
+        "ARNOLD_REPAIR_MANIFEST_BRANCH": "fixer/epic-a-20260809",
+        "PATH": "/usr/bin:/bin",
+    }
+
+    # Push to a non-manifest branch is refused fail-closed.
+    refused = subprocess.run(
+        [str(shim_path), "push", "origin", "main"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode == 77
+    assert "manifest-declared epic branch" in refused.stderr
+
+    # Push to the manifest branch passes through to the real git.
+    allowed = subprocess.run(
+        [str(shim_path), "push", "origin", "fixer/epic-a-20260809"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert allowed.returncode == 0
+    assert "FAKE-GIT push origin fixer/epic-a-20260809" in allowed.stdout
+
+    # Commit without commit authority is still refused.
+    env_no_commit = dict(env, ARNOLD_REPAIR_COMMIT_AUTHORIZED="0")
+    refused_commit = subprocess.run(
+        [str(shim_path), "commit", "-m", "fix"],
+        env=env_no_commit,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused_commit.returncode == 77
+
+    # Without a manifest branch the shim keeps the legacy behavior.
+    env_no_manifest = dict(env, ARNOLD_REPAIR_MANIFEST_BRANCH="")
+    legacy = subprocess.run(
+        [str(shim_path), "push", "origin", "main"],
+        env=env_no_manifest,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert legacy.returncode == 0
+
+
 @pytest.mark.parametrize(
     ("wrapper_name", "prefix"),
     [

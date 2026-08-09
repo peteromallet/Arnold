@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     active_execution_identity,
     assert_execution_binding,
     bind_execution_identity,
+    binding_policy,
     execution_binding_report,
     expected_worker_launch_values,
     find_bound_chain_spec,
@@ -201,6 +202,32 @@ def _bound_state(spec_path: Path) -> ChainState:
     assert report["status"] == "match"
     save_chain_state(spec_path, state)
     return state
+
+
+def test_cloud_chain_defaults_runtime_match_to_trusted_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cloud chain launches default require_editable_runtime_match to True.
+
+    The trusted-container env is set on every cloud chain start; the spec's
+    explicit value always wins over the default.
+    """
+    spec_path = _write_chain(tmp_path, ("c1",))
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"].pop("require_editable_runtime_match", None)
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    assert binding_policy(spec_path)["require_editable_runtime_match"] is False
+
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    assert binding_policy(spec_path)["require_editable_runtime_match"] is True
+
+    # An explicit spec value always wins over the environment default.
+    raw["driver"]["require_editable_runtime_match"] = False
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    assert binding_policy(spec_path)["require_editable_runtime_match"] is False
 
 
 def _replace_and_repin(spec_path: Path, labels: tuple[str, ...]) -> None:
