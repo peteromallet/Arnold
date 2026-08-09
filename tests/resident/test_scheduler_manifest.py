@@ -346,7 +346,10 @@ def test_superfixer_proactive_handler_plans_dispatch_and_stays_pending(
         "_runtime_manifest_path",
         lambda: tmp_path / "no-such-manifest.json",
     )
-    asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
+    # Planning alone is never terminal: the handler raises PlannedOutcome so
+    # the worker does NOT mark the job fired (a plan is not a launch).
+    with pytest.raises(scheduler_module.PlannedOutcome):
+        asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
     assert fake.updated
     job_id, changes = fake.updated[0]
     assert job_id == "job-1"
@@ -408,3 +411,51 @@ def test_superfixer_proactive_handler_fails_closed_on_invalid_manifest(
         asyncio.run(handlers.handle_superfixer_proactive(_job_payload()))
     assert fake.updated == []
     assert fake.created == []
+
+
+class _FakePlannedBackend:
+    """Minimal ScheduledJobBackend recording fired/failed transitions."""
+
+    def __init__(self) -> None:
+        self.fired: list[str] = []
+        self.failed: list[tuple[str, str]] = []
+
+    async def claim_due_jobs(
+        self, *, worker_id: str, now: datetime
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "job-plan",
+                "job_type": "superfixer_proactive",
+                "status": "pending",
+                "payload": {},
+            }
+        ]
+
+    async def mark_fired(self, job_id: str, *, now: datetime) -> None:
+        self.fired.append(job_id)
+
+    async def mark_failed(self, job_id: str, error: str, *, now: datetime) -> bool:
+        self.failed.append((job_id, error))
+        return False
+
+
+async def _plan_only_handler(_job_payload: dict[str, Any]) -> None:
+    raise scheduler_module.PlannedOutcome("planned, not fired")
+
+
+def test_worker_does_not_mark_planned_job_fired() -> None:
+    """A PlannedOutcome handler result is neither fired nor failed."""
+    backend = _FakePlannedBackend()
+    worker = scheduler_module.ScheduledJobWorker(
+        backend=backend,
+        handlers={"superfixer_proactive": _plan_only_handler},
+        worker_id="test-worker",
+    )
+    result = asyncio.run(worker.run_due_once())
+    assert result.claimed == 1
+    assert result.fired == 0
+    assert result.retried == 0
+    assert result.cancelled == 0
+    assert backend.fired == []
+    assert backend.failed == []
