@@ -5407,51 +5407,6 @@ def _escalate_persistent_unroutable_rework(
     unrunnable_task_ids: list[str],
     runnable_task_ids: list[str],
 ) -> StepResponse:
-    """Escalate when mixed unroutable review rework persists past the cap."""
-    unmatched = ", ".join(sorted(set(unrunnable_task_ids)))
-    runnable = ", ".join(sorted(set(runnable_task_ids)))
-    from arnold_pipelines.megaplan.observability.events import EventKind, emit
-
-    emit(
-        EventKind.STATE_TRANSITION,
-        plan_dir=plan_dir,
-        phase="execute",
-        payload={
-            "reason": "unroutable_review_rework_mixed",
-            "from": STATE_FINALIZED,
-            "to": STATE_BLOCKED,
-            "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
-            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
-            "runnable_rework_task_ids": sorted(set(runnable_task_ids)),
-        },
-    )
-    response = _block_no_runnable_rework(
-        plan_dir=plan_dir,
-        state=state,
-        auto_approve=auto_approve,
-        reason=(
-            "review rework includes unroutable item(s) that re-running execute "
-            f"cannot resolve. Unmatched rework task_id(s): {unmatched}. "
-            f"Runnable rework task_id(s): {runnable or 'none'}. "
-            f"Unroutable re-run attempts exhausted ({_MAX_UNROUTABLE_REWORK_RERUNS}/"
-            f"{_MAX_UNROUTABLE_REWORK_RERUNS}); re-run review so rework_items "
-            "reference concrete finalize task IDs, or recover-blocked after "
-            "operator review."
-        ),
-        unrunnable_task_ids=unrunnable_task_ids,
-    )
-    response["result"] = "blocked"
-    return response
-
-
-def _escalate_persistent_unroutable_rework(
-    *,
-    plan_dir: Path,
-    state: PlanState,
-    auto_approve: bool,
-    unrunnable_task_ids: list[str],
-    runnable_task_ids: list[str],
-) -> StepResponse:
     """Escalate to recoverable-blocked when unroutable rework persists past the cap.
 
     Used for the MIXED case (some runnable rework task IDs PLUS unroutable

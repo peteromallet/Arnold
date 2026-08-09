@@ -1,5 +1,0 @@
-{
-  "success": false,
-  "error": "chain_runtime_binding_drift",
-  "message": "chain state load/resume refused: runtime binding is drift; expected=fd21e55a007d; active=b4b266d0b766; active_errors=[]. Explicit operator-authorized content-addressed runtime rebind is required."
-}

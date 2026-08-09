@@ -230,13 +230,20 @@ if [[ -n "$MANIFEST_REPAIR_BIN" && -n "$MANIFEST_RUNTIME_ROOT" ]]; then
 fi
 PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
-if [[ -n "$MANIFEST_REPAIR_BIN" && -x "$MANIFEST_REPAIR_BIN" ]]; then
-  PRIMARY_REPAIR_BIN="$MANIFEST_REPAIR_BIN"
-else
-  if [[ -n "$MANIFEST_REPAIR_BIN" ]]; then
-    printf '[watchdog %s] runtime manifest repair bin not executable: %s\n' \
+if [[ -n "$MANIFEST_REPAIR_BIN" ]]; then
+  if [[ -x "$MANIFEST_REPAIR_BIN" ]]; then
+    PRIMARY_REPAIR_BIN="$MANIFEST_REPAIR_BIN"
+  else
+    # Fail closed: a manifest that declares a repair bin but points at a
+    # non-executable path is a runtime-misconfiguration signal, not a
+    # fallback trigger.  Falling back would silently run a DIFFERENT
+    # runtime than the manifest committed to.
+    printf '[watchdog %s] runtime manifest repair bin is not executable: %s\n' \
       "$(date -Iseconds)" "$MANIFEST_REPAIR_BIN" >>"$LOG" 2>&1 || true
+    echo "arnold-watchdog: manifest declares non-executable repair bin '$MANIFEST_REPAIR_BIN'; failing closed" >&2
+    exit 78
   fi
+else
   PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
   if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
     if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-primary-repair "$PRIMARY_REPAIR_SOURCE_BIN" "$PRIMARY_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then

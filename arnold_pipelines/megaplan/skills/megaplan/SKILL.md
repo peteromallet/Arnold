@@ -1,1 +1,1 @@
-/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/_composed/claude_skill.md
+../../data/_composed/claude_skill.md
