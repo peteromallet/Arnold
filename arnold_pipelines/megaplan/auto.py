@@ -4121,9 +4121,17 @@ def _project_auto_dispatch(
     # The static pypeline cursor is plan-agnostic: it describes the canonical
     # full workflow, not the plan's actual robustness-pruned topology (for
     # example at light robustness there is no gate step: critiqued -> revise).
-    # Reconcile the control projection against the plan's own topology so
-    # legitimate robustness-pruned transitions are not flagged as drift.
-    if state.get("current_state"):
+    # Reconcile the control projection against the plan's own topology ONLY
+    # for a live dispatch cursor (active_step / resume_cursor / latest_failure
+    # sources) so legitimate robustness-pruned transitions are not flagged as
+    # drift. A plain status projection (observed_phase_source=None) must keep
+    # the strict cursor-vs-projection comparison: when the status cursor's
+    # dispatch phase disagrees with the forward projection, that is a real
+    # workflow_cursor_mismatch and the drive must stop before dispatch.
+    if (
+        state.get("current_state")
+        and observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+    ):
         try:
             from arnold_pipelines.megaplan._core.workflow import workflow_next
 
