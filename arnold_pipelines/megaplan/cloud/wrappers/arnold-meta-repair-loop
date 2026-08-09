@@ -47,7 +47,23 @@ if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
   exec bash "$meta_repair_loop_snapshot" "$@"
 fi
 ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
+meta_repair_loop_snapshot_real="$(readlink -f "$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH" 2>/dev/null || printf '%s' "$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH")"
+meta_repair_loop_origin_real="$(readlink -f "$ARNOLD_META_REPAIR_LOOP_ORIGIN" 2>/dev/null || printf '%s' "$ARNOLD_META_REPAIR_LOOP_ORIGIN")"
+meta_repair_loop_origin_root="$(cd "$(dirname "$meta_repair_loop_origin_real")/../../../.." 2>/dev/null && pwd -P || printf '%s' "")"
+meta_repair_loop_snapshot_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P || printf '%s' "")"
+if [[ -z "$meta_repair_loop_snapshot_root" \
+  || "$meta_repair_loop_snapshot_real" != "$meta_repair_loop_snapshot_root"/arnold-meta-repair-loop.* \
+  || "$meta_repair_loop_snapshot_real" == "$meta_repair_loop_origin_real" \
+  || ( -n "$meta_repair_loop_origin_root" \
+    && ( "$meta_repair_loop_snapshot_real" == "$meta_repair_loop_origin_root" \
+      || "$meta_repair_loop_snapshot_real" == "$meta_repair_loop_origin_root"/* ) ) ]]; then
+  echo "arnold-meta-repair-loop: refusing unsafe immutable snapshot cleanup path" >&2
+  exit 78
+fi
+ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="$meta_repair_loop_snapshot_real"
+readonly ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH
 trap 'rm -f -- "$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH"' EXIT
+unset meta_repair_loop_snapshot_real meta_repair_loop_origin_real meta_repair_loop_origin_root meta_repair_loop_snapshot_root
 
 if [[ $# -lt 1 ]]; then
   echo "usage: arnold-meta-repair-loop <session> [trigger]" >&2

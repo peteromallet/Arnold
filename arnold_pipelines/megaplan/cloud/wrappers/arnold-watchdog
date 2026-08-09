@@ -18,7 +18,23 @@ if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   exec bash "$watchdog_snapshot" "$@"
 fi
 ARNOLD_WATCHDOG_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
+watchdog_snapshot_real="$(readlink -f "$ARNOLD_WATCHDOG_SNAPSHOT_PATH" 2>/dev/null || printf '%s' "$ARNOLD_WATCHDOG_SNAPSHOT_PATH")"
+watchdog_origin_real="$(readlink -f "$ARNOLD_WATCHDOG_ORIGIN" 2>/dev/null || printf '%s' "$ARNOLD_WATCHDOG_ORIGIN")"
+watchdog_origin_root="$(cd "$(dirname "$watchdog_origin_real")/../../../.." 2>/dev/null && pwd -P || printf '%s' "")"
+watchdog_snapshot_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P || printf '%s' "")"
+if [[ -z "$watchdog_snapshot_root" \
+  || "$watchdog_snapshot_real" != "$watchdog_snapshot_root"/arnold-watchdog.* \
+  || "$watchdog_snapshot_real" == "$watchdog_origin_real" \
+  || ( -n "$watchdog_origin_root" \
+    && ( "$watchdog_snapshot_real" == "$watchdog_origin_root" \
+      || "$watchdog_snapshot_real" == "$watchdog_origin_root"/* ) ) ]]; then
+  echo "arnold-watchdog: refusing unsafe immutable snapshot cleanup path" >&2
+  exit 78
+fi
+ARNOLD_WATCHDOG_SNAPSHOT_PATH="$watchdog_snapshot_real"
+readonly ARNOLD_WATCHDOG_SNAPSHOT_PATH
 trap 'rm -f -- "$ARNOLD_WATCHDOG_SNAPSHOT_PATH"' EXIT
+unset watchdog_snapshot_real watchdog_origin_real watchdog_origin_root watchdog_snapshot_root
 
 # Caller-provided supervisor runtime controls are an explicit invocation
 # contract (and are used by readiness probes).  The shared hot-env supplies

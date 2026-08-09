@@ -100,6 +100,22 @@ if [[ "$progress_auditor_running_snapshot" != "1" ]]; then
   exec bash "$progress_auditor_snapshot" "$@"
 fi
 ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="$progress_auditor_current"
+progress_auditor_snapshot_real="$(readlink -f "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH" 2>/dev/null || printf '%s' "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH")"
+progress_auditor_origin_real="$(readlink -f "$ARNOLD_PROGRESS_AUDITOR_ORIGIN" 2>/dev/null || printf '%s' "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")"
+progress_auditor_origin_root="$(cd "$(dirname "$progress_auditor_origin_real")/../../../.." 2>/dev/null && pwd -P || printf '%s' "")"
+progress_auditor_snapshot_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P || printf '%s' "")"
+if [[ -z "$progress_auditor_snapshot_root" \
+  || "$progress_auditor_snapshot_real" != "$progress_auditor_snapshot_root"/arnold-progress-auditor.* \
+  || "$progress_auditor_snapshot_real" == "$progress_auditor_origin_real" \
+  || ( -n "$progress_auditor_origin_root" \
+    && ( "$progress_auditor_snapshot_real" == "$progress_auditor_origin_root" \
+      || "$progress_auditor_snapshot_real" == "$progress_auditor_origin_root"/* ) ) ]]; then
+  echo "arnold-progress-auditor: refusing unsafe immutable snapshot cleanup path" >&2
+  exit 78
+fi
+ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="$progress_auditor_snapshot_real"
+readonly ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH
+unset progress_auditor_snapshot_real progress_auditor_origin_real progress_auditor_origin_root progress_auditor_snapshot_root
 
 declare -a progress_auditor_cleanup_paths=()
 register_progress_auditor_cleanup() {
