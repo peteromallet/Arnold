@@ -285,3 +285,39 @@ original `arnold-main-20260809` was deleted and the watchdog now runs from
 `arnold-r7-fresh-child-20260805` — re-verify with `pgrep -af arnold-watchdog`
 before launch); the megaplan-maintenance briefs/NORTHSTAR carry uncommitted
 dirty state that must be committed or content-hash snapshotted before launch.
+
+## P1 oracle gate G1 (gpt-5.6-sol high, 2026-08-10): NO-GO → contract corrections
+
+The admission contract was rejected once; the following corrections are now
+part of the P1 contract (the executor must not edit P1 until G1 passes with
+these folded in):
+
+1. **Per-session admission, not global.** The shared authority helper must be
+   the SOLE resolver and run before `arnold_supervisor_runtime_init`, field
+   reads, and dispatch. Watchdog admission is checked PER TARGET
+   CHAIN/SESSION, not once against the global active pointer. `cloud chain`
+   must bind each launch and session marker to its SPECIFIC manifest path —
+   concurrent chains must not cross-select runtimes (the single global pointer
+   that `arnold-runtime-create` advances is not a sufficient identity).
+2. **Richer permit record.** Minimum fields: `kind`, immutable `id`,
+   server-stamped `issued_at`, `expires_at`, `actor`, `reason`, `evidence`,
+   and a `chain_digest` of the chain spec. Validate
+   `0 < expires_at - issued_at <= 24h` and current-unexpired. Revocation is an
+   auditable tombstone (never silent delete). Caller-supplied actor is
+   attribution, not authentication. Historical deviations stay loadable after
+   expiry — expiry rejects admission/addition, it does not invalidate the
+   manifest forever. Schema stays `"1"` only because `deviations` is genuinely
+   optional AND preserved by every read/write transition.
+3. **Do NOT delete `test_editable_install_sync.py` wholesale.** Its 12 tests
+   cover still-live functions in `cloud/cli.py:5142`. Preserve/convert: clean
+   runtime mirrors, inherited-pin clearing, exact revision/PYTHONPATH binding,
+   dirty-tree refusal, divergent-branch refusal. Legacy selector assertions
+   are deleted only alongside the P4 code removal.
+4. **Gate placement must be proven before both state loads.** Canonical
+   execution loads state at `chain/__init__.py:6343` before binding `:6350`;
+   supervisor execution loads at `supervisor/chain_runner.py:337` without the
+   same initial binding. The gate fires before BOTH loads, and a regression
+   test proves rejected admission calls NEITHER `load_chain_state` NOR
+   `bind_execution_identity`; the supervisor binding path is aligned.
+5. **Baseline must be reported.** Baseline focused pytest counts (per file
+   chunk) must accompany the gate re-run.
