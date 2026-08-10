@@ -1776,6 +1776,13 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
         _normalize_flattened_plan_success_criterion(payload)
     if step == "execute":
         _strip_execute_bookkeeping_fields(payload)
+    if step == "review":
+        # review_completion_status is a handler-owned scratch extension
+        # field (handlers/review.py _REVIEW_SCRATCH_EXTENSION_FIELDS); the
+        # capture path re-promotes it later.  Drop it before the strict
+        # additionalProperties audit so omp local-strict workers do not fail
+        # the exact payload, matching the codex/hermes capture behavior.
+        payload.pop("review_completion_status", None)
 
     # Strip guide-only fields from critique checks (guidance/prior_findings
     # are in the template file to help the model, but not part of the schema)
