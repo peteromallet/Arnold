@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -74,6 +75,10 @@ def test_workflow_module_invocation(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=str(tmp_path),
+        # The demo target lives under tests.fixtures in the repo; the
+        # subprocess runs from a temp artifact dir, so put the repo on the
+        # path (mirrors the editable-install environment CI provides).
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])},
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
