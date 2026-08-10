@@ -193,12 +193,6 @@
       "reason": "Skill documentation references the legacy package path as historical compatibility context."
     },
     {
-      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Subagent launcher skill documents legacy runtime discovery fallback context."
-    },
-    {
       "path": "chain_run.log",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
