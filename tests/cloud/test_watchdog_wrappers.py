@@ -863,13 +863,26 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
     env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
-    return subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
+    # Some extracted production functions embed many Python heredocs and
+    # exceed the kernel's single-argument limit (~128 KiB MAX_ARG_STRLEN),
+    # which makes `bash -c "$script"` fail with E2BIG.  Run the script from a
+    # temp file instead — behaviorally identical, no argument size ceiling.
+    fd, script_path = tempfile.mkstemp(prefix="watchdog-shell-", suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(script)
+        return subprocess.run(
+            ["bash", script_path],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+    finally:
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
 
 
 def test_run_watchdog_shell_strips_ambient_notification_authority(
@@ -4305,7 +4318,8 @@ def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Pat
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        # Contract: arnold-repair-loop [--mode=...] <session> <workspace> <spec>
+        f"printf '%s\\n' \"$2\" >> {str(launch_log)!r}\n"
         "sleep 5\n",
         encoding="utf-8",
     )

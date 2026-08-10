@@ -952,9 +952,19 @@ def _run_managed_command_locked(
             raise RuntimeError("managed stdin placeholder used without sealed stdin")
         capability = _resolve_fs_capability(manifest)
         launch_argv = list(worker_argv)
+        # B5 boundary: the agentbox deliberately disables unprivileged user
+        # namespaces, so bwrap cannot create a namespace there.  Trusted
+        # container mode (MEGAPLAN_TRUSTED_CONTAINER=1) is the documented
+        # sandbox boundary: container isolation plus in-process path
+        # validators — bwrap is skipped, never required.  (bwrap remains the
+        # isolation mechanism only outside trusted mode.)
+        _trusted_container = str(
+            os.environ.get("MEGAPLAN_TRUSTED_CONTAINER", "")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         if (
             spec.run_kind in AUTOMATIC_RUN_KINDS
             and capability.get("profile") == FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY
+            and not _trusted_container
         ):
             engine_roots = [
                 Path(str(root)).resolve()

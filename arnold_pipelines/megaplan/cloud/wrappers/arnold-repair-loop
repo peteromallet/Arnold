@@ -8960,16 +8960,6 @@ if [[ "$REPAIR_LOOP_MODE" == "proactive" ]]; then
     log "proactive NO-OP guard: target alive but marker requires repair session=$SESSION reason=$proactive_noop_forced"
   fi
 fi
-acquire_repair_lock || exit 75
-export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
-export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
-export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
-if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]; then
-  log "canonical target liveness UNKNOWN; repair loop exits before mutation and legacy PID/tmux evidence remains diagnostic-only session=$SESSION"
-  exit 0
-fi
-log "canonical repair-entry liveness admitted session=$SESSION state=$ENTRY_CANONICAL_LIVENESS"
-
 # Environment-gone backstop: if the workspace dir is gone the repair loop has
 # nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
 # a wiped workspace). Persist an environment_gone outcome for audit and exit 0
@@ -9035,6 +9025,16 @@ if entry_reason == "stale_marker":
 PY
   exit 0
 fi
+
+acquire_repair_lock || exit 75
+export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
+export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
+export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
+if [[ "$ENTRY_CANONICAL_LIVENESS" == "unknown" ]]; then
+  log "canonical target liveness UNKNOWN; repair loop exits before mutation and legacy PID/tmux evidence remains diagnostic-only session=$SESSION"
+  exit 0
+fi
+log "canonical repair-entry liveness admitted session=$SESSION state=$ENTRY_CANONICAL_LIVENESS"
 
 IFS=$'\t' read -r ENTRY_COMPLETE _entry_scope _entry_reason _entry_chain _entry_plan _entry_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
 if [[ "${ENTRY_COMPLETE:-0}" == "1" ]]; then

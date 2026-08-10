@@ -1560,12 +1560,17 @@ if not projection.get("active_request_ids"):
                 "--grant-file", grant_path,
                 "--at", at_iso, "--timezone", "UTC",
                 "--work-intent", "execution", "--task-kind", "autonomous",
-                "--model", "hermes:deepseek:deepseek-v4-flash",
+                "--model", "omp:deepseek/deepseek-v4-flash",
                 "--project-dir", str(workspace),
             ]
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         except Exception as _sfx:
-            log "status-trigger superfixer failed session=$session err=$_sfx" 2>&1 || true
+            # NOTE: this block runs inside a Python heredoc — plain stderr,
+            # never bash syntax.
+            print(
+                f"status-trigger superfixer failed session={session} err={_sfx}",
+                file=sys.stderr,
+            )
         raise SystemExit(0)
     enqueue_occurrence_bound_repair_request(
         queue_root=repair_queue_dir(marker_dir),
@@ -4969,13 +4974,17 @@ if event_kind == "detection":
     )
     raise SystemExit(0)
 
+# Every dispatch outcome is recorded — dispatched, busy, paused, disabled,
+# recursion_blocked, unavailable, launch_failed — so the incident ledger
+# reflects the full repair dispatch history.  Only a successful dispatch
+# declares a follow-up event.
 next_expected_event = None
 if status == "dispatched":
     if repair_actor == "meta_repair":
         next_expected_event = "meta_repair.repair_attempt"
     else:
         next_expected_event = "immediate_repair.repair_attempt"
-    append_watchdog_dispatch(
+append_watchdog_dispatch(
     incident_id=incident_id,
     summary=summary,
     outcome=status,
@@ -5329,6 +5338,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
   if command -v setsid >/dev/null 2>&1; then
     PYTHONSAFEPATH=1 \
     PYTHONPATH="$WRAPPER_REPO_ROOT:${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}:${PYTHONPATH:-}" \
+    MEGAPLAN_TRUSTED_CONTAINER=1 \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
@@ -5345,6 +5355,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
   else
     PYTHONSAFEPATH=1 \
     PYTHONPATH="$WRAPPER_REPO_ROOT:${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}:${PYTHONPATH:-}" \
+    MEGAPLAN_TRUSTED_CONTAINER=1 \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
@@ -6128,10 +6139,14 @@ PY
     return 1
   fi
 
-  # Background-dispatch meta-repair so it never blocks the watchdog tick
+  # Background-dispatch meta-repair so it never blocks the watchdog tick.
+  # Trusted-container mode is the documented agentbox sandbox boundary (B5):
+  # the managed child runs inside the container with in-process validators,
+  # never bwrap (unprivileged user namespaces are disabled on the box).
   if command -v setsid >/dev/null 2>&1; then
     PYTHONSAFEPATH=1 \
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    MEGAPLAN_TRUSTED_CONTAINER=1 \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
@@ -6144,6 +6159,7 @@ PY
   else
     PYTHONSAFEPATH=1 \
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    MEGAPLAN_TRUSTED_CONTAINER=1 \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
@@ -8682,23 +8698,25 @@ PY
   # tolerates transient deploy gaps; at threshold the session is retired cleanly
   # instead of looping repair against a missing env. Below threshold we log the
   # strike and skip dispatch this tick; if the env recovers, the sidecar clears.
-  if [[ "$canonical_mutation_permitted" == "1" ]]; then
-    local env_gone_out env_gone_rc
-    env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
-    env_gone_rc=$?
-    if (( env_gone_rc == 0 )); then
-      log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
-      persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
-      clear_session_tracking_artifacts "$session" "$plan_name"
-      rm -f "$(env_gone_sidecar_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-188" "authority-risk bypass converted to typed evidence gap"
-      report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; retired after env-gone strikes" "$workspace" "$remote_spec"
-      return 0
-    fi
-    if [[ "$env_gone_out" != "present" && -n "$env_gone_out" ]]; then
-      log "env-gone strike session=$session count=$env_gone_out/$ENV_GONE_STRIKES workspace=$workspace spec=$remote_spec_path"
-      report_item "$report_items" "$session" "observe" "env_gone_pending" "env-gone strike $env_gone_out/$ENV_GONE_STRIKES; workspace=$workspace spec=$remote_spec_path" "$workspace" "$remote_spec"
-      return 0
-    fi
+  # Retirement is cleanup, not mutation: the env-gone gate runs even when
+  # canonical mutation permission is unknown/denied — a wiped workspace has
+  # nothing to repair and must be retired (or strike-counted) rather than
+  # reported as a liveness problem the repair loop would loop on forever.
+  local env_gone_out env_gone_rc
+  env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
+  env_gone_rc=$?
+  if (( env_gone_rc == 0 )); then
+    log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
+    persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
+    clear_session_tracking_artifacts "$session" "$plan_name"
+    rm -f "$(env_gone_sidecar_path "$session")" 2>/dev/null || authority_gap_continue "T29-BYPASS-188" "authority-risk bypass converted to typed evidence gap"
+    report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; retired after env-gone strikes" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if [[ "$env_gone_out" != "present" && -n "$env_gone_out" ]]; then
+    log "env-gone strike session=$session count=$env_gone_out/$ENV_GONE_STRIKES workspace=$workspace spec=$remote_spec_path"
+    report_item "$report_items" "$session" "observe" "env_gone_pending" "env-gone strike $env_gone_out/$ENV_GONE_STRIKES; workspace=$workspace spec=$remote_spec_path" "$workspace" "$remote_spec"
+    return 0
   fi
 
   local health
