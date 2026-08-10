@@ -100,6 +100,18 @@ def _install_factory(monkeypatch, client: FakeRpcClient) -> FakeRpcClient:
     return client
 
 
+
+def _tool_write_turn(client, payload: dict):
+    """Build a turn closure that writes the payload via the host tool (the
+    real model's flow): the tool validates JSON and writes the output file."""
+    def _turn():
+        tool = client.custom_tools[0]
+        result = tool.execute({"payload": json.dumps(payload)}, object())
+        assert not result.get("details", {}).get("isError"), result
+        return make_turn(assistant_text="done")
+    return _turn
+
+
 def _run_plan(
     client: FakeRpcClient,
     tmp_path: Path,
@@ -230,12 +242,11 @@ class TestStructuredOutput:
 
     def test_valid_output_inline_text(self, tmp_path, monkeypatch, deepseek_env):
         payload = _valid_plan_payload()
-        client = FakeRpcClient(
-            turn_factory=lambda: make_turn(
-                assistant_text=json.dumps(payload)
-            )
-        )
+        client = FakeRpcClient(turn_factory=_tool_write_turn(client, payload)) if False else FakeRpcClient()
+        # inline-text turns must still write via the tool in the new flow
+        client = FakeRpcClient()
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         result = _run_plan(client, tmp_path)
         assert result.payload["plan"].startswith("# Implementation Plan")
 
@@ -337,11 +348,9 @@ class TestErrorMatrix:
         self, tmp_path, monkeypatch, deepseek_env
     ):
         payload = _valid_plan_payload()
-        client = FakeRpcClient(
-            start_failures_before_success=1,
-            turn_factory=lambda: make_turn(assistant_text=json.dumps(payload)),
-        )
+        client = FakeRpcClient(start_failures_before_success=1)
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         result = _run_plan(client, tmp_path)
         assert result.attempt_index == 2
         assert len(result.attempted_specs) == 2
@@ -369,10 +378,11 @@ class TestErrorMatrix:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RpcTimeoutError("request timed out")
-            return make_turn(assistant_text=json.dumps(payload))
+            return _tool_write_turn(client, payload)()
 
-        client = FakeRpcClient(turn_factory=_flaky_turn)
+        client = FakeRpcClient()
         _install_factory(monkeypatch, client)
+        client.turn_factory = _flaky_turn
         result = _run_plan(client, tmp_path)
         assert result.attempt_index == 2
         assert calls["n"] == 2
@@ -602,9 +612,9 @@ class TestUsageAndCost:
                     cost_total=0.005,
                 ),
             ],
-            turn_factory=lambda: make_turn(assistant_text=json.dumps(payload)),
         )
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         result = _run_plan(client, tmp_path)
         assert result.prompt_tokens == 130
         assert result.completion_tokens == 70
@@ -622,9 +632,9 @@ class TestUsageAndCost:
                 tokens={"input": 500, "output": 200, "cache_read": 0, "cache_write": 0, "total": 700},
                 cost=0.05,
             ),
-            turn_factory=lambda: make_turn(assistant_text=json.dumps(payload)),
         )
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         result = _run_plan(client, tmp_path)
         assert result.prompt_tokens == 500
         assert result.completion_tokens == 200
@@ -645,15 +655,15 @@ class TestUsageAndCost:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RpcTimeoutError("timeout")
-            return make_turn(assistant_text=json.dumps(payload))
+            return _tool_write_turn(client, payload)()
 
         client = FakeRpcClient(
             messages=[
                 usage_message(input_tokens=100, output_tokens=50, cost_total=0.01)
             ],
-            turn_factory=_flaky,
         )
         _install_factory(monkeypatch, client)
+        client.turn_factory = _flaky
         result = _run_plan(client, tmp_path)
         # The failed attempt never produced messages; the successful attempt
         # is counted exactly once.
@@ -665,19 +675,17 @@ class TestUsageAndCost:
 class TestThinkingPassthrough:
     def test_thinking_level_sent(self, tmp_path, monkeypatch, deepseek_env):
         payload = _valid_plan_payload()
-        client = FakeRpcClient(
-            turn_factory=lambda: make_turn(assistant_text=json.dumps(payload))
-        )
+        client = FakeRpcClient()
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         _run_plan(client, tmp_path, effort="high")
         assert client.thinking_levels == ["high"]
 
     def test_no_thinking_when_unset(self, tmp_path, monkeypatch, deepseek_env):
         payload = _valid_plan_payload()
-        client = FakeRpcClient(
-            turn_factory=lambda: make_turn(assistant_text=json.dumps(payload))
-        )
+        client = FakeRpcClient()
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         _run_plan(client, tmp_path, effort=None)
         assert client.thinking_levels == []
 
@@ -686,10 +694,9 @@ class TestThinkingPassthrough:
     ):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
         payload = _valid_plan_payload()
-        client = FakeRpcClient(
-            turn_factory=lambda: make_turn(assistant_text=json.dumps(payload))
-        )
+        client = FakeRpcClient()
         _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
         _run_plan(client, tmp_path, model="omp:anthropic/claude-opus-4-8")
         assert ("anthropic", "claude-opus-4-8") in client.set_model_calls
         assert client.env.get("ANTHROPIC_API_KEY") is None or True

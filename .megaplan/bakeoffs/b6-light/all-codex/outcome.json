@@ -1,0 +1,87 @@
+{
+  "status": "blocked",
+  "plan": "b6-light",
+  "final_state": "blocked",
+  "iterations": 3,
+  "reason": "phase 'plan' repeated the same internal_error 3 times: {\"success\": false, \"error\": \"codex_writable_root_overlaps_engine\", \"message\": \"Codex writable root overlaps the engine root; refusing engine-writable sandbox\", \"details\": {\"project_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"work_dir\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"engine_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_head\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base_ref\": \"main\", \"target_fallback_reason\": null, \"writable_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"writable_root_source\": \"target_work_dir\", \"overlap\": \"equal\"}}",
+  "last_phase": "plan",
+  "events": [
+    {
+      "msg": "iter 1 state=initialized next=plan valid_next=['plan'] legacy_next=plan",
+      "iteration": 1,
+      "state": "initialized",
+      "next_step": "plan",
+      "valid_next": [
+        "plan"
+      ],
+      "legacy_next_step": "plan",
+      "legacy_valid_next": [
+        "plan"
+      ]
+    },
+    {
+      "msg": "running: megaplan plan --plan b6-light",
+      "phase": "plan",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'plan' exited with internal_error: {\"success\": false, \"error\": \"codex_writable_root_overlaps_engine\", \"message\": \"Codex writable root overlaps the engine root; refusing engine-writable sandbox\", \"details\": {\"project_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"work_dir\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"engine_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_head\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base_ref\": \"main\", \"target_fallback_reason\": null, \"writable_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"writable_root_source\": \"target_work_dir\", \"overlap\": \"equal\"}}"
+    },
+    {
+      "msg": "iter 2 state=initialized next=plan valid_next=['plan'] legacy_next=plan",
+      "iteration": 2,
+      "state": "initialized",
+      "next_step": "plan",
+      "valid_next": [
+        "plan"
+      ],
+      "legacy_next_step": "plan",
+      "legacy_valid_next": [
+        "plan"
+      ]
+    },
+    {
+      "msg": "running: megaplan plan --plan b6-light",
+      "phase": "plan",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'plan' exited with internal_error: {\"success\": false, \"error\": \"codex_writable_root_overlaps_engine\", \"message\": \"Codex writable root overlaps the engine root; refusing engine-writable sandbox\", \"details\": {\"project_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"work_dir\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"engine_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_head\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base_ref\": \"main\", \"target_fallback_reason\": null, \"writable_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"writable_root_source\": \"target_work_dir\", \"overlap\": \"equal\"}}"
+    },
+    {
+      "msg": "iter 3 state=initialized next=plan valid_next=['plan'] legacy_next=plan",
+      "iteration": 3,
+      "state": "initialized",
+      "next_step": "plan",
+      "valid_next": [
+        "plan"
+      ],
+      "legacy_next_step": "plan",
+      "legacy_valid_next": [
+        "plan"
+      ]
+    },
+    {
+      "msg": "running: megaplan plan --plan b6-light",
+      "phase": "plan",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'plan' exited with internal_error: {\"success\": false, \"error\": \"codex_writable_root_overlaps_engine\", \"message\": \"Codex writable root overlaps the engine root; refusing engine-writable sandbox\", \"details\": {\"project_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"work_dir\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"engine_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"target_head\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base\": \"9d374c6e02ed7838279fe09528c384bf94a23687\", \"target_base_ref\": \"main\", \"target_fallback_reason\": null, \"writable_root\": \"/workspace/omp-replaces-hermes/.megaplan-worktrees/b6-light/all-codex\", \"writable_root_source\": \"target_work_dir\", \"overlap\": \"equal\"}}"
+    }
+  ],
+  "total_cost_usd": 0.0,
+  "cost_cap_usd": null,
+  "context_retries_used": 0,
+  "max_context_retries": 2,
+  "external_retries_used": 0,
+  "max_external_retries": 1,
+  "blocked_retries_used": 0,
+  "max_blocked_retries": 1,
+  "blocking_reasons": [
+    "deterministic_phase_failure"
+  ],
+  "tier_escalations_used": 0,
+  "escalation_tier_pin": null,
+  "publish": null
+}

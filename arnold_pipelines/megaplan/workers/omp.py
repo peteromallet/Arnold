@@ -510,6 +510,9 @@ def _build_client(
             env=dict(env),
             startup_timeout=timeout,
             request_timeout=min(timeout, 60.0),
+            # Long megaplan phases stream many events (tool calls, updates);
+            # the RPC client default (10k) is too small and aborts the turn.
+            max_event_history=200_000,
         )
     rpc_client = _import_rpc_client()
     return rpc_client(
@@ -525,6 +528,7 @@ def _build_client(
         env=dict(env),
         startup_timeout=timeout,
         request_timeout=min(timeout, 60.0),
+        max_event_history=200_000,
     )
 
 
@@ -555,6 +559,38 @@ def _write_phase_output_tool(output_path: Path) -> Any:
                         "text": (
                             "error: payload must be a non-empty string "
                             "containing the exact JSON object"
+                        ),
+                    }
+                ],
+                "details": {"isError": True},
+            }
+        # The payload parameter accepts arbitrary text; enforce the JSON
+        # contract here so a model that writes prose/markdown gets an
+        # in-loop correction instead of silently poisoning the capture file.
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "error: payload is not valid JSON "
+                            f"({exc}). Retry with payload set to exactly one "
+                            "JSON object (no Markdown fences, no prose)."
+                        ),
+                    }
+                ],
+                "details": {"isError": True, "json_error": str(exc)},
+            }
+        if not isinstance(parsed, Mapping):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "error: payload must be exactly one JSON object, "
+                            f"got {type(parsed).__name__}"
                         ),
                     }
                 ],
@@ -1178,8 +1214,35 @@ def run_omp_step(
         **(prompt_kwargs or {}),
     )
     prompt = rendered_prompt.prompt
+    seed_text = ""
     if not free_text:
-        prompt += _local_strict_prompt_suffix()
+        # Seed the output file with a JSON template so the model's job is
+        # concrete (read template -> fill -> write via the tool), and prepend
+        # + append an unmissable output contract.
+        try:
+            if not output_path.exists() or not output_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).strip():
+                from arnold_pipelines.megaplan.workers.hermes import (
+                    _build_output_template,
+                )
+
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                seed_text = _build_output_template(step, schema)
+                output_path.write_text(seed_text, encoding="utf-8")
+        except Exception:
+            pass
+        contract = (
+            "\n\nOUTPUT CONTRACT (mandatory):\n"
+            f"1. The output file is {output_path}. It currently contains an "
+            "empty JSON template.\n"
+            "2. Read the template file, then call the write_phase_output tool "
+            "ONCE with the COMPLETE final JSON object as its payload argument.\n"
+            "3. Your text response must be a brief confirmation only - never "
+            "the JSON itself.\n"
+            "4. Do not use Markdown fences anywhere.\n"
+        )
+        prompt = contract + "\n\n" + prompt + contract
     try:
         check_prompt_size(prompt, phase=step)
     except CliError:
@@ -1285,7 +1348,11 @@ def run_omp_step(
                 output_raw = output_path.read_text(
                     encoding="utf-8", errors="replace"
                 )
-            if output_raw.strip():
+            # The seeded template is not model output: if the file still
+            # holds the seed byte-for-byte, the model never wrote a valid
+            # payload (rejected attempts leave the seed untouched) and the
+            # final text is the only candidate.
+            if output_raw.strip() and output_raw != seed_text:
                 raw = output_raw
 
             try:
