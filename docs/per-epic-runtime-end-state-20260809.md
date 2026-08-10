@@ -204,27 +204,34 @@ cleanup. **Risks:** spec mutation after binding, base-vs-main completion
 checks, false no-op, cherry-pick conflicts, model-selecting chain-control
 commits, on_failure vs always-close, GC before restore proof.
 
-## P7 — Live validation (final step, operator-ordered)
+## P7 — Live validation (FINAL task of the sequence, operator-ordered)
 
-Before any further rollout, prove the whole stack end to end on the live box:
+Terminal acceptance: nothing in P1–P6 counts as done until the whole stack is
+proven live. Steps, in order:
 
 1. **Push** current `main` to origin (all committed work; leave other agents'
    dirty files untouched).
 2. **Refresh the box runtime**: fast-forward the box runtime tree
-   (`/workspace/runtime-candidates/arnold-main-20260809`) to latest `main` and
-   re-copy changed wrappers to `/usr/local/bin` (the established protocol:
-   cp + chmod + `bash -n` + grep marker check).
+   (`/workspace/runtime-candidates/arnold-main-20260809`, or the tree the
+   watchdog currently runs from — check `pgrep -af arnold-watchdog` first) to
+   latest `main`; re-copy changed wrappers to `/usr/local/bin` (cp + chmod +
+   `bash -n` + grep marker check). If the box was reorganized (runtime tree
+   renamed/deleted, watchdog restarted from another tree), adapt to the live
+   tree and record the change.
 3. **Launch the `megaplan-maintenance` epic** (`.megaplan/initiatives/
    megaplan-maintenance/chain.yaml`, 5 codex milestones,
-   `merge_policy: review` + `driver.auto_approve: false` ⇒ human-gated,
-   launch with `--allow-human-gates`) via `cloud preflight` then
-   `cloud chain --fresh` against the box.
-4. **Observe**: `cloud status --all` shows the new
-   `megaplan-maintenance-<digest>` session alive and advancing past init;
-   the watchdog reports it (fresh sweep, `codex_repair_enabled=true`); the
-   fixer is active (`ARNOLD_REPAIR_TRIGGER_ENABLED=1`, repair-trigger path
-   wired, watchdog sweep shows repair enabled); the chain's first milestone
-   moves from init → prep/plan (or halts only at an expected human gate —
-   `merge_policy: review` milestone PRs).
+   `merge_policy: review` + `driver.auto_approve: false` ⇒ human-gated).
+   The cloud.yaml lives at `.megaplan/initiatives/megaplan-maintenance/
+   cloud.yaml` (gitignored, local-only; `src_path` must point at the live
+   box runtime tree). Run `cloud preflight ... --allow-human-gates` then
+   `cloud chain ... --fresh --allow-human-gates`. **First check
+   `cloud status --all`** — a `megaplan-maintenance` session may already
+   exist on the box; never double-launch, resume/observe instead.
+4. **Observe**: `cloud status --all` shows the `megaplan-maintenance-<digest>`
+   session alive and advancing past init; the watchdog reports it (fresh
+   sweep, `codex_repair_enabled=true`); the fixer is active
+   (`ARNOLD_REPAIR_TRIGGER_ENABLED=1`, repair-trigger path wired, watchdog
+   sweep shows repair enabled); the first milestone moves init → prep/plan or
+   halts only at an expected human gate (`merge_policy: review` PR).
 5. **Sense-check**: any failure in the first 10–15 min is caught now (the
    operator-loop cadence), not after a day.
