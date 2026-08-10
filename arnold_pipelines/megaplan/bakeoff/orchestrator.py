@@ -37,6 +37,29 @@ from arnold_pipelines.megaplan.types import CliError
 
 SpawnedAuto = tuple[asyncio.subprocess.Process, IO[bytes] | None]
 
+
+def _prune_stale_publish_branches(
+    root: Path, experiment_id: str, profiles: list[str]
+) -> None:
+    """Force-delete leftover auto-publish branches for this experiment."""
+    import subprocess
+
+    names = [f"megaplan/{experiment_id}"] + [
+        f"megaplan/{experiment_id}-{profile}" for profile in profiles
+    ]
+    for name in names:
+        try:
+            subprocess.run(
+                ["git", "branch", "-D", name],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except Exception:
+            continue
+
 async def run_bakeoff(
     root: Path,
     idea_path: Path | str,
@@ -121,6 +144,14 @@ async def run_bakeoff(
         evidence=run_evidence,
     )
     save_bakeoff_state(root, state)
+
+    # Drop stale auto-publish branches from earlier runs of this experiment.
+    # Each profile publishes to ``megaplan/<experiment_id>-<profile>`` (and
+    # older runs used ``megaplan/<experiment_id>``); a leftover branch whose
+    # tracked files collide with the fresh run's untracked executor output
+    # makes the publish ``git switch`` fail.  The merge step reads the diff
+    # from the worktree, not these branches, so force-deleting them is safe.
+    _prune_stale_publish_branches(root, experiment_id, profiles)
 
     created_worktrees: list[Path] = []
     try:
