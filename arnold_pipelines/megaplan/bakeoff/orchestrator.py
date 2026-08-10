@@ -317,7 +317,16 @@ async def _launch_profile_auto(
         },
     )
     try:
-        spawned = await _spawn_auto(worktree, record["plan_id"], log_path, outcome_path)
+        # Bakeoff profiles share the plan id, so the default auto-publish
+        # branch name (``megaplan/<plan>``) collides across profiles: the
+        # second profile's ``git switch`` fails with "already checked out"
+        # in the first profile's worktree.  Publish each profile to its own
+        # branch instead.
+        publish_branch = f"megaplan/{state['experiment_id']}-{record['name']}"
+        spawned = await _spawn_auto(
+            worktree, record["plan_id"], log_path, outcome_path,
+            publish_branch=publish_branch,
+        )
     except Exception as exc:
         reason = f"auto launch failed: {exc}"
         mark_crashed(worktree, reason)
@@ -342,20 +351,26 @@ async def _spawn_auto(
     plan_id: str,
     log_path: Path,
     outcome_path: Path,
+    publish_branch: str | None = None,
 ) -> SpawnedAuto:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     outcome_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("ab")
+    auto_argv = [
+        sys.executable,
+        "-m",
+        "arnold_pipelines.megaplan",
+        "auto",
+        "--plan",
+        plan_id,
+        "--outcome-file",
+        str(outcome_path),
+    ]
+    if publish_branch:
+        auto_argv.extend(["--publish-branch", publish_branch])
     try:
         process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "arnold_pipelines.megaplan",
-            "auto",
-            "--plan",
-            plan_id,
-            "--outcome-file",
-            str(outcome_path),
+            *auto_argv,
             cwd=worktree,
             stdout=log_handle,
             stderr=log_handle,
