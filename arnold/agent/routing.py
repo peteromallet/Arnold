@@ -13,7 +13,7 @@ from typing import Mapping
 from arnold.agent.contracts import AgentSpec, format_agent_spec, parse_agent_spec
 
 
-MANAGED_AGENT_BACKENDS = frozenset({"hermes", "codex", "claude"})
+MANAGED_AGENT_BACKENDS = frozenset({"hermes", "codex", "claude", "omp"})
 MANAGED_AGENT_BACKEND_ALIASES = {
     "chatgpt": "codex",
     "shannon": "claude",
@@ -22,6 +22,9 @@ DEFAULT_MANAGED_AGENT_MODELS = {
     "hermes": "deepseek:deepseek-v4-pro",
     "codex": "gpt-5.6-terra",
     "claude": "opus",
+    # Frozen B1 provider table: the resident omp default is DeepSeek V4
+    # Flash; the exact catalog model id carries the provider.
+    "omp": "deepseek/deepseek-v4-flash",
 }
 
 _HERMES_PROVIDER_PREFIXES = (
@@ -98,6 +101,17 @@ MANAGED_AGENT_CAPABILITIES = {
         max_output_tokens="claude_code_environment_cap",
         provider_timeout="launcher_and_supervisor_enforced",
         raw_stream="claude_cli_stream_json",
+    ),
+    "omp": ManagedAgentCapabilities(
+        # omp resident turns are fresh, stateless RPC sessions (B7): every
+        # turn gets a synthetic ``omp-stateless:<turn>`` identity and no
+        # session file is persisted or resumed.
+        persistent_session=False,
+        exact_session_resume=False,
+        generic_tool_policy="native_toolset_filter",
+        max_output_tokens="upstream_model_managed",
+        provider_timeout="rpc_client_enforced",
+        raw_stream="omp_rpc_events",
     ),
 }
 

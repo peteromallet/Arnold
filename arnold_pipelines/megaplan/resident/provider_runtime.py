@@ -26,6 +26,10 @@ _UUID_RE = re.compile(
     re.IGNORECASE,
 )
 _HERMES_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+# Synthetic per-turn identity for stateless omp resident turns (B7).  It is a
+# handshake marker only — it is never persisted as a resumable omp session and
+# never accepted by resume semantics.
+_OMP_STATELESS_SESSION_RE = re.compile(r"^omp-stateless:[0-9a-f]{32}$")
 _CLAUDE_TOOLS = {
     "file": ("Read", "Edit", "Write", "Glob", "Grep"),
     "web": ("WebFetch", "WebSearch"),
@@ -113,6 +117,8 @@ def reserve_session_id(backend: str) -> str | None:
         return str(uuid.uuid4())
     if backend == "hermes":
         return f"resident_{uuid.uuid4().hex}"
+    if backend == "omp":
+        return f"omp-stateless:{uuid.uuid4().hex}"
     return None
 
 
@@ -121,6 +127,8 @@ def valid_session_id(backend: str, session_id: str) -> bool:
         return bool(_UUID_RE.fullmatch(session_id))
     if backend == "hermes":
         return bool(_HERMES_SESSION_RE.fullmatch(session_id))
+    if backend == "omp":
+        return bool(_OMP_STATELESS_SESSION_RE.fullmatch(session_id))
     return False
 
 
@@ -307,6 +315,98 @@ def _normalize_hermes(
     return session_id, events, usage
 
 
+def _normalize_omp(
+    rows: list[dict[str, Any]], expected_session_id: str | None
+) -> tuple[
+    str | None,
+    str | None,
+    list[dict[str, Any]],
+    dict[str, Any],
+    str | None,
+    str | None,
+]:
+    """Normalize the omp RPC raw event dump (``omp_rpc_events``).
+
+    ``_run_omp_rpc_turn`` writes one canonical JSON object per line:
+
+    - ``session.started`` — provider/model/session marker/thinking
+    - ``message`` — one per assistant message (content + ``usage``)
+    - ``tool_execution`` — tool start/completed projection
+    - ``error`` — provider/process failure (code + message)
+    - ``turn.completed`` — terminal summary with the aggregate usage and
+      the final assistant text
+
+    The synthetic ``omp-stateless:<turn>`` session id is the handshake
+    identity; it is never a resumable omp session.
+    """
+    session_id = expected_session_id
+    final_text: str | None = None
+    usage: dict[str, Any] = {}
+    failure_category: str | None = None
+    failure_message: str | None = None
+    events: list[dict[str, Any]] = []
+    model: str | None = None
+    for row in rows:
+        row_type = str(row.get("type") or "")
+        if row_type == "session.started":
+            session_id = str(row.get("session_id") or session_id or "") or None
+            model = row.get("model")
+            events.append(
+                _event(
+                    "omp",
+                    "session.started",
+                    session_id=session_id,
+                    provider_name=row.get("provider"),
+                    model=model,
+                    thinking=row.get("thinking"),
+                )
+            )
+        elif row_type == "message":
+            events.append(
+                _event(
+                    "omp",
+                    "message.completed",
+                    role=row.get("role"),
+                    model=row.get("model") or model,
+                    stop_reason=row.get("stopReason"),
+                )
+            )
+        elif row_type == "tool_execution":
+            events.append(
+                _event(
+                    "omp",
+                    (
+                        "tool.completed"
+                        if str(row.get("status")) == "completed"
+                        else "tool.started"
+                    ),
+                    tool=row.get("tool"),
+                    tool_call_id=row.get("tool_call_id"),
+                    is_error=row.get("is_error"),
+                )
+            )
+        elif row_type == "error":
+            failure_category = str(row.get("code") or "provider_error")
+            failure_message = str(row.get("message") or "")
+        elif row_type == "turn.completed":
+            raw_usage = row.get("usage")
+            usage = dict(raw_usage) if isinstance(raw_usage, Mapping) else {}
+            text = row.get("assistant_text")
+            if isinstance(text, str) and text.strip():
+                final_text = text
+            events.append(
+                _event("omp", "turn.completed", usage=usage, model=model)
+            )
+    return (
+        session_id,
+        final_text,
+        events,
+        usage,
+        failure_category,
+        failure_message,
+    )
+
+
 def collect_provider_evidence(
     *,
     backend: str,
@@ -339,6 +439,15 @@ def collect_provider_evidence(
             final_text = raw_output_path.read_text(encoding="utf-8").strip() or None
         except OSError:
             final_text = None
+    elif backend == "omp":
+        (
+            session_id,
+            final_text,
+            events,
+            usage,
+            failure_category,
+            failure_message,
+        ) = _normalize_omp(rows, expected_session_id)
     else:
         raise ValueError(f"unsupported provider evidence backend: {backend}")
 

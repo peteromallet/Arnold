@@ -32,6 +32,7 @@ from .provider_runtime import (
     normalize_toolsets,
     provider_execution_contract,
     reserve_session_id,
+    valid_session_id,
     write_normalized_events,
 )
 from .request_summary import current_request_summary_line
@@ -541,6 +542,31 @@ class CodexCliAgentRunner(DispatchProtocol):
         return prompt
 
 
+_OMP_TOOLSET_TOOLS = {
+    "file": ("read", "edit", "write", "glob", "grep"),
+    "terminal": ("bash",),
+    "web": ("web_search",),
+}
+
+
+def _omp_tool_names_for_toolsets(toolsets: tuple[str, ...]) -> list[str]:
+    """Map the generic resident toolsets to omp CLI tool names."""
+    names: list[str] = []
+    for toolset in toolsets:
+        names.extend(_OMP_TOOLSET_TOOLS[toolset])
+    return names
+
+
+def _split_omp_model(model: str) -> tuple[str, str]:
+    """Split a catalog model id (``provider/modelId``) into provider + model."""
+    provider, sep, model_id = str(model or "").partition("/")
+    if not sep or not provider or not model_id or "/" in model_id:
+        raise ValueError(
+            f"omp model must be exactly <provider>/<modelId>, got {model!r}"
+        )
+    return provider, model_id
+
+
 async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
     """Kill the Codex wrapper and descendants created for one invocation."""
 
@@ -627,8 +653,12 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
 
         session_path = self._session_path(request.conversation_id)
         prior_session = _read_json_object(session_path)
+        # omp resident turns are stateless (B7): never resume a prior session
+        # and never persist a session file.  The synthetic per-turn marker is
+        # a handshake identity only.
         resumable = bool(
-            prior_session
+            route.backend != "omp"
+            and prior_session
             and prior_session.get("provider") == route.backend
             and prior_session.get("model") == route.model
             and prior_session.get("state") == "persisted"
@@ -662,8 +692,16 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 "provider": route.backend,
                 "session_id": session_id,
                 "state": "continuing" if resumable else "reserved",
-                "persistence": "durable" if resumable else "requested_unconfirmed",
-                "resume_semantics": "exact_session",
+                "persistence": (
+                    "durable"
+                    if resumable
+                    else "ephemeral"
+                    if route.backend == "omp"
+                    else "requested_unconfirmed"
+                ),
+                "resume_semantics": (
+                    "exact_session" if route.backend != "omp" else "stateless"
+                ),
             },
             "session_dispatch": {
                 "mode": "resume" if resumable else "new",
@@ -678,7 +716,9 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             "status_history": [{"status": "launching", "at": now}],
         }
         _atomic_json_file(paths["manifest"], manifest)
-        if session_id and not resumable:
+        if session_id and not resumable and route.backend != "omp":
+            # omp turns are stateless: never persist a session file, so no
+            # ``reserved_unconfirmed`` record is written (B7).
             _atomic_json_file(
                 session_path,
                 {
@@ -693,6 +733,20 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 },
             )
 
+        if route.backend == "omp":
+            # omp resident turns run in-process over the pinned omp_rpc
+            # RpcClient (fresh stateless session, no_session=True); the CLI
+            # subprocess path below is for the durable CLI backends.  The RPC
+            # child still leads its own process group (RpcClient spawns bun
+            # with start_new_session=True) and is terminated with the group.
+            return await self._run_omp_rpc_turn(
+                request,
+                tools,
+                route,
+                paths,
+                manifest,
+                session_id,
+            )
         try:
             argv, stdin_payload, provider_env = self._command(
                 backend=route.backend,
@@ -1100,6 +1154,438 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(self.config.model_max_tokens)
             return argv, None, env
         raise AgentLoopError(f"unsupported resident provider: {backend}")
+
+    async def _run_omp_rpc_turn(
+        self,
+        request: AgentRequest,
+        tools: ToolRegistry,
+        route: Any,
+        paths: dict[str, Path],
+        manifest: dict[str, Any],
+        session_id: str | None,
+    ) -> AgentResponse:
+        """Run one resident turn through the pinned ``omp_rpc.RpcClient``.
+
+        The turn is a fresh stateless session (``no_session=True``); the
+        synthetic ``omp-stateless:<turn>`` identity is a handshake marker only
+        — no omp session file is persisted and resume semantics never apply.
+        The RPC child leads its own process group (RpcClient spawns bun with
+        ``start_new_session=True``) and is terminated with the group on stop.
+        """
+        from arnold_pipelines.megaplan.workers.omp import (
+            aggregate_usage_from_messages,
+            reconcile_usage_with_session_stats,
+        )
+
+        try:
+            provider, model_id = _split_omp_model(route.model)
+        except ValueError as exc:
+            paths["log"].write_text(
+                f"omp model split failed: {exc}\n", encoding="utf-8"
+            )
+            return self._omp_terminal_failure(
+                paths=paths,
+                manifest=manifest,
+                session_id=session_id,
+                provider=None,
+                model=route.model,
+                thinking=route.effort,
+                returncode=127,
+                failure_category="provider_command_invalid",
+                failure_message=str(exc),
+                error=AgentLoopError(str(exc)),
+            )
+        prompt = self._prompt(request, tools, route.backend)
+        timeout_s = self.config.model_timeout_s
+        raw_lines: list[dict[str, Any]] = [
+            {
+                "type": "session.started",
+                "provider": provider,
+                "model": model_id,
+                "session_id": session_id,
+                "thinking": route.effort,
+            }
+        ]
+        client = None
+        returncode = 1
+        try:
+            try:
+                from omp_rpc import RpcClient
+            except Exception as exc:  # pragma: no cover - env probe
+                raise AgentLoopError(
+                    f"omp_rpc package is not installed: {exc}"
+                ) from exc
+            tool_names = _omp_tool_names_for_toolsets(
+                normalize_toolsets(self.config.model_toolsets)
+            )
+            client = RpcClient(
+                provider=provider,
+                model=model_id,
+                thinking=route.effort,
+                cwd=self.cwd,
+                tools=tool_names or None,
+                no_session=True,
+                no_skills=True,
+                no_rules=True,
+                no_title=True,
+                startup_timeout=min(60.0, float(timeout_s) if timeout_s else 60.0),
+                request_timeout=float(timeout_s) if timeout_s else 60.0,
+                max_event_history=10_000,
+            )
+            client.start()
+            try:
+                client.set_model(provider, model_id)
+            except Exception:
+                try:
+                    client.get_state()
+                except Exception:
+                    raise
+            if route.effort is not None:
+                try:
+                    client.set_thinking_level(route.effort)
+                except Exception:
+                    pass
+
+            async def _run_prompt() -> Any:
+                return client.prompt_and_wait(
+                    prompt, timeout=float(timeout_s) if timeout_s else None
+                )
+
+            if timeout_s is None:
+                turn = await _run_prompt()
+            else:
+                turn = await asyncio.wait_for(
+                    _run_prompt(), timeout=float(timeout_s) + 30.0
+                )
+        except asyncio.TimeoutError:
+            if client is not None:
+                try:
+                    client.stop()
+                except Exception:
+                    pass
+            returncode = 124
+            return self._omp_terminal_failure(
+                paths=paths,
+                manifest=manifest,
+                session_id=session_id,
+                provider=provider,
+                model=model_id,
+                thinking=route.effort,
+                returncode=returncode,
+                failure_category="timeout",
+                failure_message="omp RPC turn exceeded its configured timeout",
+                raw_lines=raw_lines,
+                error=AgentLoopError("omp RPC turn timed out"),
+            )
+        except Exception as exc:
+            if client is not None:
+                try:
+                    client.stop()
+                except Exception:
+                    pass
+            message = str(exc)
+            lowered = message.lower()
+            if "not found" in lowered and "bun" in lowered:
+                category = "provider_cli_missing"
+            elif "authentication" in lowered or "unauthorized" in lowered:
+                category = "authentication_failed"
+            elif "quota" in lowered or "rate limit" in lowered:
+                category = "provider_quota"
+            else:
+                category = "provider_error"
+            return self._omp_terminal_failure(
+                paths=paths,
+                manifest=manifest,
+                session_id=session_id,
+                provider=provider,
+                model=model_id,
+                thinking=route.effort,
+                returncode=returncode,
+                failure_category=category,
+                failure_message=message,
+                raw_lines=raw_lines,
+                error=AgentLoopError(message),
+            )
+
+        try:
+            final_text = turn.require_assistant_text()
+        except Exception as exc:
+            if client is not None:
+                try:
+                    client.stop()
+                except Exception:
+                    pass
+            return self._omp_terminal_failure(
+                paths=paths,
+                manifest=manifest,
+                session_id=session_id,
+                provider=provider,
+                model=model_id,
+                thinking=route.effort,
+                returncode=returncode,
+                failure_category="empty_result",
+                failure_message=f"omp RPC turn completed without a final text: {exc}",
+                raw_lines=raw_lines,
+                error=AgentLoopError("omp RPC turn produced no final text"),
+            )
+
+        messages = list(getattr(turn, "messages", ()) or ())
+        usage = aggregate_usage_from_messages(
+            messages,
+            provider=provider,
+            model=model_id,
+            attempt_id=str(session_id or ""),
+        )
+        try:
+            if client is not None:
+                stats = client.get_session_stats()
+                usage = reconcile_usage_with_session_stats(usage, stats)
+        except Exception:
+            pass
+        for message in messages:
+            raw_lines.append(
+                {
+                    "type": "message",
+                    "role": getattr(message, "role", None)
+                    if not isinstance(message, Mapping)
+                    else message.get("role"),
+                    "model": (
+                        getattr(message, "model", None)
+                        if not isinstance(message, Mapping)
+                        else message.get("model")
+                    ),
+                    "stopReason": (
+                        getattr(message, "stopReason", None)
+                        if not isinstance(message, Mapping)
+                        else message.get("stopReason")
+                    ),
+                }
+            )
+            content = (
+                getattr(message, "content", None)
+                if not isinstance(message, Mapping)
+                else message.get("content")
+            )
+            if isinstance(content, (list, tuple)):
+                for item in content:
+                    if not isinstance(item, Mapping):
+                        continue
+                    if item.get("type") in {"toolCall", "tool_use"}:
+                        raw_lines.append(
+                            {
+                                "type": "tool_execution",
+                                "status": "started",
+                                "tool": item.get("name") or item.get("tool"),
+                                "tool_call_id": item.get("id") or item.get("toolCallId"),
+                            }
+                        )
+                    elif item.get("type") in {"toolResult", "tool_result"}:
+                        raw_lines.append(
+                            {
+                                "type": "tool_execution",
+                                "status": "completed",
+                                "tool": item.get("name") or item.get("tool"),
+                                "tool_call_id": item.get("id") or item.get("toolCallId"),
+                                "is_error": bool(item.get("isError") or item.get("is_error")),
+                            }
+                        )
+        raw_lines.append(
+            {
+                "type": "turn.completed",
+                "assistant_text": final_text,
+                "usage": {
+                    "input": usage.input_tokens,
+                    "output": usage.output_tokens,
+                    "cache_read": usage.cache_read_tokens,
+                    "cache_write": usage.cache_write_tokens,
+                    "total": usage.total_tokens,
+                    "cost_usd": usage.cost_usd,
+                    "cost_pricing": usage.cost_pricing,
+                    "messages_counted": usage.messages_counted,
+                    "provider": provider,
+                    "model": model_id,
+                    "attempt_id": str(session_id or ""),
+                },
+            }
+        )
+        try:
+            if client is not None:
+                client.stop()
+        except Exception:
+            pass
+
+        self._write_omp_raw(paths, raw_lines)
+        _atomic_json_file(
+            paths["metadata"],
+            {
+                "schema_version": "arnold-managed-provider-metadata-v1",
+                "provider": provider,
+                "model": model_id,
+                "thinking": route.effort,
+                "session_id": session_id,
+                "session_mode": "stateless",
+                "usage": {
+                    "input": usage.input_tokens,
+                    "output": usage.output_tokens,
+                    "cache_read": usage.cache_read_tokens,
+                    "cache_write": usage.cache_write_tokens,
+                    "total": usage.total_tokens,
+                    "cost_usd": usage.cost_usd,
+                    "cost_pricing": usage.cost_pricing,
+                },
+            },
+        )
+        paths["result"].write_text(final_text.rstrip() + "\n", encoding="utf-8")
+
+        evidence = collect_provider_evidence(
+            backend="omp",
+            raw_output_path=paths["raw"],
+            metadata_path=paths["metadata"],
+            expected_session_id=session_id,
+            returncode=0,
+            diagnostics_path=paths["log"],
+        )
+        write_normalized_events(paths["events"], evidence.events)
+        resolved_session_id = evidence.session_id
+        if not resolved_session_id or not valid_session_id(
+            "omp", resolved_session_id
+        ):
+            resolved_session_id = session_id
+        manifest["status"] = "completed"
+        manifest["completed_at"] = _utc_timestamp()
+        manifest["updated_at"] = manifest["completed_at"]
+        manifest["status_history"].append(
+            {"status": "completed", "at": manifest["completed_at"]}
+        )
+        # omp: ephemeral/stateless — never persist a session file (B7).
+        manifest["model_session"] = {
+            "provider": "omp",
+            "session_id": resolved_session_id,
+            "state": "ephemeral",
+            "persistence": "ephemeral",
+            "resume_semantics": "stateless",
+        }
+        manifest["session_dispatch"].update(
+            {
+                "mode": "new",
+                "session_id": resolved_session_id,
+                "status": "completed",
+                "resume_semantics": "stateless",
+            }
+        )
+        manifest["telemetry"].update(
+            {
+                "status": "captured",
+                "normalized_event_count": len(evidence.events),
+                "usage": dict(evidence.usage),
+            }
+        )
+        _atomic_json_file(paths["manifest"], manifest)
+        return AgentResponse(
+            final_text=final_text,
+            tool_calls=(),
+            metadata={
+                "runner": "managed_provider_cli",
+                "provider": "omp",
+                "model": route.model,
+                "session_id": resolved_session_id,
+                "session_mode": "new",
+                "resume_semantics": "stateless",
+                "run_id": manifest["run_id"],
+                "manifest_path": str(paths["manifest"]),
+                "telemetry": dict(manifest["telemetry"]),
+            },
+        )
+
+    def _write_omp_raw(
+        self, paths: dict[str, Path], raw_lines: list[dict[str, Any]]
+    ) -> None:
+        rendered = "".join(
+            json.dumps(line, sort_keys=True, default=str) + "\n"
+            for line in raw_lines
+        )
+        temporary = paths["raw"].with_name(f".{paths['raw'].name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(rendered, encoding="utf-8")
+        temporary.replace(paths["raw"])
+
+    def _omp_terminal_failure(
+        self,
+        *,
+        paths: dict[str, Path],
+        manifest: dict[str, Any],
+        session_id: str | None,
+        provider: str | None,
+        model: str | None,
+        thinking: str | None,
+        returncode: int,
+        failure_category: str,
+        failure_message: str,
+        error: Exception,
+        raw_lines: list[dict[str, Any]] | None = None,
+    ) -> AgentResponse:
+        """Write the failure evidence/manifest and raise the loop error."""
+        if raw_lines is not None:
+            raw_lines = raw_lines + [
+                {
+                    "type": "error",
+                    "code": failure_category,
+                    "message": failure_message,
+                }
+            ]
+            self._write_omp_raw(paths, raw_lines)
+        else:
+            self._write_omp_raw(
+                paths,
+                [
+                    {
+                        "type": "session.started",
+                        "provider": provider,
+                        "model": model,
+                        "session_id": session_id,
+                        "thinking": thinking,
+                    },
+                    {
+                        "type": "error",
+                        "code": failure_category,
+                        "message": failure_message,
+                    },
+                ],
+            )
+        paths["log"].write_text(
+            f"{failure_category}: {failure_message}\n", encoding="utf-8"
+        )
+        evidence = collect_provider_evidence(
+            backend="omp",
+            raw_output_path=paths["raw"],
+            metadata_path=paths["metadata"],
+            expected_session_id=session_id,
+            returncode=returncode,
+            diagnostics_path=paths["log"],
+        )
+        write_normalized_events(paths["events"], evidence.events)
+        manifest["telemetry"].update(
+            {
+                "status": "captured",
+                "normalized_event_count": len(evidence.events),
+                "usage": dict(evidence.usage),
+            }
+        )
+        manifest = self._terminal_manifest(
+            manifest,
+            status="failed",
+            returncode=returncode,
+            failure_category=failure_category,
+            failure_message=failure_message,
+        )
+        manifest["model_session"] = {
+            "provider": "omp",
+            "session_id": session_id,
+            "state": "ephemeral",
+            "persistence": "ephemeral",
+            "resume_semantics": "stateless",
+        }
+        _atomic_json_file(paths["manifest"], manifest)
+        raise AgentLoopError(str(error))
 
     def _prompt(
         self, request: AgentRequest, tools: ToolRegistry, backend: str

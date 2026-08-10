@@ -12,7 +12,8 @@ from arnold.agent.routing import (
     ("model", "backend"),
     [
         ("hermes:glm-5.2", "hermes"),
-        ("omp:zai/glm-5.2", "hermes"),
+        ("omp:zai/glm-5.2", "omp"),
+        ("omp:deepseek/deepseek-v4-flash", "omp"),
         ("zhipu:glm-5.2", "hermes"),
         ("codex:gpt-5.6-terra", "codex"),
         ("gpt-5.6-sol", "codex"),
@@ -26,11 +27,22 @@ def test_infers_backend_from_agent_specs_and_model_families(
     assert infer_managed_agent_backend(model) == backend
 
 
-def test_hermes_glm_52_uses_direct_zhipu_route() -> None:
+def test_hermes_glm_52_uses_legacy_zhipu_alias() -> None:
+    # Pre-migration hermes spelling keeps working through the alias map.
     route = resolve_managed_agent_route(model="hermes:glm-5.2")
 
     assert route.backend == "hermes"
     assert route.model == "zhipu:glm-5.2"
+    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.backend_source == "model_spec"
+
+
+def test_omp_zai_glm_52_uses_frozen_b1_route() -> None:
+    # Frozen B1 provider table: the canonical GLM-5.2 route is omp:zai/glm-5.2.
+    route = resolve_managed_agent_route(model="omp:zai/glm-5.2")
+
+    assert route.backend == "omp"
+    assert route.model == "zai/glm-5.2"
     assert route.model_spec == "omp:zai/glm-5.2"
     assert route.backend_source == "model_spec"
 
@@ -40,7 +52,8 @@ def test_hermes_glm_52_uses_direct_zhipu_route() -> None:
     [
         ("codex:gpt-5.6-sol:high", "codex", "gpt-5.6-sol", "high"),
         ("claude:opus:high", "claude", "opus", "high"),
-        ("omp:zai/glm-5.2", "hermes", "zhipu:glm-5.2", None),
+        ("omp:zai/glm-5.2", "omp", "zai/glm-5.2", None),
+        ("omp:deepseek/deepseek-v4-pro:max", "omp", "deepseek/deepseek-v4-pro", "max"),
     ],
 )
 def test_resolves_each_supported_provider(
@@ -89,7 +102,15 @@ def test_backend_default_can_be_overridden_without_a_model() -> None:
         default_models={"hermes": "zhipu:glm-5.2"},
     )
 
-    assert route.model_spec == "omp:zai/glm-5.2"
+    assert route.model_spec == "hermes:zhipu:glm-5.2"
+
+
+def test_omp_backend_defaults_to_frozen_flash_model() -> None:
+    route = resolve_managed_agent_route(backend="omp")
+
+    assert route.backend == "omp"
+    assert route.model == "deepseek/deepseek-v4-flash"
+    assert route.model_spec == "omp:deepseek/deepseek-v4-flash"
 
 
 def test_unknown_backend_fails_clearly() -> None:
