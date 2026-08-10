@@ -235,3 +235,53 @@ proven live. Steps, in order:
    halts only at an expected human gate (`merge_policy: review` PR).
 5. **Sense-check**: any failure in the first 10–15 min is caught now (the
    operator-loop cadence), not after a day.
+
+## Whole-plan sense-check (gpt-5.6-sol, high — 2026-08-10): verdict + corrections
+
+Verdict: architecture coherent; **execution plan not safe as written**.
+Seven blockers must be folded into the plan before autonomous execution:
+
+1. **P7 is not terminal acceptance as written.** Split it: **P7A** = launch
+   smoke test through two watchdog sweeps; **P7B** = the epic reaches the
+   generated reconcile milestone, resolves its PR / verified no-op outcome,
+   runs close+sweep, and leaves durable evidence. Only P7B is whole-stack
+   terminal acceptance.
+2. **P1 omits the producer its own deny rule requires.** No cloud-launch code
+   invokes `arnold-runtime-create` today. P1 must add: runtime creation,
+   manifest binding, and launch provenance to the `cloud chain` path before
+   enabling manifest-only admission — and the 13 fallback-blessing tests must
+   be reclassified in the SAME commit.
+3. **P4 contradicts P7.** `cloud chain` still contains editable-install /
+   source-sync machinery (with an isolated `src_path` it publishes the local
+   launch HEAD, which the dirty worktree blocks). P4 must migrate
+   `cloud/cli.py` + remote refresh to manifest/runtime-create semantics
+   BEFORE deleting selectors and editable-install support.
+   `--no-editable-install-sync` is an escape hatch, not proof.
+4. **`cloud chain --fresh` can destroy an existing run** (stops + resets the
+   exact session). Launch must be conditional: matching post-P6 identity →
+   observe/resume without `--fresh`; old/mismatched identity → record
+   evidence, explicitly retire, then fresh; never treat an inherited pre-P6
+   session as acceptance.
+5. **Move the live box cutover after P6.** P5 keeps deletion/packaging/
+   offline deployment verification; the box switch happens only after P6 and
+   the final gate (avoids a mixed-version interval).
+6. **P6 needs explicit terminal-state rules.** Close+sweep only after
+   `merged`, intentionally `rejected`, or verified no-op — never after unknown
+   PR state, missing GitHub auth, cherry-pick conflict, or interrupted
+   publication. G6 must prove crash-idempotency, non-recursion of
+   `kind: reconcile`, persisted branch identity, and generated-milestone
+   insertion before binding.
+7. **Final pre-P7 gate must verify**: all commits present and origin/main is
+   ancestor/exact target; initiative inputs committed or content-hash
+   snapshotted; no manifestless production path; no editable-install/SYNC
+   selector remains; ledger-write failure blocks dispatch; P6
+   merge/reject/no-op fixtures pass; box tree + watchdog executable
+   identified; runtime manifest attests the exact SHA; wrapper checksums +
+   syntax pass; cloud preflight reports the expected workspace/session/digest.
+
+Operational notes: `cloud.yaml` is gitignored (always pass `--cloud-yaml`
+explicitly); its `src_path` must point at the LIVE box runtime tree (the
+original `arnold-main-20260809` was deleted and the watchdog now runs from
+`arnold-r7-fresh-child-20260805` — re-verify with `pgrep -af arnold-watchdog`
+before launch); the megaplan-maintenance briefs/NORTHSTAR carry uncommitted
+dirty state that must be committed or content-hash snapshotted before launch.
