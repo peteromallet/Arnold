@@ -7484,15 +7484,6 @@ def build_auto_parser(subparsers: Any) -> None:
         help="Drive a plan to completion without human intervention",
     )
     auto_parser.add_argument("--plan", required=True, help="Plan name")
-    auto_parser.add_argument(
-        "--publish-branch",
-        default=None,
-        help=(
-            "Branch name for the final auto-publish commit. Defaults to "
-            "megaplan/<plan>; bakeoff profiles pass a per-profile branch so "
-            "profiles sharing a plan id do not collide."
-        ),
-    )
     auto_parser.add_argument("--project-dir", default=None)
     auto_parser.add_argument(
         "--stall-threshold",
