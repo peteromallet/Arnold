@@ -7548,7 +7548,7 @@ def build_auto_parser(subparsers: Any) -> None:
         default=None,
         help=(
             "Live phase routing override forwarded to phase subprocesses, "
-            "for example --phase-model execute=hermes:deepseek:deepseek-v4-pro."
+            "for example --phase-model execute=omp:deepseek/deepseek-v4-pro."
         ),
     )
     auto_parser.add_argument(

@@ -61,6 +61,19 @@ class KeyPool(_BaseKeyPool):
 
 _pool = KeyPool(keys_path_source=_MegaplanKeyPathSource())
 
+# omp route providers → legacy key-pool provider names (B1 credential map).
+_OMP_PROVIDER_TO_LEGACY: dict[str, str] = {
+    "zai": "zhipu",
+    "moonshot": "kimi",
+    "kimi-code": "kimi",
+    "openrouter": "openrouter",
+    "deepseek": "deepseek",
+    "fireworks": "fireworks",
+    "xai": "xai",
+    "anthropic": "anthropic",
+    "minimax": "minimax",
+}
+
 
 def _current_envelope(*_args):  # type: ignore[no-untyped-def]
     """Return the envelope visible to this task via ContextVar, or ``None``.
@@ -248,6 +261,20 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
             "No model was specified, so no provider could be selected."
         )
     resolved_model = str(model).strip()
+    # omp routes (``omp:<provider>/<modelId>``) are translated to the legacy
+    # ``provider:modelId`` shape the pool understands, with the B1 provider
+    # aliases (zai→zhipu, moonshot/kimi-code→kimi) applied.  The transport
+    # identity ``omp`` is retained by callers; this resolver only supplies
+    # neutral credential pooling.
+    _OMP_PREFIX = "omp:"
+    if resolved_model.startswith(_OMP_PREFIX):
+        rest = resolved_model[len(_OMP_PREFIX):]
+        if "/" in rest:
+            omp_provider, omp_model = rest.split("/", 1)
+            legacy_provider = _OMP_PROVIDER_TO_LEGACY.get(omp_provider, omp_provider)
+            resolved_model = f"{legacy_provider}:{omp_model}"
+        else:
+            resolved_model = rest
     # Allow an explicit ``openrouter:`` prefix to opt into OpenRouter for any
     # model (Claude included). This is the documented escape hatch.
     if resolved_model.startswith("openrouter:"):
@@ -297,6 +324,16 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
         resolved_model = resolved_model[len("xai:"):]
         agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS.get("xai", "")) or _DEFAULT_BASE_URLS.get("xai", "https://api.x.ai/v1")
         agent_kwargs["api_key"] = acquire_key("xai")
+    elif resolved_model.startswith("anthropic:"):
+        # Anthropic routes (omp:anthropic/...) read the B1 credential directly;
+        # the hermes-era pool has no anthropic key slot.
+        resolved_model = resolved_model[len("anthropic:"):]
+        agent_kwargs["base_url"] = "https://api.anthropic.com/v1"
+        agent_kwargs["api_key"] = (
+            _get_api_credential("ANTHROPIC_API_KEY")
+            or _get_api_credential("ANTHROPIC_OAUTH_TOKEN")
+            or ""
+        )
     elif resolved_model.startswith("minimax:"):
         resolved_model = resolved_model[len("minimax:"):]
         minimax_key = acquire_key("minimax")

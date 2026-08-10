@@ -44,7 +44,7 @@ def _selected_phase_specs(phase_models: list[str]) -> dict[str, str]:
     return selected
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = build_default_agent_routing()
-KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
+KNOWN_AGENTS = ["claude", "codex", "hermes", "omp", "shannon"]
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 ROBUSTNESS_ALIASES: dict[str, str] = {
     "tiny": "bare",
@@ -73,17 +73,17 @@ VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_DEEPSEEK_PROVIDER_CHOICES = ("direct",)
 DEFAULT_DEEPSEEK_PROVIDER = "direct"
-KIMI_SPEC = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
-FIREWORKS_DEEPSEEK_V4_PRO_SPEC = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-DIRECT_DEEPSEEK_V4_PRO_SPEC = "hermes:deepseek:deepseek-v4-pro"
-DIRECT_DEEPSEEK_V4_FLASH_SPEC = "hermes:deepseek:deepseek-v4-flash"
+KIMI_SPEC = "omp:fireworks/kimi-k2.6"
+FIREWORKS_DEEPSEEK_V4_PRO_SPEC = "omp:fireworks/deepseek-v4-pro"
+DIRECT_DEEPSEEK_V4_PRO_SPEC = "omp:deepseek/deepseek-v4-pro"
+DIRECT_DEEPSEEK_V4_FLASH_SPEC = "omp:deepseek/deepseek-v4-flash"
 PREP_MODEL_STAGES = ("triage", "fanout", "distill")
 CANONICAL_PREP_MODELS: dict[str, str] = {
     "triage": DIRECT_DEEPSEEK_V4_PRO_SPEC,
     "fanout": DIRECT_DEEPSEEK_V4_PRO_SPEC,
     "distill": DIRECT_DEEPSEEK_V4_PRO_SPEC,
 }
-READ_ONLY_PREP_AGENTS = frozenset({"claude", "shannon", "codex", "hermes"})
+READ_ONLY_PREP_AGENTS = frozenset({"claude", "shannon", "codex", "hermes", "omp"})
 DEPTH_AUTHOR_PHASES = frozenset({
     "plan",
     "revise",

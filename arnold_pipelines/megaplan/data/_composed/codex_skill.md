@@ -158,12 +158,12 @@ A profile is a named preset that maps each workflow phase to an agent/model spec
 See **megaplan-prep** for profile selection. Inspect available profiles with `<launcher> config profiles list`.
 Resolution order, later overrides earlier within the same name: built-in (`megaplan/profiles/*.toml`) → user (`~/.config/megaplan/profiles.toml`, or `$XDG_CONFIG_HOME/megaplan/profiles.toml`) → project (`<project_dir>/.megaplan/profiles.toml`).
 Inspect with `<launcher> config profiles list` and `<launcher> config profiles show <name>`.
-File format: TOML with a `[profiles.<name>]` table. Keys are phase names (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `loop_plan`, `loop_execute`, `review`, `tiebreaker_researcher`, `tiebreaker_challenger`); values are agent specs like `"claude"`, `"codex"`, `"hermes:fireworks:accounts/fireworks/models/kimi-k2p6"`, `"hermes:glm-5.1"`. Example:
+File format: TOML with a `[profiles.<name>]` table. Keys are phase names (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `loop_plan`, `loop_execute`, `review`, `tiebreaker_researcher`, `tiebreaker_challenger`); values are agent specs like `"claude"`, `"codex"`, `"omp:fireworks/kimi-k2.6"`, "omp:zai/glm-5.1". Example:
 ```toml
 [profiles.my-mix]
 plan     = "claude"
 critique = "codex"
-execute  = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+execute  = "omp:fireworks/kimi-k2.6"
 review   = "codex"
 ```
 `--phase-model` overrides on the CLI stack on top of any profile.
@@ -185,7 +185,7 @@ Internally, multi-spec phase values are persisted in `state.json` using the comp
 **Fallback advancement rules (v1):**
 - **Allowed:** Fallback advances to the next spec only on retryable **availability** or **infrastructure** failures (connection errors, timeouts, crashes, service unavailable, internal errors).
 - **Blocked:** Fallback does **not** advance for malformed output, schema failures, test/evidence failures, blocked results, gate/review rejection, semantic failures, auth errors, quota exhaustion, rate limits, bad requests, unsupported models, or context-window errors.
-- **Cross-provider requirement:** The next spec must belong to a different provider family than the failing spec (e.g., `claude` → `codex`, or `hermes:deepseek` → `hermes:fireworks`). Same-provider advancement is rejected.
+- **Cross-provider requirement:** The next spec must belong to a different provider family than the failing spec (e.g., `claude` → `codex`, or `omp:deepseek/...` → `omp:fireworks/...`). Same-provider advancement is rejected.
 - **execute / loop_execute:** Fallback chains are preserved in state but advancement beyond the first spec is **blocked** in v1 — the harness raises `ExecuteFallbackUnsafe` if a retryable failure would trigger a second attempt. This protects against duplicate side effects (file mutations, checkpoints, merges).
 
 When an explicit fallback chain is configured for a phase, ambient runtime fallback (e.g., automatic provider retry) is **suppressed** — only the declared chain controls advancement.

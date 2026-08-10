@@ -135,7 +135,10 @@ def test_plan_capture_normalizes_extra_model_metadata() -> None:
     )
 
     assert "source" not in outcome.legacy_payload
-    assert "### Step 1: Patch worker" in outcome.legacy_payload["plan"]
+    # The Plan-IR renderer emits flat ``## Step N:`` headings (the structural
+    # auditor's canonical shape); assert the rendered title and substep.
+    assert "## Step 1: Patch worker" in outcome.legacy_payload["plan"]
+    assert "Promote valid raw markdown." in outcome.legacy_payload["plan"]
 
 
 def test_plan_audit_rejects_numbered_list_without_step_headings() -> None:

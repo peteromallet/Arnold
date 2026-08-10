@@ -64,11 +64,11 @@ def test_model_shortcut_normalizes_chain_hermes_provider_prefix() -> None:
     module = _load_module()
 
     assert (
-        module._resolve_model_shortcut("hermes:zhipu:glm-5.2")
+        module._resolve_model_shortcut("omp:zai/glm-5.2")
         == "zhipu:glm-5.2"
     )
     assert (
-        module._resolve_model_shortcut(" hermes:deepseek:deepseek-v4-pro ")
+        module._resolve_model_shortcut(" omp:deepseek/deepseek-v4-pro ")
         == "deepseek:deepseek-v4-pro"
     )
     assert module._resolve_model_shortcut("pro") == "deepseek:deepseek-v4-pro"

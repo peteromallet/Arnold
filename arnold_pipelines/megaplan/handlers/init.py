@@ -305,13 +305,18 @@ def _build_state_config(
     phase_models = list(getattr(args, "phase_model", None) or [])
     hermes_model = getattr(args, "hermes", None)
     if isinstance(hermes_model, str) and hermes_model.strip():
+        from arnold_pipelines.megaplan.workers.omp import omp_route_from_legacy
+
         pinned_phases = {
             entry.split("=", 1)[0]
             for entry in phase_models
             if isinstance(entry, str) and "=" in entry
         }
         hermes_model = hermes_model.strip()
-        hermes_spec = hermes_model if hermes_model.startswith("hermes:") else f"hermes:{hermes_model}"
+        # The legacy ``--hermes`` flag routes every phase through the omp
+        # (resident) backend; hermes-era specs are translated to canonical
+        # omp routes.
+        hermes_spec = omp_route_from_legacy(hermes_model)
         phase_models.extend(
             f"{phase}={hermes_spec}"
             for phase in DEFAULT_AGENT_ROUTING

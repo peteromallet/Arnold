@@ -179,8 +179,8 @@ def test_set_profile_clears_stale_vendor_for_non_premium_profile(monkeypatch) ->
         profiles_module,
         "resolve_profile",
         lambda profile_name, profiles: {
-            "plan": "hermes:deepseek:deepseek-v4-pro",
-            "execute": "hermes:deepseek:deepseek-v4-pro",
+            "plan": "omp:deepseek/deepseek-v4-pro",
+            "execute": "omp:deepseek/deepseek-v4-pro",
         },
     )
 
@@ -203,8 +203,8 @@ def test_set_profile_clears_stale_vendor_for_non_premium_profile(monkeypatch) ->
     assert result.accepted is True
     config_delta = next(delta for delta in result.state_deltas if delta.key == "config")
     assert config_delta.value["phase_model"] == [
-        "plan=hermes:deepseek:deepseek-v4-pro",
-        "execute=hermes:deepseek:deepseek-v4-pro",
+        "plan=omp:deepseek/deepseek-v4-pro",
+        "execute=omp:deepseek/deepseek-v4-pro",
     ]
     assert "vendor" not in config_delta.value
 
@@ -223,8 +223,8 @@ def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(monkey
         profiles_module,
         "resolve_profile",
         lambda profile_name, profiles: {
-            "plan": "hermes:deepseek:deepseek-v4-pro",
-            "execute": "hermes:deepseek:deepseek-v4-pro",
+            "plan": "omp:deepseek/deepseek-v4-pro",
+            "execute": "omp:deepseek/deepseek-v4-pro",
         },
     )
     monkeypatch.setattr(
@@ -263,9 +263,9 @@ def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(monkey
     assert result.accepted is True
     config_delta = next(delta for delta in result.state_deltas if delta.key == "config")
     assert config_delta.value["prep_models"] == {
-        "triage": "hermes:deepseek:deepseek-v4-pro",
-        "fanout": "hermes:deepseek:deepseek-v4-pro",
-        "distill": "hermes:deepseek:deepseek-v4-pro",
+        "triage": "omp:deepseek/deepseek-v4-pro",
+        "fanout": "omp:deepseek/deepseek-v4-pro",
+        "distill": "omp:deepseek/deepseek-v4-pro",
     }
     assert config_delta.value["prep_model_resolver_trace"]["flat_prep_input"] is None
     assert config_delta.value["prep_model_resolver_trace"]["explicit_prep_models"] == {}
@@ -294,11 +294,11 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
             "depth": "high",
             "phase_model": [
                 "finalize=codex:gpt-5.6-sol:high",
-                "execute=hermes:zhipu:glm-5.2",
+                "execute=omp:zai/glm-5.2",
             ],
             "tier_models": {
                 "execute": {
-                    str(tier): "hermes:deepseek:deepseek-v4-pro"
+                    str(tier): "omp:deepseek/deepseek-v4-pro"
                     for tier in range(1, 11)
                 }
             },
@@ -356,7 +356,7 @@ def test_same_profile_refresh_rewrites_gated_plan_routing_without_touching_custo
         for spec in execute_tiers.values()
     )
     assert "finalize=codex:gpt-5.6-sol:high" in persisted["config"]["phase_model"]
-    assert "execute=hermes:zhipu:glm-5.2" in persisted["config"]["phase_model"]
+    assert "execute=omp:zai/glm-5.2" in persisted["config"]["phase_model"]
     assert persisted["current_state"] == "gated"
     assert persisted["history"] == [cancellation]
     assert persisted["config"]["profile_binding"] == {
@@ -391,8 +391,8 @@ def test_same_profile_refresh_rejects_project_shadow_of_built_in(
     project_profile.write_text(
         """
 [profiles.partnered-5-glm]
-plan = "hermes:deepseek:deepseek-v4-pro"
-execute = "hermes:deepseek:deepseek-v4-pro"
+plan = "omp:deepseek/deepseek-v4-pro"
+execute = "omp:deepseek/deepseek-v4-pro"
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -403,7 +403,7 @@ execute = "hermes:deepseek:deepseek-v4-pro"
         "config": {
             "project_dir": str(tmp_path),
             "profile": "partnered-5-glm",
-            "phase_model": ["execute=hermes:deepseek:deepseek-v4-pro"],
+            "phase_model": ["execute=omp:deepseek/deepseek-v4-pro"],
         },
         "meta": {"overrides": []},
         "_state_meta": {"versions": {"config": 0, "meta": 0}},
@@ -424,7 +424,7 @@ execute = "hermes:deepseek:deepseek-v4-pro"
 
     assert getattr(exc_info.value, "code", None) == "profile_source_mismatch"
     assert state["config"]["phase_model"] == [
-        "execute=hermes:deepseek:deepseek-v4-pro"
+        "execute=omp:deepseek/deepseek-v4-pro"
     ]
 
 def test_default_cli_same_profile_refresh_always_uses_cas_owner(
@@ -443,11 +443,11 @@ def test_default_cli_same_profile_refresh_always_uses_cas_owner(
             "depth": "high",
             "phase_model": [
                 "finalize=codex:gpt-5.6-sol:high",
-                "execute=hermes:zhipu:glm-5.2",
+                "execute=omp:zai/glm-5.2",
             ],
             "tier_models": {
                 "execute": {
-                    str(tier): "hermes:deepseek:deepseek-v4-pro"
+                    str(tier): "omp:deepseek/deepseek-v4-pro"
                     for tier in range(1, 11)
                 }
             },

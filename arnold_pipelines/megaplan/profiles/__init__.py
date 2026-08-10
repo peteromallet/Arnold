@@ -352,7 +352,7 @@ def _extract_tier_models(
 ) -> dict[str, dict[int, str]]:
     """Normalise raw tier-model data into ``{phase: {tier: spec}}``.
 
-    Accepts both nested TOML tables (``{"execute": {"1": "hermes:deepseek-flash", ...}}``)
+    Accepts both nested TOML tables (``{"execute": {"1": "omp:deepseek/deepseek-v4-flash", ...}}``)
     and pre-flattened dotted-key forms from pipeline-local loaders
     (re-nested by ``_split_profile_dict`` into the same shape).
     Tier keys are converted from ``str`` to ``int``.

@@ -411,7 +411,7 @@ def test_managed_schedule_infers_hermes_provider_from_model_spec(
     assert receipt.launched == 1
     assert captured["backend"] == "hermes"
     assert captured["model"] == "zhipu:glm-5.2"
-    assert captured["model_spec"] == "hermes:zhipu:glm-5.2"
+    assert captured["model_spec"] == "omp:zai/glm-5.2"
     assert captured["schedule_context"]["schedule_id"] == row.schedule_id
 
 

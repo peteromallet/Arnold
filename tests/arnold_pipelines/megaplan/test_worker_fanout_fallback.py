@@ -53,7 +53,7 @@ def test_worker_unit_clone_keeps_fallback_metadata_independent() -> None:
         fallback_trigger="availability",
     )
 
-    configured_specs.append("hermes:deepseek:deepseek-v4-pro")
+    configured_specs.append("omp:deepseek/deepseek-v4-pro")
     attempted_specs.append("mutated")
     failed_attempt_reasons.append("mutated")
 

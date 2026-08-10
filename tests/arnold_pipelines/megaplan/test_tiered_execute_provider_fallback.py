@@ -20,8 +20,8 @@ from arnold_pipelines.megaplan.workers.hermes import (
 
 
 GLM_CHAIN = (
-    "hermes:zhipu:glm-5.2",
-    "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+    "omp:zai/glm-5.2",
+    "omp:fireworks/glm-5.2",
     "codex:gpt-5.4",
 )
 
@@ -80,12 +80,12 @@ def _run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         plan_dir=tmp_path / ".megaplan" / "plans" / "p",
         state={"active_step": {"run_id": "run-1"}},
         args=_args(),
-        agent="hermes",
+        agent="omp",
         mode="persistent",
         refreshed=False,
-        model="zhipu:glm-5.2",
+        model="zai/glm-5.2",
         effort=None,
-        resolved_model="zhipu:glm-5.2",
+        resolved_model="zai/glm-5.2",
         prompt_override="execute",
         configured_specs=GLM_CHAIN,
         batch_number=7,
@@ -146,8 +146,8 @@ def test_glm_retryable_failure_advances_to_fireworks(
     )
     worker, agent, _mode, _refreshed = _run(monkeypatch, tmp_path)
 
-    assert calls == ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2"]
-    assert agent == "hermes"
+    assert calls == ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2"]
+    assert agent == "omp"
     assert worker.attempt_index == 1
     assert worker.failed_attempt_reasons == ("availability",)
 
@@ -173,8 +173,8 @@ def test_retryable_failures_advance_through_fireworks_to_codex(
     worker, agent, _mode, _refreshed = _run(monkeypatch, tmp_path)
 
     assert calls == [
-        "hermes:zhipu:glm-5.2",
-        "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+        "omp:zai/glm-5.2",
+        "omp:fireworks/glm-5.2",
         "codex:gpt-5.4",
     ]
     assert agent == "codex"

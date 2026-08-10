@@ -6640,6 +6640,16 @@ def _is_agent_available(agent: str) -> bool:
         if _shannon_stream_worker_enabled():
             return is_claude_stream_available()
         return is_shannon_available()
+    if agent == "omp":
+        # The omp worker launches a ``bun ... --mode rpc`` child through the
+        # pinned omp_rpc client.  It is available when the omp executable is
+        # on PATH or the omp_rpc package can be imported (custom-command
+        # deployments); the worker fails closed at launch otherwise.
+        try:
+            import omp_rpc  # noqa: F401
+        except ImportError:
+            return bool(shutil.which("omp"))
+        return True
     return bool(shutil.which(agent))
 
 
@@ -6690,7 +6700,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     persistent session (break continuity) or --ephemeral for a truly one-off
     call with no session saved.
 
-    The model is extracted from compound agent specs (e.g. 'hermes:openai/gpt-5')
+    The model is extracted from compound agent specs (e.g. 'omp:deepseek/deepseek-v4-pro')
     or from --phase-model / --hermes CLI flags.  For bare ``claude`` /
     ``codex`` specs (no explicit model), the pinned default model is resolved
     and stored in ``resolved_model``.
@@ -6869,6 +6879,50 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
 # shannon branches so CliError propagates unchanged to the outer
 # auth/connection fallback loop.
 # ---------------------------------------------------------------------------
+
+
+def _omp_to_agent_result(
+    req: Any,
+    *,
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    worker_options: dict[str, Any] | None,
+    prompt_override: str | None,
+    prompt_kwargs: dict[str, Any] | None,
+    output_path: Path | None,
+    effective_refreshed: bool,
+) -> Any:
+    """Call run_omp_step and project WorkerResult → AgentResult (flag-on path)."""
+    from arnold_pipelines.megaplan.workers.omp import run_omp_step
+
+    mode = req.mode
+    resolved_model = req.resolved_model
+    effort = req.effort
+    read_only = req.read_only
+    if os.getenv(MOCK_ENV_VAR) != "1":
+        assert resolved_model is not None and resolved_model != "", (
+            "run_step_with_worker about to invoke run_omp_step via "
+            "ArnoldDispatcher with empty resolved_model. "
+            "AgentMode.resolved_model should hold e.g. "
+            "'omp:deepseek/deepseek-v4-pro'."
+        )
+    _w = run_omp_step(
+        step,
+        state,
+        plan_dir,
+        root=root,
+        fresh=effective_refreshed,
+        model=resolved_model,
+        effort=effort,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        read_only=read_only,
+        output_path=output_path,
+        worker_options=worker_options,
+    )
+    return _w.to_agent_result()
 
 
 def _codex_to_agent_result(
@@ -7587,13 +7641,34 @@ def _run_step_with_worker_legacy(
                             # resumed back into the same stall.
                             effective_refreshed = True
                             continue
+                elif agent == "omp":
+                    # omp is a first-class direct worker: a fresh stateless
+                    # RPC session per attempt.  The spec's ``omp:provider/model``
+                    # carries the model, so an empty resolved_model is a caller
+                    # bug — fail loud instead of reaching the codex assertion.
+                    if os.getenv(MOCK_ENV_VAR) != "1":
+                        assert resolved_model is not None and resolved_model != "", (
+                            "run_step_with_worker about to invoke run_omp_step "
+                            "with empty resolved_model. AgentMode.resolved_model "
+                            "should hold e.g. 'omp:deepseek/deepseek-v4-pro'."
+                        )
+                    from arnold_pipelines.megaplan.workers.omp import run_omp_step
+
+                    worker = run_omp_step(
+                        step,
+                        state,
+                        plan_dir,
+                        root=root,
+                        fresh=effective_refreshed,
+                        model=resolved_model,
+                        effort=effort,
+                        prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        read_only=read_only,
+                        output_path=output_path,
+                        worker_options=worker_options,
+                    )
                 else:
-                    # Defensive guard: codex must receive an explicit model. The
-                    # diagnostic in /tmp/codex_wedge_diagnostic.md shows that when
-                    # ``resolved_model`` silently becomes ``None`` (e.g. via a
-                    # 4-tuple ``resolved=`` that drops the AgentMode's
-                    # ``resolved_model`` field), the codex CLI launches with no
-                    # ``-c model=...`` and hangs at startup. Fail loud instead.
                     if os.getenv(MOCK_ENV_VAR) != "1":
                         assert resolved_model is not None and resolved_model != "", (
                             "run_step_with_worker about to invoke run_codex_step "
@@ -7661,6 +7736,21 @@ def _run_step_with_worker_legacy(
                 from arnold.agent.contracts import AgentRequest as _AgentRequest
                 _dispatcher = ArnoldDispatcher()
                 _dispatcher.register("hermes", _DeepSeekAdapter())
+                _dispatcher.register(
+                    "omp",
+                    lambda req: _omp_to_agent_result(
+                        req,
+                        step=step,
+                        state=state,
+                        plan_dir=plan_dir,
+                        root=root,
+                        worker_options=worker_options,
+                        prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        output_path=output_path,
+                        effective_refreshed=effective_refreshed,
+                    ),
+                )
                 _dispatcher.register(
                     "codex",
                     lambda req: _codex_to_agent_result(

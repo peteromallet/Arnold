@@ -51,6 +51,13 @@ _PROVIDER_ENV_HINTS.update(
         "anthropic": ("ANTHROPIC_API_KEY",),
     }
 )
+# omp provider names → legacy provider-hint key (zai ↔ zhipu share the GLM
+# credential family; moonshot/kimi-code map to the Kimi key).
+_LEGACY_PROVIDER_ALIASES: dict[str, str] = {
+    "zai": "zhipu",
+    "moonshot": "kimi",
+    "kimi-code": "kimi",
+}
 
 # ── Credential checking ───────────────────────────────────────────────
 
@@ -196,11 +203,22 @@ def _credential_guidance(profile_name: str) -> list[str]:
 def _required_env_vars_for_slot(agent_spec: str, slot_name: str) -> list[tuple[str, str]]:
     """Return list of (env_var, display_name) required for a slot.
 
-    For hermes specs, extracts the provider from the model string
+    For omp specs, extracts the upstream provider from the model string
+    (e.g. ``omp:fireworks/kimi-k2.7-code`` → FIREWORKS_API_KEY).  For legacy
+    hermes specs, extracts the provider after the ``hermes:`` prefix
     (e.g. ``hermes:fireworks:model`` → FIREWORKS_API_KEY).
     """
     agent, model = _parse_agent_spec(agent_spec)
     required: list[tuple[str, str]] = []
+
+    if agent == "omp" and model:
+        # Extract provider: omp:<provider>/<modelId>
+        provider = model.split("/", 1)[0].strip().lower()
+        alias = _LEGACY_PROVIDER_ALIASES.get(provider, provider)
+        env_vars = _PROVIDER_ENV_HINTS.get(alias)
+        if env_vars:
+            required.append((env_vars[0], f"{agent}/{provider}"))
+        return required
 
     if agent == "hermes" and model:
         # Extract provider: hermes:provider:actual-model
@@ -261,22 +279,29 @@ def preflight_check_profile(
         hermes_provider: str | None = None
         if parsed_agent == "hermes" and parsed_model and ":" in parsed_model:
             hermes_provider = parsed_model.split(":", 1)[0]
-        if hermes_provider in _PROVIDER_ENV_HINTS:
+        omp_provider: str | None = None
+        if parsed_agent == "omp" and parsed_model and "/" in parsed_model:
+            raw_provider = parsed_model.split("/", 1)[0].lower()
+            omp_provider = _LEGACY_PROVIDER_ALIASES.get(raw_provider, raw_provider)
+        for provider in (hermes_provider, omp_provider):
+            if provider is None or provider not in _PROVIDER_ENV_HINTS:
+                continue
             # A provider prefix is a direct routing contract.  Validate its
             # own aliases here so one configured GLM/ZAI key is sufficient and
-            # no empty-key AIAgent construction can be reached later.
-            if _provider_credential_configured(hermes_provider):
-                continue
-        for env_var, display_name in required:
-            if not _check_credential(env_var):
-                missing.append(
-                    {
-                        "slot": slot,
-                        "spec": concrete_spec,
-                        "agent": display_name,
-                        "env_var": env_var,
-                    }
-                )
+            # no empty-key agent construction can be reached later.
+            if _provider_credential_configured(provider):
+                break
+        else:
+            for env_var, display_name in required:
+                if not _check_credential(env_var):
+                    missing.append(
+                        {
+                            "slot": slot,
+                            "spec": concrete_spec,
+                            "agent": display_name,
+                            "env_var": env_var,
+                        }
+                    )
 
     return missing
 

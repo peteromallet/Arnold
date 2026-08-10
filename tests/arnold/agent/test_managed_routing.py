@@ -12,7 +12,7 @@ from arnold.agent.routing import (
     ("model", "backend"),
     [
         ("hermes:glm-5.2", "hermes"),
-        ("hermes:zhipu:glm-5.2", "hermes"),
+        ("omp:zai/glm-5.2", "hermes"),
         ("zhipu:glm-5.2", "hermes"),
         ("codex:gpt-5.6-terra", "codex"),
         ("gpt-5.6-sol", "codex"),
@@ -31,7 +31,7 @@ def test_hermes_glm_52_uses_direct_zhipu_route() -> None:
 
     assert route.backend == "hermes"
     assert route.model == "zhipu:glm-5.2"
-    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.model_spec == "omp:zai/glm-5.2"
     assert route.backend_source == "model_spec"
 
 
@@ -40,7 +40,7 @@ def test_hermes_glm_52_uses_direct_zhipu_route() -> None:
     [
         ("codex:gpt-5.6-sol:high", "codex", "gpt-5.6-sol", "high"),
         ("claude:opus:high", "claude", "opus", "high"),
-        ("hermes:zhipu:glm-5.2", "hermes", "zhipu:glm-5.2", None),
+        ("omp:zai/glm-5.2", "hermes", "zhipu:glm-5.2", None),
     ],
 )
 def test_resolves_each_supported_provider(
@@ -89,7 +89,7 @@ def test_backend_default_can_be_overridden_without_a_model() -> None:
         default_models={"hermes": "zhipu:glm-5.2"},
     )
 
-    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.model_spec == "omp:zai/glm-5.2"
 
 
 def test_unknown_backend_fails_clearly() -> None:

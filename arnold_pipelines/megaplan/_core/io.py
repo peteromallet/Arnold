@@ -1449,12 +1449,23 @@ def detect_available_agents() -> list[str]:
     # Access shutil via the _core package so monkeypatches on megaplan._core.shutil work.
     import arnold_pipelines.megaplan._core as _core_pkg
     _shutil_ref = _core_pkg.shutil
-    available = [a for a in KNOWN_AGENTS if a not in ("hermes", "shannon") and _shutil_ref.which(a)]
+    available = [a for a in KNOWN_AGENTS if a not in ("hermes", "shannon", "omp") and _shutil_ref.which(a)]
     if (Path(__file__).resolve().parents[1] / "agent" / "run_agent.py").is_file():
         available.append("hermes")
+    if _shutil_ref.which("omp") or _omp_rpc_available():
+        available.append("omp")
     if is_shannon_available(shutil_ref=_shutil_ref):
         available.append("shannon")
     return available
+
+
+def _omp_rpc_available() -> bool:
+    """Return True when the pinned pure-Python omp_rpc package is importable."""
+    try:
+        import omp_rpc  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

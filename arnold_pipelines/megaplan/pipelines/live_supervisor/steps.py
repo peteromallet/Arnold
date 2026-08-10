@@ -52,12 +52,12 @@ class IssueDifficulty(IntEnum):
 
 # Maps 1-10 weight (difficulty + scale) to models. Keep in sync with tier_models.execute.
 _EXECUTE_TIER_MODELS: dict[int, str] = {
-    1: "hermes:deepseek:deepseek-v4-flash",
-    2: "hermes:deepseek:deepseek-v4-flash",
-    3: "hermes:deepseek:deepseek-v4-pro",
-    4: "hermes:deepseek:deepseek-v4-pro",
-    5: "hermes:deepseek:deepseek-v4-pro",
-    6: "hermes:deepseek:deepseek-v4-pro",
+    1: "omp:deepseek/deepseek-v4-flash",
+    2: "omp:deepseek/deepseek-v4-flash",
+    3: "omp:deepseek/deepseek-v4-pro",
+    4: "omp:deepseek/deepseek-v4-pro",
+    5: "omp:deepseek/deepseek-v4-pro",
+    6: "omp:deepseek/deepseek-v4-pro",
     7: "codex:gpt-5.4",
     8: "codex:gpt-5.4",
     9: "codex:gpt-5.5",

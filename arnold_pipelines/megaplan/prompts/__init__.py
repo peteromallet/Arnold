@@ -351,6 +351,10 @@ _AGENT_REGISTRY: dict[str, tuple[dict[str, "_PromptBuilder"], str]] = {
     "claude": (_CLAUDE_PROMPT_BUILDERS, "Claude"),
     "codex": (_CODEX_PROMPT_BUILDERS, "Codex"),
     "hermes": (_HERMES_PROMPT_BUILDERS, "Hermes"),
+    # omp (the resident omp worker) uses the same neutral prompt shape as
+    # codex: the harness-guard prefix, schema block, and phase builder are
+    # transport-agnostic.
+    "omp": (_CODEX_PROMPT_BUILDERS, "omp"),
 }
 
 

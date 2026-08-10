@@ -5885,11 +5885,18 @@ def _plan_artifact_paths_for_milestone(
 
 
 def _milestone_uses_hermes_backend(milestone: "MilestoneSpec") -> str | None:
+    # The resident backend is omp; legacy hermes specs are still recognized
+    # transitionally (deleted with the hermes SDK in B11).
     for entry in milestone.phase_model or []:
         if "=" not in entry:
             continue
         phase_step, spec = entry.split("=", 1)
-        if spec.strip().startswith("hermes:") or spec.strip() == "hermes":
+        spec = spec.strip()
+        if (
+            spec.startswith("omp")
+            or spec.startswith("hermes:")
+            or spec == "hermes"
+        ):
             return phase_step
     if milestone.with_prep:
         return "prep"
@@ -5907,13 +5914,14 @@ def _preflight_agent_backends(spec: "ChainSpec", *, writer) -> None:
 
     from arnold_pipelines.megaplan.workers import _is_agent_available
 
-    if _is_agent_available("hermes"):
+    if _is_agent_available("omp") or _is_agent_available("hermes"):
         return
     names = ", ".join(f"{label}:{phase}" for label, phase in offenders)
     raise CliError(
         "agent_deps_missing",
-        "Chain requires the hermes/agent backend for "
-        f"{names}, but it is not importable. Install with `uv pip install -e '.[agent]'`.",
+        "Chain requires the omp (resident) agent backend for "
+        f"{names}, but it is not available. Install the omp CLI and the "
+        "pinned omp_rpc package.",
     )
 
 

@@ -91,7 +91,7 @@ def test_pipeline_preflight_treats_zai_glm_and_zhipu_as_alternative_aliases(
     monkeypatch.setenv("ZAI_API_KEY", "zai-test")
 
     assert preflight_check_profile(
-        {"execute": "hermes:zhipu:glm-5.2"},
+        {"execute": "omp:zai/glm-5.2"},
         profile_name="partnered-5-glm",
     ) == []
 
@@ -108,7 +108,7 @@ def test_cloud_preflight_advertises_all_zhipu_aliases() -> None:
                 {
                     "label": "m1",
                     "idea": "idea.md",
-                    "phase_model": ["execute=hermes:zhipu:glm-5.2"],
+                    "phase_model": ["execute=omp:zai/glm-5.2"],
                 }
             ]
         }
@@ -117,12 +117,14 @@ def test_cloud_preflight_advertises_all_zhipu_aliases() -> None:
     assert {"ZHIPU_API_KEY", "GLM_API_KEY", "ZAI_API_KEY"}.issubset(
         set(summary["env_hints"])
     )
-    zhipu_requirements = [
+    # The omp route reports the upstream provider ``zai`` (zhipu is the
+    # legacy hermes-era name); the env hints carry the full GLM alias family.
+    zai_requirements = [
         item
         for item in summary["provider_requirements"]
-        if item.get("provider") == "zhipu"
+        if item.get("provider") == "zai"
     ]
-    assert zhipu_requirements
+    assert zai_requirements
     assert {"ZHIPU_API_KEY", "GLM_API_KEY", "ZAI_API_KEY"}.issubset(
-        set(zhipu_requirements[0]["env_hints"])
+        set(zai_requirements[0]["env_hints"])
     )

@@ -252,7 +252,7 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
         "--phase-model",
         action="append",
         default=[],
-        help="Per-step model override, e.g. --phase-model tiebreaker_researcher=hermes:openai/gpt-5",
+        help="Per-step model override, e.g. --phase-model tiebreaker_researcher=omp:deepseek/deepseek-v4-pro",
     )
     parser.add_argument(
         "--profile",

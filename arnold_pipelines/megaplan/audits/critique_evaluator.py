@@ -81,9 +81,9 @@ def roster_for_vendor(vendor: str) -> tuple[_RosterEntry, ...]:
 def _normalize_hermes_spec(spec: str) -> str:
     """Extract the model name from a hermes provider spec.
 
-    ``hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro`` → ``deepseek-v4-pro``
-    ``hermes:deepseek:deepseek-v4-flash``              → ``deepseek-v4-flash``
-    ``hermes:glm-5.1``                                 → ``glm-5.1``
+    ``omp:fireworks/deepseek-v4-pro`` → ``deepseek-v4-pro``
+    ``omp:deepseek/deepseek-v4-flash``   → ``deepseek-v4-flash``
+    ``omp:zai/glm-5.1``                  → ``glm-5.1``
 
     The last ``/``-delimited segment wins; if there is no ``/`` the last
     ``:``-delimited segment is used.
@@ -129,8 +129,8 @@ def _resolve_canonical(model: str) -> str:
     * Fully-qualified premium specs pass through the model component:
       ``claude:claude-opus-4-7`` → ``claude-opus-4-7``.
     * Hermes provider specs extract the trailing model name:
-      ``hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro`` → ``deepseek-v4-pro``,
-      ``hermes:deepseek:deepseek-v4-flash`` → ``deepseek-v4-flash``.
+      ``omp:fireworks/deepseek-v4-pro`` → ``deepseek-v4-pro``,
+      ``omp:deepseek/deepseek-v4-flash`` → ``deepseek-v4-flash``.
 
     Raises:
         ValueError: *model* does not normalise to a known roster entry.
@@ -161,7 +161,7 @@ def _resolve_canonical(model: str) -> str:
                 normalized = _AGENT_DEFAULT_MODEL[normalized]
         else:
             # Provider-prefixed spec without an explicit ``hermes:`` prefix
-            # (e.g. ``deepseek:deepseek-v4-pro``, which is how a DeepSeek-only
+            # (e.g. ``omp:deepseek/deepseek-v4-pro``, which is how an omp
             # profile's evaluator reports its own model, or
             # ``fireworks:accounts/.../deepseek-v4-pro``). The roster ranks by
             # model family, so extract the trailing model component the same

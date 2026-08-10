@@ -38,12 +38,33 @@ _COMMANDS_BY_AGENT: dict[str, tuple[str, ...]] = {
     "claude": ("bun", "claude", "tmux"),
     "shannon": ("bun", "claude", "tmux"),
     "codex": ("codex", "tmux"),
+    # omp launches ``bun ... --mode rpc`` through the pinned omp_rpc client;
+    # the runtime command surface is bun + omp (the launcher installed by the
+    # Dockerfile / agent script).
+    "omp": ("bun", "omp", "tmux"),
 }
 
 _ENV_HINTS_BY_AGENT: dict[str, tuple[str, ...]] = {
     "claude": ("ANTHROPIC_API_KEY",),
     "shannon": ("ANTHROPIC_API_KEY",),
     "codex": ("OPENAI_API_KEY",),
+    # omp routes carry their upstream provider's credential; per-route hints
+    # are reported through _provider_requirements below.
+    "omp": (),
+}
+
+# Frozen B1 credential aliases per omp provider route (mirrors workers/omp.py).
+# zai → zhipu's full alias family (ZHIPU/GLM/ZAI/Z_AI), moonshot/kimi-code →
+# Kimi family (KIMI/MOONSHOT) — resolved through the key pool's alias tables.
+_OMP_PROVIDER_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+    "zai": provider_credential_env_vars("zhipu"),
+    "moonshot": provider_credential_env_vars("kimi"),
+    "kimi-code": provider_credential_env_vars("kimi"),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
 }
 
 # Keep cloud launch diagnostics in lock-step with the runtime key pool.  A
@@ -145,6 +166,16 @@ def _concrete_fallback_routing(
 
 
 def _provider_requirements(agent: str, model: str | None) -> list[dict[str, Any]]:
+    if agent == "omp" and model and "/" in model:
+        provider = model.split("/", 1)[0].strip().lower()
+        return [
+            {
+                "agent": "omp",
+                "provider": provider,
+                "model": model,
+                "env_hints": list(_OMP_PROVIDER_ENV_HINTS.get(provider, ())),
+            }
+        ]
     if agent != "hermes":
         return []
     provider: str | None = None

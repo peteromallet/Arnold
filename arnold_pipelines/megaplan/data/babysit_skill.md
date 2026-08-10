@@ -172,7 +172,7 @@ Common blockers + fixes (megaplan + Shannon/DeepSeek):
   harness's auth. Find the real key source (e.g. megaplan's
   `auto_improve/api_keys.json`); route Claude via **Shannon** (uses the local
   `claude` CLI subscription, no API key) and DeepSeek via its **direct API**
-  (`hermes:deepseek:...`, not OpenRouter/Fireworks unless intended).
+  (`omp:deepseek/deepseek-v4-flash`, not OpenRouter/Fireworks unless intended).
 - **429 / "rate limited"** → check whether it's a real throttle or an
   **exhausted key/credits** (`curl -s -H "Authorization: Bearer $KEY"
   https://openrouter.ai/api/v1/auth/key` shows `limit_remaining`). Switch

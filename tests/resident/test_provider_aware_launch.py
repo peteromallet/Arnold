@@ -57,7 +57,7 @@ def test_auto_route_creates_one_durable_provider_manifest(
     assert manifest["backend"] == backend
     assert manifest["model"] == runtime_model
     assert manifest["model_spec"] == (
-        "hermes:zhipu:glm-5.2" if backend == "hermes" else model_spec
+        "omp:zai/glm-5.2" if backend == "hermes" else model_spec
     )
     assert manifest["provider_route"] == {
         "backend": backend,

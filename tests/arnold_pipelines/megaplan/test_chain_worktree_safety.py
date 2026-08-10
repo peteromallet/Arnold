@@ -500,7 +500,7 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
 
     _git(source, "checkout", "native-python-working-tree")
     (source / "chain.yaml").write_text(
-        "profile: hermes:kimi:kimi-k2.7-code\n",
+        "profile: omp:moonshot/kimi-k2.7-code\n",
         encoding="utf-8",
     )
     _git(source, "add", "chain.yaml")
@@ -527,7 +527,7 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     )
 
     assert _git(runner, "branch", "--show-current").stdout.strip() == "epic-m1"
-    assert "hermes:kimi:kimi-k2.7-code" in (runner / "chain.yaml").read_text(
+    assert "omp:moonshot/kimi-k2.7-code" in (runner / "chain.yaml").read_text(
         encoding="utf-8"
     )
     assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
@@ -847,7 +847,7 @@ def test_chain_child_python_commands_use_safe_path(
             str(idea),
             robustness="thorough",
             auto_approve=True,
-            phase_model=["prep=hermes:kimi:kimi-k2.7-code"],
+            phase_model=["prep=omp:moonshot/kimi-k2.7-code"],
             writer=lambda _message: None,
         )
         == "plan-x"

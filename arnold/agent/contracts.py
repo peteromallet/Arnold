@@ -57,6 +57,36 @@ def _is_codex_model_name(name: str) -> bool:
     return lowered.startswith("gpt-5") or "/gpt-5" in lowered or "codex" in lowered
 
 
+# omp (the resident omp RPC worker) spec grammar: ``omp:<provider>/<modelId>``
+# with an optional Arnold-side effort suffix ``:<effort>``.  The effort suffix
+# is stored separately on AgentSpec and becomes the RPC ``--thinking`` level;
+# the double-colon form (a second colon inside the model slot) is never valid.
+_OMP_EFFORT_TOKENS: frozenset[str] = frozenset(
+    {"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"}
+)
+
+
+def _parse_omp_agent_spec(spec: str, rest: str) -> "AgentSpec":
+    if ":" in rest:
+        model, effort = rest.split(":", 1)
+        if not effort:
+            effort = None
+    else:
+        model, effort = rest, None
+    if not model or "/" not in model or model.startswith("/") or model.endswith("/"):
+        raise ValueError(
+            f"Invalid omp agent spec {spec!r}: expected "
+            "'omp:<provider>/<modelId>[:<effort>]'; double-colon "
+            "the double-colon form is never valid"
+        )
+    if effort is not None and effort not in _OMP_EFFORT_TOKENS:
+        raise ValueError(
+            f"Invalid omp agent spec {spec!r}: effort token {effort!r} is not "
+            f"a valid omp thinking level ({', '.join(sorted(_OMP_EFFORT_TOKENS))})"
+        )
+    return AgentSpec(agent="omp", model=model, effort=effort)
+
+
 _PREMIUM_MODEL_PREDICATES = {
     "claude": _is_claude_model_name,
     "codex": _is_codex_model_name,
@@ -183,6 +213,9 @@ def parse_agent_spec(spec: str) -> AgentSpec:
             _validate_premium_placeholder_spec(spec, model=None, effort=rest)
             return AgentSpec(agent=agent, effort=rest)
         _validate_premium_placeholder_spec(spec, model=rest, effort=None)
+
+    if agent == "omp":
+        return _parse_omp_agent_spec(spec, rest)
 
     if agent not in _PREMIUM_VENDORS:
         return AgentSpec(agent=agent, model=rest)

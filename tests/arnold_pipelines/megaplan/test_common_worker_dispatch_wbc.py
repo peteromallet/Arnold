@@ -541,7 +541,7 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
         "state": state,
         "step": "critique",
         "agent": "hermes",
-        "selected_spec": "hermes:zhipu:glm-5.2",
+        "selected_spec": "omp:zai/glm-5.2",
         "route_kind": "subprocess",
     }
     legacy = build_worker_dispatch_spec(**common)
@@ -552,7 +552,7 @@ def test_worker_dispatch_key_is_collision_free_and_default_identity_is_unchanged
     assert legacy.attempt_id == str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{phase['attempt_id']}::subprocess::critique::hermes:zhipu:glm-5.2::0::inv-fanout::worker-dispatch-v2",
+            f"{phase['attempt_id']}::subprocess::critique::omp:zai/glm-5.2::0::inv-fanout::worker-dispatch-v2",
         )
     )
     assert len({legacy.attempt_id, first.attempt_id, second.attempt_id}) == 3
@@ -596,7 +596,7 @@ def test_worker_dispatch_attempt_identity_changes_with_new_invocation(
         "state": state,
         "step": "critique",
         "agent": "hermes",
-        "selected_spec": "hermes:zhipu:glm-5.2",
+        "selected_spec": "omp:zai/glm-5.2",
         "route_kind": "subprocess",
         "attempt_index": 0,
     }

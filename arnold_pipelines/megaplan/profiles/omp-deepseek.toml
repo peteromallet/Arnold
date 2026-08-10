@@ -1,0 +1,19 @@
+# `omp-deepseek` — the resident omp profile built from the frozen B1/B4
+# provider table.  Every phase routes through the omp worker
+# (``omp:<provider>/<modelId>``) over a fresh stateless RPC session.
+# Plan/revise use DeepSeek V4 Pro (higher reasoning); everything else uses
+# DeepSeek V4 Flash for cost/latency.
+[profiles.omp-deepseek]
+plan                  = "omp:deepseek/deepseek-v4-pro"
+prep                  = "omp:deepseek/deepseek-v4-flash"
+critique              = "omp:deepseek/deepseek-v4-flash"
+revise                = "omp:deepseek/deepseek-v4-pro"
+gate                  = "omp:deepseek/deepseek-v4-flash"
+finalize              = "omp:deepseek/deepseek-v4-pro"
+execute               = "omp:deepseek/deepseek-v4-flash"
+feedback              = "omp:deepseek/deepseek-v4-flash"
+loop_plan             = "omp:deepseek/deepseek-v4-pro"
+loop_execute          = "omp:deepseek/deepseek-v4-flash"
+review                = "omp:deepseek/deepseek-v4-flash"
+tiebreaker_researcher = "omp:deepseek/deepseek-v4-flash"
+tiebreaker_challenger = "omp:deepseek/deepseek-v4-flash"

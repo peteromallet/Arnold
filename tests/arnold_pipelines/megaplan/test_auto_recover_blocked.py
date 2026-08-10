@@ -50,7 +50,7 @@ def test_drive_forwards_live_phase_model_to_phase_subprocess(
         cwd=tmp_path,
         max_iterations=1,
         poll_sleep=0,
-        phase_model=["execute=hermes:deepseek:deepseek-v4-pro"],
+        phase_model=["execute=omp:deepseek/deepseek-v4-pro"],
     )
 
     assert len(captured_args) == 1
@@ -59,7 +59,7 @@ def test_drive_forwards_live_phase_model_to_phase_subprocess(
         "--plan",
         "demo",
         "--phase-model",
-        "execute=hermes:deepseek:deepseek-v4-pro",
+        "execute=omp:deepseek/deepseek-v4-pro",
     ]
 
 
@@ -736,7 +736,7 @@ def test_drive_bounds_predispatch_validation_infrastructure_without_model_escala
                 "config": {
                     "tier_models": {
                         "execute": {
-                            "1": "hermes:zhipu:glm-5.2",
+                            "1": "omp:zai/glm-5.2",
                             "2": "codex:gpt-5.6-sol:high",
                         }
                     }

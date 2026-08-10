@@ -705,17 +705,17 @@ def test_preflight_phase_model_materialization_keeps_explicit_profile_pins() -> 
                 {
                     "label": "m1",
                     "profile": "premium",
-                    "explicit_phase_model": ["prep=hermes:deepseek:deepseek-v4-pro"],
+                    "explicit_phase_model": ["prep=omp:deepseek/deepseek-v4-pro"],
                     "resolved_phase_map": {
                         "execute": "codex:gpt-5.4",
-                        "prep": "hermes:deepseek:deepseek-v4-pro",
+                        "prep": "omp:deepseek/deepseek-v4-pro",
                     },
                 }
             ]
         }
     )
 
-    assert result == {"m1": ["prep=hermes:deepseek:deepseek-v4-pro"]}
+    assert result == {"m1": ["prep=omp:deepseek/deepseek-v4-pro"]}
 
 
 def test_preflight_phase_model_materialization_keeps_cloud_default_without_profile() -> None:
@@ -1137,7 +1137,7 @@ def test_cloud_preflight_reports_dependencies_for_every_spec_in_each_chain() -> 
                     "idea": "idea.md",
                     "phase_model": [
                         encode_phase_model_value("plan", ["codex:high", "claude:sonnet"]),
-                        encode_phase_model_value("prep", ["hermes:deepseek:deepseek-v4-pro", "codex"]),
+                        encode_phase_model_value("prep", ["omp:deepseek/deepseek-v4-pro", "codex"]),
                     ],
                 }
             ]
@@ -1153,7 +1153,7 @@ def test_cloud_preflight_reports_dependencies_for_every_spec_in_each_chain() -> 
     milestone = summary["milestones"][0]
     assert milestone["resolved_phase_map"]["plan"] == "codex:high"
     assert milestone["resolved_phase_chains"]["plan"] == ["codex:high", "claude:sonnet"]
-    assert sorted(summary["required_agents"]) == ["claude", "codex", "hermes"]
+    assert sorted(summary["required_agents"]) == ["claude", "codex", "omp"]
     assert "bun" in summary["runtime_commands"]
     assert "codex" in summary["runtime_commands"]
     assert "claude" in summary["runtime_commands"]

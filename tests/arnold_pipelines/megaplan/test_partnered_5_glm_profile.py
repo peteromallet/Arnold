@@ -9,8 +9,8 @@ from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
 from arnold_pipelines.megaplan._core.dispatch import resolve_dispatch_spec
 
 
-GLM_SPEC = "hermes:zhipu:glm-5.2"
-FIREWORKS_GLM_SPEC = "hermes:fireworks:accounts/fireworks/models/glm-5p2"
+GLM_SPEC = "omp:zai/glm-5.2"
+FIREWORKS_GLM_SPEC = "omp:fireworks/glm-5.2"
 FINALIZE_SPEC = "codex:gpt-5.6-sol:high"
 FORBIDDEN_GPT_TOKENS = ("codex", "openai", "gpt")
 
@@ -51,6 +51,9 @@ def _replace_phase_model_gpt_specs(entries: list[str]) -> list[str]:
 def _expected_glm_profile(base: dict[str, Any]) -> dict[str, Any]:
     expected = _replace_gpt_specs(base)
     expected["finalize"] = FINALIZE_SPEC
+    # The glm profile deliberately routes gate through GLM-5.2 (prep/critique
+    # stay DeepSeek-scoped); the base profile's deepseek gate is overridden.
+    expected["gate"] = GLM_SPEC
     return expected
 
 
@@ -117,6 +120,11 @@ def test_partnered_5_glm_preserves_non_gpt_phase_and_critique_routes(
         f"finalize={FINALIZE_SPEC}" if entry.startswith("finalize=") else entry
         for entry in expected_phase_models
     ]
+    # gate routes through GLM in the glm profile (base keeps deepseek).
+    expected_phase_models = [
+        f"gate={GLM_SPEC}" if entry.startswith("gate=") else entry
+        for entry in expected_phase_models
+    ]
     assert glm_args.phase_model == expected_phase_models
     assert glm_args.tier_models["critique"] == _replace_gpt_specs(
         base_args.tier_models["critique"]
@@ -131,7 +139,7 @@ def test_partnered_5_glm_all_resolved_execute_tiers_are_glm_family(
 
     apply_profile_expansion(args, tmp_path)
 
-    assert "execute=hermes:zhipu:glm-5.2" in args.phase_model
+    assert "execute=omp:zai/glm-5.2" in args.phase_model
     execute_tiers = args.tier_models["execute"]
     assert set(execute_tiers) == set(range(1, 11))
     for tier in range(1, 11):
